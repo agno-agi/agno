@@ -130,6 +130,11 @@ class Gemini(Model):
         "tool": "user",
     }
 
+    def streaming_response_usage_is_cumulative(self) -> bool:
+        """Gemini streaming usage metadata is cumulative across chunks."""
+
+        return True
+
     def get_client(self) -> GeminiClient:
         """
         Returns an instance of the GeminiClient client.
@@ -489,7 +494,6 @@ class Gemini(Model):
         Invokes the model with a list of messages and returns the response as a stream.
         """
         formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
-
         request_kwargs = self.get_request_params(
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
         )
@@ -540,7 +544,6 @@ class Gemini(Model):
         Invokes the model with a list of messages and returns the response.
         """
         formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
-
         request_kwargs = self.get_request_params(
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
         )
@@ -596,7 +599,6 @@ class Gemini(Model):
         Invokes the model with a list of messages and returns the response as a stream.
         """
         formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
-
         request_kwargs = self.get_request_params(
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
         )
@@ -1377,13 +1379,17 @@ class Gemini(Model):
         """
         metrics = Metrics()
 
-        metrics.input_tokens = response_usage.prompt_token_count or 0
-        metrics.output_tokens = response_usage.candidates_token_count or 0
-        if response_usage.thoughts_token_count is not None:
-            metrics.output_tokens += response_usage.thoughts_token_count or 0
+        prompt_tokens = response_usage.prompt_token_count or 0
+        candidates_tokens = response_usage.candidates_token_count or 0
+        thoughts_tokens = response_usage.thoughts_token_count or 0
+
+        metrics.input_tokens = prompt_tokens
+        metrics.output_tokens = candidates_tokens
+        if thoughts_tokens > 0:
+            metrics.output_tokens += thoughts_tokens
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
-        metrics.cache_read_tokens = response_usage.cached_content_token_count or 0
+        metrics.cache_read_tokens = cached_tokens
 
         if response_usage.traffic_type is not None:
             metrics.provider_metrics = {"traffic_type": response_usage.traffic_type}

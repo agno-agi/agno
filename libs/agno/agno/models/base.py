@@ -1685,6 +1685,17 @@ class Model(ABC):
         if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
             assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
 
+    def streaming_response_usage_is_cumulative(self) -> bool:
+        """Return True if streaming `response_usage` values are cumulative totals.
+
+        Most providers either omit usage on intermediate streaming chunks or report
+        incremental deltas; in those cases, metrics should be accumulated.
+        Providers that report cumulative totals (e.g. Gemini) should override this
+        to True so we keep the latest totals instead of summing.
+        """
+
+        return False
+
     def _populate_stream_data(
         self, stream_data: MessageData, model_response_delta: ModelResponse
     ) -> Iterator[ModelResponse]:
@@ -1695,9 +1706,14 @@ class Model(ABC):
             stream_data.response_role = model_response_delta.role  # type: ignore
 
         if model_response_delta.response_usage is not None:
-            if stream_data.response_metrics is None:
-                stream_data.response_metrics = Metrics()
-            stream_data.response_metrics += model_response_delta.response_usage
+            if self.streaming_response_usage_is_cumulative():
+                # Some providers report cumulative totals in each chunk. In that
+                # case, keep the latest totals instead of summing them.
+                stream_data.response_metrics = model_response_delta.response_usage
+            else:
+                if stream_data.response_metrics is None:
+                    stream_data.response_metrics = Metrics()
+                stream_data.response_metrics += model_response_delta.response_usage
 
         # Update stream_data content
         if model_response_delta.content is not None:

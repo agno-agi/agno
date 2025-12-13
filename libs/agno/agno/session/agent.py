@@ -122,6 +122,7 @@ class AgentSession:
         skip_roles: Optional[List[str]] = None,
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
+        filter_compressed: bool = False,
     ) -> List[Message]:
         """Returns the messages belonging to the session that fit the given criteria.
 
@@ -129,14 +130,24 @@ class AgentSession:
             agent_id: The id of the agent to get the messages from.
             team_id: The id of the team to get the messages from.
             last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
-            last_n_messages: The number of messages to return, counting from the latest. Defaults to all messages.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
             skip_roles: Skip messages with these roles.
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
+            filter_compressed: Filter out messages that have already been compressed.
 
         Returns:
             A list of Messages belonging to the session.
         """
+        if not self.runs:
+            return []
+
+        # Get compressed message IDs once at the start (if filter_compressed)
+        compressed_msg_ids: Optional[set] = None
+        if filter_compressed:
+            compressed_ctx = self.get_compressed_context()
+            if compressed_ctx and compressed_ctx.message_ids:
+                compressed_msg_ids = compressed_ctx.message_ids
 
         def _should_skip_message(
             message: Message, skip_roles: Optional[List[str]] = None, skip_history_messages: bool = True
@@ -150,10 +161,11 @@ class AgentSession:
             if skip_roles and message.role in skip_roles:
                 return True
 
-            return False
+            # Skip already-compressed messages
+            if compressed_msg_ids and message.id in compressed_msg_ids:
+                return True
 
-        if not self.runs:
-            return []
+            return False
 
         if skip_statuses is None:
             skip_statuses = [RunStatus.paused, RunStatus.cancelled, RunStatus.error]
@@ -222,7 +234,6 @@ class AgentSession:
                     else:
                         messages_from_history.append(message)
 
-        log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
 
     def get_chat_history(self, last_n_runs: Optional[int] = None) -> List[Message]:

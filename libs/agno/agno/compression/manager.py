@@ -10,7 +10,7 @@ from agno.compression.prompts import CONTEXT_COMPRESSION_PROMPT, TOOL_COMPRESSIO
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 
 
 @dataclass
@@ -22,17 +22,25 @@ class CompressionManager:
 
     # Tool compression
     compress_tool_results: bool = False
-    compress_tool_results_limit: int = 3
+    compress_tool_results_limit: Optional[int] = None
     compress_tool_call_instructions: Optional[str] = None
 
     # Context compression
     compress_context: bool = False
-    compress_context_messages_limit: int = 10
+    compress_context_messages_limit: Optional[int] = None
     compress_context_instructions: Optional[str] = None
 
     stats: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
+        # If token limit is NOT set, apply default count-based limits
+        # If token limit IS set, count limits remain None (token-based only)
+        if self.compress_token_limit is None:
+            if self.compress_tool_results_limit is None:
+                self.compress_tool_results_limit = 3
+            if self.compress_context_messages_limit is None:
+                self.compress_context_messages_limit = 10
+
         if self.compress_tool_results and self.compress_context:
             log_warning("Both tool-based and context-based compression are enabled. Compressing full context.")
 
@@ -111,6 +119,8 @@ class CompressionManager:
             return False
 
         # Count-based fallback ONLY when no token limit is set
+        if self.compress_context_messages_limit is None:
+            return False
         msg_count = len([m for m in messages if m.role in ("user", "assistant", "tool")])
         return msg_count >= self.compress_context_messages_limit
 
@@ -138,6 +148,8 @@ class CompressionManager:
             return False
 
         # Count-based fallback ONLY when no token limit is set
+        if self.compress_tool_results_limit is None:
+            return False
         uncompressed = sum(1 for m in messages if m.role == "tool" and m.compressed_content is None)
         return uncompressed >= self.compress_tool_results_limit
 
@@ -146,6 +158,14 @@ class CompressionManager:
         messages: List[Message],
         compressed_context: Optional[CompressedContext] = None,
     ) -> Optional[CompressedContext]:
+        """Compress conversation context while keeping current user + last tool batch.
+
+        Algorithm:
+        1. Find current user: role="user" AND from_history=False
+        2. Find last tool batch: scan from end for assistant with tool_calls (after current user)
+        3. Keep: system messages + current user + last tool batch
+        4. Compress: everything else (history + earlier tool batches)
+        """
         if len(messages) < 3:
             return None
 
@@ -154,20 +174,42 @@ class CompressionManager:
             log_warning("No compression model available for context compression")
             return None
 
-        # Collect messages to compress (exclude system messages)
-        msgs_to_compress: List[Message] = []
-        msg_ids: Set[str] = set()
+        # 1. Find current user (latest user message with from_history=False)
+        current_user_idx: Optional[int] = None
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].role == "user" and not messages[i].from_history:
+                current_user_idx = i
+                break
 
-        for msg in messages:
-            if msg.role in ("user", "assistant", "tool"):
-                msgs_to_compress.append(msg)
-                if msg.id:
-                    msg_ids.add(msg.id)
+        if current_user_idx is None:
+            return None
+
+        # 2. Find last tool batch (only after current user, not from history)
+        last_tool_idx: Optional[int] = None
+        for i in range(len(messages) - 1, current_user_idx, -1):
+            if messages[i].role == "assistant" and messages[i].tool_calls:
+                last_tool_idx = i
+                break
+
+        # 3. Collect messages to compress (everything except system, current_user, last_tool_batch)
+        msgs_to_compress: List[Message] = []
+        compressed_msg_ids: Set[str] = set()
+
+        for i, msg in enumerate(messages):
+            if msg.role == "system":
+                continue
+            if i == current_user_idx:
+                continue
+            if last_tool_idx is not None and i >= last_tool_idx:
+                continue
+            msgs_to_compress.append(msg)
+            if msg.id:
+                compressed_msg_ids.add(msg.id)
 
         if not msgs_to_compress:
             return None
 
-        # Build conversation text for compression
+        # 4. Build conversation text for LLM
         conversation_parts = []
         if compressed_context and compressed_context.content:
             conversation_parts.append(f"Previous context summary:\n{compressed_context.content}\n\n")
@@ -191,61 +233,65 @@ class CompressionManager:
                 ]
             )
 
-            if response.content:
-                # Merge message IDs
-                all_msg_ids = msg_ids
-                if compressed_context and compressed_context.message_ids:
-                    all_msg_ids = all_msg_ids.union(compressed_context.message_ids)
+            if not response.content:
+                return None
 
-                new_context = CompressedContext(
-                    content=response.content,
-                    message_ids=all_msg_ids,
-                    updated_at=datetime.now(),
+            # Merge message IDs with previous compressed context
+            all_msg_ids = compressed_msg_ids
+            if compressed_context and compressed_context.message_ids:
+                all_msg_ids = all_msg_ids.union(compressed_context.message_ids)
+
+            new_context = CompressedContext(
+                content=response.content,
+                message_ids=all_msg_ids,
+                updated_at=datetime.now(),
+            )
+
+            # Update stats
+            original_len = len(conversation_text)
+            compressed_len = len(response.content)
+            self.stats["context_compressions"] = self.stats.get("context_compressions", 0) + 1
+            self.stats["original_context_size"] = self.stats.get("original_context_size", 0) + original_len
+            self.stats["compressed_context_size"] = self.stats.get("compressed_context_size", 0) + compressed_len
+            self.stats["messages_compressed"] = self.stats.get("messages_compressed", 0) + len(msgs_to_compress)
+
+            log_info(f"Context compressed: {original_len} -> {compressed_len} chars ({len(msgs_to_compress)} msgs)")
+
+            # 5. Rebuild message list: system + summary + current_user + last_tool_batch
+            new_messages: List[Message] = []
+
+            # Keep system messages
+            system_count = 0
+            for msg in messages:
+                if msg.role == "system":
+                    new_messages.append(msg)
+                    system_count += 1
+                else:
+                    break
+
+            # Add summary as user message (provides context to LLM)
+            summary_content = f"[Previous conversation summary]\n{response.content}"
+            new_messages.append(
+                Message(
+                    role="user",
+                    content=summary_content,
+                    add_to_agent_memory=True,
                 )
+            )
 
-                # Update stats
-                original_len = len(conversation_text)
-                compressed_len = len(response.content)
-                self.stats["context_compressions"] = self.stats.get("context_compressions", 0) + 1
-                self.stats["original_context_size"] = self.stats.get("original_context_size", 0) + original_len
-                self.stats["compressed_context_size"] = self.stats.get("compressed_context_size", 0) + compressed_len
-                self.stats["messages_compressed"] = self.stats.get("messages_compressed", 0) + len(msgs_to_compress)
+            # Add current user
+            current_user_msg = messages[current_user_idx]
+            new_messages.append(current_user_msg)
 
-                log_info(f"Context compressed: {original_len} -> {compressed_len} chars ({len(msgs_to_compress)} msgs)")
+            # Add last tool batch (if exists)
+            if last_tool_idx is not None:
+                tool_batch_msgs = messages[last_tool_idx:]
+                new_messages.extend(tool_batch_msgs)
 
-                # Inject summary into user message and remove compressed messages
-                user_msg_idx = next((i for i, m in enumerate(messages) if m.role == "user"), None)
-                log_debug(f"Context compression: user_msg_idx={user_msg_idx}")
+            # Replace messages in place
+            messages[:] = new_messages
 
-                if user_msg_idx is not None:
-                    # Find where to start keeping messages (last assistant with tool_calls)
-                    keep_from_idx = len(messages)
-                    for i in range(len(messages) - 1, -1, -1):
-                        if messages[i].role == "assistant" and messages[i].tool_calls:
-                            keep_from_idx = i
-                            break
-
-                    log_debug(f"Context compression: keep_from_idx={keep_from_idx}, total_messages={len(messages)}")
-
-                    # Only compress if there are messages to remove
-                    if keep_from_idx > user_msg_idx + 1:
-                        # Log what's being kept
-                        kept_roles = [m.role for m in messages[keep_from_idx:]]
-                        log_debug(
-                            f"Context compression: keeping {len(messages) - keep_from_idx} messages: {kept_roles}"
-                        )
-
-                        # Remove compressed messages first
-                        removed_count = keep_from_idx - user_msg_idx - 1
-                        del messages[user_msg_idx + 1 : keep_from_idx]
-                        log_debug(f"Context compression: removed {removed_count} messages")
-
-                        # Insert summary as new user message after original user message
-                        summary_msg = Message(role="user", content=f"---\nCOMPLETED:\n{response.content}\n---")
-                        messages.insert(user_msg_idx + 1, summary_msg)
-                        log_debug(f"Context compression: inserted summary message:\n{response.content}")
-
-                return new_context
+            return new_context
 
         except Exception as e:
             log_error(f"Error compressing context: {e}")
@@ -257,6 +303,14 @@ class CompressionManager:
         messages: List[Message],
         compressed_context: Optional[CompressedContext] = None,
     ) -> Optional[CompressedContext]:
+        """Async: Compress conversation context while keeping current user + last tool batch.
+
+        Algorithm:
+        1. Find current user: role="user" AND from_history=False
+        2. Find last tool batch: scan from end for assistant with tool_calls (after current user)
+        3. Keep: system messages + current user + last tool batch
+        4. Compress: everything else (history + earlier tool batches)
+        """
         if len(messages) < 3:
             return None
 
@@ -265,20 +319,42 @@ class CompressionManager:
             log_warning("No compression model available for context compression")
             return None
 
-        # Collect messages to compress (exclude system messages)
-        msgs_to_compress: List[Message] = []
-        msg_ids: Set[str] = set()
+        # 1. Find current user (latest user message with from_history=False)
+        current_user_idx: Optional[int] = None
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].role == "user" and not messages[i].from_history:
+                current_user_idx = i
+                break
 
-        for msg in messages:
-            if msg.role in ("user", "assistant", "tool"):
-                msgs_to_compress.append(msg)
-                if msg.id:
-                    msg_ids.add(msg.id)
+        if current_user_idx is None:
+            return None
+
+        # 2. Find last tool batch (only after current user, not from history)
+        last_tool_idx: Optional[int] = None
+        for i in range(len(messages) - 1, current_user_idx, -1):
+            if messages[i].role == "assistant" and messages[i].tool_calls:
+                last_tool_idx = i
+                break
+
+        # 3. Collect messages to compress (everything except system, current_user, last_tool_batch)
+        msgs_to_compress: List[Message] = []
+        compressed_msg_ids: Set[str] = set()
+
+        for i, msg in enumerate(messages):
+            if msg.role == "system":
+                continue
+            if i == current_user_idx:
+                continue
+            if last_tool_idx is not None and i >= last_tool_idx:
+                continue
+            msgs_to_compress.append(msg)
+            if msg.id:
+                compressed_msg_ids.add(msg.id)
 
         if not msgs_to_compress:
             return None
 
-        # Build conversation text for compression
+        # 4. Build conversation text for LLM
         conversation_parts = []
         if compressed_context and compressed_context.content:
             conversation_parts.append(f"Previous context summary:\n{compressed_context.content}\n\n")
@@ -302,61 +378,63 @@ class CompressionManager:
                 ]
             )
 
-            if response.content:
-                # Merge message IDs
-                all_msg_ids = msg_ids
-                if compressed_context and compressed_context.message_ids:
-                    all_msg_ids = all_msg_ids.union(compressed_context.message_ids)
+            if not response.content:
+                return None
 
-                new_context = CompressedContext(
-                    content=response.content,
-                    message_ids=all_msg_ids,
-                    updated_at=datetime.now(),
+            # Merge message IDs with previous compressed context
+            all_msg_ids = compressed_msg_ids
+            if compressed_context and compressed_context.message_ids:
+                all_msg_ids = all_msg_ids.union(compressed_context.message_ids)
+
+            new_context = CompressedContext(
+                content=response.content,
+                message_ids=all_msg_ids,
+                updated_at=datetime.now(),
+            )
+
+            # Update stats
+            original_len = len(conversation_text)
+            compressed_len = len(response.content)
+            self.stats["context_compressions"] = self.stats.get("context_compressions", 0) + 1
+            self.stats["original_context_size"] = self.stats.get("original_context_size", 0) + original_len
+            self.stats["compressed_context_size"] = self.stats.get("compressed_context_size", 0) + compressed_len
+            self.stats["messages_compressed"] = self.stats.get("messages_compressed", 0) + len(msgs_to_compress)
+
+            log_info(f"Context compressed: {original_len} -> {compressed_len} chars ({len(msgs_to_compress)} msgs)")
+
+            # 5. Rebuild message list: system + summary + current_user + last_tool_batch
+            new_messages: List[Message] = []
+
+            # Keep system messages
+            for msg in messages:
+                if msg.role == "system":
+                    new_messages.append(msg)
+                else:
+                    break
+
+            # Add summary as user message (provides context to LLM)
+            summary_content = f"[Previous conversation summary]\n{response.content}"
+            new_messages.append(
+                Message(
+                    role="user",
+                    content=summary_content,
+                    add_to_agent_memory=True,
                 )
+            )
 
-                # Update stats
-                original_len = len(conversation_text)
-                compressed_len = len(response.content)
-                self.stats["context_compressions"] = self.stats.get("context_compressions", 0) + 1
-                self.stats["original_context_size"] = self.stats.get("original_context_size", 0) + original_len
-                self.stats["compressed_context_size"] = self.stats.get("compressed_context_size", 0) + compressed_len
-                self.stats["messages_compressed"] = self.stats.get("messages_compressed", 0) + len(msgs_to_compress)
+            # Add current user
+            current_user_msg = messages[current_user_idx]
+            new_messages.append(current_user_msg)
 
-                log_info(f"Context compressed: {original_len} -> {compressed_len} chars ({len(msgs_to_compress)} msgs)")
+            # Add last tool batch (if exists)
+            if last_tool_idx is not None:
+                tool_batch_msgs = messages[last_tool_idx:]
+                new_messages.extend(tool_batch_msgs)
 
-                # Inject summary into user message and remove compressed messages
-                user_msg_idx = next((i for i, m in enumerate(messages) if m.role == "user"), None)
-                log_debug(f"Context compression: user_msg_idx={user_msg_idx}")
+            # Replace messages in place
+            messages[:] = new_messages
 
-                if user_msg_idx is not None:
-                    # Find where to start keeping messages (last assistant with tool_calls)
-                    keep_from_idx = len(messages)
-                    for i in range(len(messages) - 1, -1, -1):
-                        if messages[i].role == "assistant" and messages[i].tool_calls:
-                            keep_from_idx = i
-                            break
-
-                    log_debug(f"Context compression: keep_from_idx={keep_from_idx}, total_messages={len(messages)}")
-
-                    # Only compress if there are messages to remove
-                    if keep_from_idx > user_msg_idx + 1:
-                        # Log what's being kept
-                        kept_roles = [m.role for m in messages[keep_from_idx:]]
-                        log_debug(
-                            f"Context compression: keeping {len(messages) - keep_from_idx} messages: {kept_roles}"
-                        )
-
-                        # Remove compressed messages first
-                        removed_count = keep_from_idx - user_msg_idx - 1
-                        del messages[user_msg_idx + 1 : keep_from_idx]
-                        log_debug(f"Context compression: removed {removed_count} messages")
-
-                        # Insert summary as new user message after original user message
-                        summary_msg = Message(role="user", content=f"---\nCOMPLETED:\n{response.content}\n---")
-                        messages.insert(user_msg_idx + 1, summary_msg)
-                        log_debug(f"Context compression: inserted summary message:\n{response.content}")
-
-                return new_context
+            return new_context
 
         except Exception as e:
             log_error(f"Error compressing context: {e}")

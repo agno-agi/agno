@@ -124,6 +124,7 @@ class TeamSession:
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
         skip_member_messages: bool = True,
+        filter_compressed: bool = False,
     ) -> List[Message]:
         """Returns the messages belonging to the session that fit the given criteria.
 
@@ -136,10 +137,23 @@ class TeamSession:
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
             skip_member_messages: Skip messages created by members of the team.
+            filter_compressed: Filter out messages that have already been compressed.
 
         Returns:
             A list of Messages belonging to the session.
         """
+        if member_ids is not None and skip_member_messages:
+            skip_member_messages = False
+
+        if not self.runs:
+            return []
+
+        # Get compressed message IDs once at the start (if filter_compressed)
+        compressed_msg_ids: Optional[set] = None
+        if filter_compressed:
+            compressed_ctx = self.get_compressed_context()
+            if compressed_ctx and compressed_ctx.message_ids:
+                compressed_msg_ids = compressed_ctx.message_ids
 
         def _should_skip_message(
             message: Message, skip_roles: Optional[List[str]] = None, skip_history_messages: bool = True
@@ -152,14 +166,12 @@ class TeamSession:
             # Skip messages with specified role
             if skip_roles and message.role in skip_roles:
                 return True
+
+            # Skip already-compressed messages
+            if compressed_msg_ids and message.id in compressed_msg_ids:
+                return True
+
             return False
-
-        if member_ids is not None and skip_member_messages:
-            log_debug("Member IDs to filter by were provided. The skip_member_messages flag will be ignored.")
-            skip_member_messages = False
-
-        if not self.runs:
-            return []
 
         if skip_statuses is None:
             skip_statuses = [RunStatus.paused, RunStatus.cancelled, RunStatus.error]
@@ -229,7 +241,6 @@ class TeamSession:
                     else:
                         messages_from_history.append(message)
 
-        log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
 
     def get_chat_history(self, last_n_runs: Optional[int] = None) -> List[Message]:

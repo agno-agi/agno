@@ -6388,7 +6388,6 @@ class Agent:
         agent_session = None
         if self.db is not None and self.team_id is None and self.workflow_id is None:
             log_debug(f"Reading AgentSession: {session_id}")
-
             agent_session = cast(AgentSession, self._read_session(session_id=session_id))
 
         if agent_session is None:
@@ -6706,6 +6705,7 @@ class Agent:
                 session.session_data["session_state"].pop("current_session_id", None)
                 session.session_data["session_state"].pop("current_user_id", None)
                 session.session_data["session_state"].pop("current_run_id", None)
+
             if self._has_async_db():
                 await self._aupsert_session(session=session)
             else:
@@ -8387,6 +8387,7 @@ class Agent:
                 limit=self.num_history_messages,
                 skip_roles=[skip_role] if skip_role else None,
                 agent_id=self.id if self.team_id is not None else None,
+                filter_compressed=self.compress_context,
             )
 
             if len(history) > 0:
@@ -8600,6 +8601,7 @@ class Agent:
                 limit=self.num_history_messages,
                 skip_roles=[skip_role] if skip_role else None,
                 agent_id=self.id if self.team_id is not None else None,
+                filter_compressed=self.compress_context,
             )
 
             if len(history) > 0:

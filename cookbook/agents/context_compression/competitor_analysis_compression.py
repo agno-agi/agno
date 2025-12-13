@@ -1,45 +1,20 @@
-"""Competitor Analysis Agent with Context Compression
-
-This example demonstrates how to use context compression with a competitor
-analysis agent that scrapes websites and performs deep competitive intelligence.
-FirecrawlTools returns large amounts of HTML/markdown content, and multi-company
-analysis can quickly exceed token limits.
-
-Key features:
-- Handles large web scraping results from FirecrawlTools
-- Preserves key competitive data (pricing, features, positioning)
-- Works with ReasoningTools for extended thinking
-- Compresses completed analyses while keeping actionable insights
-
-When to use this pattern:
-- Competitive intelligence agents that scrape multiple websites
-- Market research agents gathering data from many sources
-- Any agent that processes large amounts of web content
-
-Dependencies: `pip install openai firecrawl-py agno`
-"""
-
 from textwrap import dedent
 
 from agno.agent import Agent
 from agno.compression import CompressionManager
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.reasoning import ReasoningTools
+from agno.tools.parallel import ParallelTools
 
-# Create a compression manager for web content
-# Higher threshold since web scraping returns large content
 compression_manager = CompressionManager(
     compress_context=True,
-    compress_token_limit=20000,  # Higher limit for web content
 )
 
 competitor_analysis_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model="google:gemini-2.5-pro",
     tools=[
-        DuckDuckGoTools(),  # Using DuckDuckGo as Firecrawl requires API key
-        ReasoningTools(add_instructions=True),
+        DuckDuckGoTools(verify_ssl=False),
+        ParallelTools(),
     ],
     instructions=[
         "1. Initial Research & Discovery:",
@@ -93,13 +68,14 @@ competitor_analysis_agent = Agent(
     ## Sources
     {List of sources analyzed}
     """),
+    session_id="competitor_analysis_compression1_gemini1",
     # Database for session persistence
-    db=SqliteDb(db_file="tmp/dbs/competitor_analysis_compression.db"),
+    db=SqliteDb(db_file="tmp/dbs/competitor_analysis_compression2_gemini.db"),
     # Compression manager handles large web content
     compression_manager=compression_manager,
     # Enable history for multi-phase analysis
     add_history_to_context=True,
-    num_history_runs=3,
+    num_history_runs=10,
     markdown=True,
     add_datetime_to_context=True,
     debug_mode=True,
@@ -115,7 +91,6 @@ if __name__ == "__main__":
         Analyze the competitive landscape for Anthropic in the AI/LLM space.
         Identify their main competitors and their key differentiators."""),
         stream=True,
-        show_full_reasoning=True,
     )
 
     # Phase 2: Deep dive on specific competitors
@@ -129,7 +104,6 @@ if __name__ == "__main__":
         - Google DeepMind vs Anthropic research focus
         What are the key strategic differences?"""),
         stream=True,
-        show_full_reasoning=True,
     )
 
     # Phase 3: Strategic recommendations
@@ -142,13 +116,39 @@ if __name__ == "__main__":
         Anthropic consider to strengthen their market position?
         Focus on product, pricing, and partnership opportunities."""),
         stream=True,
-        show_full_reasoning=True,
     )
 
-    # Show compression statistics
-    if compression_manager.stats:
-        print("\n" + "=" * 60)
-        print("Compression Statistics:")
-        print("=" * 60)
-        for key, value in compression_manager.stats.items():
-            print(f"  {key}: {value}")
+    # Phase 4: Multi-media input (should be preserved after compression)
+    print("\n" + "=" * 60)
+    print("Phase 4: Analysis with Multi-Media Input")
+    print("=" * 60)
+    competitor_analysis_agent.print_response(
+        [
+            {
+                "type": "text",
+                "text": dedent("""\
+                    Here is new market data that just came in. Incorporate this into your analysis:
+
+                    MARKET UPDATE Q4 2024:
+                    - Anthropic Claude 3.5 Sonnet pricing: $3/$15 per 1M tokens (input/output)
+                    - OpenAI GPT-4o pricing: $2.50/$10 per 1M tokens (input/output)
+                    - Google Gemini 1.5 Pro: $1.25/$5 per 1M tokens (input/output)
+
+                    NEW ANNOUNCEMENTS:
+                    - Anthropic: Computer use capability launched
+                    - OpenAI: Advanced Voice Mode with vision
+                    - Google: Gemini 2.0 with native tool use"""),
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/Google_2015_logo.svg/1200px-Google_2015_logo.svg.png",
+                },
+            },
+            {
+                "type": "text",
+                "text": "The image above shows Google's branding. How do these updates and Google's strong brand presence change your strategic recommendations for Anthropic?",
+            },
+        ],
+        stream=True,
+    )
