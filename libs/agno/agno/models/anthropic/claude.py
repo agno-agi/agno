@@ -191,7 +191,9 @@ class Claude(Model):
             return False
         if self.id.startswith("claude-sonnet-4-") and not self.id.startswith("claude-sonnet-4-5"):
             return False
-        if self.id.startswith("claude-opus-4-") and not self.id.startswith("claude-opus-4-1"):
+        if self.id.startswith("claude-opus-4-") and not (
+            self.id.startswith("claude-opus-4-1") or self.id.startswith("claude-opus-4-5")
+        ):
             return False
 
         return True
