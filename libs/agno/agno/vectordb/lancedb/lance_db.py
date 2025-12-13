@@ -260,39 +260,6 @@ class LanceDb(VectorDb):
             tbl = self.connection.create_table(name=self.table_name, schema=schema, mode="overwrite", exist_ok=True)  # type: ignore
         return tbl  # type: ignore
 
-    def doc_exists(self, document: Document) -> bool:
-        """
-        Validating if the document exists or not
-
-        Args:
-            document (Document): Document to validate
-        """
-        try:
-            if self.table is not None:
-                cleaned_content = document.content.replace("\x00", "\ufffd")
-                doc_id = md5(cleaned_content.encode()).hexdigest()
-                result = self.table.search().where(f"{self._id}='{doc_id}'").to_arrow()
-                return len(result) > 0
-        except Exception:
-            # Search sometimes fails with stale cache data, it means the doc doesn't exist
-            return False
-
-        return False
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """
-        Asynchronously validate if the document exists
-
-        Args:
-            document (Document): Document to validate
-
-        Returns:
-            bool: True if document exists, False otherwise
-        """
-        if self.connection:
-            self.table = self.connection.open_table(name=self.table_name)
-        return self.doc_exists(document)
-
     def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
         Insert documents into the database.
@@ -309,9 +276,6 @@ class LanceDb(VectorDb):
         data = []
 
         for document in documents:
-            if self.doc_exists(document):
-                continue
-
             # Add filters to document metadata if provided
             if filters:
                 meta_data = document.meta_data.copy() if document.meta_data else {}
@@ -320,7 +284,9 @@ class LanceDb(VectorDb):
 
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = str(md5(cleaned_content.encode()).hexdigest())
+            # Include content_hash in ID to ensure uniqueness across different content hashes
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = str(md5(f"{base_id}_{content_hash}".encode()).hexdigest())
             payload = {
                 "name": document.name,
                 "meta_data": document.meta_data,

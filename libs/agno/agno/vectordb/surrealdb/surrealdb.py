@@ -31,12 +31,6 @@ class SurrealDb(VectorDb):
         DEFINE INDEX IF NOT EXISTS vector_idx ON {collection} FIELDS embedding HNSW DIMENSION {dimensions} DIST {distance};
     """
 
-    DOC_EXISTS_QUERY: Final[str] = """
-        SELECT * FROM {collection}
-        WHERE content = $content
-        LIMIT 1
-    """
-
     NAME_EXISTS_QUERY: Final[str] = """
         SELECT * FROM {collection}
         WHERE meta_data.name = $name
@@ -220,23 +214,6 @@ class SurrealDb(VectorDb):
                 m=self.m,
             )
             self.client.query(query)
-
-    def doc_exists(self, document: Document) -> bool:
-        """Check if a document exists by its content.
-
-        Args:
-            document: The document to check.
-
-        Returns:
-            True if the document exists, False otherwise.
-
-        """
-        log_debug(f"Checking if document exists: {document.content}")
-        result = self.client.query(
-            self.DOC_EXISTS_QUERY.format(collection=self.collection),
-            {"content": document.content},
-        )
-        return bool(self._extract_result(result))
 
     def name_exists(self, name: str) -> bool:
         """Check if a document exists by its name.
@@ -492,19 +469,6 @@ class SurrealDb(VectorDb):
                 m=self.m,
             ),
         )
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """Check if a document exists by its content asynchronously.
-
-        Returns:
-            True if the document exists, False otherwise.
-
-        """
-        response = await self.async_client.query(
-            self.DOC_EXISTS_QUERY.format(collection=self.collection),
-            {"content": document.content},
-        )
-        return bool(self._extract_result(response))
 
     async def async_name_exists(self, name: str) -> bool:
         """Check if a document exists by its name asynchronously.

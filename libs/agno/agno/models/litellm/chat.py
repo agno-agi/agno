@@ -10,8 +10,10 @@ from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.tools.function import Function
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
+from agno.utils.tokens import count_schema_tokens
 
 try:
     import litellm
@@ -476,3 +478,26 @@ class LiteLLM(Model):
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
         return metrics
+
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        formatted_messages = self._format_messages(messages, compress_tool_results=True)
+        formatted_tools = self._format_tools(tools) if tools else None
+        tokens = litellm.token_counter(
+            model=self.id,
+            messages=formatted_messages,
+            tools=formatted_tools,  # type: ignore
+        )
+        return tokens + count_schema_tokens(response_format, self.id)
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        return self.count_tokens(messages, tools, response_format)
