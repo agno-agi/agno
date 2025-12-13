@@ -199,7 +199,7 @@ def get_agent_router(
         request: Request,
         background_tasks: BackgroundTasks,
         message: str = Form(...),
-        stream: bool = Form(False),
+        stream: bool = Form(True),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),

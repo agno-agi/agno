@@ -2,7 +2,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Union, overload
 
 from pydantic import BaseModel
-from websocket import WebSocket
+from fastapi import WebSocket
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
@@ -38,12 +38,12 @@ class RemoteWorkflow(BaseRemote):
         return self.workflow_id
 
     async def get_workflow_config(self) -> "WorkflowResponse":
-        """Get the agent config from remote, cached after first access."""
-        return await self.client.aget_team(self.team_id)
+        """Get the workflow config from remote, cached after first access."""
+        return await self.client.aget_workflow(self.workflow_id)
 
     @cached_property
     def _workflow_config(self) -> Optional[Any]:
-        """Get the agent config from remote, cached after first access."""
+        """Get the workflow config from remote, cached after first access."""
         from agno.os.routers.workflows.schema import WorkflowResponse
 
         config: WorkflowResponse = self.client.get_workflow(self.workflow_id)
