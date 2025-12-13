@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.os.auth import get_authentication_dependency
+from agno.os.auth import get_authentication_dependency, require_resource_access
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -142,6 +142,7 @@ def get_team_router(
             400: {"description": "Invalid request or unsupported file type", "model": BadRequestResponse},
             404: {"description": "Team not found", "model": NotFoundResponse},
         },
+        dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
     )
     async def create_team_run(
         team_id: str,
@@ -295,6 +296,7 @@ def get_team_router(
             404: {"description": "Team not found", "model": NotFoundResponse},
             500: {"description": "Failed to cancel team run", "model": InternalServerErrorResponse},
         },
+        dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
     )
     async def cancel_team_run(
         team_id: str,
@@ -390,13 +392,26 @@ def get_team_router(
             }
         },
     )
-    async def get_teams() -> List[TeamResponse]:
+    async def get_teams(request: Request) -> List[TeamResponse]:
         """Return the list of all Teams present in the contextual OS"""
         if os.teams is None:
             return []
 
+        # Filter teams based on user's scopes (only if authorization is enabled)
+        if getattr(request.state, "authorization_enabled", False):
+            from agno.os.auth import filter_resources_by_access, get_accessible_resources
+
+            # Check if user has any team scopes at all
+            accessible_ids = get_accessible_resources(request, "teams")
+            if not accessible_ids:
+                raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+            accessible_teams = filter_resources_by_access(request, os.teams, "teams")
+        else:
+            accessible_teams = os.teams
+
         teams = []
-        for team in os.teams:
+        for team in accessible_teams:
             team_response = await TeamResponse.from_team(team=team)
             teams.append(team_response)
 
@@ -485,8 +500,9 @@ def get_team_router(
             },
             404: {"description": "Team not found", "model": NotFoundResponse},
         },
+        dependencies=[Depends(require_resource_access("teams", "read", "team_id"))],
     )
-    async def get_team(team_id: str) -> TeamResponse:
+    async def get_team(team_id: str, request: Request) -> TeamResponse:
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")

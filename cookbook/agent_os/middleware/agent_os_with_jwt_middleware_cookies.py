@@ -10,8 +10,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.middleware import JWTMiddleware
-from agno.os.middleware.jwt import TokenSource
+from agno.os.middleware import JWTMiddleware, TokenSource
 from fastapi import FastAPI, Response
 
 # JWT Secret (use environment variable in production)
@@ -97,10 +96,10 @@ async def clear_auth_cookie(response: Response):
     return {"message": "Authentication cookie cleared successfully"}
 
 
-# Add JWT middleware configured for cookie-based authentication
+# Add RBAC middleware configured for cookie-based authentication
 app.add_middleware(
     JWTMiddleware,
-    secret_key=JWT_SECRET,
+    verification_keys=[JWT_SECRET],
     algorithm="HS256",
     excluded_route_paths=[
         "/set-auth-cookie",
@@ -110,13 +109,7 @@ app.add_middleware(
     cookie_name="auth_token",  # Name of the cookie containing the JWT
     user_id_claim="sub",  # Extract user_id from 'sub' claim
     session_id_claim="session_id",  # Extract session_id from 'session_id' claim
-    dependencies_claims=[
-        "name",
-        "email",
-        "roles",
-        "org",
-    ],  # Additional claims to extract
-    validate=True,  # We want to ensure the token is valid
+    dependencies_claims=["name", "email", "roles", "org"],
 )
 
 
@@ -133,13 +126,13 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """
     Run your AgentOS with JWT cookie authentication.
-    
+
     This example demonstrates:
     1. JWT tokens stored in HTTP-only cookies (more secure than localStorage)
     2. Automatic JWT claims extraction from cookies
     3. Agent tools that can access user profile information
     4. Cookie management endpoints (set/clear)
-    
+
     To test:
     1. Start the server
     2. Visit /set-auth-cookie to set the authentication cookie

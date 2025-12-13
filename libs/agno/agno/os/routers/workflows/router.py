@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from agno.exceptions import InputCheckError, OutputCheckError
-from agno.os.auth import get_authentication_dependency, validate_websocket_token
+from agno.os.auth import get_authentication_dependency, require_resource_access, validate_websocket_token
 from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -252,8 +252,21 @@ def get_websocket_router(
     settings: AgnoAPISettings = AgnoAPISettings(),
 ) -> APIRouter:
     """
-    Create WebSocket router without HTTP authentication dependencies.
+    Create WebSocket router with support for both legacy (os_security_key) and JWT authentication.
+
     WebSocket endpoints handle authentication internally via message-based auth.
+    Authentication methods (in order of precedence):
+    1. JWT tokens - if JWTMiddleware is configured (via app.state.jwt_middleware)
+    2. Legacy bearer token - if settings.os_security_key is set
+    3. No authentication - if neither is configured
+
+    The JWT middleware instance is accessed from app.state.jwt_middleware, which is set
+    by AgentOS when authorization is enabled. This allows reusing the same validation
+    logic and loaded keys as the HTTP middleware.
+
+    Args:
+        os: The AgentOS instance
+        settings: API settings (includes os_security_key for legacy auth)
     """
     ws_router = APIRouter()
 
@@ -263,8 +276,17 @@ def get_websocket_router(
     )
     async def workflow_websocket_endpoint(websocket: WebSocket):
         """WebSocket endpoint for receiving real-time workflow events"""
-        requires_auth = bool(settings.os_security_key)
+        # Check if JWT validator is configured (set by AgentOS when authorization=True)
+        jwt_validator = getattr(websocket.app.state, "jwt_validator", None)
+        jwt_auth_enabled = jwt_validator is not None
+
+        # Determine auth requirements - JWT takes precedence over legacy
+        requires_auth = jwt_auth_enabled or bool(settings.os_security_key)
+
         await websocket_manager.connect(websocket, requires_auth=requires_auth)
+
+        # Store user context from JWT auth
+        websocket_user_context: Dict[str, Any] = {}
 
         try:
             while True:
@@ -279,19 +301,56 @@ def get_websocket_router(
                         await websocket.send_text(json.dumps({"event": "auth_error", "error": "Token is required"}))
                         continue
 
-                    if validate_websocket_token(token, settings):
+                    if jwt_auth_enabled and jwt_validator:
+                        # Use JWT validator for token validation
+                        try:
+                            payload = jwt_validator.validate_token(token)
+                            claims = jwt_validator.extract_claims(payload)
+                            await websocket_manager.authenticate_websocket(websocket)
+
+                            # Store user context from JWT
+                            websocket_user_context["user_id"] = claims["user_id"]
+                            websocket_user_context["scopes"] = claims["scopes"]
+                            websocket_user_context["payload"] = payload
+
+                            # Include user info in auth success message
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "event": "authenticated",
+                                        "message": "JWT authentication successful.",
+                                        "user_id": claims["user_id"],
+                                    }
+                                )
+                            )
+                        except Exception as e:
+                            error_msg = str(e) if str(e) else "Invalid token"
+                            error_type = "expired" if "expired" in error_msg.lower() else "invalid_token"
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "event": "auth_error",
+                                        "error": error_msg,
+                                        "error_type": error_type,
+                                    }
+                                )
+                            )
+                        continue
+                    elif validate_websocket_token(token, settings):
+                        # Legacy os_security_key authentication
                         await websocket_manager.authenticate_websocket(websocket)
                     else:
                         await websocket.send_text(json.dumps({"event": "auth_error", "error": "Invalid token"}))
-                        continue
+                    continue
 
                 # Check authentication for all other actions (only when required)
                 elif requires_auth and not websocket_manager.is_authenticated(websocket):
+                    auth_type = "JWT" if jwt_auth_enabled else "bearer token"
                     await websocket.send_text(
                         json.dumps(
                             {
                                 "event": "auth_required",
-                                "error": "Authentication required. Send authenticate action with valid token.",
+                                "error": f"Authentication required. Send authenticate action with valid {auth_type}.",
                             }
                         )
                     )
@@ -302,6 +361,10 @@ def get_websocket_router(
                     await websocket.send_text(json.dumps({"event": "pong"}))
 
                 elif action == "start-workflow":
+                    # Add user context to message if available from JWT auth
+                    if websocket_user_context:
+                        if "user_id" not in message and websocket_user_context.get("user_id"):
+                            message["user_id"] = websocket_user_context["user_id"]
                     # Handle workflow execution directly via WebSocket
                     await handle_workflow_via_websocket(websocket, message, os)
 
@@ -367,11 +430,24 @@ def get_workflow_router(
             }
         },
     )
-    async def get_workflows() -> List[WorkflowSummaryResponse]:
+    async def get_workflows(request: Request) -> List[WorkflowSummaryResponse]:
         if os.workflows is None:
             return []
 
-        return [WorkflowSummaryResponse.from_workflow(workflow) for workflow in os.workflows]
+        # Filter workflows based on user's scopes (only if authorization is enabled)
+        if getattr(request.state, "authorization_enabled", False):
+            from agno.os.auth import filter_resources_by_access, get_accessible_resources
+
+            # Check if user has any workflow scopes at all
+            accessible_ids = get_accessible_resources(request, "workflows")
+            if not accessible_ids:
+                raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+            accessible_workflows = filter_resources_by_access(request, os.workflows, "workflows")
+        else:
+            accessible_workflows = os.workflows
+
+        return [WorkflowSummaryResponse.from_workflow(workflow) for workflow in accessible_workflows]
 
     @router.get(
         "/workflows/{workflow_id}",
@@ -397,8 +473,9 @@ def get_workflow_router(
             },
             404: {"description": "Workflow not found", "model": NotFoundResponse},
         },
+        dependencies=[Depends(require_resource_access("workflows", "read", "workflow_id"))],
     )
-    async def get_workflow(workflow_id: str) -> WorkflowResponse:
+    async def get_workflow(workflow_id: str, request: Request) -> WorkflowResponse:
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
@@ -438,6 +515,7 @@ def get_workflow_router(
             404: {"description": "Workflow not found", "model": NotFoundResponse},
             500: {"description": "Workflow execution error", "model": InternalServerErrorResponse},
         },
+        dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
     )
     async def create_workflow_run(
         workflow_id: str,
@@ -530,6 +608,7 @@ def get_workflow_router(
             404: {"description": "Workflow or run not found", "model": NotFoundResponse},
             500: {"description": "Failed to cancel workflow run", "model": InternalServerErrorResponse},
         },
+        dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
     )
     async def cancel_workflow_run(workflow_id: str, run_id: str):
         workflow = get_workflow_by_id(workflow_id, os.workflows)
