@@ -3,13 +3,16 @@ from contextlib import AsyncExitStack
 from dataclasses import asdict
 from datetime import timedelta
 from types import TracebackType
-from typing import List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.mcp import get_entrypoint_for_tool, prepare_command
+
+if TYPE_CHECKING:
+    from agno.run import RunContext
 
 try:
     from mcp import ClientSession, StdioServerParameters
@@ -47,6 +50,7 @@ class MultiMCPTools(Toolkit):
         exclude_tools: Optional[list[str]] = None,
         refresh_connection: bool = False,
         allow_partial_failure: bool = False,
+        header_provider: Optional[Callable[["RunContext"], dict[str, Any]]] = None,
         **kwargs,
     ):
         """
@@ -64,6 +68,7 @@ class MultiMCPTools(Toolkit):
             exclude_tools: Optional list of tool names to exclude (if None, excludes none).
             allow_partial_failure: If True, allows toolkit to initialize even if some MCP servers fail to connect. If False, any failure will raise an exception.
             refresh_connection: If True, the connection and tools will be refreshed on each run
+            header_provider: Header provider function for all servers. Takes RunContext and returns dict of HTTP headers.
         """
         super().__init__(name="MultiMCPTools", **kwargs)
 
@@ -85,6 +90,8 @@ class MultiMCPTools(Toolkit):
         self.include_tools = include_tools
         self.exclude_tools = exclude_tools
         self.refresh_connection = refresh_connection
+
+        self.header_provider = header_provider
 
         if server_params_list is None and commands is None and urls is None:
             raise ValueError("Either server_params_list or commands or urls must be provided")
@@ -130,6 +137,12 @@ class MultiMCPTools(Toolkit):
         self._connection_task = None
         self._successful_connections = 0
         self._sessions: list[ClientSession] = []
+        self._session_to_server_idx: Dict[int, int] = {}  # Maps session list index to server params index
+
+        # Session management for per-agent-run sessions with dynamic headers
+        # For MultiMCP, we track sessions per (run_id, server_idx) since we have multiple servers
+        self._run_sessions: Dict[tuple[str, int], ClientSession] = {}  # Maps (run_id, server_idx) to session
+        self._run_session_contexts: Dict[tuple[str, int], Any] = {}  # Maps (run_id, server_idx) to context managers
 
         self.allow_partial_failure = allow_partial_failure
 
@@ -152,6 +165,117 @@ class MultiMCPTools(Toolkit):
             return True
         except (RuntimeError, BaseException):
             return False
+
+    async def get_session_for_run(
+        self, run_context: Optional["RunContext"] = None, server_idx: int = 0
+    ) -> ClientSession:
+        """
+        Get or create a session for the given run_context and server index.
+
+        If header_provider is configured and run_context is provided, this creates
+        a new session with dynamic headers for this specific agent run and server.
+
+        Args:
+            run_context: The RunContext containing user_id, metadata, etc.
+            server_idx: Index of the server in self._sessions list
+
+        Returns:
+            ClientSession: Either the default session or a per-run session with dynamic headers
+        """
+        # If no header_provider or no run_context, use the default session
+        if not self.header_provider or not run_context:
+            # Return the default session for this server
+            if server_idx < len(self._sessions):
+                return self._sessions[server_idx]
+            raise ValueError(f"Server index {server_idx} out of range")
+
+        # Check if we already have a session for this (run_id, server_idx)
+        run_id = run_context.run_id
+        cache_key = (run_id, server_idx)
+        if cache_key in self._run_sessions:
+            return self._run_sessions[cache_key]
+
+        # Create a new session with dynamic headers for this run and server
+        log_debug(f"Creating new session for run_id={run_id}, server_idx={server_idx} with dynamic headers")
+
+        # Generate dynamic headers from the provider
+        dynamic_headers = self.header_provider(run_context)
+
+        # Get the server params for this server index
+        if server_idx >= len(self.server_params_list):
+            raise ValueError(f"Server index {server_idx} out of range")
+
+        server_params = self.server_params_list[server_idx]
+
+        # Create new session with merged headers based on transport type
+        if isinstance(server_params, SSEClientParams):
+            params_dict = asdict(server_params)
+            existing_headers = params_dict.get("headers") or {}
+            params_dict["headers"] = {**existing_headers, **dynamic_headers}
+
+            context = sse_client(**params_dict)  # type: ignore
+            client_timeout = min(self.timeout_seconds, params_dict.get("timeout", self.timeout_seconds))
+
+        elif isinstance(server_params, StreamableHTTPClientParams):
+            params_dict = asdict(server_params)
+            existing_headers = params_dict.get("headers") or {}
+            params_dict["headers"] = {**existing_headers, **dynamic_headers}
+
+            context = streamablehttp_client(**params_dict)  # type: ignore
+            params_timeout = params_dict.get("timeout", self.timeout_seconds)
+            if isinstance(params_timeout, timedelta):
+                params_timeout = int(params_timeout.total_seconds())
+            client_timeout = min(self.timeout_seconds, params_timeout)
+        else:
+            # stdio doesn't support headers, fall back to default session
+            log_warning(f"Cannot use dynamic headers with stdio transport for server {server_idx}, using default session")
+            if server_idx < len(self._sessions):
+                return self._sessions[server_idx]
+            raise ValueError(f"Server index {server_idx} out of range")
+
+        # Enter the context and create session
+        session_params = await context.__aenter__()  # type: ignore
+        read, write = session_params[0:2]
+
+        session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
+        session = await session_context.__aenter__()  # type: ignore
+
+        # Initialize the session
+        await session.initialize()
+
+        # Store the session and context for cleanup
+        self._run_sessions[cache_key] = session
+        self._run_session_contexts[cache_key] = (context, session_context)
+
+        return session
+
+    async def cleanup_run_session(self, run_id: str, server_idx: int) -> None:
+        """Clean up a per-run session."""
+        cache_key = (run_id, server_idx)
+        if cache_key not in self._run_sessions:
+            return
+
+        try:
+            context, session_context = self._run_session_contexts[cache_key]
+
+            # Exit session context - silently ignore errors
+            try:
+                await session_context.__aexit__(None, None, None)
+            except (RuntimeError, Exception):
+                pass  # Silently ignore
+
+            # Exit transport context - silently ignore errors
+            try:
+                await context.__aexit__(None, None, None)
+            except (RuntimeError, Exception):
+                pass  # Silently ignore
+
+        except Exception:
+            pass  # Silently ignore all cleanup errors
+        finally:
+            # Remove from cache
+            self._run_sessions.pop(cache_key, None)
+            self._run_session_contexts.pop(cache_key, None)
 
     async def connect(self, force: bool = False):
         """Initialize a MultiMCPTools instance and connect to the MCP servers"""
@@ -214,7 +338,7 @@ class MultiMCPTools(Toolkit):
 
         server_connection_errors = []
 
-        for server_params in self.server_params_list:
+        for server_idx, server_params in enumerate(self.server_params_list):
             try:
                 # Handle stdio connections
                 if isinstance(server_params, StdioServerParameters):
@@ -223,7 +347,7 @@ class MultiMCPTools(Toolkit):
                     session = await self._async_exit_stack.enter_async_context(
                         ClientSession(read, write, read_timeout_seconds=timedelta(seconds=self.timeout_seconds))
                     )
-                    await self.initialize(session)
+                    await self.initialize(session, server_idx)
                     self._successful_connections += 1
 
                 # Handle SSE connections
@@ -233,7 +357,7 @@ class MultiMCPTools(Toolkit):
                     )
                     read, write = client_connection
                     session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
-                    await self.initialize(session)
+                    await self.initialize(session, server_idx)
                     self._successful_connections += 1
 
                 # Handle Streamable HTTP connections
@@ -243,7 +367,7 @@ class MultiMCPTools(Toolkit):
                     )
                     read, write = client_connection[0:2]
                     session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
-                    await self.initialize(session)
+                    await self.initialize(session, server_idx)
                     self._successful_connections += 1
 
             except Exception as e:
@@ -268,13 +392,26 @@ class MultiMCPTools(Toolkit):
         if not self._initialized:
             return
 
-        try:
-            await self._async_exit_stack.aclose()
-            self._sessions = []
-            self._successful_connections = 0
+        import warnings
 
-        except (RuntimeError, BaseException) as e:
-            log_error(f"Failed to close MCP connections: {e}")
+        # Suppress async generator cleanup warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*async_generator.*")
+            warnings.filterwarnings("ignore", message=".*cancel scope.*")
+
+            try:
+                # Clean up all per-run sessions first
+                cache_keys = list(self._run_sessions.keys())
+                for run_id, server_idx in cache_keys:
+                    await self.cleanup_run_session(run_id, server_idx)
+
+                # Clean up main sessions
+                await self._async_exit_stack.aclose()
+                self._sessions = []
+                self._successful_connections = 0
+
+            except (RuntimeError, BaseException):
+                pass  # Silently ignore all cleanup errors
 
         self._initialized = False
 
@@ -298,7 +435,10 @@ class MultiMCPTools(Toolkit):
         self._successful_connections = 0
 
     async def build_tools(self) -> None:
-        for session in self._sessions:
+        for session_list_idx, session in enumerate(self._sessions):
+            # Get server index for this session
+            server_idx = self._session_to_server_idx.get(session_list_idx, 0)
+
             # Get the list of tools from the MCP server
             available_tools = await session.list_tools()
 
@@ -314,7 +454,13 @@ class MultiMCPTools(Toolkit):
             for tool in filtered_tools:
                 try:
                     # Get an entrypoint for the tool
-                    entrypoint = get_entrypoint_for_tool(tool, session)
+                    entrypoint = get_entrypoint_for_tool(
+                        tool=tool,
+                        session=session,
+                        mcp_tools_instance=self,  # Pass self to enable dynamic headers
+                        server_name=f"{self.name}_server_{server_idx}",
+                        server_idx=session_list_idx,  # Pass session list index for session lookup
+                    )
 
                     # Create a Function for the tool
                     f = Function(
@@ -333,14 +479,18 @@ class MultiMCPTools(Toolkit):
                     log_error(f"Failed to register tool {tool.name}: {e}")
                     raise
 
-    async def initialize(self, session: ClientSession) -> None:
+    async def initialize(self, session: ClientSession, server_idx: int = 0) -> None:
         """Initialize the MCP toolkit by getting available tools from the MCP server"""
 
         try:
             # Initialize the session if not already initialized
             await session.initialize()
 
+            # Track which server index this session belongs to
+            session_list_idx = len(self._sessions)
             self._sessions.append(session)
+            self._session_to_server_idx[session_list_idx] = server_idx
+
             self._initialized = True
         except Exception as e:
             log_error(f"Failed to get MCP tools: {e}")
