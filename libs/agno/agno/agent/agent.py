@@ -119,6 +119,7 @@ from agno.utils.events import (
     create_pre_hook_completed_event,
     create_pre_hook_started_event,
     create_reasoning_completed_event,
+    create_reasoning_content_delta_event,
     create_reasoning_started_event,
     create_reasoning_step_event,
     create_run_cancelled_event,
@@ -9242,7 +9243,54 @@ class Agent:
                 or is_vertexai
             ):
                 reasoning_message: Optional[Message] = None
-                if is_deepseek:
+
+                # Use streaming versions when stream_events is True for supported models
+                if stream_events and is_deepseek:
+                    from agno.reasoning.deepseek import get_deepseek_reasoning_stream
+
+                    log_debug("Starting DeepSeek Reasoning (streaming)", center=True, symbol="=")
+                    for reasoning_delta, final_message in get_deepseek_reasoning_stream(
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
+                    ):
+                        if reasoning_delta is not None:
+                            # Yield reasoning content delta event
+                            yield handle_event(  # type: ignore
+                                create_reasoning_content_delta_event(
+                                    from_run_response=run_response,
+                                    reasoning_content=reasoning_delta,
+                                ),
+                                run_response,
+                                events_to_skip=self.events_to_skip,  # type: ignore
+                                store_events=self.store_events,
+                            )
+                        if final_message is not None:
+                            reasoning_message = final_message
+
+                elif stream_events and is_anthropic:
+                    from agno.reasoning.anthropic import get_anthropic_reasoning_stream
+
+                    log_debug("Starting Anthropic Claude Reasoning (streaming)", center=True, symbol="=")
+                    for reasoning_delta, final_message in get_anthropic_reasoning_stream(
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
+                    ):
+                        if reasoning_delta is not None:
+                            # Yield reasoning content delta event
+                            yield handle_event(  # type: ignore
+                                create_reasoning_content_delta_event(
+                                    from_run_response=run_response,
+                                    reasoning_content=reasoning_delta,
+                                ),
+                                run_response,
+                                events_to_skip=self.events_to_skip,  # type: ignore
+                                store_events=self.store_events,
+                            )
+                        if final_message is not None:
+                            reasoning_message = final_message
+
+                # Non-streaming paths
+                elif is_deepseek:
                     from agno.reasoning.deepseek import get_deepseek_reasoning
 
                     log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
@@ -9535,7 +9583,54 @@ class Agent:
                 or is_vertexai
             ):
                 reasoning_message: Optional[Message] = None
-                if is_deepseek:
+
+                # Use streaming versions when stream_events is True for supported models
+                if stream_events and is_deepseek:
+                    from agno.reasoning.deepseek import aget_deepseek_reasoning_stream
+
+                    log_debug("Starting DeepSeek Reasoning (streaming)", center=True, symbol="=")
+                    async for reasoning_delta, final_message in aget_deepseek_reasoning_stream(
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
+                    ):
+                        if reasoning_delta is not None:
+                            # Yield reasoning content delta event
+                            yield handle_event(
+                                create_reasoning_content_delta_event(
+                                    from_run_response=run_response,
+                                    reasoning_content=reasoning_delta,
+                                ),
+                                run_response,
+                                events_to_skip=self.events_to_skip,  # type: ignore
+                                store_events=self.store_events,
+                            )
+                        if final_message is not None:
+                            reasoning_message = final_message
+
+                elif stream_events and is_anthropic:
+                    from agno.reasoning.anthropic import aget_anthropic_reasoning_stream
+
+                    log_debug("Starting Anthropic Claude Reasoning (streaming)", center=True, symbol="=")
+                    async for reasoning_delta, final_message in aget_anthropic_reasoning_stream(
+                        reasoning_agent=reasoning_agent,
+                        messages=run_messages.get_input_messages(),
+                    ):
+                        if reasoning_delta is not None:
+                            # Yield reasoning content delta event
+                            yield handle_event(
+                                create_reasoning_content_delta_event(
+                                    from_run_response=run_response,
+                                    reasoning_content=reasoning_delta,
+                                ),
+                                run_response,
+                                events_to_skip=self.events_to_skip,  # type: ignore
+                                store_events=self.store_events,
+                            )
+                        if final_message is not None:
+                            reasoning_message = final_message
+
+                # Non-streaming paths
+                elif is_deepseek:
                     from agno.reasoning.deepseek import aget_deepseek_reasoning
 
                     log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")

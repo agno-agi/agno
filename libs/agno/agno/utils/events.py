@@ -16,6 +16,7 @@ from agno.run.agent import (
     PreHookCompletedEvent,
     PreHookStartedEvent,
     ReasoningCompletedEvent,
+    ReasoningContentDeltaEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     RunCancelledEvent,
@@ -417,6 +418,19 @@ def create_reasoning_step_event(
         run_id=from_run_response.run_id,
         content=reasoning_step,
         content_type=reasoning_step.__class__.__name__,
+        reasoning_content=reasoning_content,
+    )
+
+
+def create_reasoning_content_delta_event(
+    from_run_response: RunOutput, reasoning_content: str
+) -> ReasoningContentDeltaEvent:
+    """Create an event for streaming reasoning content chunks."""
+    return ReasoningContentDeltaEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
         reasoning_content=reasoning_content,
     )
 

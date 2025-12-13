@@ -156,6 +156,7 @@ class RunEvent(str, Enum):
 
     reasoning_started = "ReasoningStarted"
     reasoning_step = "ReasoningStep"
+    reasoning_content_delta = "ReasoningContentDelta"
     reasoning_completed = "ReasoningCompleted"
 
     memory_update_started = "MemoryUpdateStarted"
@@ -374,6 +375,14 @@ class ReasoningStepEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class ReasoningContentDeltaEvent(BaseAgentRunEvent):
+    """Event for streaming reasoning content chunks as they arrive."""
+
+    event: str = RunEvent.reasoning_content_delta.value
+    reasoning_content: str = ""  # The delta/chunk of reasoning content
+
+
+@dataclass
 class ReasoningCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.reasoning_completed.value
     content: Optional[Any] = None
@@ -442,6 +451,7 @@ RunOutputEvent = Union[
     PostHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
+    ReasoningContentDeltaEvent,
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
@@ -474,6 +484,7 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.post_hook_completed.value: PostHookCompletedEvent,
     RunEvent.reasoning_started.value: ReasoningStartedEvent,
     RunEvent.reasoning_step.value: ReasoningStepEvent,
+    RunEvent.reasoning_content_delta.value: ReasoningContentDeltaEvent,
     RunEvent.reasoning_completed.value: ReasoningCompletedEvent,
     RunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
     RunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
