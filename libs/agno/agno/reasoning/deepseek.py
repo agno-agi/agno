@@ -66,7 +66,7 @@ def get_deepseek_reasoning_stream(
                         reasoning_content += event.reasoning_content
                         yield (event.reasoning_content, None)
                 elif event.event == RunEvent.run_completed:
-                    final_response = event
+                    pass
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return
@@ -118,7 +118,7 @@ async def aget_deepseek_reasoning_stream(
         - During streaming: (reasoning_content_delta, None)
         - At the end: (None, final_message)
     """
-    from agno.run.agent import RunEvent, RunOutput
+    from agno.run.agent import RunEvent
 
     # Update system message role to "system"
     for message in messages:
