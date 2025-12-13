@@ -317,20 +317,40 @@ def get_session_name(session: Dict[str, Any]) -> str:
             except (KeyError, IndexError, TypeError):
                 return ""
 
-        # For agents, use the first run
+        # For agents, prefer the first user message; if none is found, fall back to the second
         else:
-            run = runs[0] if runs else None
+            first_user_message: Optional[str] = None
+            second_user_message: Optional[str] = None
 
-        if run is None:
-            return ""
+            for r in runs:
+                run_dict = r if isinstance(r, dict) else r.to_dict()
 
-        if not isinstance(run, dict):
-            run = run.to_dict()
+                # Collect user role messages
+                for message in run_dict.get("messages") or []:
+                    if message.get("role") == "user" and message.get("content"):
+                        if first_user_message is None:
+                            first_user_message = message["content"]
+                        elif second_user_message is None:
+                            second_user_message = message["content"]
+                        break
 
-        if run and run.get("messages"):
-            for message in run["messages"]:
-                if message["role"] == "user":
-                    return message["content"]
+                # If still missing, fallback to stored input content
+                if first_user_message is None or second_user_message is None:
+                    user_input = get_run_input(run_dict)
+                    if user_input:
+                        if first_user_message is None:
+                            first_user_message = user_input
+                        elif second_user_message is None:
+                            second_user_message = user_input
+
+                if first_user_message and second_user_message:
+                    break
+
+            if first_user_message:
+                return first_user_message
+            if second_user_message:
+                return second_user_message
+
     return ""
 
 
