@@ -1801,8 +1801,11 @@ class Knowledge:
         - URL with description only: hash("{description}:{url}")
         - URL without name/description: hash("{url}") (backward compatible)
         - Same logic applies to paths
+        - If Knowledge name is provided, it is also appended to the hash
         """
         hash_parts = []
+        if self.name:
+            hash_parts.append(self.name)
         if content.name:
             hash_parts.append(content.name)
         if content.description:
