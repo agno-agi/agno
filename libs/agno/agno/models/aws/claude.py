@@ -70,8 +70,8 @@ class Claude(AnthropicClaude):
                 if self.aws_region:
                     client_params["aws_region"] = self.aws_region
             else:
-                self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY")
-                self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_KEY")
+                self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY_ID") or getenv("AWS_ACCESS_KEY")
+                self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_ACCESS_KEY") or getenv("AWS_SECRET_KEY")
                 self.aws_region = self.aws_region or getenv("AWS_REGION")
 
                 client_params = {

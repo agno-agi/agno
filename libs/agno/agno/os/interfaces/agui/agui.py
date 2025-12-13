@@ -1,12 +1,13 @@
 """Main class for the AG-UI app, used to expose an Agno Agent or Team in an AG-UI compatible format."""
 
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from fastapi.routing import APIRouter
 
 from agno.agent import Agent
 from agno.os.interfaces.agui.router import attach_routes
 from agno.os.interfaces.base import BaseInterface
+from agno.remote.base import BaseRemote
 from agno.team import Team
 
 
@@ -17,8 +18,8 @@ class AGUI(BaseInterface):
 
     def __init__(
         self,
-        agent: Optional[Agent] = None,
-        team: Optional[Team] = None,
+        agent: Optional[Union[Agent, BaseRemote]] = None,
+        team: Optional[Union[Team, BaseRemote]] = None,
         prefix: str = "",
         tags: Optional[List[str]] = None,
     ):

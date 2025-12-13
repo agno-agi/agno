@@ -1,23 +1,160 @@
+import json
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Set, Type, Union
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.routing import APIRoute, APIRouter
 from pydantic import BaseModel, create_model
 from starlette.middleware.cors import CORSMiddleware
 
-from agno.agent.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
-from agno.team.team import Team
-from agno.tools import Toolkit
-from agno.tools.function import Function
-from agno.utils.log import logger
-from agno.workflow.workflow import Workflow
+from agno.remote.base import RemoteDb
+from agno.run.agent import RunOutputEvent
+from agno.run.team import TeamRunOutputEvent
+from agno.run.workflow import WorkflowRunOutputEvent
+from agno.team import RemoteTeam, Team
+from agno.tools import Function, Toolkit
+from agno.utils.log import log_warning, logger
+from agno.workflow import RemoteWorkflow, Workflow
+
+
+async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
+    """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
+    Args:
+        request: The FastAPI Request object
+        endpoint_func: The function exposing the endpoint that received the request
+
+    Returns:
+        A dictionary of kwargs
+    """
+    import inspect
+
+    form_data = await request.form()
+    sig = inspect.signature(endpoint_func)
+    known_fields = set(sig.parameters.keys())
+    kwargs: Dict[str, Any] = {key: value for key, value in form_data.items() if key not in known_fields}
+
+    # Handle JSON parameters. They are passed as strings and need to be deserialized.
+    if session_state := kwargs.get("session_state"):
+        try:
+            if isinstance(session_state, str):
+                session_state_dict = json.loads(session_state)  # type: ignore
+                kwargs["session_state"] = session_state_dict
+        except json.JSONDecodeError:
+            kwargs.pop("session_state")
+            log_warning(f"Invalid session_state parameter couldn't be loaded: {session_state}")
+
+    if dependencies := kwargs.get("dependencies"):
+        try:
+            if isinstance(dependencies, str):
+                dependencies_dict = json.loads(dependencies)  # type: ignore
+                kwargs["dependencies"] = dependencies_dict
+        except json.JSONDecodeError:
+            kwargs.pop("dependencies")
+            log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}")
+
+    if metadata := kwargs.get("metadata"):
+        try:
+            if isinstance(metadata, str):
+                metadata_dict = json.loads(metadata)  # type: ignore
+                kwargs["metadata"] = metadata_dict
+        except json.JSONDecodeError:
+            kwargs.pop("metadata")
+            log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}")
+
+    if knowledge_filters := kwargs.get("knowledge_filters"):
+        try:
+            if isinstance(knowledge_filters, str):
+                knowledge_filters_dict = json.loads(knowledge_filters)  # type: ignore
+
+                # Try to deserialize FilterExpr objects
+                from agno.filters import from_dict
+
+                # Check if it's a single FilterExpr dict or a list of FilterExpr dicts
+                if isinstance(knowledge_filters_dict, dict) and "op" in knowledge_filters_dict:
+                    # Single FilterExpr - convert to list format
+                    kwargs["knowledge_filters"] = [from_dict(knowledge_filters_dict)]
+                elif isinstance(knowledge_filters_dict, list):
+                    # List of FilterExprs or mixed content
+                    deserialized = []
+                    for item in knowledge_filters_dict:
+                        if isinstance(item, dict) and "op" in item:
+                            deserialized.append(from_dict(item))
+                        else:
+                            # Keep non-FilterExpr items as-is
+                            deserialized.append(item)
+                    kwargs["knowledge_filters"] = deserialized
+                else:
+                    # Regular dict filter
+                    kwargs["knowledge_filters"] = knowledge_filters_dict
+        except json.JSONDecodeError:
+            kwargs.pop("knowledge_filters")
+            log_warning(f"Invalid knowledge_filters parameter couldn't be loaded: {knowledge_filters}")
+        except ValueError as e:
+            # Filter deserialization failed
+            kwargs.pop("knowledge_filters")
+            log_warning(f"Invalid FilterExpr in knowledge_filters: {e}")
+
+    # Handle output_schema - convert JSON schema to dynamic Pydantic model
+    if output_schema := kwargs.get("output_schema"):
+        try:
+            if isinstance(output_schema, str):
+                from agno.os.utils import json_schema_to_pydantic_model
+
+                schema_dict = json.loads(output_schema)
+                dynamic_model = json_schema_to_pydantic_model(schema_dict)
+                kwargs["output_schema"] = dynamic_model
+        except json.JSONDecodeError:
+            kwargs.pop("output_schema")
+            log_warning(f"Invalid output_schema JSON: {output_schema}")
+        except Exception as e:
+            kwargs.pop("output_schema")
+            log_warning(f"Failed to create output_schema model: {e}")
+
+    # Parse boolean and null values
+    for key, value in kwargs.items():
+        if isinstance(value, str) and value.lower() in ["true", "false"]:
+            kwargs[key] = value.lower() == "true"
+        elif isinstance(value, str) and value.lower() in ["null", "none"]:
+            kwargs[key] = None
+
+    return kwargs
+
+
+def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent]) -> str:
+    """Parse JSON data into SSE-compliant format.
+
+    Args:
+        event_dict: Dictionary containing the event data
+
+    Returns:
+        SSE-formatted response:
+
+        ```
+        event: EventName
+        data: { ... }
+
+        event: AnotherEventName
+        data: { ... }
+        ```
+    """
+    try:
+        # Parse the JSON to extract the event type
+        event_type = event.event or "message"
+
+        # Serialize to valid JSON with double quotes and no newlines
+        clean_json = event.to_json(separators=(",", ":"), indent=None)
+
+        return f"event: {event_type}\ndata: {clean_json}\n\n"
+    except json.JSONDecodeError:
+        clean_json = event.to_json(separators=(",", ":"), indent=None)
+        return f"event: message\ndata: {clean_json}\n\n"
 
 
 async def get_db(
@@ -46,6 +183,10 @@ async def get_db(
 
         if not is_configured:
             return False
+
+        if isinstance(db, RemoteDb):
+            # We have to assume remote DBs are always configured and exist
+            return True
 
         # Then check if table actually exists in the database
         try:
@@ -102,118 +243,6 @@ def get_knowledge_instance_by_db_id(knowledge_instances: List[Knowledge], db_id:
     raise HTTPException(status_code=404, detail=f"Knowledge instance with id '{db_id}' not found")
 
 
-def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> str:
-    """Get the run input from the given run dictionary
-
-    Uses the RunInput/TeamRunInput object which stores the original user input.
-    """
-
-    # For agent or team runs, use the stored input_content
-    if not is_workflow_run and run_dict.get("input") is not None:
-        input_data = run_dict.get("input")
-        if isinstance(input_data, dict) and input_data.get("input_content") is not None:
-            return stringify_input_content(input_data["input_content"])
-
-    if is_workflow_run:
-        # Check the input field directly
-        if run_dict.get("input") is not None:
-            input_value = run_dict.get("input")
-            return str(input_value)
-
-        # Check the step executor runs for fallback
-        step_executor_runs = run_dict.get("step_executor_runs", [])
-        if step_executor_runs:
-            for message in reversed(step_executor_runs[0].get("messages", [])):
-                if message.get("role") == "user":
-                    return message.get("content", "")
-
-    # Final fallback: scan messages
-    if run_dict.get("messages") is not None:
-        for message in reversed(run_dict["messages"]):
-            if message.get("role") == "user":
-                return message.get("content", "")
-
-    return ""
-
-
-def get_session_name(session: Dict[str, Any]) -> str:
-    """Get the session name from the given session dictionary"""
-
-    # If session_data.session_name is set, return that
-    session_data = session.get("session_data")
-    if session_data is not None and session_data.get("session_name") is not None:
-        return session_data["session_name"]
-
-    # Otherwise use the original user message
-    else:
-        runs = session.get("runs", []) or []
-
-        # For teams, identify the first Team run and avoid using the first member's run
-        if session.get("session_type") == "team":
-            run = None
-            for r in runs:
-                # If agent_id is not present, it's a team run
-                if not r.get("agent_id"):
-                    run = r
-                    break
-
-            # Fallback to first run if no team run found
-            if run is None and runs:
-                run = runs[0]
-
-        elif session.get("session_type") == "workflow":
-            try:
-                workflow_run = runs[0]
-                workflow_input = workflow_run.get("input")
-                if isinstance(workflow_input, str):
-                    return workflow_input
-                elif isinstance(workflow_input, dict):
-                    try:
-                        import json
-
-                        return json.dumps(workflow_input)
-                    except (TypeError, ValueError):
-                        pass
-
-                workflow_name = session.get("workflow_data", {}).get("name")
-                return f"New {workflow_name} Session" if workflow_name else ""
-            except (KeyError, IndexError, TypeError):
-                return ""
-
-        # For agents, use the first run
-        else:
-            run = runs[0] if runs else None
-
-        if run is None:
-            return ""
-
-        if not isinstance(run, dict):
-            run = run.to_dict()
-
-        if run and run.get("messages"):
-            for message in run["messages"]:
-                if message["role"] == "user":
-                    return message["content"]
-    return ""
-
-
-def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
-    input_media: Dict[str, List[Any]] = {
-        "images": [],
-        "videos": [],
-        "audios": [],
-        "files": [],
-    }
-
-    input = run_dict.get("input", {})
-    input_media["images"].extend(input.get("images", []))
-    input_media["videos"].extend(input.get("videos", []))
-    input_media["audios"].extend(input.get("audios", []))
-    input_media["files"].extend(input.get("files", []))
-
-    return input_media
-
-
 def process_image(file: UploadFile) -> Image:
     content = file.file.read()
     if not content:
@@ -261,37 +290,9 @@ def extract_format(file: UploadFile) -> Optional[str]:
     return None
 
 
-def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):
-    formatted_tools: List[Dict] = []
-    if agent_tools is not None:
-        for tool in agent_tools:
-            if isinstance(tool, dict):
-                formatted_tools.append(tool)
-            elif isinstance(tool, Toolkit):
-                for _, f in tool.functions.items():
-                    formatted_tools.append(f.to_dict())
-            elif isinstance(tool, Function):
-                formatted_tools.append(tool.to_dict())
-            elif callable(tool):
-                func = Function.from_callable(tool)
-                formatted_tools.append(func.to_dict())
-            else:
-                logger.warning(f"Unknown tool type: {type(tool)}")
-    return formatted_tools
-
-
-def format_team_tools(team_tools: List[Union[Function, dict]]):
-    formatted_tools: List[Dict] = []
-    if team_tools is not None:
-        for tool in team_tools:
-            if isinstance(tool, dict):
-                formatted_tools.append(tool)
-            elif isinstance(tool, Function):
-                formatted_tools.append(tool.to_dict())
-    return formatted_tools
-
-
-def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Optional[Agent]:
+def get_agent_by_id(
+    agent_id: str, agents: Optional[List[Union[Agent, RemoteAgent]]] = None
+) -> Optional[Union[Agent, RemoteAgent]]:
     if agent_id is None or agents is None:
         return None
 
@@ -301,7 +302,9 @@ def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Opti
     return None
 
 
-def get_team_by_id(team_id: str, teams: Optional[List[Team]] = None) -> Optional[Team]:
+def get_team_by_id(
+    team_id: str, teams: Optional[List[Union[Team, RemoteTeam]]] = None
+) -> Optional[Union[Team, RemoteTeam]]:
     if team_id is None or teams is None:
         return None
 
@@ -311,7 +314,9 @@ def get_team_by_id(team_id: str, teams: Optional[List[Team]] = None) -> Optional
     return None
 
 
-def get_workflow_by_id(workflow_id: str, workflows: Optional[List[Workflow]] = None) -> Optional[Workflow]:
+def get_workflow_by_id(
+    workflow_id: str, workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None
+) -> Optional[Union[Workflow, RemoteWorkflow]]:
     if workflow_id is None or workflows is None:
         return None
 
@@ -322,95 +327,6 @@ def get_workflow_by_id(workflow_id: str, workflows: Optional[List[Workflow]] = N
 
 
 #  INPUT SCHEMA VALIDATIONS
-
-
-def get_agent_input_schema_dict(agent: Agent) -> Optional[Dict[str, Any]]:
-    """Get input schema as dictionary for API responses"""
-
-    if agent.input_schema is not None:
-        try:
-            return agent.input_schema.model_json_schema()
-        except Exception:
-            return None
-
-    return None
-
-
-def get_team_input_schema_dict(team: Team) -> Optional[Dict[str, Any]]:
-    """Get input schema as dictionary for API responses"""
-
-    if team.input_schema is not None:
-        try:
-            return team.input_schema.model_json_schema()
-        except Exception:
-            return None
-
-    return None
-
-
-def get_workflow_input_schema_dict(workflow: Workflow) -> Optional[Dict[str, Any]]:
-    """Get input schema as dictionary for API responses"""
-
-    # Priority 1: Explicit input_schema (Pydantic model)
-    if workflow.input_schema is not None:
-        try:
-            return workflow.input_schema.model_json_schema()
-        except Exception:
-            return None
-
-    # Priority 2: Auto-generate from custom kwargs
-    if workflow.steps and callable(workflow.steps):
-        custom_params = workflow.run_parameters
-        if custom_params and len(custom_params) > 1:  # More than just 'message'
-            return _generate_schema_from_params(custom_params)
-
-    # Priority 3: No schema (expects string message)
-    return None
-
-
-def _generate_schema_from_params(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert function parameters to JSON schema"""
-    properties: Dict[str, Any] = {}
-    required: List[str] = []
-
-    for param_name, param_info in params.items():
-        # Skip the default 'message' parameter for custom kwargs workflows
-        if param_name == "message":
-            continue
-
-        # Map Python types to JSON schema types
-        param_type = param_info.get("annotation", "str")
-        default_value = param_info.get("default")
-        is_required = param_info.get("required", False)
-
-        # Convert Python type annotations to JSON schema types
-        if param_type == "str":
-            properties[param_name] = {"type": "string"}
-        elif param_type == "bool":
-            properties[param_name] = {"type": "boolean"}
-        elif param_type == "int":
-            properties[param_name] = {"type": "integer"}
-        elif param_type == "float":
-            properties[param_name] = {"type": "number"}
-        elif "List" in str(param_type):
-            properties[param_name] = {"type": "array", "items": {"type": "string"}}
-        else:
-            properties[param_name] = {"type": "string"}  # fallback
-
-        # Add default value if present
-        if default_value is not None:
-            properties[param_name]["default"] = default_value
-
-        # Add to required if no default value
-        if is_required and default_value is None:
-            required.append(param_name)
-
-    schema = {"type": "object", "properties": properties}
-
-    if required:
-        schema["required"] = required
-
-    return schema
 
 
 def update_cors_middleware(app: FastAPI, new_origins: list):
@@ -613,32 +529,6 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         collect_mcp_tools_from_workflow(step, mcp_tools)
 
 
-def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any], BaseModel]) -> str:
-    """Convert any given input_content into its string representation.
-
-    This handles both serialized (dict) and live (object) input_content formats.
-    """
-    import json
-
-    if isinstance(input_content, str):
-        return input_content
-    elif isinstance(input_content, Message):
-        return json.dumps(input_content.to_dict())
-    elif isinstance(input_content, dict):
-        return json.dumps(input_content, indent=2, default=str)
-    elif isinstance(input_content, list):
-        if input_content:
-            # Handle live Message objects
-            if isinstance(input_content[0], Message):
-                return json.dumps([m.to_dict() for m in input_content])
-            # Handle serialized Message dicts
-            elif isinstance(input_content[0], dict) and input_content[0].get("role") == "user":
-                return input_content[0].get("content", str(input_content))
-        return str(input_content)
-    else:
-        return str(input_content)
-
-
 def _get_python_type_from_json_schema(field_schema: Dict[str, Any], field_name: str = "NestedModel") -> Type:
     """Map JSON schema type to Python type with recursive handling.
 
@@ -809,3 +699,171 @@ def parse_datetime_to_utc(datetime_str: str, param_name: str = "datetime") -> "d
             status_code=400,
             detail=f"Invalid {param_name} format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z' or '2025-11-19T10:00:00+05:30'): {e}",
         )
+
+
+def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
+    input_media: Dict[str, List[Any]] = {
+        "images": [],
+        "videos": [],
+        "audios": [],
+        "files": [],
+    }
+
+    input = run_dict.get("input", {})
+    input_media["images"].extend(input.get("images", []))
+    input_media["videos"].extend(input.get("videos", []))
+    input_media["audios"].extend(input.get("audios", []))
+    input_media["files"].extend(input.get("files", []))
+
+    return input_media
+
+
+def format_team_tools(team_tools: List[Union[Function, dict]]):
+    formatted_tools: List[Dict] = []
+    if team_tools is not None:
+        for tool in team_tools:
+            if isinstance(tool, dict):
+                formatted_tools.append(tool)
+            elif isinstance(tool, Function):
+                formatted_tools.append(tool.to_dict())
+    return formatted_tools
+
+
+def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):
+    formatted_tools: List[Dict] = []
+    if agent_tools is not None:
+        for tool in agent_tools:
+            if isinstance(tool, dict):
+                formatted_tools.append(tool)
+            elif isinstance(tool, Toolkit):
+                for _, f in tool.functions.items():
+                    formatted_tools.append(f.to_dict())
+            elif isinstance(tool, Function):
+                formatted_tools.append(tool.to_dict())
+            elif callable(tool):
+                func = Function.from_callable(tool)
+                formatted_tools.append(func.to_dict())
+            else:
+                logger.warning(f"Unknown tool type: {type(tool)}")
+    return formatted_tools
+
+
+def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> str:
+    """Get the run input from the given run dictionary
+
+    Uses the RunInput/TeamRunInput object which stores the original user input.
+    """
+
+    # For agent or team runs, use the stored input_content
+    if not is_workflow_run and run_dict.get("input") is not None:
+        input_data = run_dict.get("input")
+        if isinstance(input_data, dict) and input_data.get("input_content") is not None:
+            return stringify_input_content(input_data["input_content"])
+
+    if is_workflow_run:
+        # Check the input field directly
+        if run_dict.get("input") is not None:
+            input_value = run_dict.get("input")
+            return str(input_value)
+
+        # Check the step executor runs for fallback
+        step_executor_runs = run_dict.get("step_executor_runs", [])
+        if step_executor_runs:
+            for message in reversed(step_executor_runs[0].get("messages", [])):
+                if message.get("role") == "user":
+                    return message.get("content", "")
+
+    # Final fallback: scan messages
+    if run_dict.get("messages") is not None:
+        for message in reversed(run_dict["messages"]):
+            if message.get("role") == "user":
+                return message.get("content", "")
+
+    return ""
+
+
+def get_session_name(session: Dict[str, Any]) -> str:
+    """Get the session name from the given session dictionary"""
+
+    # If session_data.session_name is set, return that
+    session_data = session.get("session_data")
+    if session_data is not None and session_data.get("session_name") is not None:
+        return session_data["session_name"]
+
+    # Otherwise use the original user message
+    else:
+        runs = session.get("runs", []) or []
+
+        # For teams, identify the first Team run and avoid using the first member's run
+        if session.get("session_type") == "team":
+            run = None
+            for r in runs:
+                # If agent_id is not present, it's a team run
+                if not r.get("agent_id"):
+                    run = r
+                    break
+
+            # Fallback to first run if no team run found
+            if run is None and runs:
+                run = runs[0]
+
+        elif session.get("session_type") == "workflow":
+            try:
+                workflow_run = runs[0]
+                workflow_input = workflow_run.get("input")
+                if isinstance(workflow_input, str):
+                    return workflow_input
+                elif isinstance(workflow_input, dict):
+                    try:
+                        import json
+
+                        return json.dumps(workflow_input)
+                    except (TypeError, ValueError):
+                        pass
+
+                workflow_name = session.get("workflow_data", {}).get("name")
+                return f"New {workflow_name} Session" if workflow_name else ""
+            except (KeyError, IndexError, TypeError):
+                return ""
+
+        # For agents, use the first run
+        else:
+            run = runs[0] if runs else None
+
+        if run is None:
+            return ""
+
+        if not isinstance(run, dict):
+            run = run.to_dict()
+
+        if run and run.get("messages"):
+            for message in run["messages"]:
+                if message["role"] == "user":
+                    return message["content"]
+    return ""
+
+
+def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any], BaseModel]) -> str:
+    """Convert any given input_content into its string representation.
+
+    This handles both serialized (dict) and live (object) input_content formats.
+    """
+    import json
+
+    if isinstance(input_content, str):
+        return input_content
+    elif isinstance(input_content, Message):
+        return json.dumps(input_content.to_dict())
+    elif isinstance(input_content, dict):
+        return json.dumps(input_content, indent=2, default=str)
+    elif isinstance(input_content, list):
+        if input_content:
+            # Handle live Message objects
+            if isinstance(input_content[0], Message):
+                return json.dumps([m.to_dict() for m in input_content])
+            # Handle serialized Message dicts
+            elif isinstance(input_content[0], dict) and input_content[0].get("role") == "user":
+                return input_content[0].get("content", str(input_content))
+        return str(input_content)
+    else:
+        return str(input_content)

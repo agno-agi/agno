@@ -2,6 +2,7 @@ import uuid
 
 import pytest
 
+import agno.utils.os
 from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.run import RunContext
@@ -166,7 +167,7 @@ def test_set_session_name(test_agent):
     assert updated_session.session_data["session_name"] == "Test Session"
 
     # Verify it's persisted
-    name = test_agent.get_session_name(session_id=session_id)
+    name = agno.utils.os.get_session_name(session_id=session_id)
     assert name == "Test Session"
 
 
@@ -187,7 +188,7 @@ def test_get_session_name(test_agent):
     test_agent.run("Hello", session_id=session_id)
     test_agent.set_session_name(session_id=session_id, session_name="My Session")
 
-    name = test_agent.get_session_name(session_id=session_id)
+    name = agno.utils.os.get_session_name(session_id=session_id)
     assert name == "My Session"
 
 

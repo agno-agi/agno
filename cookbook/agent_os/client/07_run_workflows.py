@@ -12,7 +12,7 @@ Prerequisites:
 import asyncio
 import json
 
-from agno.os.client import AgentOSClient
+from agno.client import AgentOSClient
 
 
 async def run_workflow_non_streaming():
@@ -22,7 +22,7 @@ async def run_workflow_non_streaming():
     print("=" * 60)
 
     client = AgentOSClient(base_url="http://localhost:7777")
-    
+
     # Get available workflows
     config = await client.get_config()
     if not config.workflows:
@@ -54,7 +54,7 @@ async def run_workflow_streaming():
     print("=" * 60)
 
     client = AgentOSClient(base_url="http://localhost:7777")
-    
+
     # Get available workflows
     config = await client.get_config()
     if not config.workflows:
@@ -94,7 +94,7 @@ async def run_workflow_with_session():
     print("=" * 60)
 
     client = AgentOSClient(base_url="http://localhost:7777")
-    
+
     # Get available workflows
     config = await client.get_config()
     if not config.workflows:

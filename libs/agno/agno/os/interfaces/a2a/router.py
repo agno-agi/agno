@@ -13,23 +13,22 @@ try:
 except ImportError as e:
     raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a-sdk`") from e
 
-from agno.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.a2a.utils import (
     map_a2a_request_to_run_input,
     map_run_output_to_a2a_task,
     stream_a2a_response_with_error_handling,
 )
-from agno.os.router import _get_request_kwargs
-from agno.os.utils import get_agent_by_id, get_team_by_id, get_workflow_by_id
-from agno.team import Team
-from agno.workflow import Workflow
+from agno.os.utils import get_agent_by_id, get_request_kwargs, get_team_by_id, get_workflow_by_id
+from agno.team import RemoteTeam, Team
+from agno.workflow import RemoteWorkflow, Workflow
 
 
 def attach_routes(
     router: APIRouter,
-    agents: Optional[List[Agent]] = None,
-    teams: Optional[List[Team]] = None,
-    workflows: Optional[List[Workflow]] = None,
+    agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    teams: Optional[List[Union[Team, RemoteTeam]]] = None,
+    workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
 ) -> APIRouter:
     if agents is None and teams is None and workflows is None:
         raise ValueError("Agents, Teams, or Workflows are required to setup the A2A interface.")
@@ -75,7 +74,7 @@ def attach_routes(
     )
     async def a2a_send_message(request: Request):
         request_body = await request.json()
-        kwargs = await _get_request_kwargs(request, a2a_send_message)
+        kwargs = await get_request_kwargs(request, a2a_send_message)
 
         # 1. Get the Agent, Team, or Workflow to run
         agent_id = request_body.get("params", {}).get("message", {}).get("agentId") or request.headers.get("X-Agent-ID")
@@ -181,7 +180,7 @@ def attach_routes(
     )
     async def a2a_stream_message(request: Request):
         request_body = await request.json()
-        kwargs = await _get_request_kwargs(request, a2a_stream_message)
+        kwargs = await get_request_kwargs(request, a2a_stream_message)
 
         # 1. Get the Agent, Team, or Workflow to run
         agent_id = request_body.get("params", {}).get("message", {}).get("agentId")

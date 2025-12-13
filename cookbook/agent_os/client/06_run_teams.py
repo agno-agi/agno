@@ -11,7 +11,7 @@ Prerequisites:
 
 import asyncio
 
-from agno.os.client import AgentOSClient
+from agno.client import AgentOSClient
 
 
 async def run_team_non_streaming():
@@ -21,7 +21,7 @@ async def run_team_non_streaming():
     print("=" * 60)
 
     client = AgentOSClient(base_url="http://localhost:7777")
-    
+
     # Get available teams
     config = await client.get_config()
     if not config.teams:
@@ -48,7 +48,7 @@ async def run_team_streaming():
     print("=" * 60)
 
     client = AgentOSClient(base_url="http://localhost:7777")
-    
+
     # Get available teams
     config = await client.get_config()
     if not config.teams:
@@ -87,7 +87,7 @@ async def run_team_with_session():
     print("=" * 60)
 
     client = AgentOSClient(base_url="http://localhost:7777")
-    
+
     # Get available teams
     config = await client.get_config()
     if not config.teams:

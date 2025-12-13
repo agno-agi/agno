@@ -12,12 +12,12 @@ Prerequisites:
 
 import asyncio
 
-from agno.os.client import AgentOSClient
+from agno.client import AgentOSClient
 
 
 async def main():
     client = AgentOSClient(base_url="http://localhost:7777")
-    
+
     print("=" * 60)
     print("Knowledge Search")
     print("=" * 60)
@@ -60,9 +60,7 @@ async def main():
             content_preview = (
                 str(result.content)[:100] if hasattr(result, "content") else "N/A"
             )
-            print(
-                f"   - Score: {result.score if hasattr(result, 'score') else 'N/A'}"
-            )
+            print(f"   - Score: {result.score if hasattr(result, 'score') else 'N/A'}")
             print(f"     Content: {content_preview}...")
     except Exception as e:
         print(f"   Error searching: {e}")

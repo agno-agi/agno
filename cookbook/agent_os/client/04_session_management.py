@@ -10,7 +10,7 @@ Prerequisites:
 
 import asyncio
 
-from agno.os.client import AgentOSClient
+from agno.client import AgentOSClient
 
 
 async def main():

@@ -11,7 +11,7 @@ Prerequisites:
 
 import asyncio
 
-from agno.os.client import AgentOSClient
+from agno.client import AgentOSClient
 
 
 async def run_agent_non_streaming():
@@ -19,7 +19,7 @@ async def run_agent_non_streaming():
     print("=" * 60)
     print("Non-Streaming Agent Run")
     print("=" * 60)
-    
+
     client = AgentOSClient(base_url="http://localhost:7777")
     # Get available agents
     config = await client.get_config()
@@ -48,7 +48,7 @@ async def run_agent_streaming():
     print("=" * 60)
 
     client = AgentOSClient(base_url="http://localhost:7777")
-    
+
     # Get available agents
     config = await client.get_config()
     if not config.agents:
@@ -84,7 +84,7 @@ async def run_agent_with_session():
     print("=" * 60)
 
     client = AgentOSClient(base_url="http://localhost:7777")
-    
+
     # Get available agents
     config = await client.get_config()
     if not config.agents:
