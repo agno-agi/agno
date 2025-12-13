@@ -1,0 +1,67 @@
+"""
+Full context compression example.
+
+This example demonstrates how to use the `compress_context` flag to automatically
+compress the entire conversation context when the token limit is hit. This is useful
+for long-running conversations where you want to maintain continuity while staying
+within token limits.
+
+Key features:
+- `compress_context=True` enables full context compression
+- `compression_manager` with `compress_token_limit` sets the threshold
+
+When the token count exceeds the limit, the conversation is summarized into a
+structured format that preserves key facts, data, and task progress.
+"""
+
+from agno.agent import Agent
+from agno.compression import CompressionManager
+from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIChat
+from agno.tools.duckduckgo import DuckDuckGoTools
+
+# Create a compression manager with a token limit
+compression_manager = CompressionManager(
+    compress_context=True,
+    compress_token_limit=5000,  # Compress when context exceeds 4000 tokens
+)
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-5-mini"),
+    tools=[DuckDuckGoTools(verify_ssl=False)],
+    description="A research assistant that can search the web for information",
+    instructions="Use the search tools to find the latest information. Be thorough and cite sources.",
+    db=SqliteDb(db_file="tmp/dbs/full_compression1.db"),
+    compression_manager=compression_manager,
+    add_history_to_context=True,  # Important: enable history so compression can work across runs
+    num_history_runs=5,
+    debug_mode=True,
+)
+
+# First research task
+agent.print_response(
+    "Research the latest developments in AI model reasoning capabilities. Focus on o1, Claude, and Gemini, Grok, deepseek, mistral, etc.",
+    stream=True,
+)
+
+print("\n" + "=" * 50 + "\n")
+
+# Second research task - context may be compressed here
+agent.print_response(
+    "Now compare the pricing of these models for enterprise use. And also consumer offerings",
+    stream=True,
+)
+
+print("\n" + "=" * 50 + "\n")
+
+# Third task - builds on previous context
+agent.print_response(
+    "Based on your research, which model would you recommend for a startup building a coding assistant?",
+    stream=True,
+)
+
+# Show compression stats
+if compression_manager.stats:
+    print("\nCompression Statistics:")
+    for key, value in compression_manager.stats.items():
+        print(f"  {key}: {value}")

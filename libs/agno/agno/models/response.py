@@ -1,12 +1,15 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations
 from agno.models.metrics import Metrics
 from agno.tools.function import UserInputField
+
+if TYPE_CHECKING:
+    from agno.compression.context import CompressedContext
 
 
 class ModelResponseEvent(str, Enum):
@@ -124,6 +127,9 @@ class ModelResponse:
 
     updated_session_state: Optional[Dict[str, Any]] = None
 
+    # Compressed context from context compression
+    compressed_context: Optional["CompressedContext"] = None
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize ModelResponse to dictionary for caching."""
         _dict = asdict(self)
@@ -159,6 +165,10 @@ class ModelResponse:
             except ImportError:
                 _dict["response_usage"] = response_usage
 
+        # Handle compressed context
+        if self.compressed_context is not None:
+            _dict["compressed_context"] = self.compressed_context.to_dict()
+
         return _dict
 
     @classmethod
@@ -190,6 +200,12 @@ class ModelResponse:
             from agno.models.metrics import Metrics
 
             data["response_usage"] = Metrics(**data["response_usage"])
+
+        # Reconstruct compressed context
+        if data.get("compressed_context") and isinstance(data["compressed_context"], dict):
+            from agno.compression.context import CompressedContext
+
+            data["compressed_context"] = CompressedContext.from_dict(data["compressed_context"])
 
         return cls(**data)
 

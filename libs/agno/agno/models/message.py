@@ -365,12 +365,15 @@ class Message(BaseModel):
             _logger(f"<reasoning>\n{self.reasoning_content}\n</reasoning>")
         if self.content:
             if use_compressed_content and self.compressed_content:
-                _logger("Compressed content:\n" + self.compressed_content)
+                # _logger("Compressed content:\n" + self.compressed_content)
+                _logger("Compressed content: True")
             else:
                 if isinstance(self.content, str) or isinstance(self.content, list):
-                    _logger(self.content)
+                    # _logger(self.content)
+                    _logger("self.Content: True")
                 elif isinstance(self.content, dict):
-                    _logger(json.dumps(self.content, indent=2))
+                    # _logger(json.dumps(self.content, indent=2))
+                    _logger("JSON self.Content: True")
         if self.tool_calls:
             tool_calls_list = ["Tool Calls:"]
             for tool_call in self.tool_calls:
