@@ -307,7 +307,7 @@ def test_build_expr(milvus_db):
 
     # Test with list value
     filters = {"tags": ["tag1", "tag2"]}
-    assert milvus_db._build_expr(filters) == 'json_contains_any(meta_data, ["tag1", "tag2"], "tags")'
+    assert milvus_db._build_expr(filters) == 'json_contains_any(meta_data["tags"], ["tag1", "tag2"])'
 
     # Test with None value
     filters = {"field": None}
