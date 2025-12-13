@@ -48,7 +48,7 @@ def get_deepseek_reasoning_stream(
         - During streaming: (reasoning_content_delta, None)
         - At the end: (None, final_message)
     """
-    from agno.run.agent import RunEvent, RunOutput
+    from agno.run.agent import RunEvent
 
     # Update system message role to "system"
     for message in messages:
@@ -56,7 +56,6 @@ def get_deepseek_reasoning_stream(
             message.role = "system"
 
     reasoning_content: str = ""
-    final_response: Optional[RunOutput] = None
 
     try:
         for event in reasoning_agent.run(input=messages, stream=True, stream_intermediate_steps=True):
