@@ -13,9 +13,11 @@ from agno.models.message import Citations, DocumentCitation, Message, UrlCitatio
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.tools.function import Function
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import MCPServerConfiguration, format_messages, format_tools_for_model
+from agno.utils.tokens import count_schema_tokens
 
 try:
     from anthropic import Anthropic as AnthropicClient
@@ -398,6 +400,48 @@ class Claude(Model):
             _client_params["http_client"] = get_default_async_client()
         self.async_client = AsyncAnthropicClient(**_client_params)
         return self.async_client
+
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
+        anthropic_tools = None
+        if tools:
+            formatted_tools = self._format_tools(tools)
+            anthropic_tools = format_tools_for_model(formatted_tools)
+
+        kwargs: Dict[str, Any] = {"messages": anthropic_messages, "model": self.id}
+        if system_prompt:
+            kwargs["system"] = system_prompt
+        if anthropic_tools:
+            kwargs["tools"] = anthropic_tools
+
+        response = self.get_client().messages.count_tokens(**kwargs)
+        return response.input_tokens + count_schema_tokens(response_format, self.id)
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
+        anthropic_tools = None
+        if tools:
+            formatted_tools = self._format_tools(tools)
+            anthropic_tools = format_tools_for_model(formatted_tools)
+
+        kwargs: Dict[str, Any] = {"messages": anthropic_messages, "model": self.id}
+        if system_prompt:
+            kwargs["system"] = system_prompt
+        if anthropic_tools:
+            kwargs["tools"] = anthropic_tools
+
+        response = await self.get_async_client().messages.count_tokens(**kwargs)
+        return response.input_tokens + count_schema_tokens(response_format, self.id)
 
     def get_request_params(
         self,
