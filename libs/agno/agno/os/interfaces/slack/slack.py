@@ -2,12 +2,11 @@ from typing import List, Optional, Union
 
 from fastapi.routing import APIRouter
 
-from agno.agent.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.base import BaseInterface
 from agno.os.interfaces.slack.router import attach_routes
-from agno.remote.base import BaseRemote
-from agno.team.team import Team
-from agno.workflow.workflow import Workflow
+from agno.team import RemoteTeam, Team
+from agno.workflow import RemoteWorkflow, Workflow
 
 
 class Slack(BaseInterface):
@@ -17,9 +16,9 @@ class Slack(BaseInterface):
 
     def __init__(
         self,
-        agent: Optional[Union[Agent, BaseRemote]] = None,
-        team: Optional[Union[Team, BaseRemote]] = None,
-        workflow: Optional[Union[Workflow, BaseRemote]] = None,
+        agent: Optional[Union[Agent, RemoteAgent]] = None,
+        team: Optional[Union[Team, RemoteTeam]] = None,
+        workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
         prefix: str = "/slack",
         tags: Optional[List[str]] = None,
         reply_to_mentions_only: bool = True,

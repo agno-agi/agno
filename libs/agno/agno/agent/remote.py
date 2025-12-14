@@ -11,6 +11,7 @@ from agno.models.response import ToolExecution
 from agno.remote.base import BaseRemote, RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutput, RunOutputEvent
 from agno.utils.agent import validate_input
+from agno.utils.remote import serialize_input
 
 if TYPE_CHECKING:
     from agno.os.routers.agents.schema import AgentResponse
@@ -69,18 +70,30 @@ class RemoteAgent(BaseRemote):
         if self._agent_config is not None and self._agent_config.db_id is not None:
             config = self._config
             db_id = self._agent_config.db_id
-            session_dbs = [db for db in config.session.dbs if db.db_id == db_id]
-            session_table_name = session_dbs[0].tables[0] if session_dbs and session_dbs[0].tables else None
-            knowledge_dbs = [db for db in config.knowledge.dbs if db.db_id == db_id]
-            knowledge_table_name = knowledge_dbs[0].tables[0] if knowledge_dbs and knowledge_dbs[0].tables else None
-            memory_dbs = [db for db in config.memory.dbs if db.db_id == db_id]
-            memory_table_name = memory_dbs[0].tables[0] if memory_dbs and memory_dbs[0].tables else None
-            metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
-            metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
-            eval_dbs = [db for db in config.evals.dbs if db.db_id == db_id]
-            eval_table_name = eval_dbs[0].tables[0] if eval_dbs and eval_dbs[0].tables else None
-            traces_dbs = [db for db in config.traces.dbs if db.db_id == db_id]
-            traces_table_name = traces_dbs[0].tables[0] if traces_dbs and traces_dbs[0].tables else None
+            session_table_name = None
+            knowledge_table_name = None
+            memory_table_name = None
+            metrics_table_name = None
+            eval_table_name = None
+            traces_table_name = None
+            if config and config.session:
+                session_dbs = [db for db in config.session.dbs if db.db_id == db_id]
+                session_table_name = session_dbs[0].tables[0] if session_dbs and session_dbs[0].tables else None
+            if config and config.knowledge:
+                knowledge_dbs = [db for db in config.knowledge.dbs if db.db_id == db_id]
+                knowledge_table_name = knowledge_dbs[0].tables[0] if knowledge_dbs and knowledge_dbs[0].tables else None
+            if config and config.memory:
+                memory_dbs = [db for db in config.memory.dbs if db.db_id == db_id]
+                memory_table_name = memory_dbs[0].tables[0] if memory_dbs and memory_dbs[0].tables else None
+            if config and config.metrics:
+                metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
+                metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
+            if config and config.evals:
+                eval_dbs = [db for db in config.evals.dbs if db.db_id == db_id]
+                eval_table_name = eval_dbs[0].tables[0] if eval_dbs and eval_dbs[0].tables else None
+            if config and config.traces:
+                traces_dbs = [db for db in config.traces.dbs if db.db_id == db_id]
+                traces_table_name = traces_dbs[0].tables[0] if traces_dbs and traces_dbs[0].tables else None
             return RemoteDb(
                 id=db_id,
                 client=self.client,
@@ -91,12 +104,20 @@ class RemoteAgent(BaseRemote):
                 eval_table_name=eval_table_name,
                 traces_table_name=traces_table_name,
             )
+        return None
 
     @cached_property
     def knowledge(self) -> Optional[RemoteKnowledge]:
         """Whether the agent has knowledge enabled."""
         if self._agent_config is not None and self._agent_config.knowledge is not None:
-            return self._agent_config.knowledge.get("enabled")
+            return RemoteKnowledge(
+                client=self.client,
+                contents_db=RemoteDb(
+                    id=self._agent_config.knowledge.get("db_id"),
+                    client=self.client,
+                    knowledge_table_name=self._agent_config.knowledge.get("knowledge_table"),
+                ),
+            )
         return False
 
     @cached_property
@@ -106,88 +127,6 @@ class RemoteAgent(BaseRemote):
         model_response = self._agent_config.model
         model_str = f"{model_response.provider}:{model_response.model}"
         return get_model(model_str)
-
-    # @cached_property
-    # def user_id(self) -> Optional[str]:
-    #     return None
-
-    # @cached_property
-    # def additional_input(self) -> Optional[Dict[str, Any]]:
-    #     if self._agent_config is not None and self._agent_config.extra_messages is not None:
-    #         return self._agent_config.extra_messages.get("additional_input", None)
-    #     return None
-
-    # @cached_property
-    # def input_schema(self) -> Optional[Dict[str, Any]]:
-    #     if self._agent_config is not None and self._agent_config.input_schema is not None:
-    #         return self._agent_config.input_schema
-    #     return None
-
-    # @cached_property
-    # def tool_call_limit(self) -> Optional[int]:
-    #     if self._agent_config is not None and self._agent_config.tools is not None:
-    #         return self._agent_config.tools.get("tool_call_limit")
-    #     return None
-
-    # @cached_property
-    # def tool_choice(self) -> Optional[Union[str, Dict[str, Any]]]:
-    #     if self._agent_config is not None and self._agent_config.tools is not None:
-    #         return self._agent_config.tools.get("tool_choice")
-    #     return None
-
-    # @cached_property
-    # def add_history_to_context(self) -> Optional[bool]:
-    #     if self._agent_config is not None and self._agent_config.tools is not None:
-    #         return self._agent_config.sessions.get("add_history_to_context")
-    #     return None
-
-    # @cached_property
-    # def enable_session_summaries(self) -> Optional[bool]:
-    #     if self._agent_config is not None and self._agent_config.tools is not None:
-    #         return self._agent_config.tools.get("enable_session_summaries")
-    #     return None
-
-    # @cached_property
-    # def num_history_runs(self) -> Optional[int]:
-    #     if self._agent_config is not None and self._agent_config.tools is not None:
-    #         return self._agent_config.sessions.get("num_history_runs")
-    #     return None
-
-    # @cached_property
-    # def num_history_sessions(self) -> Optional[int]:
-    #     if self._agent_config is not None and self._agent_config.tools is not None:
-    #         return self._agent_config.sessions.get("num_history_sessions")
-    #     return None
-
-    # @cached_property
-    # def cache_session(self) -> Optional[bool]:
-    #     if self._agent_config is not None and self._agent_config.tools is not None:
-    #         return self._agent_config.sessions.get("cache_session")
-    #     return None
-
-    # @cached_property
-    # def search_session_history(self) -> Optional[bool]:
-    #     if self._agent_config is not None and self._agent_config.tools is not None:
-    #         return self._agent_config.sessions.get("search_session_history")
-    #     return None
-
-    # @cached_property
-    # def knowledge_filters(self) -> Optional[Dict[str, Any]]:
-    #     if self._agent_config is not None and self._agent_config.knowledge is not None:
-    #         return self._agent_config.knowledge.get("knowledge_filters")
-    #     return None
-
-    # @cached_property
-    # def references_format(self) -> Optional[str]:
-    #     if self._agent_config is not None and self._agent_config.knowledge is not None:
-    #         return self._agent_config.knowledge.get("references_format")
-    #     return None
-
-    # @cached_property
-    # def enable_agentic_knowledge_filters(self) -> Optional[bool]:
-    #     if self._agent_config is not None and self._agent_config.knowledge is not None:
-    #         return self._agent_config.knowledge.get("enable_agentic_knowledge_filters")
-    #     return None
 
     async def aget_tools(self, **kwargs: Any) -> List[Dict]:
         if self._agent_config.tools is not None:
@@ -267,12 +206,13 @@ class RemoteAgent(BaseRemote):
         AsyncIterator[RunOutputEvent],
     ]:
         validated_input = validate_input(input)
+        serialized_input = serialize_input(validated_input)
 
         if stream:
             # Handle streaming response
             return self.get_client().run_agent_stream(
                 agent_id=self.agent_id,
-                message=validated_input,
+                message=serialized_input,
                 session_id=session_id,
                 user_id=user_id,
                 audio=audio,
@@ -293,7 +233,7 @@ class RemoteAgent(BaseRemote):
         else:
             return self.get_client().run_agent(
                 agent_id=self.agent_id,
-                message=validated_input,
+                message=serialized_input,
                 session_id=session_id,
                 user_id=user_id,
                 audio=audio,
@@ -321,6 +261,7 @@ class RemoteAgent(BaseRemote):
         updated_tools: Optional[List[ToolExecution]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> RunOutput: ...
 
     @overload
@@ -332,6 +273,7 @@ class RemoteAgent(BaseRemote):
         updated_tools: Optional[List[ToolExecution]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]: ...
 
     def acontinue_run(  # type: ignore
@@ -342,6 +284,7 @@ class RemoteAgent(BaseRemote):
         updated_tools: Optional[List[ToolExecution]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> Union[
         RunOutput,
         AsyncIterator[RunOutputEvent],
@@ -354,6 +297,7 @@ class RemoteAgent(BaseRemote):
                 user_id=user_id,
                 session_id=session_id,
                 tools=updated_tools,
+                **kwargs,
             )
         else:
             return self.get_client().continue_agent_run(
@@ -362,6 +306,7 @@ class RemoteAgent(BaseRemote):
                 tools=updated_tools,
                 user_id=user_id,
                 session_id=session_id,
+                **kwargs,
             )
 
     async def cancel_run(self, run_id: str) -> bool:

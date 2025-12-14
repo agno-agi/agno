@@ -7,6 +7,7 @@ from uuid import uuid4
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from httpx import HTTPStatusError
 from rich import box
 from rich.panel import Panel
 from starlette.requests import Request
@@ -432,7 +433,7 @@ class AgentOS:
             return
 
         # Fall back to finding the first available database
-        db: Optional[Union[BaseDb, AsyncBaseDb]] = None
+        db: Optional[Union[BaseDb, AsyncBaseDb, RemoteDb]] = None
 
         for agent in self.agents or []:
             if agent.db:
@@ -553,6 +554,16 @@ class AgentOS:
                     content={"detail": str(exc.detail)},
                 )
 
+            @fastapi_app.exception_handler(HTTPStatusError)
+            async def http_status_error_handler(_: Request, exc: HTTPStatusError) -> JSONResponse:
+                status_code = exc.response.status_code
+                detail = exc.response.text
+                log_error(f"Downstream server returned HTTP status error: {status_code} {detail}")
+                return JSONResponse(
+                    status_code=status_code,
+                    content={"detail": detail},
+                )
+
             @fastapi_app.exception_handler(Exception)
             async def general_exception_handler(_: Request, exc: Exception) -> JSONResponse:
                 import traceback
@@ -656,9 +667,9 @@ class AgentOS:
     def _auto_discover_databases(self) -> None:
         """Auto-discover and initialize the databases used by all contextual agents, teams and workflows."""
 
-        dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]] = {}
+        dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]] = {}
         knowledge_dbs: Dict[
-            str, List[Union[BaseDb, AsyncBaseDb]]
+            str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]
         ] = {}  # Track databases specifically used for knowledge
 
         for agent in self.agents or []:
@@ -771,7 +782,7 @@ class AgentOS:
     def _auto_discover_knowledge_instances(self) -> None:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
         seen_ids = set()
-        knowledge_instances: List[Knowledge] = []
+        knowledge_instances: List[Union[Knowledge, RemoteKnowledge]] = []
 
         def _add_knowledge_if_not_duplicate(knowledge: Union["Knowledge", RemoteKnowledge]) -> None:
             """Add knowledge instance if it's not already in the list (by object identity or db_id)."""

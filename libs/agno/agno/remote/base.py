@@ -1,10 +1,12 @@
 from abc import abstractmethod
 from dataclasses import dataclass
+from datetime import date
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel
 
+from agno.db.base import SessionType
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.response import ToolExecution
@@ -13,7 +15,19 @@ from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent
 
 if TYPE_CHECKING:
+    from fastapi import UploadFile
+
     from agno.client import AgentOSClient
+    from agno.os.routers.evals.schemas import EvalSchema
+    from agno.os.routers.knowledge.schemas import (
+        ConfigResponseSchema,
+        ContentResponseSchema,
+        ContentStatusResponse,
+        VectorSearchResult,
+    )
+    from agno.os.routers.memory.schemas import OptimizeMemoriesResponse, UserMemorySchema, UserStatsSchema
+    from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
+    from agno.os.routers.traces.schemas import TraceDetail, TraceNode, TraceSessionStats, TraceSummary
     from agno.os.schema import (
         AgentSessionDetailSchema,
         ConfigResponse,
@@ -40,6 +54,9 @@ class RemoteDb:
     spans_table_name: Optional[str] = None
     culture_table_name: Optional[str] = None
 
+    # TODO: Pass headers for auth
+
+    # SESSIONS
     async def get_sessions(self, **kwargs: Any) -> "PaginatedResponse[SessionSchema]":
         return await self.client.get_sessions(**kwargs)
 
@@ -53,11 +70,112 @@ class RemoteDb:
     ) -> List[Union["RunSchema", "TeamRunSchema", "WorkflowRunSchema"]]:
         return await self.client.get_session_runs(session_id, **kwargs)
 
+    async def create_session(
+        self,
+        session_id: str,
+        session_name: str,
+        session_state: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Union["AgentSessionDetailSchema", "TeamSessionDetailSchema", "WorkflowSessionDetailSchema"]:
+        return await self.client.create_session(
+            session_id=session_id,
+            session_name=session_name,
+            session_state=session_state,
+            metadata=metadata,
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+            workflow_id=workflow_id,
+            **kwargs,
+        )
+
     async def get_session_run(
         self, session_id: str, run_id: str, **kwargs: Any
     ) -> Union["RunSchema", "TeamRunSchema", "WorkflowRunSchema"]:
         return await self.client.get_session_run(session_id, run_id, **kwargs)
 
+    async def rename_session(
+        self, session_id: str, session_name: str, **kwargs: Any
+    ) -> Union["AgentSessionDetailSchema", "TeamSessionDetailSchema", "WorkflowSessionDetailSchema"]:
+        return await self.client.rename_session(session_id, session_name, **kwargs)
+
+    async def update_session(
+        self, session_id: str, session_type: SessionType, **kwargs: Any
+    ) -> Union["AgentSessionDetailSchema", "TeamSessionDetailSchema", "WorkflowSessionDetailSchema"]:
+        return await self.client.update_session(session_id=session_id, session_type=session_type, **kwargs)
+
+    async def delete_session(self, session_id: str, **kwargs: Any) -> None:
+        return await self.client.delete_session(session_id, **kwargs)
+
+    async def delete_sessions(self, session_ids: List[str], session_types: List[SessionType], **kwargs: Any) -> None:
+        return await self.client.delete_sessions(session_ids, session_types, **kwargs)
+
+    # MEMORIES
+    async def create_memory(self, memory: str, topics: List[str], user_id: str, **kwargs: Any) -> "UserMemorySchema":
+        return await self.client.create_memory(memory=memory, topics=topics, user_id=user_id, **kwargs)
+
+    async def delete_memory(self, memory_id: str, **kwargs: Any) -> None:
+        return await self.client.delete_memory(memory_id, **kwargs)
+
+    async def delete_memories(self, memory_ids: List[str], **kwargs: Any) -> None:
+        return await self.client.delete_memories(memory_ids, **kwargs)
+
+    async def get_memory(self, memory_id: str, **kwargs: Any) -> "UserMemorySchema":
+        return await self.client.get_memory(memory_id, **kwargs)
+
+    async def get_memories(self, user_id: str, **kwargs: Any) -> "PaginatedResponse[UserMemorySchema]":
+        return await self.client.list_memories(user_id, **kwargs)
+
+    async def update_memory(self, memory_id: str, **kwargs: Any) -> "UserMemorySchema":
+        return await self.client.update_memory(memory_id, **kwargs)
+
+    async def get_user_memory_stats(self, **kwargs: Any) -> "PaginatedResponse[UserStatsSchema]":
+        return await self.client.get_user_memory_stats(**kwargs)
+
+    async def optimize_memories(self, **kwargs: Any) -> "OptimizeMemoriesResponse":
+        return await self.client.optimize_memories(**kwargs)
+
+    # TRACES
+    async def get_traces(self, **kwargs: Any) -> "PaginatedResponse[TraceSummary]":
+        return await self.client.get_traces(**kwargs)
+
+    async def get_trace(self, trace_id: str, **kwargs: Any) -> Union["TraceDetail", "TraceNode"]:
+        return await self.client.get_trace(trace_id, **kwargs)
+
+    async def get_trace_session_stats(self, **kwargs: Any) -> "PaginatedResponse[TraceSessionStats]":
+        return await self.client.get_trace_session_stats(**kwargs)
+
+    # EVALS
+    async def get_eval_runs(self, **kwargs: Any) -> "PaginatedResponse[EvalSchema]":
+        return await self.client.list_eval_runs(**kwargs)
+
+    async def get_eval_run(self, eval_run_id: str, **kwargs: Any) -> "EvalSchema":
+        return await self.client.get_eval_run(eval_run_id, **kwargs)
+
+    async def delete_eval_runs(self, eval_run_ids: List[str], **kwargs: Any) -> None:
+        return await self.client.delete_eval_runs(eval_run_ids, **kwargs)
+
+    async def update_eval_run(self, eval_run_id: str, **kwargs: Any) -> "EvalSchema":
+        return await self.client.update_eval_run(eval_run_id, **kwargs)
+
+    async def create_eval_run(self, **kwargs: Any) -> "EvalSchema":
+        return await self.client.run_eval(**kwargs)
+
+    # METRICS
+    async def get_metrics(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, **kwargs: Any
+    ) -> "MetricsResponse":
+        return await self.client.get_metrics(starting_date=starting_date, ending_date=ending_date, **kwargs)
+
+    async def refresh_metrics(self, **kwargs: Any) -> List["DayAggregatedMetrics"]:
+        return await self.client.refresh_metrics(**kwargs)
+
+    # OTHER
     async def migrate_database(self, target_version: Optional[str] = None) -> None:
         """Migrate the database to a target version.
 
@@ -70,8 +188,93 @@ class RemoteDb:
 
 @dataclass
 class RemoteKnowledge:
-    id: str
+    client: "AgentOSClient"
     contents_db: Optional[RemoteDb] = None
+
+    async def get_config(self) -> "ConfigResponseSchema":
+        return await self.client.get_knowledge_config(db_id=self.contents_db.id)
+
+    async def search_knowledge(self, query: str, **kwargs: Any) -> "PaginatedResponse[VectorSearchResult]":
+        return await self.client.search_knowledge(query, **kwargs)
+
+    async def upload_content(
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        url: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        file: Optional[Union[File, "UploadFile"]] = None,
+        text_content: Optional[str] = None,
+        reader_id: Optional[str] = None,
+        chunker: Optional[str] = None,
+        chunk_size: Optional[int] = None,
+        chunk_overlap: Optional[int] = None,
+        db_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> "ContentResponseSchema":
+        return await self.client.upload_knowledge_content(
+            name=name,
+            description=description,
+            url=url,
+            metadata=metadata,
+            file=file,
+            text_content=text_content,
+            reader_id=reader_id,
+            chunker=chunker,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            db_id=db_id,
+            **kwargs,
+        )
+
+    async def update_content(
+        self,
+        content_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        reader_id: Optional[str] = None,
+        db_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> "ContentResponseSchema":
+        return await self.client.update_knowledge_content(
+            content_id=content_id,
+            name=name,
+            description=description,
+            metadata=metadata,
+            reader_id=reader_id,
+            db_id=db_id,
+            **kwargs,
+        )
+
+    async def get_content(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        db_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> "PaginatedResponse[ContentResponseSchema]":
+        return await self.client.list_knowledge_content(
+            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, db_id=db_id, **kwargs
+        )
+
+    async def get_content_by_id(
+        self, content_id: str, db_id: Optional[str] = None, **kwargs: Any
+    ) -> "ContentResponseSchema":
+        return await self.client.get_knowledge_content(content_id=content_id, db_id=db_id, **kwargs)
+
+    async def delete_content_by_id(self, content_id: str, db_id: Optional[str] = None, **kwargs: Any) -> None:
+        return await self.client.delete_knowledge_content(content_id=content_id, db_id=db_id, **kwargs)
+
+    async def delete_all_content(self, db_id: Optional[str] = None, **kwargs: Any) -> None:
+        return await self.client.delete_all_knowledge_content(db_id=db_id, **kwargs)
+
+    async def get_content_status(
+        self, content_id: str, db_id: Optional[str] = None, **kwargs: Any
+    ) -> "ContentStatusResponse":
+        return await self.client.get_knowledge_content_status(content_id=content_id, db_id=db_id, **kwargs)
 
 
 @dataclass

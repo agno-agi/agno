@@ -5,10 +5,11 @@ from typing import List, Optional, Union
 from fastapi.routing import APIRouter
 
 from agno.agent import Agent
+from agno.agent.remote import RemoteAgent
 from agno.os.interfaces.agui.router import attach_routes
 from agno.os.interfaces.base import BaseInterface
-from agno.remote.base import BaseRemote
 from agno.team import Team
+from agno.team.remote import RemoteTeam
 
 
 class AGUI(BaseInterface):
@@ -18,8 +19,8 @@ class AGUI(BaseInterface):
 
     def __init__(
         self,
-        agent: Optional[Union[Agent, BaseRemote]] = None,
-        team: Optional[Union[Team, BaseRemote]] = None,
+        agent: Optional[Union[Agent, RemoteAgent]] = None,
+        team: Optional[Union[Team, RemoteTeam]] = None,
         prefix: str = "",
         tags: Optional[List[str]] = None,
     ):

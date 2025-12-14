@@ -5,6 +5,7 @@ from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.agent import Agent
+from agno.agent.remote import RemoteAgent
 from agno.db.base import SessionType
 from agno.os.config import (
     ChatConfig,
@@ -21,7 +22,9 @@ from agno.os.utils import (
     get_session_name,
 )
 from agno.session import AgentSession, TeamSession, WorkflowSession
+from agno.team.remote import RemoteTeam
 from agno.team.team import Team
+from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
 
@@ -102,7 +105,7 @@ class AgentSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
-    def from_agent(cls, agent: Agent) -> "AgentSummaryResponse":
+    def from_agent(cls, agent: Union[Agent, RemoteAgent]) -> "AgentSummaryResponse":
         return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
 
 
@@ -113,7 +116,7 @@ class TeamSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
-    def from_team(cls, team: Team) -> "TeamSummaryResponse":
+    def from_team(cls, team: Union[Team, RemoteTeam]) -> "TeamSummaryResponse":
         db_id = team.db.id if team.db else None
         return cls(id=team.id, name=team.name, description=team.description, db_id=db_id)
 
@@ -125,7 +128,7 @@ class WorkflowSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
-    def from_workflow(cls, workflow: Workflow) -> "WorkflowSummaryResponse":
+    def from_workflow(cls, workflow: Union[Workflow, RemoteWorkflow]) -> "WorkflowSummaryResponse":
         db_id = workflow.db.id if workflow.db else None
         return cls(
             id=workflow.id,
@@ -184,7 +187,9 @@ class SessionSchema(BaseModel):
 
     @classmethod
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
-        session_name = get_session_name(session)
+        session_name = session.get("session_name")
+        if not session_name:
+            session_name = get_session_name(session)
         session_data = session.get("session_data", {}) or {}
 
         created_at = session.get("created_at", 0)

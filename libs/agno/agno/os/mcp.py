@@ -14,6 +14,14 @@ from agno.db.schemas import UserMemory
 from agno.os.routers.memory.schemas import (
     UserMemorySchema,
 )
+from agno.os.schema import (
+    AgentSummaryResponse,
+    ConfigResponse,
+    InterfaceResponse,
+    SessionSchema,
+    TeamSummaryResponse,
+    WorkflowSummaryResponse,
+)
 from agno.os.utils import (
     get_agent_by_id,
     get_db,
@@ -23,14 +31,6 @@ from agno.os.utils import (
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
-from agno.schema.os.os import (
-    AgentSummaryResponse,
-    ConfigResponse,
-    InterfaceResponse,
-    SessionSchema,
-    TeamSummaryResponse,
-    WorkflowSummaryResponse,
-)
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS

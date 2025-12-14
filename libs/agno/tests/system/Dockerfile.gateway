@@ -25,6 +25,8 @@ RUN pip install --no-cache-dir \
     fastapi \
     uvicorn \
     httpx \
+    ddgs \
+    pgvector \
     openai \
     opentelemetry-api \
     opentelemetry-sdk \

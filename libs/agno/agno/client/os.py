@@ -1,12 +1,14 @@
 import json
+from datetime import date
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
 
+from fastapi import UploadFile
 from httpx import AsyncClient, ConnectError, ConnectTimeout, TimeoutException
 
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalFilterType, EvalType
 from agno.exceptions import RemoteServerUnavailableError
-from agno.media import Audio, Image, Video
+from agno.media import Audio, File, Image, Video
 from agno.media import File as MediaFile
 from agno.models.response import ToolExecution
 from agno.os.routers.agents.schema import AgentResponse
@@ -20,10 +22,18 @@ from agno.os.routers.knowledge.schemas import (
     VectorSearchResult,
 )
 from agno.os.routers.memory.schemas import (
+    OptimizeMemoriesResponse,
     UserMemorySchema,
     UserStatsSchema,
 )
+from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
 from agno.os.routers.teams.schema import TeamResponse
+from agno.os.routers.traces.schemas import (
+    TraceDetail,
+    TraceNode,
+    TraceSessionStats,
+    TraceSummary,
+)
 from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import (
     AgentSessionDetailSchema,
@@ -43,7 +53,7 @@ from agno.os.schema import (
 )
 from agno.run.agent import RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent, team_run_output_event_from_dict
-from agno.run.workflow import WorkflowRunOutputEvent, workflow_run_output_event_from_dict
+from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent, workflow_run_output_event_from_dict
 from agno.utils.http import get_default_async_client, get_default_sync_client
 
 
@@ -109,14 +119,13 @@ class AgentOSClient:
         sync_client = get_default_sync_client()
 
         try:
-            with sync_client as client:
-                response = client.request(method, url, **kwargs)
-                response.raise_for_status()
+            response = sync_client.request(method, url, **kwargs)
+            response.raise_for_status()
 
-                # Return None for empty responses (204 No Content, etc.)
-                if not response.content:
-                    return None
-                return response.json()
+            # Return None for empty responses (204 No Content, etc.)
+            if not response.content:
+                return None
+            return response.json()
         except (ConnectError, ConnectTimeout) as e:
             raise RemoteServerUnavailableError(
                 message=f"Failed to connect to remote server at {self.base_url}",
@@ -171,14 +180,13 @@ class AgentOSClient:
         async_client.timeout = self.timeout
 
         try:
-            async with async_client as client:
-                response = await client.request(method, url, **kwargs)
-                response.raise_for_status()
+            response = await async_client.request(method, url, **kwargs)
+            response.raise_for_status()
 
-                # Return None for empty responses (204 No Content, etc.)
-                if not response.content:
-                    return None
-                return response.json()
+            # Return None for empty responses (204 No Content, etc.)
+            if not response.content:
+                return None
+            return response.json()
         except (ConnectError, ConnectTimeout) as e:
             raise RemoteServerUnavailableError(
                 message=f"Failed to connect to remote server at {self.base_url}",
@@ -644,6 +652,7 @@ class AgentOSClient:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        **kwargs: Any,
     ) -> RunOutput:
         """Continue a paused agent run with tool results.
 
@@ -669,6 +678,12 @@ class AgentOSClient:
         if user_id:
             data["user_id"] = user_id
 
+        for key, value in kwargs.items():
+            if isinstance(value, dict):
+                data[key] = json.dumps(value)
+            else:
+                data[key] = value
+
         response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
         return RunOutput.from_dict(response_data)
 
@@ -680,6 +695,7 @@ class AgentOSClient:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]:
         """Stream a continued agent run response.
 
@@ -703,6 +719,12 @@ class AgentOSClient:
             data["session_id"] = session_id
         if user_id:
             data["user_id"] = user_id
+
+        for key, value in kwargs.items():
+            if isinstance(value, dict):
+                data[key] = json.dumps(value)
+            else:
+                data[key] = value
 
         raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
         async for event in self._parse_sse_events(raw_stream, run_output_event_from_dict):
@@ -971,7 +993,7 @@ class AgentOSClient:
         files: Optional[List[MediaFile]] = None,
         headers: Optional[Dict[str, str]] = None,
         **kwargs: Any,
-    ) -> WorkflowRunSchema:
+    ) -> WorkflowRunOutput:
         """Execute a workflow run.
 
         Args:
@@ -986,7 +1008,7 @@ class AgentOSClient:
             headers: HTTP headers to include in the request (optional)
             **kwargs: Additional parameters passed to the workflow run
         Returns:
-            WorkflowRunSchema: The workflow run response
+            WorkflowRunOutput: The workflow run response
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -1016,7 +1038,7 @@ class AgentOSClient:
         data = {k: v for k, v in data.items() if v is not None}
 
         response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
-        return WorkflowRunSchema.model_validate(response_data)
+        return WorkflowRunOutput.from_dict(response_data)
 
     async def run_workflow_stream(
         self,
@@ -1120,12 +1142,8 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params = {}
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
-
+        params = {"db_id": db_id, "table": table}
+        params = {k: v for k, v in params.items() if v is not None}
         payload: Dict[str, Any] = {"memory": memory, "user_id": user_id}
         if topics:
             payload["topics"] = topics
@@ -1156,13 +1174,8 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
-        params = {}
-        if user_id:
-            params["user_id"] = user_id
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params = {"db_id": db_id, "table": table, "user_id": user_id}
+        params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget(f"/memories/{memory_id}", params=params, headers=headers)
         return UserMemorySchema.model_validate(data)
@@ -1209,21 +1222,15 @@ class AgentOSClient:
             "page": page,
             "sort_by": sort_by,
             "sort_order": sort_order,
+            "db_id": db_id,
+            "table": table,
+            "user_id": user_id,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            "topics": topics,
+            "search_content": search_content,
         }
-        if user_id:
-            params["user_id"] = user_id
-        if agent_id:
-            params["agent_id"] = agent_id
-        if team_id:
-            params["team_id"] = team_id
-        if topics:
-            params["topics"] = topics
-        if search_content:
-            params["search_content"] = search_content
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget("/memories", params=params, headers=headers)
         return PaginatedResponse[UserMemorySchema].model_validate(data)
@@ -1255,11 +1262,8 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params = {}
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params = {"db_id": db_id, "table": table}
+        params = {k: v for k, v in params.items() if v is not None}
 
         payload: Dict[str, Any] = {"memory": memory, "user_id": user_id}
         if topics:
@@ -1288,13 +1292,8 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params = {}
-        if user_id:
-            params["user_id"] = user_id
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params = {"db_id": db_id, "table": table, "user_id": user_id}
+        params = {k: v for k, v in params.items() if v is not None}
 
         await self._adelete(f"/memories/{memory_id}", params=params, headers=headers)
 
@@ -1318,15 +1317,10 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params = {}
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params = {"db_id": db_id, "table": table}
+        params = {k: v for k, v in params.items() if v is not None}
 
-        payload: Dict[str, Any] = {"memory_ids": memory_ids}
-        if user_id:
-            payload["user_id"] = user_id
+        payload: Dict[str, Any] = {"memory_ids": memory_ids, "user_id": user_id}
 
         await self._adelete("/memories", payload, params=params, headers=headers)
 
@@ -1349,11 +1343,8 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params = {}
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params = {"db_id": db_id, "table": table}
+        params = {k: v for k, v in params.items() if v is not None}
 
         return await self._aget("/memory_topics", params=params, headers=headers)
 
@@ -1380,74 +1371,41 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params: Dict[str, Any] = {"limit": limit, "page": page}
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params: Dict[str, Any] = {"limit": limit, "page": page, "db_id": db_id, "table": table}
+        params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget("/user_memory_stats", params=params, headers=headers)
         return PaginatedResponse[UserStatsSchema].model_validate(data)
 
-    # Session Operations
-
-    async def list_sessions(
+    async def optimize_memories(
         self,
-        session_type: SessionType = SessionType.AGENT,
-        component_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        session_name: Optional[str] = None,
-        limit: int = 20,
-        page: int = 1,
-        sort_by: str = "created_at",
-        sort_order: str = "desc",
+        user_id: str,
+        model: Optional[str] = None,
+        apply: bool = True,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> PaginatedResponse[SessionSchema]:
-        """List sessions with filtering and pagination.
+    ) -> OptimizeMemoriesResponse:
+        """Optimize user memories.
 
         Args:
-            session_type: Type of sessions to retrieve (agent, team, or workflow)
-            component_id: Filter by component ID (agent/team/workflow ID)
-            user_id: Filter by user ID
-            session_name: Filter by session name (partial match)
-            limit: Number of sessions per page
-            page: Page number
-            sort_by: Field to sort by
-            sort_order: Sort order (asc or desc)
+            user_id: User ID to optimize memories for
+            model: Optional model to use for optimization
+            apply: If True, automatically replace memories in database
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
 
         Returns:
-            PaginatedResponse[SessionSchema]: Paginated list of sessions
-
-        Raises:
-            HTTPStatusError: On HTTP errors
+            OptimizeMemoriesResponse
         """
-        params: Dict[str, str] = {
-            "type": session_type.value,
-            "limit": str(limit),
-            "page": str(page),
-            "sort_by": sort_by,
-            "sort_order": sort_order,
-        }
-        if component_id:
-            params["component_id"] = component_id
-        if user_id:
-            params["user_id"] = user_id
-        if session_name:
-            params["session_name"] = session_name
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params: Dict[str, Any] = {"user_id": user_id, "model": model, "apply": apply, "db_id": db_id, "table": table}
+        params = {k: v for k, v in params.items() if v is not None}
 
-        endpoint = "/sessions?" + "&".join(f"{k}={v}" for k, v in params.items())
-        data = await self._aget(endpoint, headers=headers)
-        return PaginatedResponse[SessionSchema].model_validate(data)
+        data = await self._apost("/optimize-memories", params=params, headers=headers)
+        return OptimizeMemoriesResponse.model_validate(data)
 
+    # Session Operations
     async def create_session(
         self,
         session_type: SessionType = SessionType.AGENT,
@@ -1483,9 +1441,8 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params: Dict[str, Any] = {"type": session_type.value}
-        if db_id:
-            params["db_id"] = db_id
+        params: Dict[str, Any] = {"type": session_type.value, "db_id": db_id}
+        params = {k: v for k, v in params.items() if v is not None}
 
         payload: Dict[str, Any] = {
             "session_id": session_id,
@@ -1719,11 +1676,11 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params = {}
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params: Dict[str, Any] = {
+            "db_id": db_id,
+            "table": table,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
 
         await self._adelete(f"/sessions/{session_id}", params=params, headers=headers)
 
@@ -1731,7 +1688,6 @@ class AgentOSClient:
         self,
         session_ids: List[str],
         session_types: List[SessionType],
-        session_type: SessionType = SessionType.AGENT,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
@@ -1749,11 +1705,12 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params: Dict[str, Any] = {"type": session_type.value}
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params: Dict[str, Any] = {
+            "db_id": db_id,
+            "table": table,
+        }
+
+        params = {k: v for k, v in params.items() if v is not None}
 
         payload = {
             "session_ids": session_ids,
@@ -1787,11 +1744,12 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
-        params: Dict[str, Any] = {"type": session_type.value}
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params: Dict[str, Any] = {
+            "type": session_type.value,
+            "db_id": db_id,
+            "table": table,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
 
         payload = {"session_name": session_name}
         data = await self._apost(f"/sessions/{session_id}/rename", payload, params=params, headers=headers)
@@ -1813,6 +1771,7 @@ class AgentOSClient:
         summary: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         db_id: Optional[str] = None,
+        table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         """Update session properties.
@@ -1826,6 +1785,7 @@ class AgentOSClient:
             summary: Optional new summary
             user_id: Optional user ID
             db_id: Optional database ID to use
+            table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -1834,11 +1794,13 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
-        params: Dict[str, str] = {"type": session_type.value}
-        if user_id:
-            params["user_id"] = user_id
-        if db_id:
-            params["db_id"] = db_id
+        params: Dict[str, Any] = {
+            "type": session_type.value,
+            "user_id": user_id,
+            "db_id": db_id,
+            "table": table,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
 
         payload: Dict[str, Any] = {}
         if session_name is not None:
@@ -1905,23 +1867,16 @@ class AgentOSClient:
             "page": page,
             "sort_by": sort_by,
             "sort_order": sort_order,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            "workflow_id": workflow_id,
+            "model_id": model_id,
+            "type": filter_type.value if filter_type else None,
+            "eval_types": ",".join(et.value for et in eval_types) if eval_types else None,
+            "db_id": db_id,
+            "table": table,
         }
-        if agent_id:
-            params["agent_id"] = agent_id
-        if team_id:
-            params["team_id"] = team_id
-        if workflow_id:
-            params["workflow_id"] = workflow_id
-        if model_id:
-            params["model_id"] = model_id
-        if filter_type:
-            params["type"] = filter_type.value
-        if eval_types:
-            params["eval_types"] = ",".join(et.value for et in eval_types)
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget("/eval-runs", params=params, headers=headers)
         return PaginatedResponse[EvalSchema].model_validate(data)
@@ -1947,11 +1902,11 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
-        params = {}
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params: Dict[str, Any] = {
+            "db_id": db_id,
+            "table": table,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget(f"/eval-runs/{eval_run_id}", params=params, headers=headers)
         return EvalSchema.model_validate(data)
@@ -1974,11 +1929,11 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params = {}
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params: Dict[str, Any] = {
+            "db_id": db_id,
+            "table": table,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
 
         payload = {"eval_run_ids": eval_run_ids}
         await self._adelete("/eval-runs", payload, params=params, headers=headers)
@@ -2006,11 +1961,11 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
-        params = {}
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params: Dict[str, Any] = {
+            "db_id": db_id,
+            "table": table,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
 
         payload = {"name": name}
         data = await self._apatch(f"/eval-runs/{eval_run_id}", payload, params=params, headers=headers)
@@ -2053,11 +2008,11 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params = {}
-        if db_id:
-            params["db_id"] = db_id
-        if table:
-            params["table"] = table
+        params: Dict[str, Any] = {
+            "db_id": db_id,
+            "table": table,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
 
         payload: Dict[str, Any] = {
             "eval_type": eval_type.value,
@@ -2071,7 +2026,7 @@ class AgentOSClient:
             "num_iterations": num_iterations,
         }
 
-        endpoint = "/evals"
+        endpoint = "/eval-runs"
         data = await self._apost(endpoint, payload, params=params, headers=headers)
         if data is None:
             return None
@@ -2084,6 +2039,7 @@ class AgentOSClient:
         endpoint: str,
         form_data: Dict[str, Any],
         files: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> Any:
         """Execute asynchronous POST request with multipart form data and optional files.
@@ -2092,6 +2048,7 @@ class AgentOSClient:
             endpoint: API endpoint path (without base URL)
             form_data: Form data dictionary
             files: Optional files dictionary for multipart upload
+            params: Query parameters (optional)
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -2103,14 +2060,18 @@ class AgentOSClient:
         """
         url = f"{self.base_url}{endpoint}"
 
+        async_client = get_default_async_client()
+        async_client.timeout = self.timeout
+
         try:
-            async with AsyncClient(timeout=self.timeout) as client:
-                if files:
-                    response = await client.post(url, data=form_data, files=files, headers=headers or {})
-                else:
-                    response = await client.post(url, data=form_data, headers=headers or {})
-                response.raise_for_status()
-                return response.json()
+            if files:
+                response = await async_client.post(
+                    url, data=form_data, files=files, params=params, headers=headers or {}
+                )
+            else:
+                response = await async_client.post(url, data=form_data, params=params, headers=headers or {})
+            response.raise_for_status()
+            return response.json()
         except (ConnectError, ConnectTimeout) as e:
             raise RemoteServerUnavailableError(
                 message=f"Failed to connect to remote server at {self.base_url}",
@@ -2124,15 +2085,13 @@ class AgentOSClient:
                 original_error=e,
             ) from e
 
-    async def upload_content(
+    async def upload_knowledge_content(
         self,
         name: Optional[str] = None,
         description: Optional[str] = None,
         url: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        file_content: Optional[bytes] = None,
-        file_name: Optional[str] = None,
-        file_content_type: Optional[str] = None,
+        file: Optional[Union[File, "UploadFile"]] = None,
         text_content: Optional[str] = None,
         reader_id: Optional[str] = None,
         chunker: Optional[str] = None,
@@ -2148,9 +2107,7 @@ class AgentOSClient:
             description: Content description
             url: URL to fetch content from (can be a single URL string or a JSON-encoded array of URLs)
             metadata: Metadata dictionary for the content
-            file_content: Raw file bytes to upload
-            file_name: Filename for the uploaded content
-            file_content_type: MIME type of the file
+            file: File object containing content (bytes or file-like object), filename, and mime_type. Can also be a FastAPI UploadFile.
             text_content: Raw text content to process
             reader_id: ID of the reader to use for processing
             chunker: Chunking strategy to apply
@@ -2164,14 +2121,10 @@ class AgentOSClient:
 
         Raises:
             HTTPStatusError: On HTTP errors
-        """
-        params = {}
-        if db_id:
-            params["db_id"] = db_id
 
-        endpoint = "/knowledge/content"
-        if params:
-            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
+        """
+        params: Dict[str, Any] = {"db_id": db_id}
+        params = {k: v for k, v in params.items() if v is not None}
 
         # Build multipart form data
         form_data: Dict[str, Any] = {}
@@ -2196,13 +2149,21 @@ class AgentOSClient:
         if chunk_overlap:
             form_data["chunk_overlap"] = str(chunk_overlap)
 
-        if file_content:
-            files = {"file": (file_name or "upload", file_content, file_content_type or "application/octet-stream")}
+        if file:
+            # Handle both agno.media.File and FastAPI UploadFile
+            if isinstance(file, UploadFile):
+                files = {
+                    "file": (file.filename or "upload", file.file, file.content_type or "application/octet-stream")
+                }
+            elif file.content:
+                files = {
+                    "file": (file.filename or "upload", file.content, file.mime_type or "application/octet-stream")
+                }
 
-        data = await self._apost_multipart(endpoint, form_data, files=files, headers=headers)
+        data = await self._apost_multipart("/knowledge/content", form_data, files=files, params=params, headers=headers)
         return ContentResponseSchema.model_validate(data)
 
-    async def update_content(
+    async def update_knowledge_content(
         self,
         content_id: str,
         name: Optional[str] = None,
@@ -2229,11 +2190,8 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
-        params = {}
-        if db_id:
-            params["db_id"] = db_id
-
-        endpoint = f"/knowledge/content/{content_id}"
+        params: Dict[str, Any] = {"db_id": db_id}
+        params = {k: v for k, v in params.items() if v is not None}
 
         form_data: Dict[str, Any] = {}
         if name:
@@ -2245,10 +2203,12 @@ class AgentOSClient:
         if reader_id:
             form_data["reader_id"] = reader_id
 
-        data = await self._arequest("PATCH", endpoint, data=form_data, params=params, headers=headers, as_form=True)
+        data = await self._arequest(
+            "PATCH", f"/knowledge/content/{content_id}", data=form_data, params=params, headers=headers, as_form=True
+        )
         return ContentResponseSchema.model_validate(data)
 
-    async def list_content(
+    async def list_knowledge_content(
         self,
         limit: int = 20,
         page: int = 1,
@@ -2273,20 +2233,19 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params: Dict[str, str] = {
-            "limit": str(limit),
-            "page": str(page),
+        params: Dict[str, Any] = {
+            "limit": limit,
+            "page": page,
             "sort_by": sort_by,
             "sort_order": sort_order,
+            "db_id": db_id,
         }
-        if db_id:
-            params["db_id"] = db_id
+        params = {k: v for k, v in params.items() if v is not None}
 
-        endpoint = "/knowledge/content?" + "&".join(f"{k}={v}" for k, v in params.items())
-        data = await self._aget(endpoint, headers=headers)
+        data = await self._aget("/knowledge/content", params=params, headers=headers)
         return PaginatedResponse[ContentResponseSchema].model_validate(data)
 
-    async def get_content(
+    async def get_knowledge_content(
         self,
         content_id: str,
         db_id: Optional[str] = None,
@@ -2305,18 +2264,13 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
-        params = {}
-        if db_id:
-            params["db_id"] = db_id
+        params: Dict[str, Any] = {"db_id": db_id}
+        params = {k: v for k, v in params.items() if v is not None}
 
-        endpoint = f"/knowledge/content/{content_id}"
-        if params:
-            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
-
-        data = await self._aget(endpoint, headers=headers)
+        data = await self._aget(f"/knowledge/content/{content_id}", params=params, headers=headers)
         return ContentResponseSchema.model_validate(data)
 
-    async def delete_content(
+    async def delete_knowledge_content(
         self,
         content_id: str,
         db_id: Optional[str] = None,
@@ -2344,7 +2298,7 @@ class AgentOSClient:
         data = await self._arequest("DELETE", endpoint, params=params, headers=headers)
         return ContentResponseSchema.model_validate(data)
 
-    async def delete_all_content(
+    async def delete_all_knowledge_content(
         self,
         db_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
@@ -2371,7 +2325,7 @@ class AgentOSClient:
 
         return await self._arequest("DELETE", endpoint, params=params, headers=headers)
 
-    async def get_content_status(
+    async def get_knowledge_content_status(
         self,
         content_id: str,
         db_id: Optional[str] = None,
@@ -2390,15 +2344,10 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params = {}
-        if db_id:
-            params["db_id"] = db_id
+        params: Dict[str, Any] = {"db_id": db_id}
+        params = {k: v for k, v in params.items() if v is not None}
 
-        endpoint = f"/knowledge/content/{content_id}/status"
-        if params:
-            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
-
-        data = await self._aget(endpoint, headers=headers)
+        data = await self._aget(f"/knowledge/content/{content_id}/status", params=params, headers=headers)
         return ContentStatusResponse.model_validate(data)
 
     async def search_knowledge(
@@ -2467,13 +2416,231 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params = {}
-        if db_id:
-            params["db_id"] = db_id
+        params: Dict[str, Any] = {"db_id": db_id}
+        params = {k: v for k, v in params.items() if v is not None}
 
-        endpoint = "/knowledge/config"
-        if params:
-            endpoint += "?" + "&".join(f"{k}={v}" for k, v in params.items())
-
-        data = await self._aget(endpoint, headers=headers)
+        data = await self._aget("/knowledge/config", params=params, headers=headers)
         return KnowledgeConfigResponse.model_validate(data)
+
+    # Trace Operations
+    async def get_traces(
+        self,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        page: int = 1,
+        limit: int = 20,
+        db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> PaginatedResponse[TraceSummary]:
+        """List execution traces with filtering and pagination.
+
+        Traces provide observability into agent execution flows, model invocations,
+        tool calls, errors, and performance bottlenecks.
+
+        Args:
+            run_id: Filter by run ID
+            session_id: Filter by session ID
+            user_id: Filter by user ID
+            agent_id: Filter by agent ID
+            team_id: Filter by team ID
+            workflow_id: Filter by workflow ID
+            status: Filter by status (OK, ERROR)
+            start_time: Filter traces starting after this time (ISO 8601 format)
+            end_time: Filter traces ending before this time (ISO 8601 format)
+            page: Page number (1-indexed)
+            limit: Number of traces per page
+            db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            PaginatedResponse[TraceSummary]: Paginated list of trace summaries
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "page": page,
+            "limit": limit,
+            "run_id": run_id,
+            "session_id": session_id,
+            "user_id": user_id,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            "workflow_id": workflow_id,
+            "status": status,
+            "start_time": start_time,
+            "end_time": end_time,
+            "db_id": db_id,
+        }
+
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/traces", params=params, headers=headers)
+        return PaginatedResponse[TraceSummary].model_validate(data)
+
+    async def get_trace(
+        self,
+        trace_id: str,
+        span_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Union[TraceDetail, TraceNode]:
+        """Get detailed trace information with hierarchical span tree, or a specific span.
+
+        Without span_id: Returns the full trace with hierarchical span tree including
+        trace metadata, timing, status, and all spans organized hierarchically.
+
+        With span_id: Returns details for a specific span within the trace including
+        span metadata, timing, status, and type-specific attributes.
+
+        Args:
+            trace_id: ID of the trace to retrieve
+            span_id: Optional span ID to retrieve a specific span
+            run_id: Optional run ID to retrieve trace for
+            db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            TraceDetail if no span_id provided, TraceNode if span_id provided
+
+        Raises:
+            HTTPStatusError: On HTTP errors (404 if not found)
+        """
+        params: Dict[str, Any] = {
+            "span_id": span_id,
+            "run_id": run_id,
+            "db_id": db_id,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget(f"/traces/{trace_id}", params=params, headers=headers)
+
+        # If span_id was provided, return TraceNode, otherwise TraceDetail
+        if span_id:
+            return TraceNode.model_validate(data)
+        return TraceDetail.model_validate(data)
+
+    async def get_trace_session_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        page: int = 1,
+        limit: int = 20,
+        db_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> PaginatedResponse[TraceSessionStats]:
+        """Get aggregated trace statistics grouped by session ID.
+
+        Provides insights into total traces per session, first and last trace
+        timestamps, and associated user and agent information.
+
+        Args:
+            user_id: Filter by user ID
+            agent_id: Filter by agent ID
+            team_id: Filter by team ID
+            workflow_id: Filter by workflow ID
+            start_time: Filter sessions with traces created after this time (ISO 8601 format)
+            end_time: Filter sessions with traces created before this time (ISO 8601 format)
+            page: Page number (1-indexed)
+            limit: Number of sessions per page
+            db_id: Optional database ID to use
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            PaginatedResponse[TraceSessionStats]: Paginated list of session statistics
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "page": page,
+            "limit": limit,
+            "user_id": user_id,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            "workflow_id": workflow_id,
+            "start_time": start_time,
+            "end_time": end_time,
+            "db_id": db_id,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/trace_session_stats", params=params, headers=headers)
+        return PaginatedResponse[TraceSessionStats].model_validate(data)
+
+    # Metrics Operations
+    async def get_metrics(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> MetricsResponse:
+        """Retrieve AgentOS metrics and analytics data for a specified date range.
+
+        If no date range is specified, returns all available metrics.
+
+        Args:
+            starting_date: Starting date for metrics range (YYYY-MM-DD format)
+            ending_date: Ending date for metrics range (YYYY-MM-DD format)
+            db_id: Optional database ID to use
+            table: Optional database table to use
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            MetricsResponse: Metrics data including daily aggregated metrics
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "starting_date": starting_date.strftime("%Y-%m-%d") if starting_date else None,
+            "ending_date": ending_date.strftime("%Y-%m-%d") if ending_date else None,
+            "db_id": db_id,
+            "table": table,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/metrics", params=params, headers=headers)
+        return MetricsResponse.model_validate(data)
+
+    async def refresh_metrics(
+        self,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> List[DayAggregatedMetrics]:
+        """Manually trigger recalculation of system metrics from raw data.
+
+        This operation analyzes system activity logs and regenerates aggregated metrics.
+        Useful for ensuring metrics are up-to-date or after system maintenance.
+
+        Args:
+            db_id: Optional database ID to use
+            table: Optional database table to use
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            List[DayAggregatedMetrics]: List of refreshed daily aggregated metrics
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {"db_id": db_id, "table": table}
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._apost("/metrics/refresh", params=params, headers=headers)
+        return [DayAggregatedMetrics.model_validate(m) for m in data]

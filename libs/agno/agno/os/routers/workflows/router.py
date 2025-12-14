@@ -202,7 +202,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
 
 
 async def workflow_response_streamer(
-    workflow: Workflow,
+    workflow: Union[Workflow, RemoteWorkflow],
     input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,

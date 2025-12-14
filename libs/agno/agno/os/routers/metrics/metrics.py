@@ -17,12 +17,13 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db
+from agno.remote.base import RemoteDb
 
 logger = logging.getLogger(__name__)
 
 
 def get_metrics_router(
-    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
 ) -> APIRouter:
     """Create metrics router with comprehensive OpenAPI documentation for system metrics and analytics endpoints."""
     router = APIRouter(
@@ -39,7 +40,7 @@ def get_metrics_router(
     return attach_routes(router=router, dbs=dbs)
 
 
-def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]]) -> APIRouter:
+def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> APIRouter:
     @router.get(
         "/metrics",
         response_model=MetricsResponse,
@@ -103,6 +104,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> MetricsResponse:
         try:
             db = await get_db(dbs, db_id, table)
+
+            if isinstance(db, RemoteDb):
+                return await db.get_metrics(
+                    starting_date=starting_date, ending_date=ending_date, db_id=db_id, table=table
+                )
+
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
                 metrics, latest_updated_at = await db.get_metrics(starting_date=starting_date, ending_date=ending_date)
@@ -174,6 +181,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> List[DayAggregatedMetrics]:
         try:
             db = await get_db(dbs, db_id, table)
+
+            if isinstance(db, RemoteDb):
+                return await db.refresh_metrics(db_id=db_id, table=table)
+
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
                 result = await db.calculate_metrics()

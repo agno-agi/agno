@@ -15,19 +15,19 @@ from ag_ui.encoder import EventEncoder
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from agno.agent.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.agui.utils import (
     async_stream_agno_response_as_agui_events,
     convert_agui_messages_to_agno_messages,
     validate_agui_state,
 )
-from agno.remote.base import BaseRemote
+from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 
 logger = logging.getLogger(__name__)
 
 
-async def run_agent(agent: Union[Agent, BaseRemote], run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
+async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     """Run the contextual Agent, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
     run_id = run_input.run_id or str(uuid.uuid4())
 
@@ -70,7 +70,7 @@ async def run_agent(agent: Union[Agent, BaseRemote], run_input: RunAgentInput) -
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 
-async def run_team(team: Union[Team, BaseRemote], input: RunAgentInput) -> AsyncIterator[BaseEvent]:
+async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     """Run the contextual Team, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
     run_id = input.run_id or str(uuid.uuid4())
     try:
@@ -109,7 +109,7 @@ async def run_team(team: Union[Team, BaseRemote], input: RunAgentInput) -> Async
 
 
 def attach_routes(
-    router: APIRouter, agent: Optional[Union[Agent, BaseRemote]] = None, team: Optional[Union[Team, BaseRemote]] = None
+    router: APIRouter, agent: Optional[Union[Agent, RemoteAgent]] = None, team: Optional[Union[Team, RemoteTeam]] = None
 ) -> APIRouter:
     if agent is None and team is None:
         raise ValueError("Either agent or team must be provided.")

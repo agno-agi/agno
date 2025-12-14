@@ -138,6 +138,7 @@ class TeamResponse(BaseModel):
         }
 
         knowledge_info = {
+            "db_id": team.knowledge.contents_db.id if team.knowledge and team.knowledge.contents_db else None,
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": team.enable_agentic_knowledge_filters,
             "knowledge_filters": team.knowledge_filters,

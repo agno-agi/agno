@@ -152,6 +152,7 @@ class AgentResponse(BaseModel):
         }
 
         knowledge_info = {
+            "db_id": agent.knowledge.contents_db.id if agent.knowledge and agent.knowledge.contents_db else None,
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": agent.enable_agentic_knowledge_filters,
             "knowledge_filters": agent.knowledge_filters,

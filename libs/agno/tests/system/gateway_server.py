@@ -9,9 +9,12 @@ import os
 
 from agno.agent import Agent, RemoteAgent
 from agno.db.postgres import PostgresDb
+from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team import RemoteTeam
+from agno.vectordb.pgvector.pgvector import PgVector
 from agno.workflow import RemoteWorkflow, Workflow
 from agno.workflow.step import Step
 
@@ -24,6 +27,16 @@ db = PostgresDb(
     db_url=os.getenv("DATABASE_URL", "postgresql+psycopg://ai:ai@postgres:5432/ai"),
 )
 
+knowledge = Knowledge(
+    name="Gateway Knowledge",
+    description="A knowledge base for the gateway server",
+    vector_db=PgVector(
+        db_url=os.getenv("DATABASE_URL", "postgresql+psycopg://ai:ai@postgres:5432/ai"),
+        table_name="system_test_knowledge",
+        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+    ),
+    contents_db=db,
+)
 # =============================================================================
 # Local Agent for Gateway
 # =============================================================================
@@ -34,7 +47,9 @@ local_agent = Agent(
     description="A local agent on the gateway for testing",
     model=OpenAIChat(id="gpt-4o-mini"),
     db=db,
+    knowledge=knowledge,
     instructions=["You are a helpful assistant on the gateway server."],
+    enable_user_memories=True,
     markdown=True,
 )
 
@@ -93,5 +108,4 @@ app = agent_os.get_app()
 
 if __name__ == "__main__":
     reload = os.getenv("RELOAD", "true").lower() == "true"
-    agent_os.serve(app="gateway_server:app", reload=reload, host="0.0.0.0", port=7001)
-
+    agent_os.serve(app="gateway_server:app", reload=reload, host="0.0.0.0", port=7001, access_log=True)

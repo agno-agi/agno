@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union
 from uuid import uuid4
 
 from fastapi import (
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
 
 async def team_response_streamer(
-    team: Team,
+    team: Union[Team, RemoteTeam],
     message: str,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,

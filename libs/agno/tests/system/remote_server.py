@@ -34,6 +34,8 @@ db = PostgresDb(
 # =============================================================================
 
 knowledge = Knowledge(
+    name="Remote Knowledge",
+    description="A knowledge base for the remote server",
     vector_db=PgVector(
         db_url=os.getenv("DATABASE_URL", "postgresql+psycopg://ai:ai@postgres:5432/ai"),
         table_name="system_test_knowledge",
@@ -71,6 +73,7 @@ researcher = Agent(
     id="researcher-agent",
     description="A research assistant with web search capabilities.",
     model=OpenAIChat(id="gpt-5-mini"),
+    enable_user_memories=True,
     db=db,
     instructions=[
         "You are a research assistant.",
@@ -98,6 +101,7 @@ research_team = Team(
         "Combine insights from team members for comprehensive answers.",
     ],
     markdown=True,
+    enable_user_memories=True,
     db=db,
 )
 
@@ -142,5 +146,4 @@ app = agent_os.get_app()
 
 if __name__ == "__main__":
     reload = os.getenv("RELOAD", "true").lower() == "true"
-    agent_os.serve(app="remote_server:app", reload=reload, host="0.0.0.0", port=7002)
-
+    agent_os.serve(app="remote_server:app", reload=reload, host="0.0.0.0", port=7002, access_log=True)

@@ -1,5 +1,5 @@
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import (
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 
 
 async def agent_response_streamer(
-    agent: Agent,
+    agent: Union[Agent, RemoteAgent],
     message: str,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -100,8 +100,8 @@ async def agent_response_streamer(
 
 
 async def agent_continue_response_streamer(
-    agent: Agent,
-    run_id: Optional[str] = None,
+    agent: Union[Agent, RemoteAgent],
+    run_id: str,
     updated_tools: Optional[List] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,

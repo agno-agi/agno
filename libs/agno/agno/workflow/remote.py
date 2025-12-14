@@ -1,14 +1,15 @@
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Union, overload
 
-from pydantic import BaseModel
 from fastapi import WebSocket
+from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.remote.base import BaseRemote, RemoteDb
 from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent
 from agno.utils.agent import validate_input
+from agno.utils.remote import serialize_input
 
 if TYPE_CHECKING:
     from agno.os.routers.workflows.schema import WorkflowResponse
@@ -66,18 +67,30 @@ class RemoteWorkflow(BaseRemote):
         if self._workflow_config is not None and self._workflow_config.db_id is not None:
             config = self._config
             db_id = self._workflow_config.db_id
-            session_dbs = [db for db in config.session.dbs if db.db_id == db_id]
-            session_table_name = session_dbs[0].tables[0] if session_dbs and session_dbs[0].tables else None
-            knowledge_dbs = [db for db in config.knowledge.dbs if db.db_id == db_id]
-            knowledge_table_name = knowledge_dbs[0].tables[0] if knowledge_dbs and knowledge_dbs[0].tables else None
-            memory_dbs = [db for db in config.memory.dbs if db.db_id == db_id]
-            memory_table_name = memory_dbs[0].tables[0] if memory_dbs and memory_dbs[0].tables else None
-            metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
-            metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
-            eval_dbs = [db for db in config.evals.dbs if db.db_id == db_id]
-            eval_table_name = eval_dbs[0].tables[0] if eval_dbs and eval_dbs[0].tables else None
-            traces_dbs = [db for db in config.traces.dbs if db.db_id == db_id]
-            traces_table_name = traces_dbs[0].tables[0] if traces_dbs and traces_dbs[0].tables else None
+            session_table_name = None
+            knowledge_table_name = None
+            memory_table_name = None
+            metrics_table_name = None
+            eval_table_name = None
+            traces_table_name = None
+            if config and config.session:
+                session_dbs = [db for db in config.session.dbs if db.db_id == db_id]
+                session_table_name = session_dbs[0].tables[0] if session_dbs and session_dbs[0].tables else None
+            if config and config.knowledge:
+                knowledge_dbs = [db for db in config.knowledge.dbs if db.db_id == db_id]
+                knowledge_table_name = knowledge_dbs[0].tables[0] if knowledge_dbs and knowledge_dbs[0].tables else None
+            if config and config.memory:
+                memory_dbs = [db for db in config.memory.dbs if db.db_id == db_id]
+                memory_table_name = memory_dbs[0].tables[0] if memory_dbs and memory_dbs[0].tables else None
+            if config and config.metrics:
+                metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
+                metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
+            if config and config.evals:
+                eval_dbs = [db for db in config.evals.dbs if db.db_id == db_id]
+                eval_table_name = eval_dbs[0].tables[0] if eval_dbs and eval_dbs[0].tables else None
+            if config and config.traces:
+                traces_dbs = [db for db in config.traces.dbs if db.db_id == db_id]
+                traces_table_name = traces_dbs[0].tables[0] if traces_dbs and traces_dbs[0].tables else None
             return RemoteDb(
                 id=db_id,
                 client=self.client,
@@ -88,6 +101,7 @@ class RemoteWorkflow(BaseRemote):
                 eval_table_name=eval_table_name,
                 traces_table_name=traces_table_name,
             )
+        return None
 
     @overload
     async def arun(
@@ -133,7 +147,7 @@ class RemoteWorkflow(BaseRemote):
 
     def arun(  # type: ignore
         self,
-        input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
+        input: Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]],
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         run_id: Optional[str] = None,
@@ -150,13 +164,15 @@ class RemoteWorkflow(BaseRemote):
         background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
+        # TODO: Deal with background
         validated_input = validate_input(input)
+        serialized_input = serialize_input(validated_input)
 
         if stream:
             # Handle streaming response
             return self.get_client().run_workflow_stream(
                 workflow_id=self.workflow_id,
-                message=validated_input,
+                message=serialized_input,
                 additional_data=additional_data,
                 run_id=run_id,
                 session_id=session_id,
@@ -172,7 +188,7 @@ class RemoteWorkflow(BaseRemote):
         else:
             return self.get_client().run_workflow(
                 workflow_id=self.workflow_id,
-                message=validated_input,
+                message=serialized_input,
                 additional_data=additional_data,
                 run_id=run_id,
                 session_id=session_id,

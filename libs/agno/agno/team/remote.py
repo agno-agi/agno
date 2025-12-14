@@ -10,6 +10,7 @@ from agno.remote.base import BaseRemote, RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 from agno.utils.agent import validate_input
+from agno.utils.remote import serialize_input
 
 if TYPE_CHECKING:
     from agno.os.routers.teams.schema import TeamResponse
@@ -67,18 +68,30 @@ class RemoteTeam(BaseRemote):
         if self._team_config is not None and self._team_config.db_id is not None:
             config = self._config
             db_id = self._team_config.db_id
-            session_dbs = [db for db in config.session.dbs if db.db_id == db_id]
-            session_table_name = session_dbs[0].tables[0] if session_dbs and session_dbs[0].tables else None
-            knowledge_dbs = [db for db in config.knowledge.dbs if db.db_id == db_id]
-            knowledge_table_name = knowledge_dbs[0].tables[0] if knowledge_dbs and knowledge_dbs[0].tables else None
-            memory_dbs = [db for db in config.memory.dbs if db.db_id == db_id]
-            memory_table_name = memory_dbs[0].tables[0] if memory_dbs and memory_dbs[0].tables else None
-            metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
-            metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
-            eval_dbs = [db for db in config.evals.dbs if db.db_id == db_id]
-            eval_table_name = eval_dbs[0].tables[0] if eval_dbs and eval_dbs[0].tables else None
-            traces_dbs = [db for db in config.traces.dbs if db.db_id == db_id]
-            traces_table_name = traces_dbs[0].tables[0] if traces_dbs and traces_dbs[0].tables else None
+            session_table_name = None
+            knowledge_table_name = None
+            memory_table_name = None
+            metrics_table_name = None
+            eval_table_name = None
+            traces_table_name = None
+            if config and config.session:
+                session_dbs = [db for db in config.session.dbs if db.db_id == db_id]
+                session_table_name = session_dbs[0].tables[0] if session_dbs and session_dbs[0].tables else None
+            if config and config.knowledge:
+                knowledge_dbs = [db for db in config.knowledge.dbs if db.db_id == db_id]
+                knowledge_table_name = knowledge_dbs[0].tables[0] if knowledge_dbs and knowledge_dbs[0].tables else None
+            if config and config.memory:
+                memory_dbs = [db for db in config.memory.dbs if db.db_id == db_id]
+                memory_table_name = memory_dbs[0].tables[0] if memory_dbs and memory_dbs[0].tables else None
+            if config and config.metrics:
+                metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
+                metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
+            if config and config.evals:
+                eval_dbs = [db for db in config.evals.dbs if db.db_id == db_id]
+                eval_table_name = eval_dbs[0].tables[0] if eval_dbs and eval_dbs[0].tables else None
+            if config and config.traces:
+                traces_dbs = [db for db in config.traces.dbs if db.db_id == db_id]
+                traces_table_name = traces_dbs[0].tables[0] if traces_dbs and traces_dbs[0].tables else None
             return RemoteDb(
                 id=db_id,
                 client=self.client,
@@ -89,12 +102,20 @@ class RemoteTeam(BaseRemote):
                 eval_table_name=eval_table_name,
                 traces_table_name=traces_table_name,
             )
+        return None
 
     @cached_property
     def knowledge(self) -> Optional[RemoteKnowledge]:
         """Whether the agent has knowledge enabled."""
         if self._team_config is not None and self._team_config.knowledge is not None:
-            return self._team_config.knowledge.get("enabled")
+            return RemoteKnowledge(
+                client=self.client,
+                contents_db=RemoteDb(
+                    id=self._team_config.knowledge.get("db_id"),
+                    client=self.client,
+                    knowledge_table_name=self._team_config.knowledge.get("knowledge_table"),
+                ),
+            )
         return False
 
     @cached_property
@@ -182,12 +203,13 @@ class RemoteTeam(BaseRemote):
         AsyncIterator[RunOutputEvent],
     ]:
         validated_input = validate_input(input)
+        serialized_input = serialize_input(validated_input)
 
         if stream:
             # Handle streaming response
             return self.get_client().run_team_stream(
                 team_id=self.team_id,
-                message=validated_input,
+                message=serialized_input,
                 session_id=session_id,
                 user_id=user_id,
                 audio=audio,
@@ -208,7 +230,7 @@ class RemoteTeam(BaseRemote):
         else:
             return self.get_client().run_team(
                 team_id=self.team_id,
-                message=validated_input,
+                message=serialized_input,
                 session_id=session_id,
                 user_id=user_id,
                 audio=audio,
