@@ -14,6 +14,7 @@ from starlette.requests import Request
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
+from agno.os.builder.config import BuilderConfig
 from agno.os.config import (
     AgentOSConfig,
     DatabaseConfig,
@@ -118,6 +119,7 @@ class AgentOS:
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
+        builder: Optional[BuilderConfig] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
@@ -166,6 +168,7 @@ class AgentOS:
         self.teams: Optional[List[Team]] = teams
         self.interfaces = interfaces or []
         self.a2a_interface = a2a_interface
+        self.builder = builder
         self.knowledge = knowledge
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
         self.auto_provision_dbs = auto_provision_dbs
@@ -270,6 +273,11 @@ class AgentOS:
             get_memory_router(dbs=self.dbs),
             get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
         ]
+
+        if self.builder:
+            from agno.os.builder.router import get_builder_router
+
+            updated_routers.append(get_builder_router(self.builder))
 
         # Clear all previously existing routes
         app.router.routes = [
@@ -529,6 +537,11 @@ class AgentOS:
             get_traces_router(dbs=self.dbs),
         ]
 
+        if self.builder:
+            from agno.os.builder.router import get_builder_router
+
+            routers.append(get_builder_router(self.builder))
+
         for router in routers:
             self._add_router(fastapi_app, router)
 
@@ -670,6 +683,10 @@ class AgentOS:
                 self._register_db_with_validation(dbs, interface.agent.db)
             elif interface.team and interface.team.db:
                 self._register_db_with_validation(dbs, interface.team.db)
+
+        if self.builder and self.builder.databases:
+            for db in self.builder.databases:
+                self._register_db_with_validation(dbs, db)
 
         # Register tracing_db if provided (for traces reading)
         if self.tracing_db is not None:
