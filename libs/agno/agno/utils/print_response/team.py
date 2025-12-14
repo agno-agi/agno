@@ -30,6 +30,7 @@ def print_response(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -81,6 +82,7 @@ def print_response(
         # Run the agent
         run_response: TeamRunOutput = team.run(  # type: ignore
             input=input,
+            run_id=run_id,
             images=images,
             audio=audio,
             videos=videos,
@@ -265,8 +267,8 @@ def print_response(
                         stats = team.compression_manager.stats
                         saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
                         orig = stats.get("original_size", 1)
-                        if stats.get("messages_compressed", 0) > 0:
-                            tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                        if stats.get("tool_results_compressed", 0) > 0:
+                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
                         team.compression_manager.stats.clear()
 
                     team_tool_calls_panel = create_panel(
@@ -339,6 +341,7 @@ def print_response_stream(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -417,6 +420,7 @@ def print_response_stream(
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
+            run_id=run_id,
             knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
             dependencies=dependencies,
@@ -627,8 +631,8 @@ def print_response_stream(
                         stats = team.compression_manager.stats
                         saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
                         orig = stats.get("original_size", 1)
-                        if stats.get("messages_compressed", 0) > 0:
-                            tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                        if stats.get("tool_results_compressed", 0) > 0:
+                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
 
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
@@ -837,8 +841,8 @@ def print_response_stream(
                     stats = team.compression_manager.stats
                     saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
                     orig = stats.get("original_size", 1)
-                    if stats.get("messages_compressed", 0) > 0:
-                        tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                    if stats.get("tool_results_compressed", 0) > 0:
+                        tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
                     team.compression_manager.stats.clear()
 
                 team_tool_calls_panel = create_panel(
@@ -893,6 +897,7 @@ async def aprint_response(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -944,6 +949,7 @@ async def aprint_response(
         # Run the agent
         run_response: TeamRunOutput = await team.arun(  # type: ignore
             input=input,
+            run_id=run_id,
             images=images,
             audio=audio,
             videos=videos,
@@ -1126,8 +1132,8 @@ async def aprint_response(
                         stats = team.compression_manager.stats
                         saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
                         orig = stats.get("original_size", 1)
-                        if stats.get("messages_compressed", 0) > 0:
-                            tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                        if stats.get("tool_results_compressed", 0) > 0:
+                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
                         team.compression_manager.stats.clear()
 
                     team_tool_calls_panel = create_panel(
@@ -1200,6 +1206,7 @@ async def aprint_response_stream(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -1288,6 +1295,7 @@ async def aprint_response_stream(
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
+            run_id=run_id,
             knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
             add_dependencies_to_context=add_dependencies_to_context,
@@ -1486,8 +1494,8 @@ async def aprint_response_stream(
                         stats = team.compression_manager.stats
                         saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
                         orig = stats.get("original_size", 1)
-                        if stats.get("messages_compressed", 0) > 0:
-                            tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                        if stats.get("tool_results_compressed", 0) > 0:
+                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
 
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
@@ -1714,8 +1722,8 @@ async def aprint_response_stream(
                     stats = team.compression_manager.stats
                     saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
                     orig = stats.get("original_size", 1)
-                    if stats.get("messages_compressed", 0) > 0:
-                        tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                    if stats.get("tool_results_compressed", 0) > 0:
+                        tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
                     team.compression_manager.stats.clear()
 
                 team_tool_calls_panel = create_panel(

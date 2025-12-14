@@ -31,7 +31,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, String, Table, func, select, text, update
+    from sqlalchemy import Column, MetaData, String, Table, func, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -245,9 +245,9 @@ class SqliteDb(BaseDb):
             return table
 
         except Exception as e:
-            from traceback import format_exc
+            from traceback import print_exc
 
-            print(format_exc())
+            print_exc()
             log_error(f"Could not create table '{table_name}': {e}")
             raise e
 
@@ -362,7 +362,6 @@ class SqliteDb(BaseDb):
 
         try:
             table = Table(table_name, self.metadata, autoload_with=self.db_engine)
-            log_debug(f"Loaded existing table {table_name}")
             return table
 
         except Exception as e:
@@ -1109,9 +1108,8 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 # Select topics from all results
-                stmt = select(func.json_array_elements_text(table.c.topics)).select_from(table)
+                stmt = select(table.c.topics)
                 result = sess.execute(stmt).fetchall()
-
                 return list(set([record[0] for record in result]))
 
         except Exception as e:
@@ -2147,93 +2145,113 @@ class SqliteDb(BaseDb):
             # Fallback if spans table doesn't exist
             return select(table, literal(0).label("total_spans"), literal(0).label("error_count"))
 
-    def create_trace(self, trace: "Trace") -> None:
-        """Create a single trace record in the database.
+    def _get_trace_component_level_expr(self, workflow_id_col, team_id_col, agent_id_col, name_col):
+        """Build a SQL CASE expression that returns the component level for a trace.
+
+        Component levels (higher = more important):
+            - 3: Workflow root (.run or .arun with workflow_id)
+            - 2: Team root (.run or .arun with team_id)
+            - 1: Agent root (.run or .arun with agent_id)
+            - 0: Child span (not a root)
+
+        Args:
+            workflow_id_col: SQL column/expression for workflow_id
+            team_id_col: SQL column/expression for team_id
+            agent_id_col: SQL column/expression for agent_id
+            name_col: SQL column/expression for name
+
+        Returns:
+            SQLAlchemy CASE expression returning the component level as an integer.
+        """
+        from sqlalchemy import and_, case, or_
+
+        is_root_name = or_(name_col.contains(".run"), name_col.contains(".arun"))
+
+        return case(
+            # Workflow root (level 3)
+            (and_(workflow_id_col.isnot(None), is_root_name), 3),
+            # Team root (level 2)
+            (and_(team_id_col.isnot(None), is_root_name), 2),
+            # Agent root (level 1)
+            (and_(agent_id_col.isnot(None), is_root_name), 1),
+            # Child span or unknown (level 0)
+            else_=0,
+        )
+
+    def upsert_trace(self, trace: "Trace") -> None:
+        """Create or update a single trace record in the database.
+
+        Uses INSERT ... ON CONFLICT DO UPDATE (upsert) to handle concurrent inserts
+        atomically and avoid race conditions.
 
         Args:
             trace: The Trace object to store (one per trace_id).
         """
+        from sqlalchemy import case
+
         try:
             table = self._get_table(table_type="traces", create_table_if_not_found=True)
             if table is None:
                 return
 
+            trace_dict = trace.to_dict()
+            trace_dict.pop("total_spans", None)
+            trace_dict.pop("error_count", None)
+
             with self.Session() as sess, sess.begin():
-                # Check if trace exists
-                existing = sess.execute(table.select().where(table.c.trace_id == trace.trace_id)).fetchone()
+                # Use upsert to handle concurrent inserts atomically
+                # On conflict, update fields while preserving existing non-null context values
+                # and keeping the earliest start_time
+                insert_stmt = sqlite.insert(table).values(trace_dict)
 
-                if existing:
-                    # workflow (level 3) > team (level 2) > agent (level 1) > child/unknown (level 0)
+                # Build component level expressions for comparing trace priority
+                new_level = self._get_trace_component_level_expr(
+                    insert_stmt.excluded.workflow_id,
+                    insert_stmt.excluded.team_id,
+                    insert_stmt.excluded.agent_id,
+                    insert_stmt.excluded.name,
+                )
+                existing_level = self._get_trace_component_level_expr(
+                    table.c.workflow_id,
+                    table.c.team_id,
+                    table.c.agent_id,
+                    table.c.name,
+                )
 
-                    def get_component_level(workflow_id, team_id, agent_id, name):
-                        # Check if name indicates a root span
-                        is_root_name = ".run" in name or ".arun" in name
-
-                        if not is_root_name:
-                            return 0  # Child span (not a root)
-                        elif workflow_id:
-                            return 3  # Workflow root
-                        elif team_id:
-                            return 2  # Team root
-                        elif agent_id:
-                            return 1  # Agent root
-                        else:
-                            return 0  # Unknown
-
-                    existing_level = get_component_level(
-                        existing.workflow_id, existing.team_id, existing.agent_id, existing.name
-                    )
-                    new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
-
-                    # Only update name if new trace is from a higher or equal level
-                    should_update_name = new_level > existing_level
-
-                    # Parse existing start_time to calculate correct duration
-                    existing_start_time_str = existing.start_time
-                    if isinstance(existing_start_time_str, str):
-                        existing_start_time = datetime.fromisoformat(existing_start_time_str.replace("Z", "+00:00"))
-                    else:
-                        existing_start_time = trace.start_time
-
-                    recalculated_duration_ms = int((trace.end_time - existing_start_time).total_seconds() * 1000)
-
-                    update_values = {
-                        "end_time": trace.end_time.isoformat(),
-                        "duration_ms": recalculated_duration_ms,
-                        "status": trace.status,
-                        "name": trace.name if should_update_name else existing.name,
-                    }
-
-                    # Update context fields ONLY if new value is not None (preserve non-null values)
-                    if trace.run_id is not None:
-                        update_values["run_id"] = trace.run_id
-                    if trace.session_id is not None:
-                        update_values["session_id"] = trace.session_id
-                    if trace.user_id is not None:
-                        update_values["user_id"] = trace.user_id
-                    if trace.agent_id is not None:
-                        update_values["agent_id"] = trace.agent_id
-                    if trace.team_id is not None:
-                        update_values["team_id"] = trace.team_id
-                    if trace.workflow_id is not None:
-                        update_values["workflow_id"] = trace.workflow_id
-
-                    log_debug(
-                        f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
-                        f"session_id={update_values.get('session_id', 'unchanged')}, "
-                        f"user_id={update_values.get('user_id', 'unchanged')}, "
-                        f"agent_id={update_values.get('agent_id', 'unchanged')}, "
-                        f"team_id={update_values.get('team_id', 'unchanged')}, "
-                    )
-
-                    stmt = update(table).where(table.c.trace_id == trace.trace_id).values(**update_values)
-                    sess.execute(stmt)
-                else:
-                    trace_dict = trace.to_dict()
-                    trace_dict.pop("total_spans", None)
-                    trace_dict.pop("error_count", None)
-                    stmt = sqlite.insert(table).values(trace_dict)
-                    sess.execute(stmt)
+                # Build the ON CONFLICT DO UPDATE clause
+                # Use MIN for start_time, MAX for end_time to capture full trace duration
+                # SQLite stores timestamps as ISO strings, so string comparison works for ISO format
+                # Duration is calculated as: (MAX(end_time) - MIN(start_time)) in milliseconds
+                # SQLite doesn't have epoch extraction, so we calculate duration using julianday
+                upsert_stmt = insert_stmt.on_conflict_do_update(
+                    index_elements=["trace_id"],
+                    set_={
+                        "end_time": func.max(table.c.end_time, insert_stmt.excluded.end_time),
+                        "start_time": func.min(table.c.start_time, insert_stmt.excluded.start_time),
+                        # Calculate duration in milliseconds using julianday (SQLite-specific)
+                        # julianday returns days, so multiply by 86400000 to get milliseconds
+                        "duration_ms": (
+                            func.julianday(func.max(table.c.end_time, insert_stmt.excluded.end_time))
+                            - func.julianday(func.min(table.c.start_time, insert_stmt.excluded.start_time))
+                        )
+                        * 86400000,
+                        "status": insert_stmt.excluded.status,
+                        # Update name only if new trace is from a higher-level component
+                        # Priority: workflow (3) > team (2) > agent (1) > child spans (0)
+                        "name": case(
+                            (new_level > existing_level, insert_stmt.excluded.name),
+                            else_=table.c.name,
+                        ),
+                        # Preserve existing non-null context values using COALESCE
+                        "run_id": func.coalesce(insert_stmt.excluded.run_id, table.c.run_id),
+                        "session_id": func.coalesce(insert_stmt.excluded.session_id, table.c.session_id),
+                        "user_id": func.coalesce(insert_stmt.excluded.user_id, table.c.user_id),
+                        "agent_id": func.coalesce(insert_stmt.excluded.agent_id, table.c.agent_id),
+                        "team_id": func.coalesce(insert_stmt.excluded.team_id, table.c.team_id),
+                        "workflow_id": func.coalesce(insert_stmt.excluded.workflow_id, table.c.workflow_id),
+                    },
+                )
+                sess.execute(upsert_stmt)
 
         except Exception as e:
             log_error(f"Error creating trace: {e}")
@@ -2348,7 +2366,6 @@ class SqliteDb(BaseDb):
                 if run_id:
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
-                    log_debug(f"Filtering by session_id={session_id}")
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
                 if user_id:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
@@ -2370,14 +2387,12 @@ class SqliteDb(BaseDb):
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = sess.execute(count_stmt).scalar() or 0
-                log_debug(f"Total matching traces: {total_count}")
 
                 # Apply pagination
                 offset = (page - 1) * limit if page and limit else 0
                 paginated_stmt = base_stmt.order_by(table.c.start_time.desc()).limit(limit).offset(offset)
 
                 results = sess.execute(paginated_stmt).fetchall()
-                log_debug(f"Returning page {page} with {len(results)} traces")
 
                 traces = [Trace.from_dict(dict(row._mapping)) for row in results]
                 return traces, total_count
@@ -2414,12 +2429,6 @@ class SqliteDb(BaseDb):
         """
         try:
             from sqlalchemy import func
-
-            log_debug(
-                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
-                f"workflow_id={workflow_id}, team_id={team_id}, "
-                f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
-            )
 
             table = self._get_table(table_type="traces")
             if table is None:
@@ -2464,14 +2473,12 @@ class SqliteDb(BaseDb):
                 # Get total count of sessions
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = sess.execute(count_stmt).scalar() or 0
-                log_debug(f"Total matching sessions: {total_count}")
 
                 # Apply pagination and ordering
                 offset = (page - 1) * limit if page and limit else 0
                 paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
 
                 results = sess.execute(paginated_stmt).fetchall()
-                log_debug(f"Returning page {page} with {len(results)} session stats")
 
                 # Convert to list of dicts with datetime objects
                 from datetime import datetime

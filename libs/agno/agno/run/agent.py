@@ -11,6 +11,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
+from agno.run.requirement import RunRequirement
 from agno.utils.log import logger
 from agno.utils.media import (
     reconstruct_audio_list,
@@ -273,10 +274,17 @@ class RunCompletedEvent(BaseAgentRunEvent):
 class RunPausedEvent(BaseAgentRunEvent):
     event: str = RunEvent.run_paused.value
     tools: Optional[List[ToolExecution]] = None
+    requirements: Optional[List[RunRequirement]] = None
 
     @property
     def is_paused(self):
         return True
+
+    @property
+    def active_requirements(self) -> List[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [requirement for requirement in self.requirements if not requirement.is_resolved()]
 
 
 @dataclass
@@ -539,10 +547,19 @@ class RunOutput:
 
     status: RunStatus = RunStatus.running
 
+    # User control flow (HITL) requirements to continue a run when paused, in order of arrival
+    requirements: Optional[list[RunRequirement]] = None
+
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity
     workflow_step_id: Optional[str] = None  # FK: Points to StepOutput.step_id
+
+    @property
+    def active_requirements(self) -> list[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [requirement for requirement in self.requirements if not requirement.is_resolved()]
 
     @property
     def is_paused(self):
@@ -587,6 +604,7 @@ class RunOutput:
                 "reasoning_steps",
                 "reasoning_messages",
                 "references",
+                "requirements",
             ]
         }
 
@@ -672,6 +690,9 @@ class RunOutput:
                 else:
                     _dict["tools"].append(tool)
 
+        if self.requirements is not None:
+            _dict["requirements"] = [req.to_dict() if hasattr(req, "to_dict") else req for req in self.requirements]
+
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
 
@@ -717,6 +738,18 @@ class RunOutput:
 
         tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
+
+        # Handle requirements
+        requirements_data = data.pop("requirements", None)
+        requirements: Optional[List[RunRequirement]] = None
+        if requirements_data is not None:
+            requirements_list: List[RunRequirement] = []
+            for item in requirements_data:
+                if isinstance(item, RunRequirement):
+                    requirements_list.append(item)
+                elif isinstance(item, dict):
+                    requirements_list.append(RunRequirement.from_dict(item))
+            requirements = requirements_list if requirements_list else None
 
         images = reconstruct_images(data.pop("images", []))
         videos = reconstruct_videos(data.pop("videos", []))
@@ -772,6 +805,7 @@ class RunOutput:
             reasoning_steps=reasoning_steps,
             reasoning_messages=reasoning_messages,
             references=references,
+            requirements=requirements,
             **filtered_data,
         )
 
