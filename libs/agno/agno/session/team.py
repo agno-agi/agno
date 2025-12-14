@@ -142,12 +142,6 @@ class TeamSession:
         Returns:
             A list of Messages belonging to the session.
         """
-        if member_ids is not None and skip_member_messages:
-            skip_member_messages = False
-
-        if not self.runs:
-            return []
-
         # Get compressed message IDs once at the start (if filter_compressed)
         compressed_msg_ids: Optional[set] = None
         if filter_compressed:
@@ -172,6 +166,13 @@ class TeamSession:
                 return True
 
             return False
+
+        if member_ids is not None and skip_member_messages:
+            log_debug("Member IDs to filter by were provided. The skip_member_messages flag will be ignored.")
+            skip_member_messages = False
+
+        if not self.runs:
+            return []
 
         if skip_statuses is None:
             skip_statuses = [RunStatus.paused, RunStatus.cancelled, RunStatus.error]
@@ -241,6 +242,7 @@ class TeamSession:
                     else:
                         messages_from_history.append(message)
 
+        log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
 
     def get_chat_history(self, last_n_runs: Optional[int] = None) -> List[Message]:

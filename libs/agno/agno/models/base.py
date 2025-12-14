@@ -595,7 +595,7 @@ class Model(ABC):
                 # Compress context or tool results BEFORE making API call
                 if _compression_manager:
                     new_context = _compression_manager.compress(
-                        messages, tools, compressed_context, model=self, response_format=response_format
+                        messages, tools, compressed_context, response_format=response_format
                     )
                     if new_context is not None:
                         model_response.compressed_context = new_context
@@ -815,7 +815,7 @@ class Model(ABC):
                 # Compress context or tool results BEFORE making API call
                 if _compression_manager:
                     new_context = await _compression_manager.acompress(
-                        messages, tools, compressed_context, model=self, response_format=response_format
+                        messages, tools, compressed_context, response_format=response_format
                     )
                     if new_context is not None:
                         model_response.compressed_context = new_context
@@ -1262,7 +1262,7 @@ class Model(ABC):
                 pending_compressed_context = None
                 if _compression_manager:
                     new_context = _compression_manager.compress(
-                        messages, tools, compressed_context, model=self, response_format=response_format
+                        messages, tools, compressed_context, response_format=response_format
                     )
                     if new_context is not None:
                         compressed_context = new_context  # Update for subsequent iterations
@@ -1507,7 +1507,7 @@ class Model(ABC):
                 pending_compressed_context = None
                 if _compression_manager:
                     new_context = await _compression_manager.acompress(
-                        messages, tools, compressed_context, model=self, response_format=response_format
+                        messages, tools, compressed_context, response_format=response_format
                     )
                     if new_context is not None:
                         compressed_context = new_context  # Update for subsequent iterations

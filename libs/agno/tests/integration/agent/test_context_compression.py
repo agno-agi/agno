@@ -1,5 +1,3 @@
-"""Tests for full context compression."""
-
 import pytest
 
 from agno.agent import Agent
@@ -24,7 +22,6 @@ def context_compression_agent(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[search_tool, get_data],
         db=shared_db,
-        compress_context=True,
         compression_manager=CompressionManager(
             compress_context=True,
             compress_context_messages_limit=3,  # Low threshold for testing
@@ -50,11 +47,11 @@ def test_context_compression_sync(context_compression_agent, shared_db):
     session = context_compression_agent.get_session(context_compression_agent.session_id)
     assert session is not None
 
-    # Check if compression occurred by looking at session data
+    # Verify compression occurred
     compressed_ctx = session.get_compressed_context()
-    if compressed_ctx is not None:
-        assert compressed_ctx.content is not None, "Compressed context should have content"
-        assert len(compressed_ctx.message_ids) > 0, "Compressed context should track message IDs"
+    assert compressed_ctx is not None, "Context compression should have occurred"
+    assert compressed_ctx.content is not None, "Compressed context should have content"
+    assert len(compressed_ctx.message_ids) > 0, "Compressed context should track message IDs"
 
 
 @pytest.mark.asyncio
@@ -64,7 +61,6 @@ async def test_context_compression_async(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[search_tool, get_data],
         db=shared_db,
-        compress_context=True,
         compression_manager=CompressionManager(
             compress_context=True,
             compress_context_messages_limit=3,
@@ -83,9 +79,66 @@ async def test_context_compression_async(shared_db):
     response2 = await agent.arun("Now search for 'asyncio patterns'")
     assert response2.content is not None
 
-    # Verify session
+    # Verify compression occurred
     session = agent.get_session(agent.session_id)
     assert session is not None
+    compressed_ctx = session.get_compressed_context()
+    assert compressed_ctx is not None, "Context compression should have occurred"
+    assert compressed_ctx.content is not None, "Compressed context should have content"
+    assert len(compressed_ctx.message_ids) > 0, "Compressed context should track message IDs"
+
+
+def test_context_compression_stream(context_compression_agent, shared_db):
+    """Test that context compression works in sync streaming mode."""
+    # First run - consume stream
+    for _ in context_compression_agent.run("Search for 'Python programming'", stream=True):
+        pass
+
+    # Second run - consume stream
+    for _ in context_compression_agent.run("Now search for 'JavaScript frameworks'", stream=True):
+        pass
+
+    # Verify compression occurred
+    session = context_compression_agent.get_session(context_compression_agent.session_id)
+    assert session is not None
+    compressed_ctx = session.get_compressed_context()
+    assert compressed_ctx is not None, "Context compression should have occurred"
+    assert compressed_ctx.content is not None, "Compressed context should have content"
+    assert len(compressed_ctx.message_ids) > 0, "Compressed context should track message IDs"
+
+
+@pytest.mark.asyncio
+async def test_context_compression_async_stream(shared_db):
+    """Test that context compression works in async streaming mode."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[search_tool, get_data],
+        db=shared_db,
+        compression_manager=CompressionManager(
+            compress_context=True,
+            compress_context_messages_limit=3,
+        ),
+        instructions="Use the tools as requested.",
+        add_history_to_context=True,
+        num_history_runs=5,
+        telemetry=False,
+    )
+
+    # First run - consume async stream
+    async for _ in agent.arun("Search for 'async Python'", stream=True):
+        pass
+
+    # Second run - consume async stream
+    async for _ in agent.arun("Now search for 'asyncio patterns'", stream=True):
+        pass
+
+    # Verify compression occurred
+    session = agent.get_session(agent.session_id)
+    assert session is not None
+    compressed_ctx = session.get_compressed_context()
+    assert compressed_ctx is not None, "Context compression should have occurred"
+    assert compressed_ctx.content is not None, "Compressed context should have content"
+    assert len(compressed_ctx.message_ids) > 0, "Compressed context should track message IDs"
 
 
 def test_context_compression_with_token_limit(shared_db):
@@ -113,9 +166,9 @@ def test_context_compression_with_token_limit(shared_db):
 
     assert response.content is not None
 
-    # Check compression stats
-    if compression_manager.stats.get("context_compressions", 0) > 0:
-        assert compression_manager.stats.get("messages_compressed", 0) > 0
+    # Verify compression occurred with low token limit
+    assert compression_manager.stats.get("context_compressions", 0) > 0, "Context compression should have triggered"
+    assert compression_manager.stats.get("messages_compressed", 0) > 0, "Messages should have been compressed"
 
 
 def test_context_compression_preserves_continuity(shared_db):
@@ -123,7 +176,6 @@ def test_context_compression_preserves_continuity(shared_db):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
-        compress_context=True,
         compression_manager=CompressionManager(
             compress_context=True,
             compress_context_messages_limit=2,  # Very low for testing
@@ -164,8 +216,8 @@ def test_no_context_compression_when_disabled(shared_db):
     assert compressed_ctx is None, "No compression should occur when disabled"
 
 
-def test_both_tool_and_context_compression(shared_db):
-    """Test that both tool and context compression can work together."""
+def test_context_compression_takes_precedence(shared_db):
+    """Test that context compression takes precedence over tool compression when both enabled."""
     compression_manager = CompressionManager(
         compress_tool_results=True,
         compress_context=True,
@@ -191,9 +243,7 @@ def test_both_tool_and_context_compression(shared_db):
 
     assert response.content is not None
 
-    # Verify stats - context compression takes precedence when both are enabled
-    # so we expect context compression stats
+    # Verify context compression took precedence
     stats = compression_manager.stats
-    # At least one type of compression should have occurred
-    total_compressions = stats.get("context_compressions", 0) + stats.get("tool_results_compressed", 0)
-    assert total_compressions >= 0  # May or may not trigger depending on token counts
+    assert stats.get("context_compressions", 0) > 0, "Context compression should have occurred"
+    assert stats.get("messages_compressed", 0) > 0, "Messages should have been compressed"

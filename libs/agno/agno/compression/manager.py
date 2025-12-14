@@ -33,51 +33,31 @@ class CompressionManager:
     stats: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
-        # If token limit is NOT set, apply default count-based limits
-        # If token limit IS set, count limits remain None (token-based only)
         if self.compress_token_limit is None:
             if self.compress_tool_results_limit is None:
                 self.compress_tool_results_limit = 3
             if self.compress_context_messages_limit is None:
                 self.compress_context_messages_limit = 10
 
+        if self.compress_token_limit is not None and not self.compress_tool_results and not self.compress_context:
+            log_warning(
+                "compress_token_limit is set but no compression strategy is enabled. "
+                "Set compress_tool_results=True or compress_context=True."
+            )
+
         if self.compress_tool_results and self.compress_context:
             log_warning("Both tool-based and context-based compression are enabled. Compressing full context.")
-
-    def should_compress(
-        self,
-        messages: List[Message],
-        tools: Optional[List] = None,
-        model: Optional[Model] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-    ) -> bool:
-        return self._should_compress_context(messages, tools, model, response_format) or self._should_compress_tools(
-            messages, tools, model, response_format
-        )
-
-    async def ashould_compress(
-        self,
-        messages: List[Message],
-        tools: Optional[List] = None,
-        model: Optional[Model] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-    ) -> bool:
-        """Async version of should_compress for token counting."""
-        return self._should_compress_context(messages, tools, model, response_format) or self._should_compress_tools(
-            messages, tools, model, response_format
-        )
 
     def compress(
         self,
         messages: List[Message],
         tools: Optional[List] = None,
         compressed_context: Optional[CompressedContext] = None,
-        model: Optional[Model] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> Optional[CompressedContext]:
-        if self._should_compress_context(messages, tools, model, response_format):
+        if self._should_compress_context(messages, tools, response_format):
             return self._compress_context(messages, compressed_context)
-        elif self._should_compress_tools(messages, tools, model, response_format):
+        elif self._should_compress_tools(messages, tools, response_format):
             self._compress_tools(messages)
         return None
 
@@ -86,12 +66,11 @@ class CompressionManager:
         messages: List[Message],
         tools: Optional[List] = None,
         compressed_context: Optional[CompressedContext] = None,
-        model: Optional[Model] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> Optional[CompressedContext]:
-        if self._should_compress_context(messages, tools, model, response_format):
+        if self._should_compress_context(messages, tools, response_format):
             return await self._acompress_context(messages, compressed_context)
-        elif self._should_compress_tools(messages, tools, model, response_format):
+        elif self._should_compress_tools(messages, tools, response_format):
             await self._acompress_tools(messages)
         return None
 
@@ -99,26 +78,21 @@ class CompressionManager:
         self,
         messages: List[Message],
         tools: Optional[List] = None,
-        model: Optional[Model] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> bool:
         if not self.compress_context:
             return False
 
-        # Use the Agent/Team's model for token counting
-        counting_model = model or self.model
-
-        # Token-based compression (if limit is set)
+        # Token-based compression
         if self.compress_token_limit:
-            if counting_model:
-                token_count = counting_model.count_tokens(messages, tools, output_schema=response_format)
+            if self.model:
+                token_count = self.model.count_tokens(messages, tools, output_schema=response_format)
                 if token_count >= self.compress_token_limit:
                     log_info(f"Context compression token limit hit: {token_count} >= {self.compress_token_limit}")
                     return True
-            # Token limit is set - only use token-based, don't fall back to message count
             return False
 
-        # Count-based fallback ONLY when no token limit is set
+        # Count-based compression
         if self.compress_context_messages_limit is None:
             return False
         msg_count = len([m for m in messages if m.role in ("user", "assistant", "tool")])
@@ -128,26 +102,21 @@ class CompressionManager:
         self,
         messages: List[Message],
         tools: Optional[List] = None,
-        model: Optional[Model] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> bool:
         if not self.compress_tool_results:
             return False
 
-        # Use the Agent/Team's model for token counting
-        counting_model = model or self.model
-
-        # Token-based compression (if limit is set)
+        # Token-based compression
         if self.compress_token_limit:
-            if counting_model:
-                token_count = counting_model.count_tokens(messages, tools, output_schema=response_format)
+            if self.model:
+                token_count = self.model.count_tokens(messages, tools, output_schema=response_format)
                 if token_count >= self.compress_token_limit:
                     log_info(f"Tool compression token limit hit: {token_count} >= {self.compress_token_limit}")
                     return True
-            # Token limit is set - only use token-based, don't fall back to tool count
             return False
 
-        # Count-based fallback ONLY when no token limit is set
+        # Count-based compression
         if self.compress_tool_results_limit is None:
             return False
         uncompressed = sum(1 for m in messages if m.role == "tool" and m.compressed_content is None)

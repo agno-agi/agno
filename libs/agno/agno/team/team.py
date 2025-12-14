@@ -1606,6 +1606,8 @@ class Team:
             # 6. Get the model response for the team leader
             self.model = cast(Model, self.model)
 
+            compression_enabled = self.compress_tool_results or self.compress_context
+
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
                 response_format=response_format,
@@ -1613,9 +1615,7 @@ class Team:
                 tool_choice=self.tool_choice,
                 tool_call_limit=self.tool_call_limit,
                 send_media_to_model=self.send_media_to_model,
-                compression_manager=self.compression_manager
-                if (self.compress_tool_results or self.compress_context)
-                else None,
+                compression_manager=self.compression_manager if compression_enabled else None,
                 compressed_context=session.get_compressed_context() if self.compress_context else None,
             )
 
@@ -2350,6 +2350,7 @@ class Team:
         14. Create session summary
         15. Cleanup and store (scrub, add to session, calculate metrics, save session)
         """
+
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         if run_context.dependencies is not None:
@@ -2461,6 +2462,8 @@ class Team:
             # Check for cancellation before model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
+            compression_enabled = self.compress_tool_results or self.compress_context
+
             # 8. Get the model response for the team leader
             model_response = await self.model.aresponse(
                 messages=run_messages.messages,
@@ -2470,9 +2473,7 @@ class Team:
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
                 run_response=run_response,
-                compression_manager=self.compression_manager
-                if (self.compress_tool_results or self.compress_context)
-                else None,
+                compression_manager=self.compression_manager if compression_enabled else None,
                 compressed_context=team_session.get_compressed_context() if self.compress_context else None,
             )  # type: ignore
 
@@ -3312,6 +3313,8 @@ class Team:
             stream_model_response = False
 
         full_model_response = ModelResponse()
+        compression_enabled = self.compress_tool_results or self.compress_context
+
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -3321,9 +3324,7 @@ class Team:
             stream_model_response=stream_model_response,
             send_media_to_model=self.send_media_to_model,
             compressed_context=session.get_compressed_context() if self.compress_context else None,
-            compression_manager=self.compression_manager
-            if (self.compress_tool_results or self.compress_context)
-            else None,
+            compression_manager=self.compression_manager if compression_enabled else None,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -3412,6 +3413,8 @@ class Team:
             stream_model_response = False
 
         full_model_response = ModelResponse()
+        compression_enabled = self.compress_tool_results or self.compress_context
+
         model_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -3422,9 +3425,7 @@ class Team:
             send_media_to_model=self.send_media_to_model,
             compressed_context=session.get_compressed_context() if self.compress_context else None,
             run_response=run_response,
-            compression_manager=self.compression_manager
-            if (self.compress_tool_results or self.compress_context)
-            else None,
+            compression_manager=self.compression_manager if compression_enabled else None,
         )  # type: ignore
         async for model_response_event in model_stream:
             for event in self._handle_model_response_chunk(
@@ -6437,6 +6438,7 @@ class Team:
                 limit=self.num_history_messages,
                 skip_roles=[skip_role] if skip_role else None,
                 team_id=self.id if self.parent_team_id is not None else None,
+                filter_compressed=self.compress_context,
             )
 
             if len(history) > 0:
@@ -6569,6 +6571,7 @@ class Team:
                 limit=self.num_history_messages,
                 skip_roles=[skip_role] if skip_role else None,
                 team_id=self.id,
+                filter_compressed=self.compress_context,
             )
 
             if len(history) > 0:

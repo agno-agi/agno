@@ -1,200 +1,59 @@
-import pytest
-
+from agno.compression.manager import CompressionManager
 from agno.models.message import Message
 
 
-@pytest.mark.asyncio
-async def test_ashould_compress_below_token_limit():
-    """Test async should_compress returns False when below token limit."""
-    from agno.compression.manager import CompressionManager
-    from agno.models.openai import OpenAIChat
-
-    model = OpenAIChat(id="gpt-4o")
-    messages = [Message(role="user", content="Hello")]
-
-    cm = CompressionManager(compress_tool_results=True, compress_token_limit=1000)
-
-    sync_result = cm.should_compress(messages, model=model)
-    async_result = await cm.ashould_compress(messages, model=model)
-
-    assert sync_result == async_result
-    assert sync_result is False
-
-
-@pytest.mark.asyncio
-async def test_ashould_compress_above_token_limit():
-    """Test async should_compress returns True when above token limit."""
-    from agno.compression.manager import CompressionManager
-    from agno.models.openai import OpenAIChat
-
-    model = OpenAIChat(id="gpt-4o")
-    messages = [Message(role="user", content="Hello " * 100)]
-
-    cm = CompressionManager(compress_tool_results=True, compress_token_limit=10)
-
-    sync_result = cm.should_compress(messages, model=model)
-    async_result = await cm.ashould_compress(messages, model=model)
-
-    assert sync_result == async_result
-    assert sync_result is True
-
-
-@pytest.mark.asyncio
-async def test_ashould_compress_disabled():
-    """Test async should_compress returns False when compression disabled."""
-    from agno.compression.manager import CompressionManager
-    from agno.models.openai import OpenAIChat
-
-    model = OpenAIChat(id="gpt-4o")
-    messages = [Message(role="user", content="Hello")]
-
-    cm = CompressionManager(compress_tool_results=False)
-
-    sync_result = cm.should_compress(messages, model=model)
-    async_result = await cm.ashould_compress(messages, model=model)
-
-    assert sync_result == async_result
-    assert sync_result is False
-
-
-def test_should_compress_below_token_limit():
-    """Test sync should_compress returns False when below token limit."""
-    from agno.compression.manager import CompressionManager
-    from agno.models.openai import OpenAIChat
-
-    model = OpenAIChat(id="gpt-4o")
-    messages = [Message(role="user", content="Hello")]
-
-    cm = CompressionManager(compress_tool_results=True, compress_token_limit=1000)
-    result = cm.should_compress(messages, model=model)
-
-    assert result is False
-
-
-def test_should_compress_above_token_limit():
-    """Test sync should_compress returns True when above token limit."""
-    from agno.compression.manager import CompressionManager
-    from agno.models.openai import OpenAIChat
-
-    model = OpenAIChat(id="gpt-4o")
-    messages = [Message(role="user", content="Hello " * 100)]
-
-    cm = CompressionManager(compress_tool_results=True, compress_token_limit=10)
-    result = cm.should_compress(messages, model=model)
-
-    assert result is True
-
-
-def test_should_compress_disabled():
-    """Test sync should_compress returns False when compression disabled."""
-    from agno.compression.manager import CompressionManager
-
-    messages = [Message(role="user", content="Hello")]
-
-    cm = CompressionManager(compress_tool_results=False)
-    result = cm.should_compress(messages)
-
-    assert result is False
-
-
-def test_should_compress_default_count_limit():
-    """Test that compress_tool_results_limit defaults to 3 when nothing is set."""
-    from agno.compression.manager import CompressionManager
-
+def test_default_count_limits():
+    """Test default count-based limits when no token limit is set."""
     cm = CompressionManager()
     assert cm.compress_tool_results_limit == 3
-
-    cm_with_token = CompressionManager(compress_token_limit=1000)
-    assert cm_with_token.compress_tool_results_limit is None
-
-    cm_with_count = CompressionManager(compress_tool_results_limit=5)
-    assert cm_with_count.compress_tool_results_limit == 5
+    assert cm.compress_context_messages_limit == 10
 
 
-def test_should_compress_count_based_below_limit():
-    """Test should_compress with count-based limit below threshold."""
-    from agno.compression.manager import CompressionManager
-
-    messages = [
-        Message(role="user", content="Hello"),
-        Message(role="tool", content="Result 1", tool_name="test"),
-    ]
-
-    cm = CompressionManager(compress_tool_results=True, compress_tool_results_limit=5)
-    result = cm.should_compress(messages)
-
-    assert result is False
+def test_count_limits_none_with_token_limit():
+    """Test that count limits are None when token limit is set."""
+    cm = CompressionManager(compress_token_limit=1000)
+    assert cm.compress_tool_results_limit is None
+    assert cm.compress_context_messages_limit is None
 
 
-def test_should_compress_count_based_above_limit():
-    """Test should_compress with count-based limit above threshold."""
-    from agno.compression.manager import CompressionManager
-
-    messages = [
-        Message(role="user", content="Hello"),
-        Message(role="tool", content="Result 1", tool_name="test1"),
-        Message(role="tool", content="Result 2", tool_name="test2"),
-        Message(role="tool", content="Result 3", tool_name="test3"),
-    ]
-
-    cm = CompressionManager(compress_tool_results=True, compress_tool_results_limit=2)
-    result = cm.should_compress(messages)
-
-    assert result is True
+def test_warning_when_token_limit_without_strategy(capsys):
+    """Test warning when token limit is set but no compression strategy enabled."""
+    CompressionManager(compress_token_limit=1000)
+    captured = capsys.readouterr()
+    assert "no compression strategy is enabled" in captured.out
 
 
-def test_should_compress_excludes_already_compressed():
-    """Already compressed messages should not count toward the limit."""
-    from agno.compression.manager import CompressionManager
-
-    messages = [
-        Message(role="user", content="Hello"),
-        Message(role="tool", content="Result 1", tool_name="test1", compressed_content="compressed"),
-        Message(role="tool", content="Result 2", tool_name="test2", compressed_content="compressed"),
-        Message(role="tool", content="Result 3", tool_name="test3"),
-    ]
-
-    cm = CompressionManager(compress_tool_results=True, compress_tool_results_limit=2)
-    result = cm.should_compress(messages)
-
-    assert result is False
+def test_warning_when_both_strategies_enabled(capsys):
+    """Test warning when both compression strategies are enabled."""
+    CompressionManager(compress_tool_results=True, compress_context=True)
+    captured = capsys.readouterr()
+    assert "Both tool-based and context-based compression are enabled" in captured.out
 
 
-@pytest.mark.asyncio
-async def test_ashould_compress_count_based_below_limit():
-    """Test async should_compress with count-based limit below threshold."""
-    from agno.compression.manager import CompressionManager
+def test_should_compress_context_count_based():
+    """Test _should_compress_context with count-based threshold."""
+    cm = CompressionManager(compress_context=True, compress_context_messages_limit=3)
 
-    messages = [
-        Message(role="user", content="Hello"),
-        Message(role="tool", content="Result 1", tool_name="test"),
-    ]
+    # Below limit
+    messages = [Message(role="user", content="Hello"), Message(role="assistant", content="Hi")]
+    assert cm._should_compress_context(messages) is False
 
-    cm = CompressionManager(compress_tool_results=True, compress_tool_results_limit=5)
-
-    sync_result = cm.should_compress(messages)
-    async_result = await cm.ashould_compress(messages)
-
-    assert sync_result == async_result
-    assert sync_result is False
+    # At limit
+    messages.append(Message(role="user", content="How are you?"))
+    assert cm._should_compress_context(messages) is True
 
 
-@pytest.mark.asyncio
-async def test_ashould_compress_count_based_above_limit():
-    """Test async should_compress with count-based limit above threshold."""
-    from agno.compression.manager import CompressionManager
-
-    messages = [
-        Message(role="user", content="Hello"),
-        Message(role="tool", content="Result 1", tool_name="test1"),
-        Message(role="tool", content="Result 2", tool_name="test2"),
-        Message(role="tool", content="Result 3", tool_name="test3"),
-    ]
-
+def test_should_compress_tools_count_based():
+    """Test _should_compress_tools with count-based threshold."""
     cm = CompressionManager(compress_tool_results=True, compress_tool_results_limit=2)
 
-    sync_result = cm.should_compress(messages)
-    async_result = await cm.ashould_compress(messages)
+    # Below limit
+    messages = [Message(role="tool", content="Result 1")]
+    assert cm._should_compress_tools(messages) is False
 
-    assert sync_result == async_result
-    assert sync_result is True
+    # At limit (ignores already compressed)
+    messages.append(Message(role="tool", content="Result 2", compressed_content="Compressed"))
+    assert cm._should_compress_tools(messages) is False  # Only 1 uncompressed
+
+    messages.append(Message(role="tool", content="Result 3"))
+    assert cm._should_compress_tools(messages) is True  # 2 uncompressed

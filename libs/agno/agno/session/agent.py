@@ -139,9 +139,6 @@ class AgentSession:
         Returns:
             A list of Messages belonging to the session.
         """
-        if not self.runs:
-            return []
-
         # Get compressed message IDs once at the start (if filter_compressed)
         compressed_msg_ids: Optional[set] = None
         if filter_compressed:
@@ -166,6 +163,9 @@ class AgentSession:
                 return True
 
             return False
+
+        if not self.runs:
+            return []
 
         if skip_statuses is None:
             skip_statuses = [RunStatus.paused, RunStatus.cancelled, RunStatus.error]
@@ -234,6 +234,7 @@ class AgentSession:
                     else:
                         messages_from_history.append(message)
 
+        log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
 
     def get_chat_history(self, last_n_runs: Optional[int] = None) -> List[Message]:

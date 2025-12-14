@@ -1153,6 +1153,8 @@ class Agent:
             # 6. Generate a response from the Model (includes running function calls)
             self.model = cast(Model, self.model)
 
+            compression_enabled = self.compress_tool_results or self.compress_context
+
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
                 tools=_tools,
@@ -1161,9 +1163,7 @@ class Agent:
                 response_format=response_format,
                 run_response=run_response,
                 send_media_to_model=self.send_media_to_model,
-                compression_manager=self.compression_manager
-                if (self.compress_tool_results or self.compress_context)
-                else None,
+                compression_manager=self.compression_manager if compression_enabled else None,
                 compressed_context=session.get_compressed_context() if self.compress_context else None,
             )
 
@@ -1944,6 +1944,7 @@ class Agent:
         15. Create session summary
         16. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
         """
+
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # 1. Read or create session. Reads from the database if provided.
@@ -2057,6 +2058,8 @@ class Agent:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 9. Generate a response from the Model (includes running function calls)
+            compression_enabled = self.compress_tool_results or self.compress_context
+
             model_response: ModelResponse = await self.model.aresponse(
                 messages=run_messages.messages,
                 tools=_tools,
@@ -2065,9 +2068,7 @@ class Agent:
                 response_format=response_format,
                 send_media_to_model=self.send_media_to_model,
                 run_response=run_response,
-                compression_manager=self.compression_manager
-                if (self.compress_tool_results or self.compress_context)
-                else None,
+                compression_manager=self.compression_manager if compression_enabled else None,
                 compressed_context=agent_session.get_compressed_context() if self.compress_context else None,
             )
 
@@ -5176,6 +5177,8 @@ class Agent:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
+        compression_enabled = self.compress_tool_results or self.compress_context
+
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -5185,9 +5188,7 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
-            compression_manager=self.compression_manager
-            if (self.compress_tool_results or self.compress_context)
-            else None,
+            compression_manager=self.compression_manager if compression_enabled else None,
             compressed_context=session.get_compressed_context() if self.compress_context else None,
         ):
             yield from self._handle_model_response_chunk(
@@ -5270,6 +5271,8 @@ class Agent:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
+        compression_enabled = self.compress_tool_results or self.compress_context
+
         model_response_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -5279,9 +5282,7 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
-            compression_manager=self.compression_manager
-            if (self.compress_tool_results or self.compress_context)
-            else None,
+            compression_manager=self.compression_manager if compression_enabled else None,
             compressed_context=session.get_compressed_context() if self.compress_context else None,
         )  # type: ignore
 
