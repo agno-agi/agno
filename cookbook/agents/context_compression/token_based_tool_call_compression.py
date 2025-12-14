@@ -42,12 +42,13 @@ compression_prompt = """
 compression_manager = CompressionManager(
     model=OpenAIChat(id="gpt-5-mini"),
     compress_token_limit=5000,
+    compress_context=True,
     compress_tool_call_instructions=compression_prompt,
 )
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[DuckDuckGoTools(verify_ssl=False)],
     description="Specialized in tracking competitor activities",
     instructions="Use the search tools and always use the latest information and data.",
     db=SqliteDb(db_file="tmp/token_based_tool_call_compression.db"),
