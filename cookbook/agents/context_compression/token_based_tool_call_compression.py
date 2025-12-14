@@ -42,7 +42,7 @@ compression_prompt = """
 compression_manager = CompressionManager(
     model=OpenAIChat(id="gpt-5-mini"),
     compress_token_limit=5000,
-    compress_context=True,
+    compress_tool_results=True,
     compress_tool_call_instructions=compression_prompt,
 )
 

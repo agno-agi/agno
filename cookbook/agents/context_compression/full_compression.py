@@ -20,48 +20,34 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 
-# Create a compression manager with a token limit
 compression_manager = CompressionManager(
     compress_context=True,
-    compress_token_limit=5000,  # Compress when context exceeds 4000 tokens
+    compress_token_limit=5000,
 )
 
 agent = Agent(
     model=OpenAIChat(id="gpt-5-mini"),
-    tools=[DuckDuckGoTools(verify_ssl=False)],
+    tools=[DuckDuckGoTools()],
     description="A research assistant that can search the web for information",
     instructions="Use the search tools to find the latest information. Be thorough and cite sources.",
-    db=SqliteDb(db_file="tmp/dbs/full_compression1.db"),
+    db=SqliteDb(db_file="tmp/full_compression.db"),
     compression_manager=compression_manager,
-    add_history_to_context=True,  # Important: enable history so compression can work across runs
+    add_history_to_context=True, 
     num_history_runs=5,
     debug_mode=True,
 )
 
-# First research task
 agent.print_response(
     "Research the latest developments in AI model reasoning capabilities. Focus on o1, Claude, and Gemini, Grok, deepseek, mistral, etc.",
     stream=True,
 )
 
-print("\n" + "=" * 50 + "\n")
-
-# Second research task - context may be compressed here
 agent.print_response(
     "Now compare the pricing of these models for enterprise use. And also consumer offerings",
     stream=True,
 )
 
-print("\n" + "=" * 50 + "\n")
-
-# Third task - builds on previous context
 agent.print_response(
     "Based on your research, which model would you recommend for a startup building a coding assistant?",
     stream=True,
 )
-
-# Show compression stats
-if compression_manager.stats:
-    print("\nCompression Statistics:")
-    for key, value in compression_manager.stats.items():
-        print(f"  {key}: {value}")
