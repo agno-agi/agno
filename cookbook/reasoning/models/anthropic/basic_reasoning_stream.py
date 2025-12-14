@@ -8,8 +8,9 @@ is streamed as it arrives instead of all at once.
 import asyncio
 
 from agno.agent import Agent
-from agno.run.agent import RunEvent # noqa
 from agno.models.anthropic import Claude
+from agno.run.agent import RunEvent  # noqa
+
 
 async def streaming_reasoning():
     """Test streaming reasoning with an OpenAI model."""
@@ -27,7 +28,7 @@ async def streaming_reasoning():
 
     await agent.aprint_response(prompt, stream=True, stream_events=True)
 
-    # # or you can capture the event using 
+    # # or you can capture the event using
     # async for run_output_event in agent.arun(
     #     prompt,
     #     stream=True,

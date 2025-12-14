@@ -52,7 +52,8 @@ def get_anthropic_reasoning(reasoning_agent: "Agent", messages: List[Message]) -
 
 
 def get_anthropic_reasoning_stream(
-    reasoning_agent: "Agent", messages: List[Message]  # type: ignore  # noqa: F821
+    reasoning_agent: "Agent",
+    messages: List[Message],  # type: ignore  # noqa: F821
 ) -> Iterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from Anthropic Claude model.
@@ -122,7 +123,8 @@ async def aget_anthropic_reasoning(reasoning_agent: "Agent", messages: List[Mess
 
 
 async def aget_anthropic_reasoning_stream(
-    reasoning_agent: "Agent", messages: List[Message]  # type: ignore  # noqa: F821
+    reasoning_agent: "Agent",
+    messages: List[Message],  # type: ignore  # noqa: F821
 ) -> AsyncIterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from Anthropic Claude model asynchronously.
