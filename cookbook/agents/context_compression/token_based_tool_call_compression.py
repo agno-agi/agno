@@ -48,7 +48,7 @@ compression_manager = CompressionManager(
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools(verify_ssl=False)],
+    tools=[DuckDuckGoTools()],
     description="Specialized in tracking competitor activities",
     instructions="Use the search tools and always use the latest information and data.",
     db=SqliteDb(db_file="tmp/token_based_tool_call_compression.db"),

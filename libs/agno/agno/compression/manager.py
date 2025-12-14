@@ -194,6 +194,7 @@ class CompressionManager:
         conversation_text = "\n".join(conversation_parts)
         compression_prompt = self.compress_context_instructions or CONTEXT_COMPRESSION_PROMPT
 
+        # Generate a new combined summary from: previous summary + new messages
         try:
             response = self.model.response(
                 messages=[
