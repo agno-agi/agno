@@ -11,6 +11,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
 from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.tokens import count_text_tokens
 
 
 @dataclass
@@ -217,15 +218,15 @@ class CompressionManager:
                 updated_at=datetime.now(),
             )
 
-            # Update stats
-            original_len = len(conversation_text)
-            compressed_len = len(response.content)
+            original_tokens = count_text_tokens(conversation_text, self.model.id)
+            compressed_tokens = count_text_tokens(response.content, self.model.id)
             self.stats["context_compressions"] = self.stats.get("context_compressions", 0) + 1
-            self.stats["original_context_size"] = self.stats.get("original_context_size", 0) + original_len
-            self.stats["compressed_context_size"] = self.stats.get("compressed_context_size", 0) + compressed_len
-            self.stats["messages_compressed"] = self.stats.get("messages_compressed", 0) + len(msgs_to_compress)
+            self.stats["original_context_tokens"] = self.stats.get("original_context_tokens", 0) + original_tokens
+            self.stats["compressed_context_tokens"] = self.stats.get("compressed_context_tokens", 0) + compressed_tokens
 
-            log_info(f"Context compressed: {original_len} -> {compressed_len} chars ({len(msgs_to_compress)} msgs)")
+            log_info(
+                f"Context compressed: {original_tokens} -> {compressed_tokens} tokens ({len(msgs_to_compress)} msgs)"
+            )
 
             # 5. Rebuild message list: system + summary + current_user + last_tool_batch
             new_messages: List[Message] = []
@@ -362,15 +363,16 @@ class CompressionManager:
                 updated_at=datetime.now(),
             )
 
-            # Update stats
-            original_len = len(conversation_text)
-            compressed_len = len(response.content)
+            # Update stats (track tokens, not chars)
+            original_tokens = count_text_tokens(conversation_text, self.model.id)
+            compressed_tokens = count_text_tokens(response.content, self.model.id)
             self.stats["context_compressions"] = self.stats.get("context_compressions", 0) + 1
-            self.stats["original_context_size"] = self.stats.get("original_context_size", 0) + original_len
-            self.stats["compressed_context_size"] = self.stats.get("compressed_context_size", 0) + compressed_len
-            self.stats["messages_compressed"] = self.stats.get("messages_compressed", 0) + len(msgs_to_compress)
+            self.stats["original_context_tokens"] = self.stats.get("original_context_tokens", 0) + original_tokens
+            self.stats["compressed_context_tokens"] = self.stats.get("compressed_context_tokens", 0) + compressed_tokens
 
-            log_info(f"Context compressed: {original_len} -> {compressed_len} chars ({len(msgs_to_compress)} msgs)")
+            log_info(
+                f"Context compressed: {original_tokens} -> {compressed_tokens} tokens ({len(msgs_to_compress)} msgs)"
+            )
 
             # 5. Rebuild message list: system + summary + current_user + last_tool_batch
             new_messages: List[Message] = []
@@ -419,7 +421,7 @@ class CompressionManager:
             return
 
         for tool_msg in uncompressed_tools:
-            original_len = len(str(tool_msg.content)) if tool_msg.content else 0
+            original_content = str(tool_msg.content) if tool_msg.content else ""
             compressed = self._compress_tool_result(tool_msg)
             if compressed:
                 tool_msg.compressed_content = compressed
@@ -427,8 +429,11 @@ class CompressionManager:
                 self.stats["tool_results_compressed"] = (
                     self.stats.get("tool_results_compressed", 0) + tool_results_count
                 )
-                self.stats["original_size"] = self.stats.get("original_size", 0) + original_len
-                self.stats["compressed_size"] = self.stats.get("compressed_size", 0) + len(compressed)
+                # Track tokens, not chars (model is set after _compress_tool_result)
+                original_tokens = count_text_tokens(original_content, self.model.id)
+                compressed_tokens = count_text_tokens(compressed, self.model.id)
+                self.stats["original_tool_tokens"] = self.stats.get("original_tool_tokens", 0) + original_tokens
+                self.stats["compressed_tool_tokens"] = self.stats.get("compressed_tool_tokens", 0) + compressed_tokens
             else:
                 log_warning(f"Compression failed for {tool_msg.tool_name}")
 
@@ -465,23 +470,26 @@ class CompressionManager:
         if not uncompressed_tools:
             return
 
-        # Track original sizes before compression
-        original_sizes = [len(str(msg.content)) if msg.content else 0 for msg in uncompressed_tools]
+        # Track original content before compression (for token counting)
+        original_contents = [str(msg.content) if msg.content else "" for msg in uncompressed_tools]
 
         # Parallel compression using asyncio.gather
         tasks = [self._acompress_tool_result(msg) for msg in uncompressed_tools]
         results = await asyncio.gather(*tasks)
 
-        # Apply results and track stats
-        for msg, compressed, original_len in zip(uncompressed_tools, results, original_sizes):
+        # Apply results and track stats (model is set after compression calls)
+        for msg, compressed, original_content in zip(uncompressed_tools, results, original_contents):
             if compressed:
                 msg.compressed_content = compressed
                 tool_results_count = len(msg.tool_calls) if msg.tool_calls else 1
                 self.stats["tool_results_compressed"] = (
                     self.stats.get("tool_results_compressed", 0) + tool_results_count
                 )
-                self.stats["original_size"] = self.stats.get("original_size", 0) + original_len
-                self.stats["compressed_size"] = self.stats.get("compressed_size", 0) + len(compressed)
+                # Track tokens, not chars
+                original_tokens = count_text_tokens(original_content, self.model.id)
+                compressed_tokens = count_text_tokens(compressed, self.model.id)
+                self.stats["original_tool_tokens"] = self.stats.get("original_tool_tokens", 0) + original_tokens
+                self.stats["compressed_tool_tokens"] = self.stats.get("compressed_tool_tokens", 0) + compressed_tokens
             else:
                 log_warning(f"Compression failed for {msg.tool_name}")
 

@@ -19,6 +19,8 @@ class ModelResponseEvent(str, Enum):
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     assistant_response = "AssistantResponse"
+    compression_started = "CompressionStarted"
+    compression_completed = "CompressionCompleted"
 
 
 @dataclass

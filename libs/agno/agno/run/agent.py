@@ -170,6 +170,9 @@ class RunEvent(str, Enum):
     output_model_response_started = "OutputModelResponseStarted"
     output_model_response_completed = "OutputModelResponseCompleted"
 
+    compression_started = "CompressionStarted"
+    compression_completed = "CompressionCompleted"
+
     custom_event = "CustomEvent"
 
 
@@ -417,6 +420,25 @@ class OutputModelResponseCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class CompressionStartedEvent(BaseAgentRunEvent):
+    """Event sent when context or tool compression starts"""
+
+    event: str = RunEvent.compression_started.value
+    compression_type: str = ""  # "tool" or "context"
+
+
+@dataclass
+class CompressionCompletedEvent(BaseAgentRunEvent):
+    """Event sent when context or tool compression completes"""
+
+    event: str = RunEvent.compression_completed.value
+    compression_type: str = ""  # "tool" or "context"
+    original_size: int = 0
+    compressed_size: int = 0
+    items_compressed: int = 0  # tools or messages
+
+
+@dataclass
 class CustomEvent(BaseAgentRunEvent):
     event: str = RunEvent.custom_event.value
 
@@ -453,6 +475,8 @@ RunOutputEvent = Union[
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     OutputModelResponseCompletedEvent,
+    CompressionStartedEvent,
+    CompressionCompletedEvent,
     CustomEvent,
 ]
 
@@ -485,6 +509,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     RunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
     RunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
+    RunEvent.compression_started.value: CompressionStartedEvent,
+    RunEvent.compression_completed.value: CompressionCompletedEvent,
     RunEvent.custom_event.value: CustomEvent,
 }
 

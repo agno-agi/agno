@@ -1261,12 +1261,36 @@ class Model(ABC):
                 # Compress context or tool results BEFORE invoke
                 pending_compressed_context = None
                 if _compression_manager:
+                    # Check if compression will happen and emit started event
+                    compression_type = None
+                    if _compression_manager._should_compress_context(messages, tools, response_format):
+                        compression_type = "context"
+                    elif _compression_manager._should_compress_tools(messages, tools, response_format):
+                        compression_type = "tool"
+
+                    if compression_type:
+                        yield ModelResponse(
+                            event=ModelResponseEvent.compression_started.value,
+                            extra={"compression_type": compression_type},
+                        )
+
                     new_context = _compression_manager.compress(
                         messages, tools, compressed_context, response_format=response_format
                     )
                     if new_context is not None:
                         compressed_context = new_context  # Update for subsequent iterations
                         pending_compressed_context = new_context  # Save for yielded response
+
+                    # Emit completed event with stats if compression happened
+                    if compression_type and _compression_manager.stats:
+                        stats = _compression_manager.stats
+                        yield ModelResponse(
+                            event=ModelResponseEvent.compression_completed.value,
+                            extra={
+                                "compression_type": compression_type,
+                                "stats": stats.copy(),
+                            },
+                        )
 
                 assistant_message = Message(role=self.assistant_message_role)
                 # Create assistant message and stream data
@@ -1506,12 +1530,36 @@ class Model(ABC):
                 # Compress context or tool results BEFORE making API call
                 pending_compressed_context = None
                 if _compression_manager:
+                    # Check if compression will happen and emit started event
+                    compression_type = None
+                    if _compression_manager._should_compress_context(messages, tools, response_format):
+                        compression_type = "context"
+                    elif _compression_manager._should_compress_tools(messages, tools, response_format):
+                        compression_type = "tool"
+
+                    if compression_type:
+                        yield ModelResponse(
+                            event=ModelResponseEvent.compression_started.value,
+                            extra={"compression_type": compression_type},
+                        )
+
                     new_context = await _compression_manager.acompress(
                         messages, tools, compressed_context, response_format=response_format
                     )
                     if new_context is not None:
                         compressed_context = new_context  # Update for subsequent iterations
                         pending_compressed_context = new_context  # Save for yielded response
+
+                    # Emit completed event with stats if compression happened
+                    if compression_type and _compression_manager.stats:
+                        stats = _compression_manager.stats
+                        yield ModelResponse(
+                            event=ModelResponseEvent.compression_completed.value,
+                            extra={
+                                "compression_type": compression_type,
+                                "stats": stats.copy(),
+                            },
+                        )
 
                 # Create assistant message and stream data
                 assistant_message = Message(role=self.assistant_message_role)

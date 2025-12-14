@@ -107,6 +107,8 @@ from agno.utils.agent import (
 )
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
+    create_team_compression_completed_event,
+    create_team_compression_started_event,
     create_team_parser_model_response_completed_event,
     create_team_parser_model_response_started_event,
     create_team_post_hook_completed_event,
@@ -3761,6 +3763,30 @@ class Team:
                                     "reasoning_time_taken"
                                 ] + float(metrics.duration)
 
+                            # Yield reasoning step event for think/analyze tools
+                            if stream_events and reasoning_step is not None:
+                                if reasoning_state is not None and not reasoning_state["reasoning_started"]:
+                                    yield handle_event(  # type: ignore
+                                        create_team_reasoning_started_event(
+                                            from_run_response=run_response,
+                                        ),
+                                        run_response,
+                                        events_to_skip=self.events_to_skip,
+                                        store_events=self.store_events,
+                                    )
+                                    reasoning_state["reasoning_started"] = True
+
+                                yield handle_event(  # type: ignore
+                                    create_team_reasoning_step_event(
+                                        from_run_response=run_response,
+                                        reasoning_step=reasoning_step,
+                                        reasoning_content=run_response.reasoning_content or "",
+                                    ),
+                                    run_response,
+                                    events_to_skip=self.events_to_skip,
+                                    store_events=self.store_events,
+                                )
+
                         if stream_events:
                             yield handle_event(  # type: ignore
                                 create_team_tool_call_completed_event(
@@ -3773,29 +3799,34 @@ class Team:
                                 store_events=self.store_events,
                             )
 
-                if stream_events:
-                    if reasoning_step is not None:
-                        if reasoning_state is not None and not reasoning_state["reasoning_started"]:
-                            yield handle_event(  # type: ignore
-                                create_team_reasoning_started_event(
-                                    from_run_response=run_response,
-                                ),
-                                run_response,
-                                events_to_skip=self.events_to_skip,
-                                store_events=self.store_events,
-                            )
-                            reasoning_state["reasoning_started"] = True
+            # Handle compression events
+            elif model_response_event.event == ModelResponseEvent.compression_started.value:
+                if stream_events and model_response_event.extra:
+                    compression_type = model_response_event.extra.get("compression_type", "")
+                    yield handle_event(  # type: ignore
+                        create_team_compression_started_event(
+                            from_run_response=run_response,
+                            compression_type=compression_type,
+                        ),
+                        run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                    )
 
-                        yield handle_event(  # type: ignore
-                            create_team_reasoning_step_event(
-                                from_run_response=run_response,
-                                reasoning_step=reasoning_step,
-                                reasoning_content=run_response.reasoning_content or "",
-                            ),
-                            run_response,
-                            events_to_skip=self.events_to_skip,
-                            store_events=self.store_events,
-                        )
+            elif model_response_event.event == ModelResponseEvent.compression_completed.value:
+                if stream_events and model_response_event.extra:
+                    compression_type = model_response_event.extra.get("compression_type", "")
+                    stats = model_response_event.extra.get("stats", {})
+                    yield handle_event(  # type: ignore
+                        create_team_compression_completed_event(
+                            from_run_response=run_response,
+                            compression_type=compression_type,
+                            stats=stats,
+                        ),
+                        run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                    )
 
     def _convert_response_to_structured_format(
         self, run_response: Union[TeamRunOutput, RunOutput, ModelResponse], run_context: Optional[RunContext] = None

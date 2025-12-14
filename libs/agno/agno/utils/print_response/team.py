@@ -262,21 +262,44 @@ def print_response(
                     # Join with blank lines between items
                     tool_calls_text = "\n\n".join(lines)
 
-                    # Add compression stats at end of tool calls
-                    if team.compression_manager is not None and team.compression_manager.stats:
-                        stats = team.compression_manager.stats
-                        saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
-                        orig = stats.get("original_size", 1)
-                        if stats.get("tool_results_compressed", 0) > 0:
-                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
-                        team.compression_manager.stats.clear()
-
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
                         title="Team Tool Calls",
                         border_style="yellow",
                     )
                     panels.append(team_tool_calls_panel)
+
+                    # Add compression stats panel if available
+                    if team.compression_manager is not None and team.compression_manager.stats:
+                        stats = team.compression_manager.stats
+                        stats_text = Text()
+
+                        # Tool compression stats
+                        if stats.get("tool_results_compressed", 0) > 0:
+                            tool_saved = stats.get("original_tool_tokens", 0) - stats.get("compressed_tool_tokens", 0)
+                            tool_orig = stats.get("original_tool_tokens", 1)
+                            stats_text.append(f"Compressions: {stats['tool_results_compressed']}\n")
+                            stats_text.append(f"Saved: {tool_saved:,} tokens ({tool_saved / tool_orig * 100:.0f}%)\n")
+
+                        # Context compression stats
+                        if stats.get("context_compressions", 0) > 0:
+                            ctx_saved = stats.get("original_context_tokens", 0) - stats.get(
+                                "compressed_context_tokens", 0
+                            )
+                            ctx_orig = stats.get("original_context_tokens", 1)
+                            stats_text.append(f"Compressions: {stats['context_compressions']}\n")
+                            stats_text.append(f"Saved: {ctx_saved:,} tokens ({ctx_saved / ctx_orig * 100:.0f}%)\n")
+
+                        if stats_text.plain.strip():
+                            compression_panel = create_panel(
+                                content=stats_text,
+                                title="Compression",
+                                border_style="magenta",
+                            )
+                            panels.append(compression_panel)
+
+                        team.compression_manager.stats.clear()
+
                     live_console.update(Group(*panels))
 
             response_content_batch: Union[str, JSON, Markdown] = _parse_response_content(  # type: ignore
@@ -485,6 +508,22 @@ def print_response_stream(
                         processed_tool_calls.add(tool_id)
                         team_tool_calls.append(tool)
 
+                # Handle compression events
+                if resp.event == TeamRunEvent.compression_started:  # type: ignore
+                    compression_type = getattr(resp, "compression_type", "")
+                    status_text = (
+                        "Compressing context..." if compression_type == "context" else "Compressing tool results..."
+                    )
+                    status = Status(status_text, spinner="aesthetic", speed=0.4, refresh_per_second=10)
+                    panels[0] = status
+                    live_console.update(Group(*panels))
+
+                if resp.event == TeamRunEvent.compression_completed:  # type: ignore
+                    # Reset status back to thinking after compression completes
+                    status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+                    panels[0] = status
+                    live_console.update(Group(*panels))
+
             # Collect member tool calls, avoiding duplicates
             if show_member_responses and hasattr(resp, "member_responses") and resp.member_responses:
                 for member_response in resp.member_responses:
@@ -515,7 +554,7 @@ def print_response_stream(
                 response_content_stream = Markdown(escaped_content)
 
             # Create new panels for each chunk
-            panels = []
+            panels = [status]
 
             if input_content and show_message:
                 render = True
@@ -543,9 +582,6 @@ def print_response_stream(
                     border_style="green",
                 )
                 panels.append(thinking_panel)
-            elif _response_content == "":
-                # Keep showing status if no content yet
-                panels.append(status)
 
             # Process member responses and their tool calls
             for member_response in (
@@ -626,20 +662,41 @@ def print_response_stream(
                     # Join with blank lines between items
                     tool_calls_text = "\n\n".join(lines)
 
-                    # Add compression stats if available (don't clear - will be cleared in final_panels)
-                    if team.compression_manager is not None and team.compression_manager.stats:
-                        stats = team.compression_manager.stats
-                        saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
-                        orig = stats.get("original_size", 1)
-                        if stats.get("tool_results_compressed", 0) > 0:
-                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
-
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
                         title="Team Tool Calls",
                         border_style="yellow",
                     )
                     panels.append(team_tool_calls_panel)
+
+                    # Add compression stats panel if available (don't clear - will be cleared in final_panels)
+                    if team.compression_manager is not None and team.compression_manager.stats:
+                        stats = team.compression_manager.stats
+                        stats_text = Text()
+
+                        # Tool compression stats
+                        if stats.get("tool_results_compressed", 0) > 0:
+                            tool_saved = stats.get("original_tool_tokens", 0) - stats.get("compressed_tool_tokens", 0)
+                            tool_orig = stats.get("original_tool_tokens", 1)
+                            stats_text.append(f"Compressions: {stats['tool_results_compressed']}\n")
+                            stats_text.append(f"Saved: {tool_saved:,} tokens ({tool_saved / tool_orig * 100:.0f}%)\n")
+
+                        # Context compression stats
+                        if stats.get("context_compressions", 0) > 0:
+                            ctx_saved = stats.get("original_context_tokens", 0) - stats.get(
+                                "compressed_context_tokens", 0
+                            )
+                            ctx_orig = stats.get("original_context_tokens", 1)
+                            stats_text.append(f"Compressions: {stats['context_compressions']}\n")
+                            stats_text.append(f"Saved: {ctx_saved:,} tokens ({ctx_saved / ctx_orig * 100:.0f}%)\n")
+
+                        if stats_text.plain.strip():
+                            compression_panel = create_panel(
+                                content=stats_text,
+                                title="Compression",
+                                border_style="magenta",
+                            )
+                            panels.append(compression_panel)
 
             # Add the team response panel at the end
             if response_content_stream:
@@ -836,21 +893,41 @@ def print_response_stream(
 
                 tool_calls_text = "\n\n".join(lines)
 
-                # Add compression stats at end of tool calls
-                if team.compression_manager is not None and team.compression_manager.stats:
-                    stats = team.compression_manager.stats
-                    saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
-                    orig = stats.get("original_size", 1)
-                    if stats.get("tool_results_compressed", 0) > 0:
-                        tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
-                    team.compression_manager.stats.clear()
-
                 team_tool_calls_panel = create_panel(
                     content=tool_calls_text,
                     title="Team Tool Calls",
                     border_style="yellow",
                 )
                 final_panels.append(team_tool_calls_panel)
+
+                # Add compression stats panel if available
+                if team.compression_manager is not None and team.compression_manager.stats:
+                    stats = team.compression_manager.stats
+                    stats_text = Text()
+
+                    # Tool compression stats
+                    if stats.get("tool_results_compressed", 0) > 0:
+                        tool_saved = stats.get("original_tool_tokens", 0) - stats.get("compressed_tool_tokens", 0)
+                        tool_orig = stats.get("original_tool_tokens", 1)
+                        stats_text.append(f"Compressions: {stats['tool_results_compressed']}\n")
+                        stats_text.append(f"Saved: {tool_saved:,} tokens ({tool_saved / tool_orig * 100:.0f}%)\n")
+
+                    # Context compression stats
+                    if stats.get("context_compressions", 0) > 0:
+                        ctx_saved = stats.get("original_context_tokens", 0) - stats.get("compressed_context_tokens", 0)
+                        ctx_orig = stats.get("original_context_tokens", 1)
+                        stats_text.append(f"Compressions: {stats['context_compressions']}\n")
+                        stats_text.append(f"Saved: {ctx_saved:,} tokens ({ctx_saved / ctx_orig * 100:.0f}%)\n")
+
+                    if stats_text.plain.strip():
+                        compression_panel = create_panel(
+                            content=stats_text,
+                            title="Compression",
+                            border_style="magenta",
+                        )
+                        final_panels.append(compression_panel)
+
+                    team.compression_manager.stats.clear()
 
         # Add team response
         if _response_content:
@@ -1127,21 +1204,44 @@ async def aprint_response(
 
                     tool_calls_text = "\n\n".join(lines)
 
-                    # Add compression stats at end of tool calls
-                    if team.compression_manager is not None and team.compression_manager.stats:
-                        stats = team.compression_manager.stats
-                        saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
-                        orig = stats.get("original_size", 1)
-                        if stats.get("tool_results_compressed", 0) > 0:
-                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
-                        team.compression_manager.stats.clear()
-
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
                         title="Team Tool Calls",
                         border_style="yellow",
                     )
                     panels.append(team_tool_calls_panel)
+
+                    # Add compression stats panel if available
+                    if team.compression_manager is not None and team.compression_manager.stats:
+                        stats = team.compression_manager.stats
+                        stats_text = Text()
+
+                        # Tool compression stats
+                        if stats.get("tool_results_compressed", 0) > 0:
+                            tool_saved = stats.get("original_tool_tokens", 0) - stats.get("compressed_tool_tokens", 0)
+                            tool_orig = stats.get("original_tool_tokens", 1)
+                            stats_text.append(f"Compressions: {stats['tool_results_compressed']}\n")
+                            stats_text.append(f"Saved: {tool_saved:,} tokens ({tool_saved / tool_orig * 100:.0f}%)\n")
+
+                        # Context compression stats
+                        if stats.get("context_compressions", 0) > 0:
+                            ctx_saved = stats.get("original_context_tokens", 0) - stats.get(
+                                "compressed_context_tokens", 0
+                            )
+                            ctx_orig = stats.get("original_context_tokens", 1)
+                            stats_text.append(f"Compressions: {stats['context_compressions']}\n")
+                            stats_text.append(f"Saved: {ctx_saved:,} tokens ({ctx_saved / ctx_orig * 100:.0f}%)\n")
+
+                        if stats_text.plain.strip():
+                            compression_panel = create_panel(
+                                content=stats_text,
+                                title="Compression",
+                                border_style="magenta",
+                            )
+                            panels.append(compression_panel)
+
+                        team.compression_manager.stats.clear()
+
                     live_console.update(Group(*panels))
 
             response_content_batch: Union[str, JSON, Markdown] = _parse_response_content(  # type: ignore
@@ -1349,6 +1449,22 @@ async def aprint_response_stream(
                         processed_tool_calls.add(tool_id)
                         team_tool_calls.append(tool)
 
+                # Handle compression events
+                if resp.event == TeamRunEvent.compression_started:  # type: ignore
+                    compression_type = getattr(resp, "compression_type", "")
+                    status_text = (
+                        "Compressing context..." if compression_type == "context" else "Compressing tool results..."
+                    )
+                    status = Status(status_text, spinner="aesthetic", speed=0.4, refresh_per_second=10)
+                    panels[0] = status
+                    live_console.update(Group(*panels))
+
+                if resp.event == TeamRunEvent.compression_completed:  # type: ignore
+                    # Reset status back to thinking after compression completes
+                    status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+                    panels[0] = status
+                    live_console.update(Group(*panels))
+
             # Collect member tool calls, avoiding duplicates
             if show_member_responses and hasattr(resp, "member_responses") and resp.member_responses:
                 for member_response in resp.member_responses:
@@ -1378,7 +1494,7 @@ async def aprint_response_stream(
                 response_content_stream = Markdown(escaped_content)
 
             # Create new panels for each chunk
-            panels = []
+            panels = [status]
 
             if input_content and show_message:
                 render = True
@@ -1406,9 +1522,6 @@ async def aprint_response_stream(
                     border_style="green",
                 )
                 panels.append(thinking_panel)
-            elif _response_content == "":
-                # Keep showing status if no content yet
-                panels.append(status)
 
             # Process member responses and their tool calls
             for member_response in (
@@ -1489,20 +1602,41 @@ async def aprint_response_stream(
                     # Join with blank lines between items
                     tool_calls_text = "\n\n".join(lines)
 
-                    # Add compression stats if available (don't clear - will be cleared in final_panels)
-                    if team.compression_manager is not None and team.compression_manager.stats:
-                        stats = team.compression_manager.stats
-                        saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
-                        orig = stats.get("original_size", 1)
-                        if stats.get("tool_results_compressed", 0) > 0:
-                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
-
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
                         title="Team Tool Calls",
                         border_style="yellow",
                     )
                     panels.append(team_tool_calls_panel)
+
+                    # Add compression stats panel if available (don't clear - will be cleared in final_panels)
+                    if team.compression_manager is not None and team.compression_manager.stats:
+                        stats = team.compression_manager.stats
+                        stats_text = Text()
+
+                        # Tool compression stats
+                        if stats.get("tool_results_compressed", 0) > 0:
+                            tool_saved = stats.get("original_tool_tokens", 0) - stats.get("compressed_tool_tokens", 0)
+                            tool_orig = stats.get("original_tool_tokens", 1)
+                            stats_text.append(f"Compressions: {stats['tool_results_compressed']}\n")
+                            stats_text.append(f"Saved: {tool_saved:,} tokens ({tool_saved / tool_orig * 100:.0f}%)\n")
+
+                        # Context compression stats
+                        if stats.get("context_compressions", 0) > 0:
+                            ctx_saved = stats.get("original_context_tokens", 0) - stats.get(
+                                "compressed_context_tokens", 0
+                            )
+                            ctx_orig = stats.get("original_context_tokens", 1)
+                            stats_text.append(f"Compressions: {stats['context_compressions']}\n")
+                            stats_text.append(f"Saved: {ctx_saved:,} tokens ({ctx_saved / ctx_orig * 100:.0f}%)\n")
+
+                        if stats_text.plain.strip():
+                            compression_panel = create_panel(
+                                content=stats_text,
+                                title="Compression",
+                                border_style="magenta",
+                            )
+                            panels.append(compression_panel)
 
             # Add the team response panel at the end
             if response_content_stream:
@@ -1717,21 +1851,41 @@ async def aprint_response_stream(
 
                 tool_calls_text = "\n\n".join(lines)
 
-                # Add compression stats at end of tool calls
-                if team.compression_manager is not None and team.compression_manager.stats:
-                    stats = team.compression_manager.stats
-                    saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
-                    orig = stats.get("original_size", 1)
-                    if stats.get("tool_results_compressed", 0) > 0:
-                        tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
-                    team.compression_manager.stats.clear()
-
                 team_tool_calls_panel = create_panel(
                     content=tool_calls_text,
                     title="Team Tool Calls",
                     border_style="yellow",
                 )
                 final_panels.append(team_tool_calls_panel)
+
+                # Add compression stats panel if available
+                if team.compression_manager is not None and team.compression_manager.stats:
+                    stats = team.compression_manager.stats
+                    stats_text = Text()
+
+                    # Tool compression stats
+                    if stats.get("tool_results_compressed", 0) > 0:
+                        tool_saved = stats.get("original_tool_tokens", 0) - stats.get("compressed_tool_tokens", 0)
+                        tool_orig = stats.get("original_tool_tokens", 1)
+                        stats_text.append(f"Compressions: {stats['tool_results_compressed']}\n")
+                        stats_text.append(f"Saved: {tool_saved:,} tokens ({tool_saved / tool_orig * 100:.0f}%)\n")
+
+                    # Context compression stats
+                    if stats.get("context_compressions", 0) > 0:
+                        ctx_saved = stats.get("original_context_tokens", 0) - stats.get("compressed_context_tokens", 0)
+                        ctx_orig = stats.get("original_context_tokens", 1)
+                        stats_text.append(f"Compressions: {stats['context_compressions']}\n")
+                        stats_text.append(f"Saved: {ctx_saved:,} tokens ({ctx_saved / ctx_orig * 100:.0f}%)\n")
+
+                    if stats_text.plain.strip():
+                        compression_panel = create_panel(
+                            content=stats_text,
+                            title="Compression",
+                            border_style="magenta",
+                        )
+                        final_panels.append(compression_panel)
+
+                    team.compression_manager.stats.clear()
 
         # Add team response
         if _response_content:
