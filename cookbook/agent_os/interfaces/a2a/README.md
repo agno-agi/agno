@@ -110,6 +110,7 @@ When you enable A2A interface, the following endpoints are automatically created
 
 - `POST /a2a/agents/{id}/message:send` - Send a message to an agent or team (standard A2A protocol)
 - `POST /a2a/agents/{id}/message:stream` - Stream messages to/from an agent or team (standard A2A protocol)
+- `GET /agents/{id}/.well-known/agent-card.json` - Get Agent Card (standard A2A protocol)
 - `GET /docs` - OpenAPI documentation
 - `GET /config` - View AgentOS configuration
 

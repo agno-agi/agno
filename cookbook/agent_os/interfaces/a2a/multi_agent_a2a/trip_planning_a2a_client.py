@@ -73,6 +73,7 @@ def ask_weather_agent(request: str) -> str:
 
 trip_planner = Agent(
     name="Trip Planner",
+    id="trip_planner",
     model=OpenAIChat(id="gpt-4o"),
     # Give the agent the tools we just created
     tools=[ask_airbnb_agent, ask_weather_agent],
@@ -97,7 +98,10 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """Run your AgentOS.
     You can run the Agent via A2A protocol:
-    POST http://localhost:7777/a2a/message/send
-    (include "agentId": "agent-with-tools" in params.message)
+    POST http://localhost:7777/agents/{id}/v1/message:send
+    For streaming responses:
+    POST http://localhost:7777/agents/{id}/v1/message:stream
+    Retrieve the agent card at:
+    GET  http://localhost:7777/agents/{id}/.well-known/agent-card.json
     """
-    agent_os.serve(app="trip_planning_a2a_client:app", port=7770, reload=True)
+    agent_os.serve(app="trip_planning_a2a_client:app", port=7777, reload=True)

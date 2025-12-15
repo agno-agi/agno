@@ -37,7 +37,10 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """Run your AgentOS.
     You can run the Agent via A2A protocol:
-    POST http://localhost:7777/a2a/message/send
-    (include "agentId": "agent-with-tools" in params.message)
+    POST http://localhost:7774/agents/{id}/v1/message:send
+    For streaming responses:
+    POST http://localhost:7774/agents/{id}/v1/message:stream
+    Retrieve the agent card at:
+    GET  http://localhost:7774/agents/{id}/.well-known/agent-card.json
     """
     agent_os.serve(app="airbnb_agent:app", port=7774, reload=True)

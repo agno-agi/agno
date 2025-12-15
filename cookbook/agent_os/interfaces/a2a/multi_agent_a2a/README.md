@@ -25,19 +25,19 @@ Run order (required)
      ```
 3. Start the Trip Planner (orchestrator)
    - File: trip_planning_a2a_client.py
-   - Default port in file: 7770 (ensure this does not conflict with the Weather Agent)
+   - Default port in file: 7777
    - Command:
      ```
      python trip_planning_a2a_client.py
      ```
-Notes on ports and conflicts
-- The trip planner expects the Weather Agent at http://localhost:7770 and the Airbnb Agent at http://localhost:7774 (see WEATHER_URL and AIRBNB_URL in trip_planning_a2a_client.py).
-- If starting both the Weather Agent and Trip Planner on the same machine causes a port conflict, change the port used by one process (edit the `agent_os.serve(..., port=XXXX)` call) and update the corresponding URL constants in trip_planning_a2a_client.py.
+Notes on ports
+- The trip planner runs on port 7777 and expects the Weather Agent at http://localhost:7770 and the Airbnb Agent at http://localhost:7774 (see WEATHER_URL and AIRBNB_URL in trip_planning_a2a_client.py).
+- All agents run on separate ports, so no conflicts occur.
 Testing the Trip Planner (example)
-- Send an A2A JSON-RPC request to the Trip Planner service. Replace {TRIP_PORT} and {TRIP_AGENT_ID} with the port and agent id shown in the Trip Planner logs (or set an explicit agent id in the code).
+- Send an A2A JSON-RPC request to the Trip Planner service on port 7777 using the agent ID `trip_planner`.
 - Example minimal payload (use curl or any HTTP client):
   ```
-  curl -X POST http://localhost:{TRIP_PORT}/a2a/agents/{TRIP_AGENT_ID}/v1/message:send \
+  curl -X POST http://localhost:7777/a2a/agents/trip_planner/v1/message:send \
     -H "Content-Type: application/json" \
     -d '{
       "id":"test",
