@@ -16,6 +16,7 @@ from agno.exceptions import EvalError
 from agno.models.base import Model
 from agno.run.agent import RunInput, RunOutput
 from agno.run.team import TeamRunInput, TeamRunOutput
+from agno.team.team import Team
 from agno.utils.log import log_warning, logger, set_log_level_to_debug, set_log_level_to_info
 
 if TYPE_CHECKING:
@@ -174,6 +175,10 @@ class AgentAsJudgeEval(BaseEval):
 
     # Evaluation metadata
     name: Optional[str] = None
+
+    # Agent or Team to evaluate
+    agent: Optional[Agent] = None
+    team: Optional[Team] = None
 
     # Model configuration
     model: Optional[Model] = None
@@ -518,7 +523,30 @@ class AgentAsJudgeEval(BaseEval):
             result.print_summary(console)
 
         # Log to DB
-        self._log_eval_to_db(run_id=run_id, result=result)
+        if self.agent is not None:
+            agent_id = self.agent.id
+            team_id = None
+            model_id = self.agent.model.id if self.agent.model is not None else None
+            model_provider = self.agent.model.provider if self.agent.model is not None else None
+        elif self.team is not None:
+            agent_id = None
+            team_id = self.team.id
+            model_id = self.team.model.id if self.team.model is not None else None
+            model_provider = self.team.model.provider if self.team.model is not None else None
+        else:
+            agent_id = None
+            team_id = None
+            model_id = None
+            model_provider = None
+
+        self._log_eval_to_db(
+            run_id=run_id,
+            result=result,
+            agent_id=agent_id,
+            model_id=model_id,
+            model_provider=model_provider,
+            team_id=team_id,
+        )
 
         if self.telemetry:
             from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
@@ -613,7 +641,30 @@ class AgentAsJudgeEval(BaseEval):
             result.print_summary(console)
 
         # Log to DB
-        await self._async_log_eval_to_db(run_id=run_id, result=result)
+        if self.agent is not None:
+            agent_id = self.agent.id
+            team_id = None
+            model_id = self.agent.model.id if self.agent.model is not None else None
+            model_provider = self.agent.model.provider if self.agent.model is not None else None
+        elif self.team is not None:
+            agent_id = None
+            team_id = self.team.id
+            model_id = self.team.model.id if self.team.model is not None else None
+            model_provider = self.team.model.provider if self.team.model is not None else None
+        else:
+            agent_id = None
+            team_id = None
+            model_id = None
+            model_provider = None
+
+        await self._async_log_eval_to_db(
+            run_id=run_id,
+            result=result,
+            agent_id=agent_id,
+            model_id=model_id,
+            model_provider=model_provider,
+            team_id=team_id,
+        )
 
         if self.telemetry:
             from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
@@ -681,7 +732,30 @@ class AgentAsJudgeEval(BaseEval):
             result.print_summary(console)
 
         # Log to DB
-        self._log_eval_to_db(run_id=run_id, result=result)
+        if self.agent is not None:
+            agent_id = self.agent.id
+            team_id = None
+            model_id = self.agent.model.id if self.agent.model is not None else None
+            model_provider = self.agent.model.provider if self.agent.model is not None else None
+        elif self.team is not None:
+            agent_id = None
+            team_id = self.team.id
+            model_id = self.team.model.id if self.team.model is not None else None
+            model_provider = self.team.model.provider if self.team.model is not None else None
+        else:
+            agent_id = None
+            team_id = None
+            model_id = None
+            model_provider = None
+
+        self._log_eval_to_db(
+            run_id=run_id,
+            result=result,
+            agent_id=agent_id,
+            model_id=model_id,
+            model_provider=model_provider,
+            team_id=team_id,
+        )
 
         if self.telemetry:
             from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
@@ -748,7 +822,30 @@ class AgentAsJudgeEval(BaseEval):
             result.print_summary(console)
 
         # Log to DB
-        await self._async_log_eval_to_db(run_id=run_id, result=result)
+        if self.agent is not None:
+            agent_id = self.agent.id
+            team_id = None
+            model_id = self.agent.model.id if self.agent.model is not None else None
+            model_provider = self.agent.model.provider if self.agent.model is not None else None
+        elif self.team is not None:
+            agent_id = None
+            team_id = self.team.id
+            model_id = self.team.model.id if self.team.model is not None else None
+            model_provider = self.team.model.provider if self.team.model is not None else None
+        else:
+            agent_id = None
+            team_id = None
+            model_id = None
+            model_provider = None
+
+        await self._async_log_eval_to_db(
+            run_id=run_id,
+            result=result,
+            agent_id=agent_id,
+            model_id=model_id,
+            model_provider=model_provider,
+            team_id=team_id,
+        )
 
         if self.telemetry:
             from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
