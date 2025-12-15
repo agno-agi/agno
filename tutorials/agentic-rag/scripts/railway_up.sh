@@ -1,0 +1,68 @@
+#!/bin/bash
+
+# Deploy Agentic RAG to Railway
+# Prerequisites:
+# - Railway CLI installed: https://docs.railway.com/reference/cli-api
+# - Logged in: railway login
+# - .env file with OPENAI_API_KEY
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+cd "$PROJECT_DIR"
+
+# Load .env
+if [ -f .env ]; then
+    echo "Loading .env..."
+    set -a
+    source .env
+    set +a
+else
+    echo "Error: No .env file found. Create one with OPENAI_API_KEY."
+    exit 1
+fi
+
+# Validate OPENAI_API_KEY
+if [ -z "$OPENAI_API_KEY" ]; then
+    echo "Error: OPENAI_API_KEY is not set in .env"
+    exit 1
+fi
+
+echo "=== Initializing Railway project ==="
+railway init -n "agentic-rag-os"
+
+echo ""
+echo "=== Deploying PgVector database ==="
+# Deploy pgvector template (template code: 3jJFCA)
+# See: https://railway.com/deploy/3jJFCA
+railway deploy -t 3jJFCA
+
+echo ""
+echo "Waiting for database to be ready..."
+sleep 15
+
+echo ""
+echo "=== Creating API service with environment variables ==="
+# Add a new service for the API with variables using Railway's reference syntax
+# The pgvector template creates a service named "pgvector" with standard Postgres variables
+railway add --service agentic-rag-os \
+  --variables "DB_DRIVER=postgresql+psycopg" \
+  --variables 'DB_USER=${{pgvector.PGUSER}}' \
+  --variables 'DB_PASS=${{pgvector.PGPASSWORD}}' \
+  --variables 'DB_HOST=${{pgvector.PGHOST}}' \
+  --variables 'DB_PORT=${{pgvector.PGPORT}}' \
+  --variables 'DB_DATABASE=${{pgvector.PGDATABASE}}' \
+  --variables "OPENAI_API_KEY=${OPENAI_API_KEY}"
+
+echo -e "🚀 Deploying application...\n"
+railway up --service agentic-rag-os -d
+
+echo -e "🔗 Creating domain...\n"
+railway domain --service agentic-rag-os
+
+echo -e "Note: It may take up to 5 minutes for the domain to reach ready state while the application is deploying.\n"
+
+echo -e "✅ Deployment complete!\n"
+echo -e "💡 Tip: Run 'railway logs --service agentic-rag-os' to view your application logs.\n"

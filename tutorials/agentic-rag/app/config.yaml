@@ -1,0 +1,6 @@
+chat:
+  quick_prompts:
+    docs-assistant:
+      - "What is Agno?"
+      - "How do I create an agent with tools?"
+      - "What models are available?"

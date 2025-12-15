@@ -84,8 +84,7 @@ onboarding_agent = Agent(
     name="Onboarding Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions=(
-        "Welcome new users and ask about their preferences. "
-        "Determine if they prefer technical or friendly assistance."
+        "Welcome new users and ask about their preferences. Determine if they prefer technical or friendly assistance."
     ),
     markdown=True,
 )
