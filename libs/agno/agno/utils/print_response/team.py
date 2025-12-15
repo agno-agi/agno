@@ -267,8 +267,8 @@ def print_response(
                         stats = team.compression_manager.stats
                         saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
                         orig = stats.get("original_size", 1)
-                        if stats.get("messages_compressed", 0) > 0:
-                            tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                        if stats.get("tool_results_compressed", 0) > 0:
+                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
                         team.compression_manager.stats.clear()
 
                     team_tool_calls_panel = create_panel(
@@ -631,8 +631,8 @@ def print_response_stream(
                         stats = team.compression_manager.stats
                         saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
                         orig = stats.get("original_size", 1)
-                        if stats.get("messages_compressed", 0) > 0:
-                            tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                        if stats.get("tool_results_compressed", 0) > 0:
+                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
 
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
@@ -841,8 +841,8 @@ def print_response_stream(
                     stats = team.compression_manager.stats
                     saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
                     orig = stats.get("original_size", 1)
-                    if stats.get("messages_compressed", 0) > 0:
-                        tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                    if stats.get("tool_results_compressed", 0) > 0:
+                        tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
                     team.compression_manager.stats.clear()
 
                 team_tool_calls_panel = create_panel(
@@ -1132,8 +1132,8 @@ async def aprint_response(
                         stats = team.compression_manager.stats
                         saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
                         orig = stats.get("original_size", 1)
-                        if stats.get("messages_compressed", 0) > 0:
-                            tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                        if stats.get("tool_results_compressed", 0) > 0:
+                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
                         team.compression_manager.stats.clear()
 
                     team_tool_calls_panel = create_panel(
@@ -1494,8 +1494,8 @@ async def aprint_response_stream(
                         stats = team.compression_manager.stats
                         saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
                         orig = stats.get("original_size", 1)
-                        if stats.get("messages_compressed", 0) > 0:
-                            tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                        if stats.get("tool_results_compressed", 0) > 0:
+                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
 
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
@@ -1722,8 +1722,8 @@ async def aprint_response_stream(
                     stats = team.compression_manager.stats
                     saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
                     orig = stats.get("original_size", 1)
-                    if stats.get("messages_compressed", 0) > 0:
-                        tool_calls_text += f"\n\nTool results compressed: {stats.get('messages_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                    if stats.get("tool_results_compressed", 0) > 0:
+                        tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
                     team.compression_manager.stats.clear()
 
                 team_tool_calls_panel = create_panel(
