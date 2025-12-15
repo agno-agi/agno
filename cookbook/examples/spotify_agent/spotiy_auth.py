@@ -4,8 +4,8 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 
-CLIENT_ID = "d1d8dae8384c4ccd961f9129419fdbcb"
-CLIENT_SECRET = "df66d0cd93ef41eab1235cc0be2fe9f3"
+CLIENT_ID = "<YOUR_CLIENT_ID>"
+CLIENT_SECRET = "<YOUR_CLIENT_SECRET>"
 
 REDIRECT_URI = "http://127.0.0.1:8888/callback"
 
