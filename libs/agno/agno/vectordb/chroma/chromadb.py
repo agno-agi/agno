@@ -912,6 +912,7 @@ class ChromaDb(VectorDb):
 
                 # Convert to the expected type for ChromaDB
                 chroma_metadatas = cast(List[Mapping[str, Union[str, int, float, bool]]], updated_metadatas)
+                chroma_metadatas = [{k: v for k, v in m.items() if k and v} for m in chroma_metadatas]
                 collection.update(ids=ids, metadatas=chroma_metadatas)  # type: ignore
                 logger.debug(f"Updated metadata for {len(ids)} documents with content_id: {content_id}")
 
