@@ -6,6 +6,10 @@ from agno.tools.cognee import CogneeTools
 # your .env file should have the following variables:
 # OPENAI_API_KEY=your_openai_api_key
 # LLM_API_KEY=your_openai_api_key
+# or
+api_key = "<your_openai_api_key>"
+os.environ['OPENAI_API_KEY'] = api_key
+os.environ["LLM_API_KEY"] = api_key
 
 def main():
     cognee_tools = CogneeTools()
