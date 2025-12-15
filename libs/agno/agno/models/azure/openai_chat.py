@@ -65,11 +65,17 @@ class AzureOpenAI(OpenAILike):
         self.azure_endpoint = self.azure_endpoint or getenv("AZURE_OPENAI_ENDPOINT")
         self.azure_deployment = self.azure_deployment or getenv("AZURE_OPENAI_DEPLOYMENT")
 
-        if not self.api_key:
-            raise ModelAuthenticationError(
-                message="AZURE_OPENAI_API_KEY not set. Please set the AZURE_OPENAI_API_KEY environment variable.",
-                model_name=self.name,
-            )
+        if not (self.api_key or self.azure_ad_token):
+            if not self.api_key:
+                raise ModelAuthenticationError(
+                    message="AZURE_OPENAI_API_KEY not set. Please set the AZURE_OPENAI_API_KEY environment variable.",
+                    model_name=self.name,
+                )
+            if not self.azure_ad_token:
+                raise ModelAuthenticationError(
+                    message="AZURE_AD_TOKEN not set. Please set the AZURE_AD_TOKEN environment variable.",
+                    model_name=self.name,
+                )
 
         params_mapping = {
             "api_key": self.api_key,

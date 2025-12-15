@@ -1785,9 +1785,6 @@ class Agent:
                 if stream_events is None:
                     stream_events = False if self.stream_events is None else self.stream_events
 
-                self.stream = self.stream or stream
-                self.stream_events = self.stream_events or stream_events
-
                 # Prepare arguments for the model
                 response_format = (
                     self._get_response_format(run_context=run_context) if self.parser_model is None else None
@@ -2711,9 +2708,6 @@ class Agent:
         if stream_events is None:
             stream_events = False if self.stream_events is None else self.stream_events
 
-        self.stream = self.stream or stream
-        self.stream_events = self.stream_events or stream_events
-
         self.model = cast(Model, self.model)
 
         # Get knowledge filters
@@ -3019,9 +3013,6 @@ class Agent:
                 # Can't stream events if streaming is disabled
                 if stream is False:
                     stream_events = False
-
-                self.stream = self.stream or stream
-                self.stream_events = self.stream_events or stream_events
 
                 # Run can be continued from previous run response or from passed run_response context
                 if run_response is not None:
@@ -3588,9 +3579,6 @@ class Agent:
         # Can't have stream_intermediate_steps if stream is False
         if stream is False:
             stream_events = False
-
-        self.stream = self.stream or stream
-        self.stream_events = self.stream_events or stream_events
 
         # Get knowledge filters
         knowledge_filters = knowledge_filters
@@ -10420,9 +10408,8 @@ class Agent:
         """Use this function to add information to the knowledge base for future use.
 
         Args:
-            query: The query to add.
-            result: The result of the query.
-
+            query (str): The query or topic to add.
+            result (str): The actual content or information to store.
         Returns:
             str: A string indicating the status of the addition.
         """
@@ -10433,13 +10420,9 @@ class Agent:
         document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
-        import asyncio
-
         from agno.knowledge.reader.text_reader import TextReader
 
-        asyncio.run(
-            self.knowledge.add_content_async(name=document_name, text_content=document_content, reader=TextReader())
-        )
+        self.knowledge.add_content(name=document_name, text_content=document_content, reader=TextReader())
         return "Successfully added to knowledge base"
 
     def _get_previous_sessions_messages_function(
