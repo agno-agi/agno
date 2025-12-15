@@ -768,7 +768,6 @@ class OpenAIChat(Model):
         # Add role
         if response_message.role is not None:
             model_response.role = response_message.role
-
         # Add content
         if response_message.content is not None:
             model_response.content = response_message.content
@@ -846,7 +845,6 @@ class OpenAIChat(Model):
 
         if response_delta.choices and len(response_delta.choices) > 0:
             choice_delta: ChoiceDelta = response_delta.choices[0].delta
-
             if choice_delta:
                 # Add content
                 if choice_delta.content is not None:
