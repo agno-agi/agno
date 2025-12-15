@@ -15,6 +15,7 @@ except ImportError:
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
+from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import hash_string_sha256
 from agno.vectordb.base import VectorDb
@@ -39,6 +40,7 @@ class RedisDB(VectorDb):
         search_type: SearchType = SearchType.vector,
         distance: Distance = Distance.cosine,
         vector_score_weight: float = 0.7,
+        reranker: Optional[Reranker] = None,
         **redis_kwargs,
     ):
         """
@@ -91,8 +93,8 @@ class RedisDB(VectorDb):
         self.distance: Distance = distance
         self.vector_score_weight: float = vector_score_weight
 
-        # # Reranker instance
-        # self.reranker: Optional[Reranker] = reranker
+        # Reranker instance
+        self.reranker: Optional[Reranker] = reranker
 
         # Create index schema
         self.schema = self._get_schema()
@@ -427,6 +429,10 @@ class RedisDB(VectorDb):
             # Convert results to documents
             documents = [Document.from_dict(r) for r in results]
 
+            # Apply reranking if reranker is available
+            if self.reranker:
+                documents = self.reranker.rerank(query=query, documents=documents)
+
             return documents
         except Exception as e:
             log_error(f"Error in vector search: {e}")
@@ -449,6 +455,10 @@ class RedisDB(VectorDb):
 
             # Convert results to documents
             documents = [Document.from_dict(p) for p in parsed]
+
+            # Apply reranking if reranker is available
+            if self.reranker:
+                documents = self.reranker.rerank(query=query, documents=documents)
 
             return documents
         except Exception as e:
@@ -478,6 +488,10 @@ class RedisDB(VectorDb):
 
             # Convert results to documents
             documents = [Document.from_dict(p) for p in parsed]
+
+            # Apply reranking if reranker is available
+            if self.reranker:
+                documents = self.reranker.rerank(query=query, documents=documents)
 
             return documents
         except Exception as e:
