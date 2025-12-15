@@ -5989,6 +5989,10 @@ class Agent:
                     for name, _func in tool.functions.items():
                         if name in _function_names:
                             continue
+                        # Skip discoverable tools - they are only searchable, not auto-added
+                        if _func.discoverable:
+                            log_debug(f"Skipping discoverable tool {name} from {tool.name}")
+                            continue
                         _function_names.append(name)
                         _func = _func.model_copy(deep=True)
                         _func._agent = self
@@ -6006,6 +6010,10 @@ class Agent:
 
                 elif isinstance(tool, Function):
                     if tool.name in _function_names:
+                        continue
+                    # Skip discoverable tools - they are only searchable, not auto-added
+                    if tool.discoverable:
+                        log_debug(f"Skipping discoverable tool {tool.name}")
                         continue
                     _function_names.append(tool.name)
 
