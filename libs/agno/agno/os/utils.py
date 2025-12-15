@@ -285,9 +285,10 @@ def get_session_name(session: Dict[str, Any]) -> str:
     else:
         runs = session.get("runs", []) or []
 
+        run = None
+
         # For teams, identify the first Team run and avoid using the first member's run
         if session.get("session_type") == "team":
-            run = None
             for r in runs:
                 # If agent_id is not present, it's a team run
                 if not r.get("agent_id"):
@@ -317,28 +318,35 @@ def get_session_name(session: Dict[str, Any]) -> str:
             except (KeyError, IndexError, TypeError):
                 return ""
 
-        # For agents, prefer the first user message; if none is found, fall back to the second
+        # For agents, use all runs
         else:
-            first_user_message: Optional[str] = None
-            second_user_message: Optional[str] = None
+            pass  # Will use runs directly below
 
-            for r in runs:
-                run_dict = r if isinstance(r, dict) else r.to_dict()
+        # Shared message extraction for team and agent cases
+        # Prefer first user message; fall back to second if needed
+        first_user_message: Optional[str] = None
+        second_user_message: Optional[str] = None
 
-                # Collect user role messages
-                for message in run_dict.get("messages") or []:
-                    if message.get("role") == "user" and message.get("content"):
-                        if first_user_message is None:
-                            first_user_message = message["content"]
-                        elif second_user_message is None:
-                            second_user_message = message["content"]
-                        break
+        # For team, we already have a specific run; for agents, iterate all runs
+        runs_to_check = [run] if session.get("session_type") == "team" and run else runs
 
+        for r in runs_to_check:
+            if r is None:
+                continue
+            run_dict = r if isinstance(r, dict) else r.to_dict()
 
-            if first_user_message:
-                return first_user_message
-            if second_user_message:
-                return second_user_message
+            for message in run_dict.get("messages") or []:
+                if message.get("role") == "user" and message.get("content"):
+                    if first_user_message is None:
+                        first_user_message = message["content"]
+                    elif second_user_message is None:
+                        second_user_message = message["content"]
+                    break
+
+        if first_user_message:
+            return first_user_message
+        if second_user_message:
+            return second_user_message
 
     return ""
 
