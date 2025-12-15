@@ -471,20 +471,6 @@ class MongoDb(VectorDb):
             if self.wait_until_index_ready_in_seconds:
                 await self._wait_for_index_ready_async()
 
-    def doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the MongoDB collection based on its content."""
-        try:
-            collection = self._get_collection()
-            # Use content hash as document ID
-            doc_id = md5(document.content.encode("utf-8")).hexdigest()
-            result = collection.find_one({"_id": doc_id})
-            exists = result is not None
-            log_debug(f"Document {'exists' if exists else 'does not exist'}: {doc_id}")
-            return exists
-        except Exception as e:
-            logger.error(f"Error checking document existence: {e}")
-            return False
-
     def name_exists(self, name: str) -> bool:
         """Check if a document with a given name exists in the collection."""
         try:
@@ -1023,19 +1009,6 @@ class MongoDb(VectorDb):
         except Exception as e:
             logger.error(f"Error getting document count: {e}")
             return 0
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """Check if a document exists asynchronously."""
-        try:
-            collection = await self._get_async_collection()
-            doc_id = md5(document.content.encode("utf-8")).hexdigest()
-            result = await collection.find_one({"_id": doc_id})
-            exists = result is not None
-            log_debug(f"Document {'exists' if exists else 'does not exist'}: {doc_id}")
-            return exists
-        except Exception as e:
-            logger.error(f"Error checking document existence asynchronously: {e}")
-            return False
 
     async def async_insert(
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
