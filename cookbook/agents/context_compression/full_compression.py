@@ -32,6 +32,7 @@ agent = Agent(
     description="A research assistant that can search the web for information",
     instructions="Use the search tools to find the latest information. Be thorough and cite sources.",
     db=SqliteDb(db_file="tmp/full_compression.db"),
+    session_id="full_compression",
     compression_manager=compression_manager,
     add_history_to_context=True,
     num_history_runs=5,

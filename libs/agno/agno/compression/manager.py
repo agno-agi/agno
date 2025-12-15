@@ -93,7 +93,6 @@ class CompressionManager:
             if self.model:
                 token_count = self.model.count_tokens(messages, tools, output_schema=response_format)
                 if token_count >= self.compress_token_limit:
-                    log_info(f"Context compression token limit hit: {token_count} >= {self.compress_token_limit}")
                     return True
             return False
 
@@ -116,7 +115,6 @@ class CompressionManager:
             if self.model:
                 token_count = self.model.count_tokens(messages, tools, output_schema=response_format)
                 if token_count >= self.compress_token_limit:
-                    log_info(f"Tool compression token limit hit: {token_count} >= {self.compress_token_limit}")
                     return True
             return False
 
@@ -422,6 +420,8 @@ class CompressionManager:
         if not uncompressed_tools:
             return
 
+        log_info(f"Compressing {len(uncompressed_tools)} tool results")
+
         for tool_msg in uncompressed_tools:
             original_content = str(tool_msg.content) if tool_msg.content else ""
             compressed = self._compress_tool_result(tool_msg)
@@ -472,6 +472,8 @@ class CompressionManager:
 
         if not uncompressed_tools:
             return
+
+        log_info(f"Compressing {len(uncompressed_tools)} tool results")
 
         # Track original content before compression
         original_contents = [str(msg.content) if msg.content else "" for msg in uncompressed_tools]
