@@ -2,14 +2,16 @@ import asyncio
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
-from agno.run.agent import RunEvent # noqa
+from agno.run.agent import RunEvent  # noqa
 
 
 async def streaming_reasoning():
     """Test streaming reasoning with a OpenAI Responses model."""
     # Create an agent with reasoning enabled
     agent = Agent(
-        reasoning_model=OpenAIResponses(id="o3-mini", reasoning_effort="high", reasoning_summary="detailed"),
+        reasoning_model=OpenAIResponses(
+            id="o3-mini", reasoning_effort="high", reasoning_summary="detailed"
+        ),
         reasoning=True,
         instructions="Think step by step about the problem.",
     )
@@ -51,4 +53,3 @@ async def streaming_reasoning():
 
 if __name__ == "__main__":
     asyncio.run(streaming_reasoning())
-

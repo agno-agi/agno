@@ -114,6 +114,7 @@ from agno.utils.events import (
     create_team_pre_hook_completed_event,
     create_team_pre_hook_started_event,
     create_team_reasoning_completed_event,
+    create_team_reasoning_content_delta_event,
     create_team_reasoning_started_event,
     create_team_reasoning_step_event,
     create_team_run_cancelled_event,
@@ -4756,6 +4757,15 @@ class Team:
         run_messages: RunMessages,
         stream_events: bool,
     ) -> Iterator[TeamRunOutputEvent]:
+        """
+        Run reasoning using the ReasoningManager.
+
+        Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
+        default Chain-of-Thought reasoning with a clean, unified interface.
+        """
+        from agno.reasoning.manager import ReasoningConfig, ReasoningManager
+
+        # Yield a reasoning started event
         if stream_events:
             yield handle_event(  # type: ignore
                 create_team_reasoning_started_event(from_run_response=run_response),
@@ -4763,8 +4773,6 @@ class Team:
                 events_to_skip=self.events_to_skip,
                 store_events=self.store_events,
             )
-
-        use_default_reasoning = False
 
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.reasoning_model
@@ -4777,250 +4785,115 @@ class Team:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
 
-        # If a reasoning model is provided, use it to generate reasoning
-        if reasoning_model_provided:
-            from agno.reasoning.anthropic import is_anthropic_reasoning_model
-            from agno.reasoning.azure_ai_foundry import is_ai_foundry_reasoning_model
-            from agno.reasoning.deepseek import is_deepseek_reasoning_model
-            from agno.reasoning.gemini import is_gemini_reasoning_model
-            from agno.reasoning.groq import is_groq_reasoning_model
-            from agno.reasoning.helpers import get_reasoning_agent
-            from agno.reasoning.ollama import is_ollama_reasoning_model
-            from agno.reasoning.openai import is_openai_reasoning_model
-            from agno.reasoning.vertexai import is_vertexai_reasoning_model
-
-            reasoning_agent = self.reasoning_agent or get_reasoning_agent(
+        # Create reasoning manager
+        manager = ReasoningManager(
+            ReasoningConfig(
                 reasoning_model=reasoning_model,
+                reasoning_agent=self.reasoning_agent,
+                min_steps=self.reasoning_min_steps,
+                max_steps=self.reasoning_max_steps,
+                tools=self.tools,
+                tool_call_limit=self.tool_call_limit,
+                use_json_mode=self.use_json_mode,
+                telemetry=self.telemetry,
+                debug_mode=self.debug_mode,
+                debug_level=self.debug_level,
                 session_state=self.session_state,
                 dependencies=self.dependencies,
                 metadata=self.metadata,
             )
-            is_deepseek = is_deepseek_reasoning_model(reasoning_model)
-            is_groq = is_groq_reasoning_model(reasoning_model)
-            is_openai = is_openai_reasoning_model(reasoning_model)
-            is_ollama = is_ollama_reasoning_model(reasoning_model)
-            is_ai_foundry = is_ai_foundry_reasoning_model(reasoning_model)
-            is_gemini = is_gemini_reasoning_model(reasoning_model)
-            is_anthropic = is_anthropic_reasoning_model(reasoning_model)
-            is_vertexai = is_vertexai_reasoning_model(reasoning_model)
+        )
 
-            if (
-                is_deepseek
-                or is_groq
-                or is_openai
-                or is_ollama
-                or is_ai_foundry
-                or is_gemini
-                or is_anthropic
-                or is_vertexai
-            ):
-                reasoning_message: Optional[Message] = None
-                if is_deepseek:
-                    from agno.reasoning.deepseek import get_deepseek_reasoning
-
-                    log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
-                    reasoning_message = get_deepseek_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                    )
-                elif is_groq:
-                    from agno.reasoning.groq import get_groq_reasoning
-
-                    log_debug("Starting Groq Reasoning", center=True, symbol="=")
-                    reasoning_message = get_groq_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                    )
-                elif is_openai:
-                    from agno.reasoning.openai import get_openai_reasoning
-
-                    log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
-                    reasoning_message = get_openai_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                    )
-                elif is_ollama:
-                    from agno.reasoning.ollama import get_ollama_reasoning
-
-                    log_debug("Starting Ollama Reasoning", center=True, symbol="=")
-                    reasoning_message = get_ollama_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                    )
-                elif is_ai_foundry:
-                    from agno.reasoning.azure_ai_foundry import get_ai_foundry_reasoning
-
-                    log_debug("Starting Azure AI Foundry Reasoning", center=True, symbol="=")
-                    reasoning_message = get_ai_foundry_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                    )
-                elif is_gemini:
-                    from agno.reasoning.gemini import get_gemini_reasoning
-
-                    log_debug("Starting Gemini Reasoning", center=True, symbol="=")
-                    reasoning_message = get_gemini_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                    )
-                elif is_anthropic:
-                    from agno.reasoning.anthropic import get_anthropic_reasoning
-
-                    log_debug("Starting Anthropic Claude Reasoning", center=True, symbol="=")
-                    reasoning_message = get_anthropic_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                    )
-                elif is_vertexai:
-                    from agno.reasoning.vertexai import get_vertexai_reasoning
-
-                    log_debug("Starting VertexAI Reasoning", center=True, symbol="=")
-                    reasoning_message = get_vertexai_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                    )
-
-                if reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                    return
-
-                run_messages.messages.append(reasoning_message)
-                # Add reasoning step to the Agent's run_response
-                update_run_output_with_reasoning(
-                    run_response=run_response,
-                    reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
-                    reasoning_agent_messages=[reasoning_message],
-                )
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_team_reasoning_completed_event(
-                            from_run_response=run_response,
-                            content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
-                            content_type=ReasoningSteps.__name__,
-                        ),
-                        run_response,
-                        events_to_skip=self.events_to_skip,
-                        store_events=self.store_events,
-                    )
-            else:
-                log_info(
-                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
-                )
-                use_default_reasoning = True
-        # If no reasoning model is provided, use default reasoning
-        else:
-            use_default_reasoning = True
-
-        if use_default_reasoning:
-            from agno.reasoning.default import get_default_reasoning_agent
-            from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
-
-            # Get default reasoning agent
-            use_json_mode: bool = self.use_json_mode
-
-            reasoning_agent: Optional[Agent] = self.reasoning_agent  # type: ignore
-            if reasoning_agent is None:
-                reasoning_agent = get_default_reasoning_agent(
-                    reasoning_model=reasoning_model,
-                    min_steps=self.reasoning_min_steps,
-                    max_steps=self.reasoning_max_steps,
-                    tool_call_limit=self.tool_call_limit,
-                    telemetry=self.telemetry,
-                    debug_mode=self.debug_mode,
-                    debug_level=self.debug_level,
-                    use_json_mode=use_json_mode,
-                    session_state=self.session_state,
-                    dependencies=self.dependencies,
-                    metadata=self.metadata,
-                )
-
-            # Validate reasoning agent
-            if reasoning_agent is None:
-                log_warning("Reasoning error. Reasoning agent is None, continuing regular session...")
-                return
-            # Ensure the reasoning agent response model is ReasoningSteps
-            if (
-                reasoning_agent.output_schema is not None
-                and not isinstance(reasoning_agent.output_schema, type)
-                and not issubclass(reasoning_agent.output_schema, ReasoningSteps)
-            ):
-                log_warning("Reasoning agent response model should be `ReasoningSteps`, continuing regular session...")
-                return
-            # Ensure the reasoning model and agent do not show tool calls
-
-            step_count = 1
-            next_action = NextAction.CONTINUE
-            reasoning_messages: List[Message] = []
-            all_reasoning_steps: List[ReasoningStep] = []
-            log_debug("Starting Reasoning", center=True, symbol="=")
-            while next_action == NextAction.CONTINUE and step_count < self.reasoning_max_steps:
-                log_debug(f"Step {step_count}", center=True, symbol="-")
-                step_count += 1
-                try:
-                    # Run the reasoning agent
-                    reasoning_agent_response: RunOutput = reasoning_agent.run(  # type: ignore
-                        input=run_messages.get_input_messages()
-                    )
-                    if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
-                        log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
-                        break
-
-                    if isinstance(reasoning_agent_response.content, str):
-                        log_warning(
-                            "Reasoning error. Content is a string, not structured output. Continuing regular session..."
+        # If a reasoning model is provided, use native reasoning if supported
+        if reasoning_model_provided and manager.is_native_reasoning_model(reasoning_model):
+            # Use streaming for native models when stream_events is enabled
+            if stream_events:
+                for reasoning_delta, result in manager.stream_native_reasoning(
+                    reasoning_model, run_messages.get_input_messages()
+                ):
+                    if reasoning_delta is not None:
+                        yield handle_event(  # type: ignore
+                            create_team_reasoning_content_delta_event(
+                                from_run_response=run_response,
+                                reasoning_content=reasoning_delta,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
                         )
-                        break
-
-                    if reasoning_agent_response.content.reasoning_steps is None:
-                        log_warning("Reasoning error. Reasoning steps are empty, continuing regular session...")
-                        break
-
-                    reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
-                    all_reasoning_steps.extend(reasoning_steps)
-                    # Yield reasoning steps
-                    if stream_events:
-                        for reasoning_step in reasoning_steps:
-                            updated_reasoning_content = self._format_reasoning_step_content(
-                                run_response, reasoning_step
+                    if result is not None:
+                        if not result.success:
+                            log_warning(f"Reasoning error. {result.error}, continuing regular session...")
+                            return
+                        if result.message:
+                            run_messages.messages.append(result.message)
+                            update_run_output_with_reasoning(
+                                run_response=run_response,
+                                reasoning_steps=result.steps,
+                                reasoning_agent_messages=result.reasoning_messages,
                             )
-
                             yield handle_event(  # type: ignore
-                                create_team_reasoning_step_event(
+                                create_team_reasoning_completed_event(
                                     from_run_response=run_response,
-                                    reasoning_step=reasoning_step,
-                                    reasoning_content=updated_reasoning_content,
+                                    content=ReasoningSteps(reasoning_steps=result.steps),
+                                    content_type=ReasoningSteps.__name__,
                                 ),
                                 run_response,
                                 events_to_skip=self.events_to_skip,
                                 store_events=self.store_events,
                             )
-
-                    # Find the index of the first assistant message
-                    first_assistant_index = next(
-                        (i for i, m in enumerate(reasoning_agent_response.messages) if m.role == "assistant"),
-                        len(reasoning_agent_response.messages),
-                    )
-                    # Extract reasoning messages starting from the message after the first assistant message
-                    reasoning_messages = reasoning_agent_response.messages[first_assistant_index:]
-
-                    # Add reasoning step to the Agent's run_response
+            else:
+                # Non-streaming native reasoning
+                result = manager.get_native_reasoning(reasoning_model, run_messages.get_input_messages())
+                if not result.success:
+                    log_warning(f"Reasoning error. {result.error}, continuing regular session...")
+                    return
+                if result.message:
+                    run_messages.messages.append(result.message)
                     update_run_output_with_reasoning(
                         run_response=run_response,
-                        reasoning_steps=reasoning_steps,
-                        reasoning_agent_messages=reasoning_agent_response.messages,
+                        reasoning_steps=result.steps,
+                        reasoning_agent_messages=result.reasoning_messages,
                     )
+        else:
+            # Use default Chain-of-Thought reasoning
+            if reasoning_model_provided:
+                log_info(
+                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
+                )
 
-                    # Get the next action
-                    next_action = get_next_action(reasoning_steps[-1])
-                    if next_action == NextAction.FINAL_ANSWER:
-                        break
-                except Exception as e:
-                    log_error(f"Reasoning error: {e}")
-                    break
-
-            log_debug(f"Total Reasoning steps: {len(all_reasoning_steps)}")
-            log_debug("Reasoning finished", center=True, symbol="=")
-
-            # Update the messages_for_model to include reasoning messages
-            update_messages_with_reasoning(
-                run_messages=run_messages,
-                reasoning_messages=reasoning_messages,
-            )
+            all_reasoning_steps: List[ReasoningStep] = []
+            for reasoning_step, result in manager.run_default_reasoning(reasoning_model, run_messages):
+                if reasoning_step is not None:
+                    all_reasoning_steps.append(reasoning_step)
+                    if stream_events:
+                        updated_reasoning_content = self._format_reasoning_step_content(
+                            run_response=run_response,
+                            reasoning_step=reasoning_step,
+                        )
+                        yield handle_event(  # type: ignore
+                            create_team_reasoning_step_event(
+                                from_run_response=run_response,
+                                reasoning_step=reasoning_step,
+                                reasoning_content=updated_reasoning_content,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    # Update run_response with each step
+                    update_run_output_with_reasoning(
+                        run_response=run_response,
+                        reasoning_steps=[reasoning_step],
+                        reasoning_agent_messages=[],
+                    )
+                if result is not None:
+                    if not result.success:
+                        log_warning(f"Reasoning error. {result.error}, continuing regular session...")
+                        return
 
             # Yield the final reasoning completed event
-            if stream_events:
+            if stream_events and all_reasoning_steps:
                 yield handle_event(  # type: ignore
                     create_team_reasoning_completed_event(
                         from_run_response=run_response,
@@ -5038,6 +4911,15 @@ class Team:
         run_messages: RunMessages,
         stream_events: bool,
     ) -> AsyncIterator[TeamRunOutputEvent]:
+        """
+        Run reasoning asynchronously using the ReasoningManager.
+
+        Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
+        default Chain-of-Thought reasoning with a clean, unified interface.
+        """
+        from agno.reasoning.manager import ReasoningConfig, ReasoningManager
+
+        # Yield a reasoning started event
         if stream_events:
             yield handle_event(  # type: ignore
                 create_team_reasoning_started_event(from_run_response=run_response),
@@ -5045,8 +4927,6 @@ class Team:
                 events_to_skip=self.events_to_skip,
                 store_events=self.store_events,
             )
-
-        use_default_reasoning = False
 
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.reasoning_model
@@ -5059,249 +4939,116 @@ class Team:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
 
-        # If a reasoning model is provided, use it to generate reasoning
-        if reasoning_model_provided:
-            from agno.reasoning.anthropic import is_anthropic_reasoning_model
-            from agno.reasoning.azure_ai_foundry import is_ai_foundry_reasoning_model
-            from agno.reasoning.deepseek import is_deepseek_reasoning_model
-            from agno.reasoning.gemini import is_gemini_reasoning_model
-            from agno.reasoning.groq import is_groq_reasoning_model
-            from agno.reasoning.helpers import get_reasoning_agent
-            from agno.reasoning.ollama import is_ollama_reasoning_model
-            from agno.reasoning.openai import is_openai_reasoning_model
-            from agno.reasoning.vertexai import is_vertexai_reasoning_model
-
-            reasoning_agent = self.reasoning_agent or get_reasoning_agent(
+        # Create reasoning manager
+        manager = ReasoningManager(
+            ReasoningConfig(
                 reasoning_model=reasoning_model,
+                reasoning_agent=self.reasoning_agent,
+                min_steps=self.reasoning_min_steps,
+                max_steps=self.reasoning_max_steps,
+                tools=self.tools,
+                tool_call_limit=self.tool_call_limit,
+                use_json_mode=self.use_json_mode,
+                telemetry=self.telemetry,
+                debug_mode=self.debug_mode,
+                debug_level=self.debug_level,
                 session_state=self.session_state,
                 dependencies=self.dependencies,
                 metadata=self.metadata,
             )
-            is_deepseek = is_deepseek_reasoning_model(reasoning_model)
-            is_groq = is_groq_reasoning_model(reasoning_model)
-            is_openai = is_openai_reasoning_model(reasoning_model)
-            is_ollama = is_ollama_reasoning_model(reasoning_model)
-            is_ai_foundry = is_ai_foundry_reasoning_model(reasoning_model)
-            is_gemini = is_gemini_reasoning_model(reasoning_model)
-            is_anthropic = is_anthropic_reasoning_model(reasoning_model)
-            is_vertexai = is_vertexai_reasoning_model(reasoning_model)
+        )
 
-            if (
-                is_deepseek
-                or is_groq
-                or is_openai
-                or is_ollama
-                or is_ai_foundry
-                or is_gemini
-                or is_anthropic
-                or is_vertexai
-            ):
-                reasoning_message: Optional[Message] = None
-                if is_deepseek:
-                    from agno.reasoning.deepseek import aget_deepseek_reasoning
-
-                    log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
-                    reasoning_message = await aget_deepseek_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                    )
-                elif is_groq:
-                    from agno.reasoning.groq import aget_groq_reasoning
-
-                    log_debug("Starting Groq Reasoning", center=True, symbol="=")
-                    reasoning_message = await aget_groq_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                    )
-                elif is_openai:
-                    from agno.reasoning.openai import aget_openai_reasoning
-
-                    log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
-                    reasoning_message = await aget_openai_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                    )
-                elif is_ollama:
-                    from agno.reasoning.ollama import get_ollama_reasoning
-
-                    log_debug("Starting Ollama Reasoning", center=True, symbol="=")
-                    reasoning_message = get_ollama_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                    )
-                elif is_ai_foundry:
-                    from agno.reasoning.azure_ai_foundry import get_ai_foundry_reasoning
-
-                    log_debug("Starting Azure AI Foundry Reasoning", center=True, symbol="=")
-                    reasoning_message = get_ai_foundry_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                    )
-                elif is_gemini:
-                    from agno.reasoning.gemini import aget_gemini_reasoning
-
-                    log_debug("Starting Gemini Reasoning", center=True, symbol="=")
-                    reasoning_message = await aget_gemini_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                    )
-                elif is_anthropic:
-                    from agno.reasoning.anthropic import aget_anthropic_reasoning
-
-                    log_debug("Starting Anthropic Claude Reasoning", center=True, symbol="=")
-                    reasoning_message = await aget_anthropic_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                    )
-                elif is_vertexai:
-                    from agno.reasoning.vertexai import aget_vertexai_reasoning
-
-                    log_debug("Starting VertexAI Reasoning", center=True, symbol="=")
-                    reasoning_message = await aget_vertexai_reasoning(
-                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                    )
-
-                if reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                    return
-                run_messages.messages.append(reasoning_message)
-                # Add reasoning step to the Agent's run_response
-                update_run_output_with_reasoning(
-                    run_response=run_response,
-                    reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
-                    reasoning_agent_messages=[reasoning_message],
-                )
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_team_reasoning_completed_event(
-                            from_run_response=run_response,
-                            content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
-                            content_type=ReasoningSteps.__name__,
-                        ),
-                        run_response,
-                        events_to_skip=self.events_to_skip,
-                        store_events=self.store_events,
-                    )
-            else:
-                log_info(
-                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
-                )
-                use_default_reasoning = True
-        # If no reasoning model is provided, use default reasoning
-        else:
-            use_default_reasoning = True
-
-        if use_default_reasoning:
-            from agno.reasoning.default import get_default_reasoning_agent
-            from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
-
-            # Get default reasoning agent
-            use_json_mode: bool = self.use_json_mode
-            reasoning_agent: Optional[Agent] = self.reasoning_agent  # type: ignore
-            if reasoning_agent is None:
-                reasoning_agent = get_default_reasoning_agent(  # type: ignore
-                    reasoning_model=reasoning_model,
-                    min_steps=self.reasoning_min_steps,
-                    max_steps=self.reasoning_max_steps,
-                    telemetry=self.telemetry,
-                    debug_mode=self.debug_mode,
-                    debug_level=self.debug_level,
-                    use_json_mode=use_json_mode,
-                    session_state=self.session_state,
-                    dependencies=self.dependencies,
-                    metadata=self.metadata,
-                )
-
-            # Validate reasoning agent
-            if reasoning_agent is None:
-                log_warning("Reasoning error. Reasoning agent is None, continuing regular session...")
-                return
-            # Ensure the reasoning agent response model is ReasoningSteps
-            if (
-                reasoning_agent.output_schema is not None
-                and not isinstance(reasoning_agent.output_schema, type)
-                and not issubclass(reasoning_agent.output_schema, ReasoningSteps)
-            ):
-                log_warning("Reasoning agent response model should be `ReasoningSteps`, continuing regular session...")
-                return
-
-            # Ensure the reasoning model and agent do not show tool calls
-
-            step_count = 1
-            next_action = NextAction.CONTINUE
-            reasoning_messages: List[Message] = []
-            all_reasoning_steps: List[ReasoningStep] = []
-            log_debug("Starting Reasoning", center=True, symbol="=")
-            while next_action == NextAction.CONTINUE and step_count < self.reasoning_max_steps:
-                log_debug(f"Step {step_count}", center=True, symbol="-")
-                step_count += 1
-                try:
-                    # Run the reasoning agent
-                    reasoning_agent_response: RunOutput = await reasoning_agent.arun(  # type: ignore
-                        input=run_messages.get_input_messages()
-                    )
-                    if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
-                        log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
-                        break
-
-                    if isinstance(reasoning_agent_response.content, str):
-                        log_warning(
-                            "Reasoning error. Content is a string, not structured output. Continuing regular session..."
+        # If a reasoning model is provided, use native reasoning if supported
+        if reasoning_model_provided and manager.is_native_reasoning_model(reasoning_model):
+            # Use streaming for native models when stream_events is enabled
+            if stream_events:
+                async for reasoning_delta, result in manager.astream_native_reasoning(
+                    reasoning_model, run_messages.get_input_messages()
+                ):
+                    if reasoning_delta is not None:
+                        yield handle_event(  # type: ignore
+                            create_team_reasoning_content_delta_event(
+                                from_run_response=run_response,
+                                reasoning_content=reasoning_delta,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
                         )
-                        break
-
-                    if reasoning_agent_response.content.reasoning_steps is None:
-                        log_warning("Reasoning error. Reasoning steps are empty, continuing regular session...")
-                        break
-
-                    reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
-                    all_reasoning_steps.extend(reasoning_steps)
-                    # Yield reasoning steps
-                    if stream_events:
-                        for reasoning_step in reasoning_steps:
-                            updated_reasoning_content = self._format_reasoning_step_content(
-                                run_response, reasoning_step
+                    if result is not None:
+                        if not result.success:
+                            log_warning(f"Reasoning error. {result.error}, continuing regular session...")
+                            return
+                        if result.message:
+                            run_messages.messages.append(result.message)
+                            update_run_output_with_reasoning(
+                                run_response=run_response,
+                                reasoning_steps=result.steps,
+                                reasoning_agent_messages=result.reasoning_messages,
                             )
-
                             yield handle_event(  # type: ignore
-                                create_team_reasoning_step_event(
+                                create_team_reasoning_completed_event(
                                     from_run_response=run_response,
-                                    reasoning_step=reasoning_step,
-                                    reasoning_content=updated_reasoning_content,
+                                    content=ReasoningSteps(reasoning_steps=result.steps),
+                                    content_type=ReasoningSteps.__name__,
                                 ),
                                 run_response,
                                 events_to_skip=self.events_to_skip,
                                 store_events=self.store_events,
                             )
-
-                    # Find the index of the first assistant message
-                    first_assistant_index = next(
-                        (i for i, m in enumerate(reasoning_agent_response.messages) if m.role == "assistant"),
-                        len(reasoning_agent_response.messages),
-                    )
-                    # Extract reasoning messages starting from the message after the first assistant message
-                    reasoning_messages = reasoning_agent_response.messages[first_assistant_index:]
-
-                    # Add reasoning step to the Agent's run_response
+            else:
+                # Non-streaming native reasoning
+                result = await manager.aget_native_reasoning(reasoning_model, run_messages.get_input_messages())
+                if not result.success:
+                    log_warning(f"Reasoning error. {result.error}, continuing regular session...")
+                    return
+                if result.message:
+                    run_messages.messages.append(result.message)
                     update_run_output_with_reasoning(
                         run_response=run_response,
-                        reasoning_steps=reasoning_steps,
-                        reasoning_agent_messages=reasoning_agent_response.messages,
+                        reasoning_steps=result.steps,
+                        reasoning_agent_messages=result.reasoning_messages,
                     )
+        else:
+            # Use default Chain-of-Thought reasoning
+            if reasoning_model_provided:
+                log_info(
+                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
+                )
 
-                    # Get the next action
-                    next_action = get_next_action(reasoning_steps[-1])
-                    if next_action == NextAction.FINAL_ANSWER:
-                        break
-                except Exception as e:
-                    log_error(f"Reasoning error: {e}")
-                    break
-
-            log_debug(f"Total Reasoning steps: {len(all_reasoning_steps)}")
-            log_debug("Reasoning finished", center=True, symbol="=")
-
-            # Update the messages_for_model to include reasoning messages
-            update_messages_with_reasoning(
-                run_messages=run_messages,
-                reasoning_messages=reasoning_messages,
-            )
+            all_reasoning_steps: List[ReasoningStep] = []
+            async for reasoning_step, result in manager.arun_default_reasoning(reasoning_model, run_messages):
+                if reasoning_step is not None:
+                    all_reasoning_steps.append(reasoning_step)
+                    if stream_events:
+                        updated_reasoning_content = self._format_reasoning_step_content(
+                            run_response=run_response,
+                            reasoning_step=reasoning_step,
+                        )
+                        yield handle_event(  # type: ignore
+                            create_team_reasoning_step_event(
+                                from_run_response=run_response,
+                                reasoning_step=reasoning_step,
+                                reasoning_content=updated_reasoning_content,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    # Update run_response with each step
+                    update_run_output_with_reasoning(
+                        run_response=run_response,
+                        reasoning_steps=[reasoning_step],
+                        reasoning_agent_messages=[],
+                    )
+                if result is not None:
+                    if not result.success:
+                        log_warning(f"Reasoning error. {result.error}, continuing regular session...")
+                        return
 
             # Yield the final reasoning completed event
-            if stream_events:
-                yield handle_event(  # type: ignore  # type: ignore
+            if stream_events and all_reasoning_steps:
+                yield handle_event(  # type: ignore
                     create_team_reasoning_completed_event(
                         from_run_response=run_response,
                         content=ReasoningSteps(reasoning_steps=all_reasoning_steps),

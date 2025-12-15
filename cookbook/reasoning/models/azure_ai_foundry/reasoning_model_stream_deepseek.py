@@ -3,7 +3,7 @@ import os
 
 from agno.agent import Agent
 from agno.models.azure import AzureAIFoundry
-from agno.run.agent import RunEvent # noqa
+from agno.run.agent import RunEvent  # noqa
 
 
 async def streaming_reasoning():

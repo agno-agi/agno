@@ -1,8 +1,8 @@
 import asyncio
 
 from agno.agent import Agent
-from agno.run.agent import RunEvent # noqa
 from agno.models.azure.openai_chat import AzureOpenAI
+from agno.run.agent import RunEvent  # noqa
 
 
 async def streaming_reasoning():
@@ -51,4 +51,3 @@ async def streaming_reasoning():
 
 if __name__ == "__main__":
     asyncio.run(streaming_reasoning())
-

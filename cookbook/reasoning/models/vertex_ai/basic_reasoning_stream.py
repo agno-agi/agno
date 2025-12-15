@@ -2,7 +2,7 @@ import asyncio
 
 from agno.agent import Agent
 from agno.models.google import Gemini
-from agno.run.agent import RunEvent # noqa
+from agno.run.agent import RunEvent  # noqa
 
 
 async def streaming_reasoning():
