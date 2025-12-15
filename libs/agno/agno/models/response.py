@@ -130,7 +130,7 @@ class ModelResponse:
     updated_session_state: Optional[Dict[str, Any]] = None
 
     # Compressed context from context compression
-    compressed_context: Optional["CompressedContext"] = None
+    compression_context: Optional["CompressedContext"] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize ModelResponse to dictionary for caching."""
@@ -168,8 +168,8 @@ class ModelResponse:
                 _dict["response_usage"] = response_usage
 
         # Handle compressed context
-        if self.compressed_context is not None:
-            _dict["compressed_context"] = self.compressed_context.to_dict()
+        if self.compression_context is not None:
+            _dict["compression_context"] = self.compression_context.to_dict()
 
         return _dict
 
@@ -204,10 +204,10 @@ class ModelResponse:
             data["response_usage"] = Metrics(**data["response_usage"])
 
         # Reconstruct compressed context
-        if data.get("compressed_context") and isinstance(data["compressed_context"], dict):
+        if data.get("compression_context") and isinstance(data["compression_context"], dict):
             from agno.compression.context import CompressedContext
 
-            data["compressed_context"] = CompressedContext.from_dict(data["compressed_context"])
+            data["compression_context"] = CompressedContext.from_dict(data["compression_context"])
 
         return cls(**data)
 

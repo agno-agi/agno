@@ -1618,12 +1618,12 @@ class Team:
                 tool_call_limit=self.tool_call_limit,
                 send_media_to_model=self.send_media_to_model,
                 compression_manager=self.compression_manager if compression_enabled else None,
-                compressed_context=session.get_compressed_context() if self.compress_context else None,
+                compression_context=session.get_compression_context() if self.compress_context else None,
             )
 
             # Store compressed context if compression occurred
-            if model_response.compressed_context:
-                session.set_compressed_context(model_response.compressed_context)
+            if model_response.compression_context:
+                session.set_compression_context(model_response.compression_context)
 
             # Check for cancellation after model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2476,12 +2476,12 @@ class Team:
                 send_media_to_model=self.send_media_to_model,
                 run_response=run_response,
                 compression_manager=self.compression_manager if compression_enabled else None,
-                compressed_context=team_session.get_compressed_context() if self.compress_context else None,
+                compression_context=team_session.get_compression_context() if self.compress_context else None,
             )  # type: ignore
 
             # Store compressed context if compression occurred
-            if model_response.compressed_context:
-                team_session.set_compressed_context(model_response.compressed_context)
+            if model_response.compression_context:
+                team_session.set_compression_context(model_response.compression_context)
 
             # Check for cancellation after model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3325,7 +3325,7 @@ class Team:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             send_media_to_model=self.send_media_to_model,
-            compressed_context=session.get_compressed_context() if self.compress_context else None,
+            compression_context=session.get_compression_context() if self.compress_context else None,
             compression_manager=self.compression_manager if compression_enabled else None,
         ):
             yield from self._handle_model_response_chunk(
@@ -3341,8 +3341,8 @@ class Team:
             )
 
         # Store compressed context if compression occurred
-        if full_model_response.compressed_context:
-            session.set_compressed_context(full_model_response.compressed_context)
+        if full_model_response.compression_context:
+            session.set_compression_context(full_model_response.compression_context)
 
         # 3. Update TeamRunOutput
         if full_model_response.content is not None:
@@ -3425,7 +3425,7 @@ class Team:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
             send_media_to_model=self.send_media_to_model,
-            compressed_context=session.get_compressed_context() if self.compress_context else None,
+            compression_context=session.get_compression_context() if self.compress_context else None,
             run_response=run_response,
             compression_manager=self.compression_manager if compression_enabled else None,
         )  # type: ignore
@@ -3444,8 +3444,8 @@ class Team:
                 yield event
 
         # Store compressed context if compression occurred
-        if full_model_response.compressed_context:
-            session.set_compressed_context(full_model_response.compressed_context)
+        if full_model_response.compression_context:
+            session.set_compression_context(full_model_response.compression_context)
 
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
@@ -3533,9 +3533,9 @@ class Team:
         else:
             model_response_event = cast(ModelResponse, model_response_event)
 
-            # Accumulate compressed_context if present
-            if model_response_event.compressed_context is not None:
-                full_model_response.compressed_context = model_response_event.compressed_context
+            # Accumulate compression_context if present
+            if model_response_event.compression_context is not None:
+                full_model_response.compression_context = model_response_event.compression_context
 
             # If the model response is an assistant_response, yield a RunOutput
             if model_response_event.event == ModelResponseEvent.assistant_response.value:

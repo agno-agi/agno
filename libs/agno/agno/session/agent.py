@@ -9,7 +9,7 @@ from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_warning
 
 
 @dataclass
@@ -105,8 +105,6 @@ class AgentSession:
         else:
             self.runs.append(run)
 
-        log_debug("Added RunOutput to Agent Session")
-
     def get_run(self, run_id: str) -> Optional[Union[RunOutput, TeamRunOutput]]:
         for run in self.runs or []:
             if run.run_id == run_id:
@@ -142,7 +140,7 @@ class AgentSession:
         # Get compressed message IDs once at the start (if filter_compressed)
         compressed_msg_ids: Optional[set] = None
         if filter_compressed:
-            compressed_ctx = self.get_compressed_context()
+            compressed_ctx = self.get_compression_context()
             if compressed_ctx and compressed_ctx.message_ids:
                 compressed_msg_ids = compressed_ctx.message_ids
 
@@ -234,7 +232,6 @@ class AgentSession:
                     else:
                         messages_from_history.append(message)
 
-        log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
 
     def get_chat_history(self, last_n_runs: Optional[int] = None) -> List[Message]:
@@ -272,17 +269,16 @@ class AgentSession:
             return None
         return self.summary
 
-    def get_compressed_context(self) -> Optional[CompressedContext]:
+    def get_compression_context(self) -> Optional[CompressedContext]:
         """Get compressed context from session_data."""
-        if self.session_data and "compressed_context" in self.session_data:
-            ctx_data = self.session_data["compressed_context"]
+        if self.session_data and "compression_context" in self.session_data:
+            ctx_data = self.session_data["compression_context"]
             if isinstance(ctx_data, dict):
                 return CompressedContext.from_dict(ctx_data)
-            return ctx_data
         return None
 
-    def set_compressed_context(self, ctx: CompressedContext) -> None:
+    def set_compression_context(self, ctx: CompressedContext) -> None:
         """Store compressed context in session_data."""
         if self.session_data is None:
             self.session_data = {}
-        self.session_data["compressed_context"] = ctx.to_dict()
+        self.session_data["compression_context"] = ctx.to_dict()

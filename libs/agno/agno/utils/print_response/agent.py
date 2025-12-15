@@ -517,10 +517,10 @@ def build_panels_stream(
 
         # Context compression stats
         if stats.get("context_compressions", 0) > 0:
-            ctx_saved = stats.get("original_context_tokens", 0) - stats.get("compressed_context_tokens", 0)
-            ctx_orig = stats.get("original_context_tokens", 1)
+            tokens_saved = stats.get("original_context_tokens", 0) - stats.get("compression_context_tokens", 0)
+            original_tokens = stats.get("original_context_tokens", 1)
             stats_text.append(f"Compressions: {stats['context_compressions']}\n")
-            stats_text.append(f"Saved: {ctx_saved:,} tokens ({ctx_saved / ctx_orig * 100:.0f}%)\n")
+            stats_text.append(f"Saved: {tokens_saved:,} tokens ({tokens_saved / original_tokens * 100:.0f}%)\n")
 
         if stats_text.plain.strip():
             compression_panel = create_panel(
@@ -914,10 +914,10 @@ def build_panels(
 
         # Context compression stats
         if stats.get("context_compressions", 0) > 0:
-            ctx_saved = stats.get("original_context_tokens", 0) - stats.get("compressed_context_tokens", 0)
-            ctx_orig = stats.get("original_context_tokens", 1)
+            tokens_saved = stats.get("original_context_tokens", 0) - stats.get("compression_context_tokens", 0)
+            original_tokens = stats.get("original_context_tokens", 1)
             stats_text.append(f"Compressions: {stats['context_compressions']}\n")
-            stats_text.append(f"Saved: {ctx_saved:,} tokens ({ctx_saved / ctx_orig * 100:.0f}%)\n")
+            stats_text.append(f"Saved: {tokens_saved:,} tokens ({tokens_saved / original_tokens * 100:.0f}%)\n")
 
         if stats_text.plain.strip():
             compression_panel = create_panel(

@@ -48,7 +48,7 @@ def test_context_compression_sync(context_compression_agent, shared_db):
     assert session is not None
 
     # Verify compression occurred
-    compressed_ctx = session.get_compressed_context()
+    compressed_ctx = session.get_compression_context()
     assert compressed_ctx is not None, "Context compression should have occurred"
     assert compressed_ctx.content is not None, "Compressed context should have content"
     assert len(compressed_ctx.message_ids) > 0, "Compressed context should track message IDs"
@@ -82,7 +82,7 @@ async def test_context_compression_async(shared_db):
     # Verify compression occurred
     session = agent.get_session(agent.session_id)
     assert session is not None
-    compressed_ctx = session.get_compressed_context()
+    compressed_ctx = session.get_compression_context()
     assert compressed_ctx is not None, "Context compression should have occurred"
     assert compressed_ctx.content is not None, "Compressed context should have content"
     assert len(compressed_ctx.message_ids) > 0, "Compressed context should track message IDs"
@@ -101,7 +101,7 @@ def test_context_compression_stream(context_compression_agent, shared_db):
     # Verify compression occurred
     session = context_compression_agent.get_session(context_compression_agent.session_id)
     assert session is not None
-    compressed_ctx = session.get_compressed_context()
+    compressed_ctx = session.get_compression_context()
     assert compressed_ctx is not None, "Context compression should have occurred"
     assert compressed_ctx.content is not None, "Compressed context should have content"
     assert len(compressed_ctx.message_ids) > 0, "Compressed context should track message IDs"
@@ -135,7 +135,7 @@ async def test_context_compression_async_stream(shared_db):
     # Verify compression occurred
     session = agent.get_session(agent.session_id)
     assert session is not None
-    compressed_ctx = session.get_compressed_context()
+    compressed_ctx = session.get_compression_context()
     assert compressed_ctx is not None, "Context compression should have occurred"
     assert compressed_ctx.content is not None, "Compressed context should have content"
     assert len(compressed_ctx.message_ids) > 0, "Compressed context should track message IDs"
@@ -168,7 +168,9 @@ def test_context_compression_with_token_limit(shared_db):
 
     # Verify compression occurred with low token limit
     assert compression_manager.stats.get("context_compressions", 0) > 0, "Context compression should have triggered"
-    assert compression_manager.stats.get("messages_compressed", 0) > 0, "Messages should have been compressed"
+    assert compression_manager.stats.get("original_context_tokens", 0) > compression_manager.stats.get(
+        "compression_context_tokens", 0
+    ), "Tokens should have been reduced"
 
 
 def test_context_compression_preserves_continuity(shared_db):
@@ -212,7 +214,7 @@ def test_no_context_compression_when_disabled(shared_db):
     agent.run("What did I say before?")
 
     session = agent.get_session(agent.session_id)
-    compressed_ctx = session.get_compressed_context()
+    compressed_ctx = session.get_compression_context()
     assert compressed_ctx is None, "No compression should occur when disabled"
 
 
@@ -246,4 +248,6 @@ def test_context_compression_takes_precedence(shared_db):
     # Verify context compression took precedence
     stats = compression_manager.stats
     assert stats.get("context_compressions", 0) > 0, "Context compression should have occurred"
-    assert stats.get("messages_compressed", 0) > 0, "Messages should have been compressed"
+    assert stats.get("original_context_tokens", 0) > stats.get("compression_context_tokens", 0), (
+        "Tokens should have been reduced"
+    )

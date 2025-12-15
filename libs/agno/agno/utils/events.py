@@ -710,7 +710,7 @@ def create_compression_completed_event(
     # Extract relevant stats based on compression type (use token-based keys)
     if compression_type == "context":
         original_size = stats.get("original_context_tokens", 0)
-        compressed_size = stats.get("compressed_context_tokens", 0)
+        compressed_size = stats.get("compression_context_tokens", 0)
         items_compressed = stats.get("context_compressions", 0)
     else:  # tool
         original_size = stats.get("original_tool_tokens", 0)
@@ -750,7 +750,7 @@ def create_team_compression_completed_event(
     # Extract relevant stats based on compression type (use token-based keys)
     if compression_type == "context":
         original_size = stats.get("original_context_tokens", 0)
-        compressed_size = stats.get("compressed_context_tokens", 0)
+        compressed_size = stats.get("compression_context_tokens", 0)
         items_compressed = stats.get("context_compressions", 0)
     else:  # tool
         original_size = stats.get("original_tool_tokens", 0)

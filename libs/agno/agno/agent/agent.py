@@ -1166,12 +1166,12 @@ class Agent:
                 run_response=run_response,
                 send_media_to_model=self.send_media_to_model,
                 compression_manager=self.compression_manager if compression_enabled else None,
-                compressed_context=session.get_compressed_context() if self.compress_context else None,
+                compression_context=session.get_compression_context() if self.compress_context else None,
             )
 
             # Store compressed context if compression occurred
-            if model_response.compressed_context:
-                session.set_compressed_context(model_response.compressed_context)
+            if model_response.compression_context:
+                session.set_compression_context(model_response.compression_context)
 
             # Check for cancellation after model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2071,12 +2071,12 @@ class Agent:
                 send_media_to_model=self.send_media_to_model,
                 run_response=run_response,
                 compression_manager=self.compression_manager if compression_enabled else None,
-                compressed_context=agent_session.get_compressed_context() if self.compress_context else None,
+                compression_context=agent_session.get_compression_context() if self.compress_context else None,
             )
 
             # Store compressed context if compression occurred
-            if model_response.compressed_context:
-                agent_session.set_compressed_context(model_response.compressed_context)
+            if model_response.compression_context:
+                agent_session.set_compression_context(model_response.compression_context)
 
             # Check for cancellation after model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -5191,7 +5191,7 @@ class Agent:
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
             compression_manager=self.compression_manager if compression_enabled else None,
-            compressed_context=session.get_compressed_context() if self.compress_context else None,
+            compression_context=session.get_compression_context() if self.compress_context else None,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -5242,8 +5242,8 @@ class Agent:
             run_response.response_audio = model_response.audio
 
         # Store compressed context if compression occurred
-        if model_response.compressed_context:
-            session.set_compressed_context(model_response.compressed_context)
+        if model_response.compression_context:
+            session.set_compression_context(model_response.compression_context)
 
     async def _ahandle_model_response_stream(
         self,
@@ -5285,7 +5285,7 @@ class Agent:
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
             compression_manager=self.compression_manager if compression_enabled else None,
-            compressed_context=session.get_compressed_context() if self.compress_context else None,
+            compression_context=session.get_compression_context() if self.compress_context else None,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
@@ -5338,8 +5338,8 @@ class Agent:
             run_response.response_audio = model_response.audio
 
         # Store compressed context if compression occurred
-        if model_response.compressed_context:
-            session.set_compressed_context(model_response.compressed_context)
+        if model_response.compression_context:
+            session.set_compression_context(model_response.compression_context)
 
     def _handle_model_response_chunk(
         self,
@@ -5376,9 +5376,9 @@ class Agent:
         else:
             model_response_event = cast(ModelResponse, model_response_event)
 
-            # Accumulate compressed_context if present
-            if model_response_event.compressed_context is not None:
-                model_response.compressed_context = model_response_event.compressed_context
+            # Accumulate compression_context if present
+            if model_response_event.compression_context is not None:
+                model_response.compression_context = model_response_event.compression_context
 
             # If the model response is an assistant_response, yield a RunOutput
             if model_response_event.event == ModelResponseEvent.assistant_response.value:

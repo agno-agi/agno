@@ -284,7 +284,7 @@ def print_response(
                         # Context compression stats
                         if stats.get("context_compressions", 0) > 0:
                             ctx_saved = stats.get("original_context_tokens", 0) - stats.get(
-                                "compressed_context_tokens", 0
+                                "compression_context_tokens", 0
                             )
                             ctx_orig = stats.get("original_context_tokens", 1)
                             stats_text.append(f"Compressions: {stats['context_compressions']}\n")
@@ -684,7 +684,7 @@ def print_response_stream(
                         # Context compression stats
                         if stats.get("context_compressions", 0) > 0:
                             ctx_saved = stats.get("original_context_tokens", 0) - stats.get(
-                                "compressed_context_tokens", 0
+                                "compression_context_tokens", 0
                             )
                             ctx_orig = stats.get("original_context_tokens", 1)
                             stats_text.append(f"Compressions: {stats['context_compressions']}\n")
@@ -914,7 +914,7 @@ def print_response_stream(
 
                     # Context compression stats
                     if stats.get("context_compressions", 0) > 0:
-                        ctx_saved = stats.get("original_context_tokens", 0) - stats.get("compressed_context_tokens", 0)
+                        ctx_saved = stats.get("original_context_tokens", 0) - stats.get("compression_context_tokens", 0)
                         ctx_orig = stats.get("original_context_tokens", 1)
                         stats_text.append(f"Compressions: {stats['context_compressions']}\n")
                         stats_text.append(f"Saved: {ctx_saved:,} tokens ({ctx_saved / ctx_orig * 100:.0f}%)\n")
@@ -1226,7 +1226,7 @@ async def aprint_response(
                         # Context compression stats
                         if stats.get("context_compressions", 0) > 0:
                             ctx_saved = stats.get("original_context_tokens", 0) - stats.get(
-                                "compressed_context_tokens", 0
+                                "compression_context_tokens", 0
                             )
                             ctx_orig = stats.get("original_context_tokens", 1)
                             stats_text.append(f"Compressions: {stats['context_compressions']}\n")
@@ -1624,7 +1624,7 @@ async def aprint_response_stream(
                         # Context compression stats
                         if stats.get("context_compressions", 0) > 0:
                             ctx_saved = stats.get("original_context_tokens", 0) - stats.get(
-                                "compressed_context_tokens", 0
+                                "compression_context_tokens", 0
                             )
                             ctx_orig = stats.get("original_context_tokens", 1)
                             stats_text.append(f"Compressions: {stats['context_compressions']}\n")
@@ -1872,7 +1872,7 @@ async def aprint_response_stream(
 
                     # Context compression stats
                     if stats.get("context_compressions", 0) > 0:
-                        ctx_saved = stats.get("original_context_tokens", 0) - stats.get("compressed_context_tokens", 0)
+                        ctx_saved = stats.get("original_context_tokens", 0) - stats.get("compression_context_tokens", 0)
                         ctx_orig = stats.get("original_context_tokens", 1)
                         stats_text.append(f"Compressions: {stats['context_compressions']}\n")
                         stats_text.append(f"Saved: {ctx_saved:,} tokens ({ctx_saved / ctx_orig * 100:.0f}%)\n")

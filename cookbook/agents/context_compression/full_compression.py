@@ -19,22 +19,22 @@ from agno.compression import CompressionManager
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.parallel import ParallelTools
 
 compression_manager = CompressionManager(
     compress_context=True,
-    compress_token_limit=5000,
+    compress_token_limit=15000,
 )
 
 agent = Agent(
     model=OpenAIChat(id="gpt-5-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[DuckDuckGoTools(verify_ssl=False), ParallelTools()],
     description="A research assistant that can search the web for information",
     instructions="Use the search tools to find the latest information. Be thorough and cite sources.",
     db=SqliteDb(db_file="tmp/full_compression.db"),
     compression_manager=compression_manager,
-    add_history_to_context=True, 
+    add_history_to_context=True,
     num_history_runs=5,
-    debug_mode=True,
 )
 
 agent.print_response(

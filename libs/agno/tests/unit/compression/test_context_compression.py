@@ -158,11 +158,11 @@ class TestContextCompressionSlicing:
         assert len(messages) == 3
         assert messages[0].role == "system"
         assert messages[1].role == "user"  # Summary (provides context to LLM)
-        assert "[Previous conversation summary]" in messages[1].content
+        assert "<previous_summary>" in messages[1].content
         assert messages[2].role == "user"
         assert messages[2].content == "Current question"
 
-    def test_merges_previous_compressed_context(self):
+    def test_merges_previous_compression_context(self):
         """Verify that message IDs are merged with previous compressed context."""
         manager = CompressionManager(
             compress_context=True,
@@ -357,7 +357,7 @@ class TestCompressedContextFiltering:
         assert filtered_history[0].id == "user3"
         assert filtered_history[1].id == "asst3"
 
-    def test_filter_with_no_compressed_context(self):
+    def test_filter_with_no_compression_context(self):
         """Verify filtering is skipped when there's no compressed context."""
         compressed_ctx: Optional[CompressedContext] = None
 

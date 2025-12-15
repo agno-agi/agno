@@ -65,7 +65,7 @@ def test_team_context_compression_sync(context_compression_team, shared_db):
     assert session is not None
 
     # Check if compression occurred by looking at session data
-    compressed_ctx = session.get_compressed_context()
+    compressed_ctx = session.get_compression_context()
     if compressed_ctx is not None:
         assert compressed_ctx.content is not None, "Compressed context should have content"
         assert len(compressed_ctx.message_ids) > 0, "Compressed context should track message IDs"
@@ -149,7 +149,7 @@ def test_team_no_context_compression_when_disabled(shared_db, research_member):
     team.run("What did I say before?")
 
     session = team.get_session(team.session_id)
-    compressed_ctx = session.get_compressed_context()
+    compressed_ctx = session.get_compression_context()
     assert compressed_ctx is None, "No compression should occur when disabled"
 
 
