@@ -16,7 +16,7 @@ def test_duplicate_agent_ids_with_explicit_ids_raises_error():
     with pytest.raises(ValueError) as exc_info:
         AgentOS(agents=[agent1, agent2], telemetry=False)
 
-    assert "Duplicate Agent IDs" in str(exc_info.value)
+    assert "Duplicate IDs found in AgentOS" in str(exc_info.value)
     assert "same-id" in str(exc_info.value)
 
 
@@ -28,7 +28,7 @@ def test_duplicate_agent_ids_from_same_name_raises_error():
     with pytest.raises(ValueError) as exc_info:
         AgentOS(agents=[agent1, agent2], telemetry=False)
 
-    assert "Duplicate Agent IDs" in str(exc_info.value)
+    assert "Duplicate IDs found in AgentOS" in str(exc_info.value)
 
 
 def test_unique_agent_ids_work_correctly():
@@ -60,7 +60,7 @@ def test_duplicate_team_ids_with_explicit_ids_raises_error():
     with pytest.raises(ValueError) as exc_info:
         AgentOS(teams=[team1, team2], telemetry=False)
 
-    assert "Duplicate Team IDs" in str(exc_info.value)
+    assert "Duplicate IDs found in AgentOS" in str(exc_info.value)
     assert "same-team-id" in str(exc_info.value)
 
 
@@ -75,7 +75,7 @@ def test_duplicate_team_ids_from_same_name_raises_error():
     with pytest.raises(ValueError) as exc_info:
         AgentOS(teams=[team1, team2], telemetry=False)
 
-    assert "Duplicate Team IDs" in str(exc_info.value)
+    assert "Duplicate IDs found in AgentOS" in str(exc_info.value)
 
 
 def test_unique_team_ids_work_correctly():
@@ -98,7 +98,7 @@ def test_duplicate_workflow_ids_with_explicit_ids_raises_error():
     with pytest.raises(ValueError) as exc_info:
         AgentOS(workflows=[workflow1, workflow2], telemetry=False)
 
-    assert "Duplicate Workflow IDs" in str(exc_info.value)
+    assert "Duplicate IDs found in AgentOS" in str(exc_info.value)
     assert "same-workflow-id" in str(exc_info.value)
 
 
@@ -110,7 +110,7 @@ def test_duplicate_workflow_ids_from_same_name_raises_error():
     with pytest.raises(ValueError) as exc_info:
         AgentOS(workflows=[workflow1, workflow2], telemetry=False)
 
-    assert "Duplicate Workflow IDs" in str(exc_info.value)
+    assert "Duplicate IDs found in AgentOS" in str(exc_info.value)
 
 
 def test_unique_workflow_ids_work_correctly():
@@ -136,8 +136,8 @@ def test_mixed_components_with_unique_ids():
     assert len(os.workflows) == 1
 
 
-def test_error_message_contains_duplicate_details():
-    """Test that error message contains helpful duplicate details."""
+def test_error_message_contains_duplicate_id():
+    """Test that error message contains the duplicate ID."""
     agent1 = Agent(name="First Agent", id="duplicate-id", telemetry=False)
     agent2 = Agent(name="Second Agent", id="duplicate-id", telemetry=False)
 
@@ -146,20 +146,3 @@ def test_error_message_contains_duplicate_details():
 
     error_message = str(exc_info.value)
     assert "duplicate-id" in error_message
-    assert "First Agent" in error_message
-    assert "Second Agent" in error_message
-
-
-def test_multiple_duplicates_reported():
-    """Test that multiple duplicate ID groups are reported."""
-    agent1 = Agent(name="Agent A1", id="id-a", telemetry=False)
-    agent2 = Agent(name="Agent A2", id="id-a", telemetry=False)
-    agent3 = Agent(name="Agent B1", id="id-b", telemetry=False)
-    agent4 = Agent(name="Agent B2", id="id-b", telemetry=False)
-
-    with pytest.raises(ValueError) as exc_info:
-        AgentOS(agents=[agent1, agent2, agent3, agent4], telemetry=False)
-
-    error_message = str(exc_info.value)
-    assert "id-a" in error_message
-    assert "id-b" in error_message
