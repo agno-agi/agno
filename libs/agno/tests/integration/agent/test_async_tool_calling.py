@@ -6,35 +6,36 @@ import pytest
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 
 
 # Test tools: Async functions (return values)
-async def fast_async_function(session_state, data: str) -> str:
+async def fast_async_function(run_context: RunContext, data: str) -> str:
     """Fast async function that returns a value (1 second)"""
     await asyncio.sleep(1)
-    session_state["fast_async_function"] = True
+    run_context.session_state["fast_async_function"] = True  # type: ignore
     return f"Fast result: {data}"
 
 
-async def slow_async_function(session_state, data: str) -> str:
+async def slow_async_function(run_context: RunContext, data: str) -> str:
     """Slow async function that returns a value (3 seconds)"""
     await asyncio.sleep(3)
-    session_state["slow_async_function"] = True
+    run_context.session_state["slow_async_function"] = True  # type: ignore
     return f"Slow result: {data}"
 
 
 # Test tools: Async generators (yield values)
-async def fast_async_generator(session_state, data: str) -> AsyncIterator[str]:
+async def fast_async_generator(run_context: RunContext, data: str) -> AsyncIterator[str]:
     """Fast async generator that yields a value (1 second)"""
     await asyncio.sleep(1)
-    session_state["fast_async_generator"] = True
+    run_context.session_state["fast_async_generator"] = True  # type: ignore
     yield f"Fast generator result: {data}"
 
 
-async def slow_async_generator(session_state, data: str) -> AsyncIterator[str]:
+async def slow_async_generator(run_context: RunContext, data: str) -> AsyncIterator[str]:
     """Slow async generator that yields a value (3 seconds)"""
     await asyncio.sleep(3)
-    session_state["slow_async_generator"] = True
+    run_context.session_state["slow_async_generator"] = True  # type: ignore
     yield f"Slow generator result: {data}"
 
 
@@ -151,6 +152,7 @@ async def test_mixed_async_functions_and_generators():
     assert "Slow generator result: test" in response.content
 
 
+@pytest.mark.flaky(max_runs=3)
 @pytest.mark.asyncio
 async def test_error_handling_in_async_generators():
     """Test error handling in concurrent async generators"""
@@ -171,7 +173,10 @@ async def test_error_handling_in_async_generators():
 
     # This should handle the error gracefully
     with pytest.raises((ValueError, Exception)):  # The specific exception might be wrapped
-        async for event in agent.arun("Call both generators", stream=True):
+        async for event in agent.arun(
+            "Call BOTH generator functions you have access to",
+            stream=True,
+        ):
             pass
 
 

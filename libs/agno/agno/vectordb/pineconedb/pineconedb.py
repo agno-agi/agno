@@ -22,6 +22,7 @@ except ImportError:
     raise ImportError("The `pinecone` package is not installed, please install using `pip install pinecone`.")
 
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
@@ -215,23 +216,6 @@ class PineconeDb(VectorDb):
         if self.exists():
             log_debug(f"Deleting index: {self.name}")
             self.client.delete_index(name=self.name, timeout=self.timeout)
-
-    def doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the index.
-
-        Args:
-            document (Document): The document to check.
-
-        Returns:
-            bool: True if the document exists, False otherwise.
-
-        """
-        response = self.index.fetch(ids=[document.id], namespace=self.namespace)
-        return len(response.vectors) > 0
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the index asynchronously."""
-        return await asyncio.to_thread(self.doc_exists, document)
 
     def name_exists(self, name: str) -> bool:
         """Check if an index with the given name exists.
@@ -474,7 +458,7 @@ class PineconeDb(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Union[str, float, int, bool, List, dict]]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         namespace: Optional[str] = None,
         include_values: Optional[bool] = None,
     ) -> List[Document]:
@@ -492,6 +476,9 @@ class PineconeDb(VectorDb):
             List[Document]: The list of matching documents.
 
         """
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in PineconeDB. No filters will be applied.")
+            filters = None
         dense_embedding = self.embedder.get_embedding(query)
 
         if self.use_hybrid_search:
@@ -540,7 +527,7 @@ class PineconeDb(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Union[str, float, int, bool, List, dict]]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         namespace: Optional[str] = None,
         include_values: Optional[bool] = None,
     ) -> List[Document]:

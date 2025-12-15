@@ -11,6 +11,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
+from agno.run.requirement import RunRequirement
 from agno.utils.log import logger
 from agno.utils.media import (
     reconstruct_audio_list,
@@ -221,6 +222,9 @@ class RunContentEvent(BaseAgentRunEvent):
 
     event: str = RunEvent.run_content.value
     content: Optional[Any] = None
+    workflow_agent: bool = (
+        False  # Used by consumers of the events to distinguish between workflow agent and regular agent
+    )
     content_type: str = "str"
     reasoning_content: Optional[str] = None
     model_provider_data: Optional[Dict[str, Any]] = None
@@ -263,16 +267,24 @@ class RunCompletedEvent(BaseAgentRunEvent):
     reasoning_messages: Optional[List[Message]] = None
     metadata: Optional[Dict[str, Any]] = None
     metrics: Optional[Metrics] = None
+    session_state: Optional[Dict[str, Any]] = None
 
 
 @dataclass
 class RunPausedEvent(BaseAgentRunEvent):
     event: str = RunEvent.run_paused.value
     tools: Optional[List[ToolExecution]] = None
+    requirements: Optional[List[RunRequirement]] = None
 
     @property
     def is_paused(self):
         return True
+
+    @property
+    def active_requirements(self) -> List[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [requirement for requirement in self.requirements if not requirement.is_resolved()]
 
 
 @dataclass
@@ -527,6 +539,7 @@ class RunOutput:
     references: Optional[List[MessageReferences]] = None
 
     metadata: Optional[Dict[str, Any]] = None
+    session_state: Optional[Dict[str, Any]] = None
 
     created_at: int = field(default_factory=lambda: int(time()))
 
@@ -534,10 +547,19 @@ class RunOutput:
 
     status: RunStatus = RunStatus.running
 
+    # User control flow (HITL) requirements to continue a run when paused, in order of arrival
+    requirements: Optional[list[RunRequirement]] = None
+
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity
     workflow_step_id: Optional[str] = None  # FK: Points to StepOutput.step_id
+
+    @property
+    def active_requirements(self) -> list[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [requirement for requirement in self.requirements if not requirement.is_resolved()]
 
     @property
     def is_paused(self):
@@ -567,6 +589,7 @@ class RunOutput:
             and k
             not in [
                 "messages",
+                "metrics",
                 "tools",
                 "metadata",
                 "images",
@@ -581,6 +604,7 @@ class RunOutput:
                 "reasoning_steps",
                 "reasoning_messages",
                 "references",
+                "requirements",
             ]
         }
 
@@ -666,6 +690,9 @@ class RunOutput:
                 else:
                     _dict["tools"].append(tool)
 
+        if self.requirements is not None:
+            _dict["requirements"] = [req.to_dict() if hasattr(req, "to_dict") else req for req in self.requirements]
+
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
 
@@ -691,7 +718,17 @@ class RunOutput:
             data = data.pop("run")
 
         events = data.pop("events", None)
-        events = [run_output_event_from_dict(event) for event in events] if events else None
+        final_events = []
+        for event in events or []:
+            if "agent_id" in event:
+                event = run_output_event_from_dict(event)
+            else:
+                # Use the factory from response.py for agent events
+                from agno.run.team import team_run_output_event_from_dict
+
+                event = team_run_output_event_from_dict(event)
+            final_events.append(event)
+        events = final_events
 
         messages = data.pop("messages", None)
         messages = [Message.from_dict(message) for message in messages] if messages else None
@@ -701,6 +738,18 @@ class RunOutput:
 
         tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
+
+        # Handle requirements
+        requirements_data = data.pop("requirements", None)
+        requirements: Optional[List[RunRequirement]] = None
+        if requirements_data is not None:
+            requirements_list: List[RunRequirement] = []
+            for item in requirements_data:
+                if isinstance(item, RunRequirement):
+                    requirements_list.append(item)
+                elif isinstance(item, dict):
+                    requirements_list.append(RunRequirement.from_dict(item))
+            requirements = requirements_list if requirements_list else None
 
         images = reconstruct_images(data.pop("images", []))
         videos = reconstruct_videos(data.pop("videos", []))
@@ -756,6 +805,7 @@ class RunOutput:
             reasoning_steps=reasoning_steps,
             reasoning_messages=reasoning_messages,
             references=references,
+            requirements=requirements,
             **filtered_data,
         )
 

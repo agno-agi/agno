@@ -1,9 +1,11 @@
 import inspect
+import warnings
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
 from agno.run.agent import RunOutputEvent
+from agno.run.base import RunContext
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     ConditionExecutionCompletedEvent,
@@ -175,10 +177,12 @@ class Condition:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute the condition and its steps with sequential chaining if condition is true"""
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
@@ -188,7 +192,11 @@ class Condition:
         self._prepare_steps()
 
         # Evaluate the condition
-        condition_result = self._evaluate_condition(step_input, session_state)
+        if run_context is not None and run_context.session_state is not None:
+            condition_result = self._evaluate_condition(step_input, session_state=run_context.session_state)
+        else:
+            condition_result = self._evaluate_condition(step_input, session_state=session_state)
+
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
         if not condition_result:
@@ -214,10 +222,12 @@ class Condition:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
@@ -284,11 +294,13 @@ class Condition:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the condition with streaming support - mirrors Loop logic"""
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
@@ -298,10 +310,19 @@ class Condition:
         self._prepare_steps()
 
         # Evaluate the condition
-        condition_result = self._evaluate_condition(step_input, session_state)
+        if run_context is not None and run_context.session_state is not None:
+            condition_result = self._evaluate_condition(step_input, session_state=run_context.session_state)
+        else:
+            condition_result = self._evaluate_condition(step_input, session_state=session_state)
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
@@ -363,11 +384,13 @@ class Condition:
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    run_context=run_context,
                     session_state=session_state,
                     parent_step_id=conditional_step_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -447,10 +470,12 @@ class Condition:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Async execute the condition and its steps with sequential chaining"""
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
@@ -460,7 +485,10 @@ class Condition:
         self._prepare_steps()
 
         # Evaluate the condition
-        condition_result = await self._aevaluate_condition(step_input, session_state)
+        if run_context is not None and run_context.session_state is not None:
+            condition_result = await self._aevaluate_condition(step_input, session_state=run_context.session_state)
+        else:
+            condition_result = await self._aevaluate_condition(step_input, session_state=session_state)
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
         if not condition_result:
@@ -488,10 +516,12 @@ class Condition:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 )
 
                 # Handle both single StepOutput and List[StepOutput]
@@ -556,11 +586,13 @@ class Condition:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Async execute the condition with streaming support - mirrors Loop logic"""
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
@@ -570,10 +602,19 @@ class Condition:
         self._prepare_steps()
 
         # Evaluate the condition
-        condition_result = await self._aevaluate_condition(step_input, session_state)
+        if run_context is not None and run_context.session_state is not None:
+            condition_result = await self._aevaluate_condition(step_input, session_state=run_context.session_state)
+        else:
+            condition_result = await self._aevaluate_condition(step_input, session_state=session_state)
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
         # Considering both stream_events and stream_intermediate_steps (deprecated)
+        if stream_intermediate_steps is not None:
+            warnings.warn(
+                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
@@ -637,11 +678,13 @@ class Condition:
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    run_context=run_context,
                     session_state=session_state,
                     parent_step_id=conditional_step_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)

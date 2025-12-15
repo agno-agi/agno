@@ -34,18 +34,14 @@ team_leader = Team(
     show_members_responses=True,
 )
 
-team_leader.print_response(
-    "Hi", stream=True, stream_events=True, show_full_reasoning=True
-)
+team_leader.print_response("Hi", stream=True, show_full_reasoning=True)
 team_leader.print_response(
     "What is the stock price of Apple?",
     stream=True,
-    stream_events=True,
     show_full_reasoning=True,
 )
 team_leader.print_response(
     "What's going on in New York?",
     stream=True,
-    stream_events=True,
     show_full_reasoning=True,
 )

@@ -1,7 +1,7 @@
 import asyncio
 import json
 from hashlib import md5
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 try:
     from sqlalchemy.dialects import mysql
@@ -14,10 +14,11 @@ try:
 except ImportError:
     raise ImportError("`sqlalchemy` not installed")
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -184,8 +185,10 @@ class SingleStore(VectorDb):
             for document in documents:
                 document.embed(embedder=self.embedder)
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                record_id = md5(cleaned_content.encode()).hexdigest()
-                _id = document.id or record_id
+                # Include content_hash in ID to ensure uniqueness across different content hashes
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -245,8 +248,10 @@ class SingleStore(VectorDb):
             for document in documents:
                 document.embed(embedder=self.embedder)
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                record_id = md5(cleaned_content.encode()).hexdigest()
-                _id = document.id or record_id
+                # Include content_hash in ID to ensure uniqueness across different content hashes
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -282,7 +287,9 @@ class SingleStore(VectorDb):
             sess.commit()
             log_debug(f"Committed {counter} documents")
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """
         Search for documents based on a query and optional filters.
 
@@ -294,6 +301,8 @@ class SingleStore(VectorDb):
         Returns:
             List[Document]: List of documents that match the query.
         """
+        if filters is not None:
+            log_warning("Filters are not supported in SingleStore. No filters will be applied.")
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
@@ -543,8 +552,10 @@ class SingleStore(VectorDb):
             counter = 0
             for document in documents:
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                record_id = md5(cleaned_content.encode()).hexdigest()
-                _id = document.id or record_id
+                # Include content_hash in ID to ensure uniqueness across different content hashes
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -627,8 +638,10 @@ class SingleStore(VectorDb):
             counter = 0
             for document in documents:
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                record_id = md5(cleaned_content.encode()).hexdigest()
-                _id = document.id or record_id
+                # Include content_hash in ID to ensure uniqueness across different content hashes
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -665,7 +678,7 @@ class SingleStore(VectorDb):
             log_debug(f"Committed {counter} documents")
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         return self.search(query=query, limit=limit, filters=filters)
 

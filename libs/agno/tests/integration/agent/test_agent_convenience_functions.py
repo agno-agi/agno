@@ -1,10 +1,10 @@
 import uuid
-from typing import Any, Dict
 
 import pytest
 
 from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
+from agno.run import RunContext
 
 
 @pytest.fixture
@@ -132,25 +132,27 @@ async def test_aget_chat_history(async_test_agent):
     assert len(chat_history) >= 4
 
 
-# Tests for get_messages_for_session() and aget_messages_for_session()
-def test_get_messages_for_session(test_agent):
-    """Test get_messages_for_session returns all messages."""
+# Tests for get_session_messages() and aget_session_messages()
+
+
+def test_get_session_messages(test_agent):
+    """Test get_session_messages returns all messages."""
     session_id = str(uuid.uuid4())
     test_agent.run("Hello", session_id=session_id)
     test_agent.run("How are you?", session_id=session_id)
 
-    messages = test_agent.get_messages_for_session(session_id=session_id)
+    messages = test_agent.get_session_messages(session_id=session_id)
     assert len(messages) >= 4
 
 
 @pytest.mark.asyncio
-async def test_aget_messages_for_session(async_test_agent):
-    """Test aget_messages_for_session returns all messages."""
+async def test_aget_session_messages(async_test_agent):
+    """Test aget_session_messages returns all messages."""
     session_id = str(uuid.uuid4())
     await async_test_agent.arun("Hello", session_id=session_id)
     await async_test_agent.arun("How are you?", session_id=session_id)
 
-    messages = await async_test_agent.aget_messages_for_session(session_id=session_id)
+    messages = await async_test_agent.aget_session_messages(session_id=session_id)
     assert len(messages) >= 4
 
 
@@ -415,9 +417,12 @@ def test_convenience_functions_without_db():
 def test_get_session_state_with_tool_updates(test_agent):
     """Test session state updates via tools."""
 
-    def add_item(session_state: Dict[str, Any], item: str) -> str:
+    def add_item(run_context: RunContext, item: str) -> str:
         """Add an item to the list."""
-        session_state["items"].append(item)
+        if not run_context.session_state:
+            run_context.session_state = {}
+
+        run_context.session_state["items"].append(item)
         return f"Added {item}"
 
     agent = Agent(

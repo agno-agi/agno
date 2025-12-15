@@ -110,7 +110,7 @@ async def map_a2a_request_to_run_input(request_body: dict, stream: bool = True) 
 
     Returns:
         RunInput: The Agno RunInput
-        stream: Wheter we are in stream mode
+        stream: Whether we are in stream mode
     """
 
     # 1. Validate the request

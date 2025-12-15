@@ -1,7 +1,7 @@
 import json
 import logging
 import math
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, UploadFile
 
@@ -102,6 +102,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         text_content: Optional[str] = Form(None, description="Raw text content to process"),
         reader_id: Optional[str] = Form(None, description="ID of the reader to use for content processing"),
         chunker: Optional[str] = Form(None, description="Chunking strategy to apply during processing"),
+        chunk_size: Optional[int] = Form(None, description="Chunk size to use for processing"),
+        chunk_overlap: Optional[int] = Form(None, description="Chunk overlap to use for processing"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for content storage"),
     ):
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
@@ -172,7 +174,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         content.content_hash = content_hash
         content.id = generate_id(content_hash)
 
-        background_tasks.add_task(process_content, knowledge, content, reader_id, chunker)
+        background_tasks.add_task(process_content, knowledge, content, reader_id, chunker, chunk_size, chunk_overlap)
 
         response = ContentResponseSchema(
             id=content.id,
@@ -615,7 +617,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         "/knowledge/config",
         status_code=200,
         operation_id="get_knowledge_config",
-        summary="Get Knowledge Configuration",
+        summary="Get Config",
         description=(
             "Retrieve available readers, chunkers, and configuration options for content processing. "
             "This endpoint provides metadata about supported file types, processing strategies, and filters."
@@ -801,36 +803,55 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                                     "key": "AgenticChunker",
                                     "name": "AgenticChunker",
                                     "description": "Chunking strategy that uses an LLM to determine natural breakpoints in the text",
+                                    "metadata": {"chunk_size": 5000},
                                 },
                                 "DocumentChunker": {
                                     "key": "DocumentChunker",
                                     "name": "DocumentChunker",
                                     "description": "A chunking strategy that splits text based on document structure like paragraphs and sections",
-                                },
-                                "RecursiveChunker": {
-                                    "key": "RecursiveChunker",
-                                    "name": "RecursiveChunker",
-                                    "description": "Chunking strategy that recursively splits text into chunks by finding natural break points",
-                                },
-                                "SemanticChunker": {
-                                    "key": "SemanticChunker",
-                                    "name": "SemanticChunker",
-                                    "description": "Chunking strategy that splits text into semantic chunks using chonkie",
+                                    "metadata": {
+                                        "chunk_size": 5000,
+                                        "chunk_overlap": 0,
+                                    },
                                 },
                                 "FixedSizeChunker": {
                                     "key": "FixedSizeChunker",
                                     "name": "FixedSizeChunker",
                                     "description": "Chunking strategy that splits text into fixed-size chunks with optional overlap",
-                                },
-                                "RowChunker": {
-                                    "key": "RowChunker",
-                                    "name": "RowChunker",
-                                    "description": "RowChunking chunking strategy",
+                                    "metadata": {
+                                        "chunk_size": 5000,
+                                        "chunk_overlap": 0,
+                                    },
                                 },
                                 "MarkdownChunker": {
                                     "key": "MarkdownChunker",
                                     "name": "MarkdownChunker",
                                     "description": "A chunking strategy that splits markdown based on structure like headers, paragraphs and sections",
+                                    "metadata": {
+                                        "chunk_size": 5000,
+                                        "chunk_overlap": 0,
+                                    },
+                                },
+                                "RecursiveChunker": {
+                                    "key": "RecursiveChunker",
+                                    "name": "RecursiveChunker",
+                                    "description": "Chunking strategy that recursively splits text into chunks by finding natural break points",
+                                    "metadata": {
+                                        "chunk_size": 5000,
+                                        "chunk_overlap": 0,
+                                    },
+                                },
+                                "RowChunker": {
+                                    "key": "RowChunker",
+                                    "name": "RowChunker",
+                                    "description": "RowChunking chunking strategy",
+                                    "metadata": {},
+                                },
+                                "SemanticChunker": {
+                                    "key": "SemanticChunker",
+                                    "name": "SemanticChunker",
+                                    "description": "Chunking strategy that splits text into semantic chunks using chonkie",
+                                    "metadata": {"chunk_size": 5000},
                                 },
                             },
                             "vector_dbs": [
@@ -853,8 +874,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
     ) -> ConfigResponseSchema:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
 
-        # Get factory readers info
-        readers_info = get_all_readers_info()
+        # Get factory readers info (including custom readers from this knowledge instance)
+        readers_info = get_all_readers_info(knowledge)
         reader_schemas = {}
         # Add factory readers
         for reader_info in readers_info:
@@ -866,7 +887,12 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             )
 
         # Add custom readers from knowledge.readers
-        readers_dict: Dict[str, Reader] = knowledge.get_readers() or {}
+        readers_result: Any = knowledge.get_readers() or {}
+        # Ensure readers_dict is a dictionary (defensive check)
+        if not isinstance(readers_result, dict):
+            readers_dict: Dict[str, Reader] = {}
+        else:
+            readers_dict = readers_result
         if readers_dict:
             for reader_id, reader in readers_dict.items():
                 # Get chunking strategies from the reader
@@ -886,8 +912,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                         chunkers=chunking_strategies,
                     )
 
-        # Get content types to readers mapping
-        types_of_readers = get_content_types_to_readers_mapping()
+        # Get content types to readers mapping (including custom readers from this knowledge instance)
+        types_of_readers = get_content_types_to_readers_mapping(knowledge)
         chunkers_list = get_all_chunkers_info()
 
         # Convert chunkers list to dictionary format expected by schema
@@ -896,7 +922,10 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             chunker_key = chunker_info.get("key")
             if chunker_key:
                 chunkers_dict[chunker_key] = ChunkerSchema(
-                    key=chunker_key, name=chunker_info.get("name"), description=chunker_info.get("description")
+                    key=chunker_key,
+                    name=chunker_info.get("name"),
+                    description=chunker_info.get("description"),
+                    metadata=chunker_info.get("metadata", {}),
                 )
 
         vector_dbs = []
@@ -918,7 +947,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             vector_dbs=vector_dbs,
             readersForType=types_of_readers,
             chunkers=chunkers_dict,
-            filters=knowledge.get_filters(),
+            filters=knowledge.get_valid_filters(),
         )
 
     return router
@@ -929,33 +958,41 @@ async def process_content(
     content: Content,
     reader_id: Optional[str] = None,
     chunker: Optional[str] = None,
+    chunk_size: Optional[int] = None,
+    chunk_overlap: Optional[int] = None,
 ):
     """Background task to process the content"""
 
     try:
         if reader_id:
             reader = None
-            if knowledge.readers and reader_id in knowledge.readers:
-                reader = knowledge.readers[reader_id]
+            # Use get_readers() to ensure we get a dict (handles list conversion)
+            custom_readers = knowledge.get_readers()
+            if custom_readers and reader_id in custom_readers:
+                reader = custom_readers[reader_id]
+                log_debug(f"Found custom reader: {reader.__class__.__name__}")
             else:
+                # Try to resolve from factory readers
                 key = reader_id.lower().strip().replace("-", "_").replace(" ", "_")
                 candidates = [key] + ([key[:-6]] if key.endswith("reader") else [])
                 for cand in candidates:
                     try:
                         reader = ReaderFactory.create_reader(cand)
-                        log_debug(f"Resolved reader: {reader.__class__.__name__}")
+                        log_debug(f"Resolved reader from factory: {reader.__class__.__name__}")
                         break
                     except Exception:
                         continue
             if reader:
                 content.reader = reader
+            else:
+                log_debug(f"Could not resolve reader with id: {reader_id}")
         if chunker and content.reader:
             # Set the chunker name on the reader - let the reader handle it internally
-            content.reader.set_chunking_strategy_from_string(chunker)
+            content.reader.set_chunking_strategy_from_string(chunker, chunk_size=chunk_size, overlap=chunk_overlap)
             log_debug(f"Set chunking strategy: {chunker}")
 
         log_debug(f"Using reader: {content.reader.__class__.__name__}")
-        await knowledge._load_content(content, upsert=False, skip_if_exists=True)
+        await knowledge._load_content_async(content, upsert=False, skip_if_exists=True)
         log_info(f"Content {content.id} processed successfully")
     except Exception as e:
         log_info(f"Error processing content: {e}")

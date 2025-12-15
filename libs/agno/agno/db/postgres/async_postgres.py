@@ -1,9 +1,14 @@
 import time
+import warnings
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
+
 from agno.db.base import AsyncBaseDb, SessionType
+from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
     abulk_upsert_metrics,
@@ -25,10 +30,12 @@ from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
-    from sqlalchemy import Index, String, UniqueConstraint, func, update
+    from sqlalchemy import Index, String, Table, UniqueConstraint, and_, case, func, or_, update
     from sqlalchemy.dialects import postgresql
+    from sqlalchemy.dialects.postgresql import TIMESTAMP
+    from sqlalchemy.exc import ProgrammingError
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
-    from sqlalchemy.schema import Column, MetaData, Table
+    from sqlalchemy.schema import Column, MetaData
     from sqlalchemy.sql.expression import select, text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
@@ -47,6 +54,10 @@ class AsyncPostgresDb(AsyncBaseDb):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         culture_table: Optional[str] = None,
+        traces_table: Optional[str] = None,
+        spans_table: Optional[str] = None,
+        versions_table: Optional[str] = None,
+        create_schema: bool = True,
         db_id: Optional[str] = None,  # Deprecated, use id instead.
     ):
         """
@@ -68,6 +79,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
             culture_table (Optional[str]): Name of the table to store cultural knowledge.
+            traces_table (Optional[str]): Name of the table to store run traces.
+            spans_table (Optional[str]): Name of the table to store span events.
+            versions_table (Optional[str]): Name of the table to store schema versions.
+            create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
+                Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
             db_id: Deprecated, use id instead.
 
         Raises:
@@ -75,7 +91,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             ValueError: If none of the tables are provided.
         """
         if db_id is not None:
-            log_warning("db_id is deprecated and will be removed in a future version, use id instead.")
+            warnings.warn(
+                "The 'db_id' parameter is deprecated and will be removed in future versions. Use 'id' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         super().__init__(
             id=id or db_id,
@@ -85,6 +105,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             culture_table=culture_table,
+            traces_table=traces_table,
+            spans_table=spans_table,
+            versions_table=versions_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -96,20 +119,51 @@ class AsyncPostgresDb(AsyncBaseDb):
         self.db_url: Optional[str] = db_url
         self.db_engine: AsyncEngine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
-        self.metadata: MetaData = MetaData()
+        self.metadata: MetaData = MetaData(schema=self.db_schema)
+        self.create_schema: bool = create_schema
 
         # Initialize database session factory
-        self.async_session_factory = async_sessionmaker(bind=self.db_engine)
+        self.async_session_factory = async_sessionmaker(
+            bind=self.db_engine,
+            expire_on_commit=False,
+        )
 
     # -- DB methods --
-    async def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+    async def table_exists(self, table_name: str) -> bool:
+        """Check if a table with the given name exists in the Postgres database.
+
+        Args:
+            table_name: Name of the table to check
+
+        Returns:
+            bool: True if the table exists in the database, False otherwise
+        """
+        async with self.async_session_factory() as sess:
+            return await ais_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
+
+    async def _create_all_tables(self):
+        """Create all tables for the database."""
+        tables_to_create = [
+            (self.session_table_name, "sessions"),
+            (self.memory_table_name, "memories"),
+            (self.metrics_table_name, "metrics"),
+            (self.eval_table_name, "evals"),
+            (self.knowledge_table_name, "knowledge"),
+            (self.versions_table_name, "versions"),
+        ]
+
+        for table_name, table_type in tables_to_create:
+            await self._get_or_create_table(
+                table_name=table_name, table_type=table_type, create_table_if_not_found=True
+            )
+
+    async def _create_table(self, table_name: str, table_type: str) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
 
         Args:
             table_name (str): Name of the table to create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object
@@ -138,8 +192,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table_metadata = MetaData(schema=db_schema)
-            table = Table(table_name, table_metadata, *columns, schema=db_schema)
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
 
             # Add multi-column unique constraints with table-specific names
             for constraint in schema_unique_constraints:
@@ -152,12 +205,19 @@ class AsyncPostgresDb(AsyncBaseDb):
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
 
-            async with self.async_session_factory() as sess, sess.begin():
-                await acreate_schema(session=sess, db_schema=db_schema)
+            if self.create_schema:
+                async with self.async_session_factory() as sess, sess.begin():
+                    await acreate_schema(session=sess, db_schema=self.db_schema)
 
             # Create table
-            async with self.db_engine.begin() as conn:
-                await conn.run_sync(table.create, checkfirst=True)
+            table_created = False
+            if not await self.table_exists(table_name):
+                async with self.db_engine.begin() as conn:
+                    await conn.run_sync(table.create, checkfirst=True)
+                log_debug(f"Successfully created table '{table_name}'")
+                table_created = True
+            else:
+                log_debug(f"Table '{self.db_schema}.{table_name}' already exists, skipping creation")
 
             # Create indexes
             for idx in table.indexes:
@@ -167,110 +227,204 @@ class AsyncPostgresDb(AsyncBaseDb):
                         exists_query = text(
                             "SELECT 1 FROM pg_indexes WHERE schemaname = :schema AND indexname = :index_name"
                         )
-                        result = await sess.execute(exists_query, {"schema": db_schema, "index_name": idx.name})
+                        result = await sess.execute(exists_query, {"schema": self.db_schema, "index_name": idx.name})
                         exists = result.scalar() is not None
                         if exists:
-                            log_debug(f"Index {idx.name} already exists in {db_schema}.{table_name}, skipping creation")
+                            log_debug(
+                                f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation"
+                            )
                             continue
 
                     async with self.db_engine.begin() as conn:
                         await conn.run_sync(idx.create)
-                    log_debug(f"Created index: {idx.name} for table {db_schema}.{table_name}")
+                    log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
 
                 except Exception as e:
                     log_error(f"Error creating index {idx.name}: {e}")
 
-            log_info(f"Successfully created table {table_name} in schema {db_schema}")
+            # Store the schema version for the created table
+            if table_name != self.versions_table_name and table_created:
+                # Also store the schema version for the created table
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                await self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+                log_info(
+                    f"Successfully stored version {latest_schema_version.public} in database for table {table_name}"
+                )
+
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {db_schema}.{table_name}: {e}")
+            log_error(f"Could not create table {self.db_schema}.{table_name}: {e}")
             raise
 
-    async def _get_table(self, table_type: str) -> Table:
+    async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Table:
         if table_type == "sessions":
             if not hasattr(self, "session_table"):
                 self.session_table = await self._get_or_create_table(
-                    table_name=self.session_table_name, table_type="sessions", db_schema=self.db_schema
+                    table_name=self.session_table_name,
+                    table_type="sessions",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.session_table
 
         if table_type == "memories":
             if not hasattr(self, "memory_table"):
                 self.memory_table = await self._get_or_create_table(
-                    table_name=self.memory_table_name, table_type="memories", db_schema=self.db_schema
+                    table_name=self.memory_table_name,
+                    table_type="memories",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.memory_table
 
         if table_type == "metrics":
             if not hasattr(self, "metrics_table"):
                 self.metrics_table = await self._get_or_create_table(
-                    table_name=self.metrics_table_name, table_type="metrics", db_schema=self.db_schema
+                    table_name=self.metrics_table_name,
+                    table_type="metrics",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.metrics_table
 
         if table_type == "evals":
             if not hasattr(self, "eval_table"):
                 self.eval_table = await self._get_or_create_table(
-                    table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
+                    table_name=self.eval_table_name,
+                    table_type="evals",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.eval_table
 
         if table_type == "knowledge":
             if not hasattr(self, "knowledge_table"):
                 self.knowledge_table = await self._get_or_create_table(
-                    table_name=self.knowledge_table_name, table_type="knowledge", db_schema=self.db_schema
+                    table_name=self.knowledge_table_name,
+                    table_type="knowledge",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.knowledge_table
 
         if table_type == "culture":
             if not hasattr(self, "culture_table"):
                 self.culture_table = await self._get_or_create_table(
-                    table_name=self.culture_table_name, table_type="culture", db_schema=self.db_schema
+                    table_name=self.culture_table_name,
+                    table_type="culture",
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.culture_table
 
+        if table_type == "versions":
+            if not hasattr(self, "versions_table"):
+                self.versions_table = await self._get_or_create_table(
+                    table_name=self.versions_table_name,
+                    table_type="versions",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+            return self.versions_table
+
+        if table_type == "traces":
+            if not hasattr(self, "traces_table"):
+                self.traces_table = await self._get_or_create_table(
+                    table_name=self.trace_table_name,
+                    table_type="traces",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+            return self.traces_table
+
+        if table_type == "spans":
+            if not hasattr(self, "spans_table"):
+                # Ensure traces table exists first (spans has FK to traces)
+                await self._get_table(table_type="traces", create_table_if_not_found=True)
+                self.spans_table = await self._get_or_create_table(
+                    table_name=self.span_table_name,
+                    table_type="spans",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+            return self.spans_table
+
         raise ValueError(f"Unknown table type: {table_type}")
 
-    async def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+    async def _get_or_create_table(
+        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
+    ) -> Table:
         """
         Check if the table exists and is valid, else create it.
 
         Args:
             table_name (str): Name of the table to get or create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object representing the schema.
         """
 
         async with self.async_session_factory() as sess, sess.begin():
-            table_is_available = await ais_table_available(session=sess, table_name=table_name, db_schema=db_schema)
+            table_is_available = await ais_table_available(
+                session=sess, table_name=table_name, db_schema=self.db_schema
+            )
 
-        if not table_is_available:
-            return await self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
+        if (not table_is_available) and create_table_if_not_found:
+            return await self._create_table(table_name=table_name, table_type=table_type)
 
         if not await ais_valid_table(
             db_engine=self.db_engine,
             table_name=table_name,
             table_type=table_type,
-            db_schema=db_schema,
+            db_schema=self.db_schema,
         ):
-            raise ValueError(f"Table {db_schema}.{table_name} has an invalid schema")
+            raise ValueError(f"Table {self.db_schema}.{table_name} has an invalid schema")
 
         try:
             async with self.db_engine.connect() as conn:
 
                 def create_table(connection):
-                    return Table(table_name, self.metadata, schema=db_schema, autoload_with=connection)
+                    return Table(table_name, self.metadata, schema=self.db_schema, autoload_with=connection)
 
                 table = await conn.run_sync(create_table)
+
                 return table
 
         except Exception as e:
-            log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
+            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {e}")
             raise
+
+    async def get_latest_schema_version(self, table_name: str) -> str:
+        """Get the latest version of the database schema."""
+        table = await self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return "2.0.0"
+
+        async with self.async_session_factory() as sess:
+            stmt = select(table)
+            # Latest version for the given table
+            stmt = stmt.where(table.c.table_name == table_name)
+            stmt = stmt.order_by(table.c.version.desc()).limit(1)
+            result = await sess.execute(stmt)
+            row = result.fetchone()
+            if row is None:
+                return "2.0.0"
+
+            version_dict = dict(row._mapping)
+            return version_dict.get("version") or "2.0.0"
+
+    async def upsert_schema_version(self, table_name: str, version: str) -> None:
+        """Upsert the schema version into the database."""
+        table = await self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return
+        current_datetime = datetime.now().isoformat()
+        async with self.async_session_factory() as sess, sess.begin():
+            stmt = postgresql.insert(table).values(
+                table_name=table_name,
+                version=version,
+                created_at=current_datetime,  # Store as ISO format string
+                updated_at=current_datetime,
+            )
+            # Update version if table_name already exists
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["table_name"],
+                set_=dict(version=version, updated_at=current_datetime),
+            )
+            await sess.execute(stmt)
 
     # -- Session methods --
     async def delete_session(self, session_id: str) -> bool:
@@ -567,7 +721,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = await self._get_table(table_type="sessions")
+            table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
             session_dict = session.to_dict()
 
             if isinstance(session, AgentSession):
@@ -698,7 +852,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return None
 
     # -- Memory methods --
-    async def delete_user_memory(self, memory_id: str):
+    async def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
         """Delete a user memory from the database.
 
         Returns:
@@ -712,6 +866,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(delete_stmt)
 
                 success = result.rowcount > 0  # type: ignore
@@ -723,7 +879,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
 
-    async def delete_user_memories(self, memory_ids: List[str]) -> None:
+    async def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
 
         Args:
@@ -737,6 +893,10 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
+
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+
                 result = await sess.execute(delete_stmt)
 
                 if result.rowcount == 0:  # type: ignore
@@ -747,8 +907,11 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error deleting user memories: {e}")
 
-    async def get_all_memory_topics(self) -> List[str]:
+    async def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: List of memory topics.
@@ -757,8 +920,19 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="memories")
 
             async with self.async_session_factory() as sess, sess.begin():
-                stmt = select(func.json_array_elements_text(table.c.topics))
-                result = await sess.execute(stmt)
+                try:
+                    stmt = select(func.jsonb_array_elements_text(table.c.topics))
+                    if user_id is not None:
+                        stmt = stmt.where(table.c.user_id == user_id)
+                    result = await sess.execute(stmt)
+                except ProgrammingError:
+                    # Retrying with json_array_elements_text. This works in older versions,
+                    # where the topics column was of type JSON instead of JSONB
+                    stmt = select(func.json_array_elements_text(table.c.topics))
+                    if user_id is not None:
+                        stmt = stmt.where(table.c.user_id == user_id)
+                    result = await sess.execute(stmt)
+
                 records = result.fetchall()
 
                 return list(set([record[0] for record in records]))
@@ -768,13 +942,17 @@ class AsyncPostgresDb(AsyncBaseDb):
             return []
 
     async def get_user_memory(
-        self, memory_id: str, deserialize: Optional[bool] = True
+        self,
+        memory_id: str,
+        deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             Union[UserMemory, Dict[str, Any], None]:
@@ -789,6 +967,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
 
                 result = await sess.execute(stmt)
                 row = result.fetchone()
@@ -915,7 +1095,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 await sess.execute(table.delete())
 
         except Exception as e:
-            log_warning(f"Exception deleting all cultural knowledge: {e}")
+            log_error(f"Exception deleting all cultural knowledge: {e}")
 
     async def delete_cultural_knowledge(self, id: str) -> None:
         """Delete cultural knowledge by ID.
@@ -934,8 +1114,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 await sess.execute(stmt)
 
         except Exception as e:
-            log_warning(f"Exception deleting cultural knowledge: {e}")
-            raise e
+            log_error(f"Exception deleting cultural knowledge: {e}")
 
     async def get_cultural_knowledge(
         self, id: str, deserialize: Optional[bool] = True
@@ -971,8 +1150,8 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return deserialize_cultural_knowledge(db_row)
 
         except Exception as e:
-            log_warning(f"Exception reading cultural knowledge: {e}")
-            raise e
+            log_error(f"Exception reading cultural knowledge: {e}")
+            return None
 
     async def get_all_cultural_knowledge(
         self,
@@ -1006,7 +1185,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = await self._get_table(table_type="culture")
+            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
 
             async with self.async_session_factory() as sess:
                 # Build query with filters
@@ -1044,8 +1223,8 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return [deserialize_cultural_knowledge(row) for row in db_rows]
 
         except Exception as e:
-            log_warning(f"Exception reading all cultural knowledge: {e}")
-            raise e
+            log_error(f"Exception reading all cultural knowledge: {e}")
+            return [] if deserialize else ([], 0)
 
     async def upsert_cultural_knowledge(
         self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
@@ -1063,7 +1242,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = await self._get_table(table_type="culture")
+            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
 
             # Generate ID if not present
             if cultural_knowledge.id is None:
@@ -1121,13 +1300,14 @@ class AsyncPostgresDb(AsyncBaseDb):
             raise e
 
     async def get_user_memory_stats(
-        self, limit: Optional[int] = None, page: Optional[int] = None
+        self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
         Args:
             limit (Optional[int]): The maximum number of user stats to return.
             page (Optional[int]): The page number.
+            user_id (Optional[str]): User ID for filtering.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
@@ -1148,16 +1328,18 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="memories")
 
             async with self.async_session_factory() as sess, sess.begin():
-                stmt = (
-                    select(
-                        table.c.user_id,
-                        func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.updated_at).label("last_memory_updated_at"),
-                    )
-                    .where(table.c.user_id.is_not(None))
-                    .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.updated_at).desc())
+                stmt = select(
+                    table.c.user_id,
+                    func.count(table.c.memory_id).label("total_memories"),
+                    func.max(table.c.updated_at).label("last_memory_updated_at"),
                 )
+
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id)
+                stmt = stmt.order_by(func.max(table.c.updated_at).desc())
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = await sess.scalar(count_stmt) or 0
@@ -1204,38 +1386,46 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = await self._get_table(table_type="memories")
+            table = await self._get_table(table_type="memories", create_table_if_not_found=True)
 
-            async with self.async_session_factory() as sess, sess.begin():
-                if memory.memory_id is None:
-                    memory.memory_id = str(uuid4())
+            current_time = int(time.time())
 
-                stmt = postgresql.insert(table).values(
-                    memory_id=memory.memory_id,
-                    memory=memory.memory,
-                    input=memory.input,
-                    user_id=memory.user_id,
-                    agent_id=memory.agent_id,
-                    team_id=memory.team_id,
-                    topics=memory.topics,
-                    updated_at=int(time.time()),
-                )
-                stmt = stmt.on_conflict_do_update(  # type: ignore
-                    index_elements=["memory_id"],
-                    set_=dict(
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    if memory.memory_id is None:
+                        memory.memory_id = str(uuid4())
+
+                    stmt = postgresql.insert(table).values(
+                        memory_id=memory.memory_id,
                         memory=memory.memory,
-                        topics=memory.topics,
                         input=memory.input,
+                        user_id=memory.user_id,
                         agent_id=memory.agent_id,
                         team_id=memory.team_id,
-                        updated_at=int(time.time()),
-                    ),
-                ).returning(table)
+                        topics=memory.topics,
+                        feedback=memory.feedback,
+                        created_at=memory.created_at,
+                        updated_at=memory.created_at,
+                    )
+                    stmt = stmt.on_conflict_do_update(  # type: ignore
+                        index_elements=["memory_id"],
+                        set_=dict(
+                            memory=memory.memory,
+                            topics=memory.topics,
+                            input=memory.input,
+                            agent_id=memory.agent_id,
+                            team_id=memory.team_id,
+                            feedback=memory.feedback,
+                            updated_at=current_time,
+                            # Preserve created_at on update - don't overwrite existing value
+                            created_at=table.c.created_at,
+                        ),
+                    ).returning(table)
 
-                result = await sess.execute(stmt)
-                row = result.fetchone()
-                if row is None:
-                    return None
+                    result = await sess.execute(stmt)
+                    row = result.fetchone()
+                    if row is None:
+                        return None
 
             memory_raw = dict(row._mapping)
 
@@ -1540,7 +1730,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
         """
         try:
-            table = await self._get_table(table_type="knowledge")
+            table = await self._get_table(table_type="knowledge", create_table_if_not_found=True)
             async with self.async_session_factory() as sess, sess.begin():
                 # Get the actual table columns to avoid "unconsumed column names" error
                 table_columns = set(table.columns.keys())
@@ -1900,3 +2090,490 @@ class AsyncPostgresDb(AsyncBaseDb):
             for memory in memories:
                 await self.upsert_user_memory(memory)
             log_info(f"Migrated {len(memories)} memories to table: {self.memory_table}")
+
+    # --- Traces ---
+    def _get_traces_base_query(self, table: Table, spans_table: Optional[Table] = None):
+        """Build base query for traces with aggregated span counts.
+
+        Args:
+            table: The traces table.
+            spans_table: The spans table (optional).
+
+        Returns:
+            SQLAlchemy select statement with total_spans and error_count calculated dynamically.
+        """
+        from sqlalchemy import case, literal
+
+        if spans_table is not None:
+            # JOIN with spans table to calculate total_spans and error_count
+            return (
+                select(
+                    table,
+                    func.coalesce(func.count(spans_table.c.span_id), 0).label("total_spans"),
+                    func.coalesce(func.sum(case((spans_table.c.status_code == "ERROR", 1), else_=0)), 0).label(
+                        "error_count"
+                    ),
+                )
+                .select_from(table.outerjoin(spans_table, table.c.trace_id == spans_table.c.trace_id))
+                .group_by(table.c.trace_id)
+            )
+        else:
+            # Fallback if spans table doesn't exist
+            return select(table, literal(0).label("total_spans"), literal(0).label("error_count"))
+
+    def _get_trace_component_level_expr(self, workflow_id_col, team_id_col, agent_id_col, name_col):
+        """Build a SQL CASE expression that returns the component level for a trace.
+
+        Component levels (higher = more important):
+            - 3: Workflow root (.run or .arun with workflow_id)
+            - 2: Team root (.run or .arun with team_id)
+            - 1: Agent root (.run or .arun with agent_id)
+            - 0: Child span (not a root)
+
+        Args:
+            workflow_id_col: SQL column/expression for workflow_id
+            team_id_col: SQL column/expression for team_id
+            agent_id_col: SQL column/expression for agent_id
+            name_col: SQL column/expression for name
+
+        Returns:
+            SQLAlchemy CASE expression returning the component level as an integer.
+        """
+        is_root_name = or_(name_col.contains(".run"), name_col.contains(".arun"))
+
+        return case(
+            # Workflow root (level 3)
+            (and_(workflow_id_col.isnot(None), is_root_name), 3),
+            # Team root (level 2)
+            (and_(team_id_col.isnot(None), is_root_name), 2),
+            # Agent root (level 1)
+            (and_(agent_id_col.isnot(None), is_root_name), 1),
+            # Child span or unknown (level 0)
+            else_=0,
+        )
+
+    async def upsert_trace(self, trace: "Trace") -> None:
+        """Create or update a single trace record in the database.
+
+        Uses INSERT ... ON CONFLICT DO UPDATE (upsert) to handle concurrent inserts
+        atomically and avoid race conditions.
+
+        Args:
+            trace: The Trace object to store (one per trace_id).
+        """
+        try:
+            table = await self._get_table(table_type="traces", create_table_if_not_found=True)
+
+            trace_dict = trace.to_dict()
+            trace_dict.pop("total_spans", None)
+            trace_dict.pop("error_count", None)
+
+            async with self.async_session_factory() as sess, sess.begin():
+                # Use upsert to handle concurrent inserts atomically
+                # On conflict, update fields while preserving existing non-null context values
+                # and keeping the earliest start_time
+                insert_stmt = postgresql.insert(table).values(trace_dict)
+
+                # Build component level expressions for comparing trace priority
+                new_level = self._get_trace_component_level_expr(
+                    insert_stmt.excluded.workflow_id,
+                    insert_stmt.excluded.team_id,
+                    insert_stmt.excluded.agent_id,
+                    insert_stmt.excluded.name,
+                )
+                existing_level = self._get_trace_component_level_expr(
+                    table.c.workflow_id,
+                    table.c.team_id,
+                    table.c.agent_id,
+                    table.c.name,
+                )
+
+                # Build the ON CONFLICT DO UPDATE clause
+                # Use LEAST for start_time, GREATEST for end_time to capture full trace duration
+                # Use COALESCE to preserve existing non-null context values
+                upsert_stmt = insert_stmt.on_conflict_do_update(
+                    index_elements=["trace_id"],
+                    set_={
+                        "end_time": func.greatest(table.c.end_time, insert_stmt.excluded.end_time),
+                        "start_time": func.least(table.c.start_time, insert_stmt.excluded.start_time),
+                        "duration_ms": func.extract(
+                            "epoch",
+                            func.cast(
+                                func.greatest(table.c.end_time, insert_stmt.excluded.end_time),
+                                TIMESTAMP(timezone=True),
+                            )
+                            - func.cast(
+                                func.least(table.c.start_time, insert_stmt.excluded.start_time),
+                                TIMESTAMP(timezone=True),
+                            ),
+                        )
+                        * 1000,
+                        "status": insert_stmt.excluded.status,
+                        # Update name only if new trace is from a higher-level component
+                        # Priority: workflow (3) > team (2) > agent (1) > child spans (0)
+                        "name": case(
+                            (new_level > existing_level, insert_stmt.excluded.name),
+                            else_=table.c.name,
+                        ),
+                        # Preserve existing non-null context values using COALESCE
+                        "run_id": func.coalesce(insert_stmt.excluded.run_id, table.c.run_id),
+                        "session_id": func.coalesce(insert_stmt.excluded.session_id, table.c.session_id),
+                        "user_id": func.coalesce(insert_stmt.excluded.user_id, table.c.user_id),
+                        "agent_id": func.coalesce(insert_stmt.excluded.agent_id, table.c.agent_id),
+                        "team_id": func.coalesce(insert_stmt.excluded.team_id, table.c.team_id),
+                        "workflow_id": func.coalesce(insert_stmt.excluded.workflow_id, table.c.workflow_id),
+                    },
+                )
+                await sess.execute(upsert_stmt)
+
+        except Exception as e:
+            log_error(f"Error creating trace: {e}")
+            # Don't raise - tracing should not break the main application flow
+
+    async def get_trace(
+        self,
+        trace_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ):
+        """Get a single trace by trace_id or other filters.
+
+        Args:
+            trace_id: The unique trace identifier.
+            run_id: Filter by run ID (returns first match).
+
+        Returns:
+            Optional[Trace]: The trace if found, None otherwise.
+
+        Note:
+            If multiple filters are provided, trace_id takes precedence.
+            For other filters, the most recent trace is returned.
+        """
+        try:
+            from agno.tracing.schemas import Trace
+
+            table = await self._get_table(table_type="traces")
+
+            # Get spans table for JOIN
+            spans_table = await self._get_table(table_type="spans")
+
+            async with self.async_session_factory() as sess:
+                # Build query with aggregated span counts
+                stmt = self._get_traces_base_query(table, spans_table)
+
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                elif run_id:
+                    stmt = stmt.where(table.c.run_id == run_id)
+                else:
+                    log_debug("get_trace called without any filter parameters")
+                    return None
+
+                # Order by most recent and get first result
+                stmt = stmt.order_by(table.c.start_time.desc()).limit(1)
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+
+                if row:
+                    return Trace.from_dict(dict(row._mapping))
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting trace: {e}")
+            return None
+
+    async def get_traces(
+        self,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List, int]:
+        """Get traces matching the provided filters with pagination.
+
+        Args:
+            run_id: Filter by run ID.
+            session_id: Filter by session ID.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            status: Filter by status (OK, ERROR, UNSET).
+            start_time: Filter traces starting after this datetime.
+            end_time: Filter traces ending before this datetime.
+            limit: Maximum number of traces to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
+        """
+        try:
+            from agno.tracing.schemas import Trace
+
+            table = await self._get_table(table_type="traces")
+
+            # Get spans table for JOIN
+            spans_table = await self._get_table(table_type="spans")
+
+            async with self.async_session_factory() as sess:
+                # Build base query with aggregated span counts
+                base_stmt = self._get_traces_base_query(table, spans_table)
+
+                # Apply filters
+                if run_id:
+                    base_stmt = base_stmt.where(table.c.run_id == run_id)
+                if session_id:
+                    base_stmt = base_stmt.where(table.c.session_id == session_id)
+                if user_id:
+                    base_stmt = base_stmt.where(table.c.user_id == user_id)
+                if agent_id:
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
+                if status:
+                    base_stmt = base_stmt.where(table.c.status == status)
+                if start_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.start_time >= start_time.isoformat())
+                if end_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.end_time <= end_time.isoformat())
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = await sess.scalar(count_stmt) or 0
+                log_debug(f"Total matching traces: {total_count}")
+
+                # Apply pagination
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = base_stmt.order_by(table.c.start_time.desc()).limit(limit).offset(offset)
+
+                result = await sess.execute(paginated_stmt)
+                results = result.fetchall()
+                log_debug(f"Returning page {page} with {len(results)} traces")
+
+                traces = [Trace.from_dict(dict(row._mapping)) for row in results]
+                return traces, total_count
+
+        except Exception as e:
+            log_error(f"Error getting traces: {e}")
+            return [], 0
+
+    async def get_trace_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Get trace statistics grouped by session.
+
+        Args:
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            start_time: Filter sessions with traces created after this datetime.
+            end_time: Filter sessions with traces created before this datetime.
+            limit: Maximum number of sessions to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
+                Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
+                workflow_id, first_trace_at, last_trace_at.
+        """
+        try:
+            table = await self._get_table(table_type="traces")
+
+            async with self.async_session_factory() as sess:
+                # Build base query grouped by session_id
+                base_stmt = (
+                    select(
+                        table.c.session_id,
+                        table.c.user_id,
+                        table.c.agent_id,
+                        table.c.team_id,
+                        table.c.workflow_id,
+                        func.count(table.c.trace_id).label("total_traces"),
+                        func.min(table.c.created_at).label("first_trace_at"),
+                        func.max(table.c.created_at).label("last_trace_at"),
+                    )
+                    .where(table.c.session_id.isnot(None))  # Only sessions with session_id
+                    .group_by(
+                        table.c.session_id, table.c.user_id, table.c.agent_id, table.c.team_id, table.c.workflow_id
+                    )
+                )
+
+                # Apply filters
+                if user_id:
+                    base_stmt = base_stmt.where(table.c.user_id == user_id)
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
+                if agent_id:
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if start_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.created_at >= start_time.isoformat())
+                if end_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.created_at <= end_time.isoformat())
+
+                # Get total count of sessions
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = await sess.scalar(count_stmt) or 0
+
+                # Apply pagination and ordering
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
+
+                result = await sess.execute(paginated_stmt)
+                results = result.fetchall()
+
+                # Convert to list of dicts with datetime objects
+                stats_list = []
+                for row in results:
+                    # Convert ISO strings to datetime objects
+                    first_trace_at_str = row.first_trace_at
+                    last_trace_at_str = row.last_trace_at
+
+                    # Parse ISO format strings to datetime objects
+                    first_trace_at = datetime.fromisoformat(first_trace_at_str.replace("Z", "+00:00"))
+                    last_trace_at = datetime.fromisoformat(last_trace_at_str.replace("Z", "+00:00"))
+
+                    stats_list.append(
+                        {
+                            "session_id": row.session_id,
+                            "user_id": row.user_id,
+                            "agent_id": row.agent_id,
+                            "team_id": row.team_id,
+                            "workflow_id": row.workflow_id,
+                            "total_traces": row.total_traces,
+                            "first_trace_at": first_trace_at,
+                            "last_trace_at": last_trace_at,
+                        }
+                    )
+
+                return stats_list, total_count
+
+        except Exception as e:
+            log_error(f"Error getting trace stats: {e}")
+            return [], 0
+
+    # --- Spans ---
+    async def create_span(self, span: "Span") -> None:
+        """Create a single span in the database.
+
+        Args:
+            span: The Span object to store.
+        """
+        try:
+            table = await self._get_table(table_type="spans", create_table_if_not_found=True)
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(span.to_dict())
+                await sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating span: {e}")
+
+    async def create_spans(self, spans: List) -> None:
+        """Create multiple spans in the database as a batch.
+
+        Args:
+            spans: List of Span objects to store.
+        """
+        if not spans:
+            return
+
+        try:
+            table = await self._get_table(table_type="spans", create_table_if_not_found=True)
+
+            async with self.async_session_factory() as sess, sess.begin():
+                for span in spans:
+                    stmt = postgresql.insert(table).values(span.to_dict())
+                    await sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating spans batch: {e}")
+
+    async def get_span(self, span_id: str):
+        """Get a single span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[Span]: The span if found, None otherwise.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            table = await self._get_table(table_type="spans")
+
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.span_id == span_id)
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                if row:
+                    return Span.from_dict(dict(row._mapping))
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting span: {e}")
+            return None
+
+    async def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        """Get spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            parent_span_id: Filter by parent span ID.
+            limit: Maximum number of spans to return.
+
+        Returns:
+            List[Span]: List of matching spans.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            table = await self._get_table(table_type="spans")
+
+            async with self.async_session_factory() as sess:
+                stmt = select(table)
+
+                # Apply filters
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                if parent_span_id:
+                    stmt = stmt.where(table.c.parent_span_id == parent_span_id)
+
+                if limit:
+                    stmt = stmt.limit(limit)
+
+                result = await sess.execute(stmt)
+                results = result.fetchall()
+                return [Span.from_dict(dict(row._mapping)) for row in results]
+
+        except Exception as e:
+            log_error(f"Error getting spans: {e}")
+            return []

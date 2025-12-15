@@ -5,9 +5,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from hashlib import md5
 from pathlib import Path
-from time import time
+from time import sleep, time
 from types import AsyncGeneratorType, GeneratorType
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Dict,
@@ -15,23 +16,29 @@ from typing import (
     List,
     Literal,
     Optional,
+    Sequence,
     Tuple,
     Type,
     Union,
     get_args,
 )
+
+if TYPE_CHECKING:
+    from agno.compression.manager import CompressionManager
 from uuid import uuid4
 
 from pydantic import BaseModel
 
-from agno.exceptions import AgentRunException
+from agno.exceptions import AgentRunException, ModelProviderError, RetryableModelProviderError
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
+from agno.run.requirement import RunRequirement
 from agno.run.team import RunContentEvent as TeamRunContentEvent
-from agno.run.team import TeamRunOutputEvent
+from agno.run.team import TeamRunOutput, TeamRunOutputEvent
+from agno.run.workflow import WorkflowRunOutputEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
@@ -51,6 +58,8 @@ class MessageData:
     response_image: Optional[Image] = None
     response_video: Optional[Video] = None
     response_file: Optional[File] = None
+
+    response_metrics: Optional[Metrics] = None
 
     # Data from the provider that we might need on subsequent messages
     response_provider_data: Optional[Dict[str, Any]] = None
@@ -142,14 +151,220 @@ class Model(ABC):
     cache_ttl: Optional[int] = None
     cache_dir: Optional[str] = None
 
+    # Retry configuration for model provider errors
+    # Number of retries to attempt when a ModelProviderError occurs
+    retries: int = 0
+    # Delay between retries (in seconds)
+    delay_between_retries: int = 1
+    # Exponential backoff: if True, the delay between retries is doubled each time
+    exponential_backoff: bool = False
+    # Enable retrying a model invocation once with a guidance message.
+    # This is useful for known errors avoidable with extra instructions.
+    retry_with_guidance: bool = True
+    # Set the number of times to retry the model invocation with guidance.
+    retry_with_guidance_limit: int = 1
+
     def __post_init__(self):
         if self.provider is None and self.name is not None:
             self.provider = f"{self.name} ({self.id})"
+
+    def _get_retry_delay(self, attempt: int) -> float:
+        """Calculate the delay before the next retry attempt."""
+        if self.exponential_backoff:
+            return self.delay_between_retries * (2**attempt)
+        return self.delay_between_retries
+
+    def _invoke_with_retry(self, **kwargs) -> ModelResponse:
+        """
+        Invoke the model with retry logic for ModelProviderError.
+
+        This method wraps the invoke() call and retries on ModelProviderError
+        with optional exponential backoff.
+        """
+        last_exception: Optional[ModelProviderError] = None
+
+        for attempt in range(self.retries + 1):
+            try:
+                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
+                return self.invoke(**kwargs)
+            except ModelProviderError as e:
+                last_exception = e
+                if attempt < self.retries:
+                    delay = self._get_retry_delay(attempt)
+                    log_warning(
+                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {e}. Retrying in {delay}s..."
+                    )
+                    sleep(delay)
+                else:
+                    log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+            except RetryableModelProviderError as e:
+                current_count = retries_with_guidance_count
+                if current_count >= self.retry_with_guidance_limit:
+                    raise ModelProviderError(
+                        message=f"Max retries with guidance reached. Error: {e.original_error}",
+                        model_name=self.name,
+                        model_id=self.id,
+                    )
+                kwargs.pop("retry_with_guidance", None)
+                kwargs["retries_with_guidance_count"] = current_count + 1
+
+                # Append the guidance message to help the model avoid the error in the next invoke.
+                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
+
+                return self._invoke_with_retry(**kwargs, retry_with_guidance=True)
+
+        # If we've exhausted all retries, raise the last exception
+        raise last_exception  # type: ignore
+
+    async def _ainvoke_with_retry(self, **kwargs) -> ModelResponse:
+        """
+        Asynchronously invoke the model with retry logic for ModelProviderError.
+
+        This method wraps the ainvoke() call and retries on ModelProviderError
+        with optional exponential backoff.
+        """
+        last_exception: Optional[ModelProviderError] = None
+
+        for attempt in range(self.retries + 1):
+            try:
+                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
+                return await self.ainvoke(**kwargs)
+            except ModelProviderError as e:
+                last_exception = e
+                if attempt < self.retries:
+                    delay = self._get_retry_delay(attempt)
+                    log_warning(
+                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {e}. Retrying in {delay}s..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+            except RetryableModelProviderError as e:
+                current_count = retries_with_guidance_count
+                if current_count >= self.retry_with_guidance_limit:
+                    raise ModelProviderError(
+                        message=f"Max retries with guidance reached. Error: {e.original_error}",
+                        model_name=self.name,
+                        model_id=self.id,
+                    )
+
+                kwargs.pop("retry_with_guidance", None)
+                kwargs["retries_with_guidance_count"] = current_count + 1
+
+                # Append the guidance message to help the model avoid the error in the next invoke.
+                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
+
+                return await self._ainvoke_with_retry(**kwargs, retry_with_guidance=True)
+
+        # If we've exhausted all retries, raise the last exception
+        raise last_exception  # type: ignore
+
+    def _invoke_stream_with_retry(self, **kwargs) -> Iterator[ModelResponse]:
+        """
+        Invoke the model stream with retry logic for ModelProviderError.
+
+        This method wraps the invoke_stream() call and retries on ModelProviderError
+        with optional exponential backoff. Note that retries restart the entire stream.
+        """
+        last_exception: Optional[ModelProviderError] = None
+
+        for attempt in range(self.retries + 1):
+            try:
+                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
+                yield from self.invoke_stream(**kwargs)
+                return  # Success, exit the retry loop
+            except ModelProviderError as e:
+                last_exception = e
+                if attempt < self.retries:
+                    delay = self._get_retry_delay(attempt)
+                    log_warning(
+                        f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    sleep(delay)
+                else:
+                    log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+            except RetryableModelProviderError as e:
+                current_count = retries_with_guidance_count
+                if current_count >= self.retry_with_guidance_limit:
+                    raise ModelProviderError(
+                        message=f"Max retries with guidance reached. Error: {e.original_error}",
+                        model_name=self.name,
+                        model_id=self.id,
+                    )
+
+                kwargs.pop("retry_with_guidance", None)
+                kwargs["retries_with_guidance_count"] = current_count + 1
+
+                # Append the guidance message to help the model avoid the error in the next invoke.
+                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
+
+                yield from self._invoke_stream_with_retry(**kwargs, retry_with_guidance=True)
+                return  # Success, exit after regeneration
+
+        # If we've exhausted all retries, raise the last exception
+        raise last_exception  # type: ignore
+
+    async def _ainvoke_stream_with_retry(self, **kwargs) -> AsyncIterator[ModelResponse]:
+        """
+        Asynchronously invoke the model stream with retry logic for ModelProviderError.
+
+        This method wraps the ainvoke_stream() call and retries on ModelProviderError
+        with optional exponential backoff. Note that retries restart the entire stream.
+        """
+        last_exception: Optional[ModelProviderError] = None
+
+        for attempt in range(self.retries + 1):
+            try:
+                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
+                async for response in self.ainvoke_stream(**kwargs):
+                    yield response
+                return  # Success, exit the retry loop
+            except ModelProviderError as e:
+                last_exception = e
+                if attempt < self.retries:
+                    delay = self._get_retry_delay(attempt)
+                    log_warning(
+                        f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+            except RetryableModelProviderError as e:
+                current_count = retries_with_guidance_count
+                if current_count >= self.retry_with_guidance_limit:
+                    raise ModelProviderError(
+                        message=f"Max retries with guidance reached. Error: {e.original_error}",
+                        model_name=self.name,
+                        model_id=self.id,
+                    )
+
+                kwargs.pop("retry_with_guidance", None)
+                kwargs["retries_with_guidance_count"] = current_count + 1
+
+                # Append the guidance message to help the model avoid the error in the next invoke.
+                kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
+
+                async for response in self._ainvoke_stream_with_retry(**kwargs, retry_with_guidance=True):
+                    yield response
+                return  # Success, exit after regeneration
+
+        # If we've exhausted all retries, raise the last exception
+        raise last_exception  # type: ignore
 
     def to_dict(self) -> Dict[str, Any]:
         fields = {"name", "id", "provider"}
         _dict = {field: getattr(self, field) for field in fields if getattr(self, field) is not None}
         return _dict
+
+    def _remove_temporary_messages(self, messages: List[Message]) -> None:
+        """Remove temporary messages from the given list.
+
+        Args:
+            messages: The list of messages to filter (modified in place).
+        """
+        messages[:] = [m for m in messages if not m.temporary]
 
     def get_provider(self) -> str:
         return self.provider or self.name or self.__class__.__name__
@@ -300,6 +515,29 @@ class Model(ABC):
                 _tool_dicts.append(tool)
         return _tool_dicts
 
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[Sequence[Union[Function, Dict[str, Any]]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        from agno.utils.tokens import count_tokens
+
+        return count_tokens(
+            messages,
+            tools=list(tools) if tools else None,
+            model_id=self.id,
+            output_schema=output_schema,
+        )
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[Sequence[Union[Function, Dict[str, Any]]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        return self.count_tokens(messages, tools, output_schema=output_schema)
+
     def response(
         self,
         messages: List[Message],
@@ -307,8 +545,9 @@ class Model(ABC):
         tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
+        compression_manager: Optional["CompressionManager"] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -322,155 +561,194 @@ class Model(ABC):
             run_response: Run response to use
             send_media_to_model: Whether to send media to the model
         """
-
-        # Check cache if enabled
-        if self.cache_response:
-            cache_key = self._get_model_cache_key(messages, stream=False, response_format=response_format, tools=tools)
-            cached_data = self._get_cached_model_response(cache_key)
-
-            if cached_data:
-                log_info("Cache hit for model response")
-                return self._model_response_from_cache(cached_data)
-
-        log_debug(f"{self.get_provider()} Response Start", center=True, symbol="-")
-        log_debug(f"Model: {self.id}", center=True, symbol="-")
-
-        _log_messages(messages)
-        model_response = ModelResponse()
-
-        function_call_count = 0
-
-        _tool_dicts = self._format_tools(tools) if tools is not None else []
-        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
-
-        while True:
-            # Get response from model
-            assistant_message = Message(role=self.assistant_message_role)
-            self._process_model_response(
-                messages=messages,
-                assistant_message=assistant_message,
-                model_response=model_response,
-                response_format=response_format,
-                tools=_tool_dicts,
-                tool_choice=tool_choice or self._tool_choice,
-                run_response=run_response,
-            )
-
-            # Add assistant message to messages
-            messages.append(assistant_message)
-
-            # Log response and metrics
-            assistant_message.log(metrics=True)
-
-            # Handle tool calls if present
-            if assistant_message.tool_calls:
-                # Prepare function calls
-                function_calls_to_run = self._prepare_function_calls(
-                    assistant_message=assistant_message,
-                    messages=messages,
-                    model_response=model_response,
-                    functions=_functions,
+        try:
+            # Check cache if enabled
+            if self.cache_response:
+                cache_key = self._get_model_cache_key(
+                    messages, stream=False, response_format=response_format, tools=tools
                 )
-                function_call_results: List[Message] = []
+                cached_data = self._get_cached_model_response(cache_key)
 
-                # Execute function calls
-                for function_call_response in self.run_function_calls(
-                    function_calls=function_calls_to_run,
-                    function_call_results=function_call_results,
-                    current_function_call_count=function_call_count,
-                    function_call_limit=tool_call_limit,
+                if cached_data:
+                    log_info("Cache hit for model response")
+                    return self._model_response_from_cache(cached_data)
+
+            log_debug(f"{self.get_provider()} Response Start", center=True, symbol="-")
+            log_debug(f"Model: {self.id}", center=True, symbol="-")
+
+            _log_messages(messages)
+            model_response = ModelResponse()
+
+            function_call_count = 0
+
+            _tool_dicts = self._format_tools(tools) if tools is not None else []
+            _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+
+            _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+            _compression_manager = compression_manager if _compress_tool_results else None
+
+            while True:
+                # Compress tool results if compression is enabled and threshold is met
+                if _compression_manager is not None and _compression_manager.should_compress(
+                    messages, tools, model=self, response_format=response_format
                 ):
-                    if isinstance(function_call_response, ModelResponse):
-                        # The session state is updated by the function call
-                        if function_call_response.updated_session_state is not None:
-                            model_response.updated_session_state = function_call_response.updated_session_state
+                    _compression_manager.compress(messages)
 
-                        # Media artifacts are generated by the function call
-                        if function_call_response.images is not None:
-                            if model_response.images is None:
-                                model_response.images = []
-                            model_response.images.extend(function_call_response.images)
-
-                        if function_call_response.audios is not None:
-                            if model_response.audios is None:
-                                model_response.audios = []
-                            model_response.audios.extend(function_call_response.audios)
-
-                        if function_call_response.videos is not None:
-                            if model_response.videos is None:
-                                model_response.videos = []
-                            model_response.videos.extend(function_call_response.videos)
-
-                        if function_call_response.files is not None:
-                            if model_response.files is None:
-                                model_response.files = []
-                            model_response.files.extend(function_call_response.files)
-
-                        if (
-                            function_call_response.event
-                            in [
-                                ModelResponseEvent.tool_call_completed.value,
-                                ModelResponseEvent.tool_call_paused.value,
-                            ]
-                            and function_call_response.tool_executions is not None
-                        ):
-                            if model_response.tool_executions is None:
-                                model_response.tool_executions = []
-                            model_response.tool_executions.extend(function_call_response.tool_executions)
-
-                        elif function_call_response.event not in [
-                            ModelResponseEvent.tool_call_started.value,
-                            ModelResponseEvent.tool_call_completed.value,
-                        ]:
-                            if function_call_response.content:
-                                model_response.content += function_call_response.content  # type: ignore
-
-                # Add a function call for each successful execution
-                function_call_count += len(function_call_results)
-
-                # Format and add results to messages
-                self.format_function_call_results(
-                    messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                # Get response from model
+                assistant_message = Message(role=self.assistant_message_role)
+                self._process_model_response(
+                    messages=messages,
+                    assistant_message=assistant_message,
+                    model_response=model_response,
+                    response_format=response_format,
+                    tools=_tool_dicts,
+                    tool_choice=tool_choice or self._tool_choice,
+                    run_response=run_response,
+                    compress_tool_results=_compress_tool_results,
                 )
 
-                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
-                    # Handle function call media
-                    self._handle_function_call_media(
+                # Add assistant message to messages
+                messages.append(assistant_message)
+
+                # Log response and metrics
+                assistant_message.log(metrics=True, use_compressed_content=_compress_tool_results)
+
+                # Handle tool calls if present
+                if assistant_message.tool_calls:
+                    # Prepare function calls
+                    function_calls_to_run = self._prepare_function_calls(
+                        assistant_message=assistant_message,
+                        messages=messages,
+                        model_response=model_response,
+                        functions=_functions,
+                    )
+                    function_call_results: List[Message] = []
+
+                    # Execute function calls
+                    for function_call_response in self.run_function_calls(
+                        function_calls=function_calls_to_run,
+                        function_call_results=function_call_results,
+                        current_function_call_count=function_call_count,
+                        function_call_limit=tool_call_limit,
+                    ):
+                        if isinstance(function_call_response, ModelResponse):
+                            # The session state is updated by the function call
+                            if function_call_response.updated_session_state is not None:
+                                model_response.updated_session_state = function_call_response.updated_session_state
+
+                            # Media artifacts are generated by the function call
+                            if function_call_response.images is not None:
+                                if model_response.images is None:
+                                    model_response.images = []
+                                model_response.images.extend(function_call_response.images)
+
+                            if function_call_response.audios is not None:
+                                if model_response.audios is None:
+                                    model_response.audios = []
+                                model_response.audios.extend(function_call_response.audios)
+
+                            if function_call_response.videos is not None:
+                                if model_response.videos is None:
+                                    model_response.videos = []
+                                model_response.videos.extend(function_call_response.videos)
+
+                            if function_call_response.files is not None:
+                                if model_response.files is None:
+                                    model_response.files = []
+                                model_response.files.extend(function_call_response.files)
+
+                            if (
+                                function_call_response.event
+                                in [
+                                    ModelResponseEvent.tool_call_completed.value,
+                                    ModelResponseEvent.tool_call_paused.value,
+                                ]
+                                and function_call_response.tool_executions is not None
+                            ):
+                                # Record the tool execution in the model response
+                                if model_response.tool_executions is None:
+                                    model_response.tool_executions = []
+                                model_response.tool_executions.extend(function_call_response.tool_executions)
+
+                                # If the tool is currently paused (HITL flow), add the requirement to the run response
+                                if (
+                                    function_call_response.event == ModelResponseEvent.tool_call_paused.value
+                                    and run_response is not None
+                                ):
+                                    current_tool_execution = function_call_response.tool_executions[-1]
+                                    if run_response.requirements is None:
+                                        run_response.requirements = []
+                                    run_response.requirements.append(
+                                        RunRequirement(tool_execution=current_tool_execution)
+                                    )
+
+                            elif function_call_response.event not in [
+                                ModelResponseEvent.tool_call_started.value,
+                                ModelResponseEvent.tool_call_completed.value,
+                            ]:
+                                if function_call_response.content:
+                                    model_response.content += function_call_response.content  # type: ignore
+
+                    # Add a function call for each successful execution
+                    function_call_count += len(function_call_results)
+
+                    # Format and add results to messages
+                    self.format_function_call_results(
                         messages=messages,
                         function_call_results=function_call_results,
-                        send_media_to_model=send_media_to_model,
+                        compress_tool_results=_compress_tool_results,
+                        **model_response.extra or {},
                     )
 
-                for function_call_result in function_call_results:
-                    function_call_result.log(metrics=True)
+                    if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
+                        # Handle function call media
+                        self._handle_function_call_media(
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            send_media_to_model=send_media_to_model,
+                        )
 
-                # Check if we should stop after tool calls
-                if any(m.stop_after_tool_call for m in function_call_results):
-                    break
+                    for function_call_result in function_call_results:
+                        function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
 
-                # If we have any tool calls that require confirmation, break the loop
-                if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
-                    break
+                    # Check if we should stop after tool calls
+                    if any(m.stop_after_tool_call for m in function_call_results):
+                        break
 
-                # If we have any tool calls that require external execution, break the loop
-                if any(tc.external_execution_required for tc in model_response.tool_executions or []):
-                    break
+                    # If we have any tool calls that require confirmation, break the loop
+                    if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
+                        break
 
-                # If we have any tool calls that require user input, break the loop
-                if any(tc.requires_user_input for tc in model_response.tool_executions or []):
-                    break
+                    # If we have any tool calls that require external execution, break the loop
+                    if any(tc.external_execution_required for tc in model_response.tool_executions or []):
+                        break
 
-                # Continue loop to get next response
-                continue
+                    # If we have any tool calls that require user input, break the loop
+                    if any(tc.requires_user_input for tc in model_response.tool_executions or []):
+                        break
 
-            # No tool calls or finished processing them
-            break
+                    # Continue loop to get next response
+                    continue
 
-        log_debug(f"{self.get_provider()} Response End", center=True, symbol="-")
+                # No tool calls or finished processing them
+                break
 
-        # Save to cache if enabled
-        if self.cache_response:
-            self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
+            log_debug(f"{self.get_provider()} Response End", center=True, symbol="-")
+
+            # Save to cache if enabled
+            if self.cache_response:
+                self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
+        finally:
+            # Close the Gemini client
+            if self.__class__.__name__ == "Gemini" and self.client is not None:  # type: ignore
+                try:
+                    self.client.close()  # type: ignore
+                    self.client = None
+                except AttributeError:
+                    log_warning(
+                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                    )
 
         return model_response
 
@@ -481,157 +759,200 @@ class Model(ABC):
         tools: Optional[List[Union[Function, dict]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
+        compression_manager: Optional["CompressionManager"] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
         """
 
-        # Check cache if enabled
-        if self.cache_response:
-            cache_key = self._get_model_cache_key(messages, stream=False, response_format=response_format, tools=tools)
-            cached_data = self._get_cached_model_response(cache_key)
-
-            if cached_data:
-                log_info("Cache hit for model response")
-                return self._model_response_from_cache(cached_data)
-
-        log_debug(f"{self.get_provider()} Async Response Start", center=True, symbol="-")
-        log_debug(f"Model: {self.id}", center=True, symbol="-")
-        _log_messages(messages)
-        model_response = ModelResponse()
-
-        _tool_dicts = self._format_tools(tools) if tools is not None else []
-        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
-
-        function_call_count = 0
-
-        while True:
-            # Get response from model
-            assistant_message = Message(role=self.assistant_message_role)
-            await self._aprocess_model_response(
-                messages=messages,
-                assistant_message=assistant_message,
-                model_response=model_response,
-                response_format=response_format,
-                tools=_tool_dicts,
-                tool_choice=tool_choice or self._tool_choice,
-            )
-
-            # Add assistant message to messages
-            messages.append(assistant_message)
-
-            # Log response and metrics
-            assistant_message.log(metrics=True)
-
-            # Handle tool calls if present
-            if assistant_message.tool_calls:
-                # Prepare function calls
-                function_calls_to_run = self._prepare_function_calls(
-                    assistant_message=assistant_message,
-                    messages=messages,
-                    model_response=model_response,
-                    functions=_functions,
+        try:
+            # Check cache if enabled
+            if self.cache_response:
+                cache_key = self._get_model_cache_key(
+                    messages, stream=False, response_format=response_format, tools=tools
                 )
-                function_call_results: List[Message] = []
+                cached_data = self._get_cached_model_response(cache_key)
 
-                # Execute function calls
-                async for function_call_response in self.arun_function_calls(
-                    function_calls=function_calls_to_run,
-                    function_call_results=function_call_results,
-                    current_function_call_count=function_call_count,
-                    function_call_limit=tool_call_limit,
+                if cached_data:
+                    log_info("Cache hit for model response")
+                    return self._model_response_from_cache(cached_data)
+
+            log_debug(f"{self.get_provider()} Async Response Start", center=True, symbol="-")
+            log_debug(f"Model: {self.id}", center=True, symbol="-")
+            _log_messages(messages)
+            model_response = ModelResponse()
+
+            _tool_dicts = self._format_tools(tools) if tools is not None else []
+            _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+
+            _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+            _compression_manager = compression_manager if _compress_tool_results else None
+
+            function_call_count = 0
+
+            while True:
+                # Compress existing tool results BEFORE making API call to avoid context overflow
+                if _compression_manager is not None and await _compression_manager.ashould_compress(
+                    messages, tools, model=self, response_format=response_format
                 ):
-                    if isinstance(function_call_response, ModelResponse):
-                        # The session state is updated by the function call
-                        if function_call_response.updated_session_state is not None:
-                            model_response.updated_session_state = function_call_response.updated_session_state
+                    await _compression_manager.acompress(messages)
 
-                        # Media artifacts are generated by the function call
-                        if function_call_response.images is not None:
-                            if model_response.images is None:
-                                model_response.images = []
-                            model_response.images.extend(function_call_response.images)
-
-                        if function_call_response.audios is not None:
-                            if model_response.audios is None:
-                                model_response.audios = []
-                            model_response.audios.extend(function_call_response.audios)
-
-                        if function_call_response.videos is not None:
-                            if model_response.videos is None:
-                                model_response.videos = []
-                            model_response.videos.extend(function_call_response.videos)
-
-                        if function_call_response.files is not None:
-                            if model_response.files is None:
-                                model_response.files = []
-                            model_response.files.extend(function_call_response.files)
-
-                        if (
-                            function_call_response.event
-                            in [
-                                ModelResponseEvent.tool_call_completed.value,
-                                ModelResponseEvent.tool_call_paused.value,
-                            ]
-                            and function_call_response.tool_executions is not None
-                        ):
-                            if model_response.tool_executions is None:
-                                model_response.tool_executions = []
-                            model_response.tool_executions.extend(function_call_response.tool_executions)
-                        elif function_call_response.event not in [
-                            ModelResponseEvent.tool_call_started.value,
-                            ModelResponseEvent.tool_call_completed.value,
-                        ]:
-                            if function_call_response.content:
-                                model_response.content += function_call_response.content  # type: ignore
-
-                # Add a function call for each successful execution
-                function_call_count += len(function_call_results)
-
-                # Format and add results to messages
-                self.format_function_call_results(
-                    messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                # Get response from model
+                assistant_message = Message(role=self.assistant_message_role)
+                await self._aprocess_model_response(
+                    messages=messages,
+                    assistant_message=assistant_message,
+                    model_response=model_response,
+                    response_format=response_format,
+                    tools=_tool_dicts,
+                    tool_choice=tool_choice or self._tool_choice,
+                    run_response=run_response,
+                    compress_tool_results=_compress_tool_results,
                 )
 
-                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
-                    # Handle function call media
-                    self._handle_function_call_media(
+                # Add assistant message to messages
+                messages.append(assistant_message)
+
+                # Log response and metrics
+                assistant_message.log(metrics=True)
+
+                # Handle tool calls if present
+                if assistant_message.tool_calls:
+                    # Prepare function calls
+                    function_calls_to_run = self._prepare_function_calls(
+                        assistant_message=assistant_message,
+                        messages=messages,
+                        model_response=model_response,
+                        functions=_functions,
+                    )
+                    function_call_results: List[Message] = []
+
+                    # Execute function calls
+                    async for function_call_response in self.arun_function_calls(
+                        function_calls=function_calls_to_run,
+                        function_call_results=function_call_results,
+                        current_function_call_count=function_call_count,
+                        function_call_limit=tool_call_limit,
+                    ):
+                        if isinstance(function_call_response, ModelResponse):
+                            # The session state is updated by the function call
+                            if function_call_response.updated_session_state is not None:
+                                model_response.updated_session_state = function_call_response.updated_session_state
+
+                            # Media artifacts are generated by the function call
+                            if function_call_response.images is not None:
+                                if model_response.images is None:
+                                    model_response.images = []
+                                model_response.images.extend(function_call_response.images)
+
+                            if function_call_response.audios is not None:
+                                if model_response.audios is None:
+                                    model_response.audios = []
+                                model_response.audios.extend(function_call_response.audios)
+
+                            if function_call_response.videos is not None:
+                                if model_response.videos is None:
+                                    model_response.videos = []
+                                model_response.videos.extend(function_call_response.videos)
+
+                            if function_call_response.files is not None:
+                                if model_response.files is None:
+                                    model_response.files = []
+                                model_response.files.extend(function_call_response.files)
+
+                            if (
+                                function_call_response.event
+                                in [
+                                    ModelResponseEvent.tool_call_completed.value,
+                                    ModelResponseEvent.tool_call_paused.value,
+                                ]
+                                and function_call_response.tool_executions is not None
+                            ):
+                                if model_response.tool_executions is None:
+                                    model_response.tool_executions = []
+                                model_response.tool_executions.extend(function_call_response.tool_executions)
+
+                                # If the tool is currently paused (HITL flow), add the requirement to the run response
+                                if (
+                                    function_call_response.event == ModelResponseEvent.tool_call_paused.value
+                                    and run_response is not None
+                                ):
+                                    current_tool_execution = function_call_response.tool_executions[-1]
+                                    if run_response.requirements is None:
+                                        run_response.requirements = []
+                                    run_response.requirements.append(
+                                        RunRequirement(tool_execution=current_tool_execution)
+                                    )
+
+                            elif function_call_response.event not in [
+                                ModelResponseEvent.tool_call_started.value,
+                                ModelResponseEvent.tool_call_completed.value,
+                            ]:
+                                if function_call_response.content:
+                                    model_response.content += function_call_response.content  # type: ignore
+
+                    # Add a function call for each successful execution
+                    function_call_count += len(function_call_results)
+
+                    # Format and add results to messages
+                    self.format_function_call_results(
                         messages=messages,
                         function_call_results=function_call_results,
-                        send_media_to_model=send_media_to_model,
+                        compress_tool_results=_compress_tool_results,
+                        **model_response.extra or {},
                     )
 
-                for function_call_result in function_call_results:
-                    function_call_result.log(metrics=True)
+                    if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
+                        # Handle function call media
+                        self._handle_function_call_media(
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            send_media_to_model=send_media_to_model,
+                        )
 
-                # Check if we should stop after tool calls
-                if any(m.stop_after_tool_call for m in function_call_results):
-                    break
+                    for function_call_result in function_call_results:
+                        function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
 
-                # If we have any tool calls that require confirmation, break the loop
-                if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
-                    break
+                    # Check if we should stop after tool calls
+                    if any(m.stop_after_tool_call for m in function_call_results):
+                        break
 
-                # If we have any tool calls that require external execution, break the loop
-                if any(tc.external_execution_required for tc in model_response.tool_executions or []):
-                    break
+                    # If we have any tool calls that require confirmation, break the loop
+                    if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
+                        break
 
-                # If we have any tool calls that require user input, break the loop
-                if any(tc.requires_user_input for tc in model_response.tool_executions or []):
-                    break
+                    # If we have any tool calls that require external execution, break the loop
+                    if any(tc.external_execution_required for tc in model_response.tool_executions or []):
+                        break
 
-                # Continue loop to get next response
-                continue
+                    # If we have any tool calls that require user input, break the loop
+                    if any(tc.requires_user_input for tc in model_response.tool_executions or []):
+                        break
 
-            # No tool calls or finished processing them
-            break
+                    # Continue loop to get next response
+                    continue
 
-        log_debug(f"{self.get_provider()} Async Response End", center=True, symbol="-")
+                # No tool calls or finished processing them
+                break
 
-        # Save to cache if enabled
-        if self.cache_response:
-            self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
+            log_debug(f"{self.get_provider()} Async Response End", center=True, symbol="-")
+
+            # Save to cache if enabled
+            if self.cache_response:
+                self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
+        finally:
+            # Close the Gemini client
+            if self.__class__.__name__ == "Gemini" and self.client is not None:
+                try:
+                    await self.client.aio.aclose()  # type: ignore
+                    self.client = None
+                except AttributeError:
+                    log_warning(
+                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                    )
 
         return model_response
 
@@ -643,7 +964,8 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compress_tool_results: bool = False,
     ) -> None:
         """
         Process a single model response and return the assistant message and whether to continue.
@@ -651,14 +973,15 @@ class Model(ABC):
         Returns:
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
-        # Generate response
-        provider_response = self.invoke(
+        # Generate response with retry logic for ModelProviderError
+        provider_response = self._invoke_with_retry(
             assistant_message=assistant_message,
             messages=messages,
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
             run_response=run_response,
+            compress_tool_results=compress_tool_results,
         )
 
         # Populate the assistant message
@@ -687,6 +1010,8 @@ class Model(ABC):
             if model_response.extra is None:
                 model_response.extra = {}
             model_response.extra.update(provider_response.extra)
+        if provider_response.provider_data is not None:
+            model_response.provider_data = provider_response.provider_data
 
     async def _aprocess_model_response(
         self,
@@ -696,7 +1021,8 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compress_tool_results: bool = False,
     ) -> None:
         """
         Process a single async model response and return the assistant message and whether to continue.
@@ -704,14 +1030,15 @@ class Model(ABC):
         Returns:
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
-        # Generate response
-        provider_response = await self.ainvoke(
+        # Generate response with retry logic for ModelProviderError
+        provider_response = await self._ainvoke_with_retry(
             messages=messages,
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
             assistant_message=assistant_message,
             run_response=run_response,
+            compress_tool_results=compress_tool_results,
         )
 
         # Populate the assistant message
@@ -740,6 +1067,8 @@ class Model(ABC):
             if model_response.extra is None:
                 model_response.extra = {}
             model_response.extra.update(provider_response.extra)
+        if provider_response.provider_data is not None:
+            model_response.provider_data = provider_response.provider_data
 
     def _populate_assistant_message(
         self,
@@ -756,7 +1085,6 @@ class Model(ABC):
         Returns:
             Message: The populated assistant message
         """
-        # Add role to assistant message
         if provider_response.role is not None:
             assistant_message.role = provider_response.role
 
@@ -820,28 +1148,30 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
-        Process a streaming response from the model.
+        Process a streaming response from the model with retry logic for ModelProviderError.
         """
 
-        for response_delta in self.invoke_stream(
+        for response_delta in self._invoke_stream_with_retry(
             messages=messages,
             assistant_message=assistant_message,
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
             run_response=run_response,
+            compress_tool_results=compress_tool_results,
         ):
-            yield from self._populate_stream_data_and_assistant_message(
+            for model_response_delta in self._populate_stream_data(
                 stream_data=stream_data,
-                assistant_message=assistant_message,
                 model_response_delta=response_delta,
-            )
+            ):
+                yield model_response_delta
 
-        # Add final metrics to assistant message
-        self._populate_assistant_message(assistant_message=assistant_message, provider_response=response_delta)
+        # Populate assistant message from stream data after the stream ends
+        self._populate_assistant_message_from_stream_data(assistant_message=assistant_message, stream_data=stream_data)
 
     def response_stream(
         self,
@@ -851,165 +1181,185 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
+        compression_manager: Optional["CompressionManager"] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
         """
-
-        # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
-        cache_key = None
-        if self.cache_response:
-            cache_key = self._get_model_cache_key(messages, stream=True, response_format=response_format, tools=tools)
-            cached_data = self._get_cached_model_response(cache_key)
-
-            if cached_data:
-                log_info("Cache hit for streaming model response")
-                # Yield cached responses
-                for response in self._streaming_responses_from_cache(cached_data["streaming_responses"]):
-                    yield response
-                return
-
-            log_info("Cache miss for streaming model response")
-
-        # Track streaming responses for caching
-        streaming_responses: List[ModelResponse] = []
-
-        log_debug(f"{self.get_provider()} Response Stream Start", center=True, symbol="-")
-        log_debug(f"Model: {self.id}", center=True, symbol="-")
-        _log_messages(messages)
-
-        _tool_dicts = self._format_tools(tools) if tools is not None else []
-        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
-
-        function_call_count = 0
-
-        while True:
-            assistant_message = Message(role=self.assistant_message_role)
-            # Create assistant message and stream data
-            stream_data = MessageData()
-            model_response = ModelResponse()
-            if stream_model_response:
-                # Generate response
-                for response in self.process_response_stream(
-                    messages=messages,
-                    assistant_message=assistant_message,
-                    stream_data=stream_data,
-                    response_format=response_format,
-                    tools=_tool_dicts,
-                    tool_choice=tool_choice or self._tool_choice,
-                    run_response=run_response,
-                ):
-                    if self.cache_response and isinstance(response, ModelResponse):
-                        streaming_responses.append(response)
-                    yield response
-
-                # Populate assistant message from stream data
-                if stream_data.response_content:
-                    assistant_message.content = stream_data.response_content
-                if stream_data.response_reasoning_content:
-                    assistant_message.reasoning_content = stream_data.response_reasoning_content
-                if stream_data.response_redacted_reasoning_content:
-                    assistant_message.redacted_reasoning_content = stream_data.response_redacted_reasoning_content
-                if stream_data.response_provider_data:
-                    assistant_message.provider_data = stream_data.response_provider_data
-                if stream_data.response_citations:
-                    assistant_message.citations = stream_data.response_citations
-                if stream_data.response_audio:
-                    assistant_message.audio_output = stream_data.response_audio
-                if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
-                    assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
-
-            else:
-                self._process_model_response(
-                    messages=messages,
-                    assistant_message=assistant_message,
-                    model_response=model_response,
-                    response_format=response_format,
-                    tools=_tool_dicts,
-                    tool_choice=tool_choice or self._tool_choice,
+        try:
+            # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
+            cache_key = None
+            if self.cache_response:
+                cache_key = self._get_model_cache_key(
+                    messages, stream=True, response_format=response_format, tools=tools
                 )
-                if self.cache_response:
-                    streaming_responses.append(model_response)
-                yield model_response
+                cached_data = self._get_cached_model_response(cache_key)
 
-            # Add assistant message to messages
-            messages.append(assistant_message)
-            assistant_message.log(metrics=True)
+                if cached_data:
+                    log_info("Cache hit for streaming model response")
+                    # Yield cached responses
+                    for response in self._streaming_responses_from_cache(cached_data["streaming_responses"]):
+                        yield response
+                    return
 
-            # Handle tool calls if present
-            if assistant_message.tool_calls is not None:
-                # Prepare function calls
-                function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
-                    assistant_message=assistant_message, messages=messages, functions=_functions
-                )
-                function_call_results: List[Message] = []
+                log_info("Cache miss for streaming model response")
 
-                # Execute function calls
-                for function_call_response in self.run_function_calls(
-                    function_calls=function_calls_to_run,
-                    function_call_results=function_call_results,
-                    current_function_call_count=function_call_count,
-                    function_call_limit=tool_call_limit,
+            # Track streaming responses for caching
+            streaming_responses: List[ModelResponse] = []
+
+            log_debug(f"{self.get_provider()} Response Stream Start", center=True, symbol="-")
+            log_debug(f"Model: {self.id}", center=True, symbol="-")
+            _log_messages(messages)
+
+            _tool_dicts = self._format_tools(tools) if tools is not None else []
+            _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+
+            _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+            _compression_manager = compression_manager if _compress_tool_results else None
+
+            function_call_count = 0
+
+            while True:
+                # Compress existing tool results BEFORE invoke
+                if _compression_manager is not None and _compression_manager.should_compress(
+                    messages, tools, model=self, response_format=response_format
                 ):
-                    if self.cache_response and isinstance(function_call_response, ModelResponse):
-                        streaming_responses.append(function_call_response)
-                    yield function_call_response
+                    _compression_manager.compress(messages)
 
-                # Add a function call for each successful execution
-                function_call_count += len(function_call_results)
-
-                # Format and add results to messages
-                if stream_data and stream_data.extra is not None:
-                    self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **stream_data.extra
-                    )
-                elif model_response and model_response.extra is not None:
-                    self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **model_response.extra
-                    )
-                else:
-                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)
-
-                # Handle function call media
-                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
-                    self._handle_function_call_media(
+                assistant_message = Message(role=self.assistant_message_role)
+                # Create assistant message and stream data
+                stream_data = MessageData()
+                model_response = ModelResponse()
+                if stream_model_response:
+                    # Generate response
+                    for response in self.process_response_stream(
                         messages=messages,
-                        function_call_results=function_call_results,
-                        send_media_to_model=send_media_to_model,
+                        assistant_message=assistant_message,
+                        stream_data=stream_data,
+                        response_format=response_format,
+                        tools=_tool_dicts,
+                        tool_choice=tool_choice or self._tool_choice,
+                        run_response=run_response,
+                        compress_tool_results=_compress_tool_results,
+                    ):
+                        if self.cache_response and isinstance(response, ModelResponse):
+                            streaming_responses.append(response)
+                        yield response
+
+                else:
+                    self._process_model_response(
+                        messages=messages,
+                        assistant_message=assistant_message,
+                        model_response=model_response,
+                        response_format=response_format,
+                        tools=_tool_dicts,
+                        tool_choice=tool_choice or self._tool_choice,
+                        run_response=run_response,
+                        compress_tool_results=_compress_tool_results,
                     )
+                    if self.cache_response:
+                        streaming_responses.append(model_response)
+                    yield model_response
 
-                for function_call_result in function_call_results:
-                    function_call_result.log(metrics=True)
+                # Add assistant message to messages
+                messages.append(assistant_message)
+                assistant_message.log(metrics=True)
 
-                # Check if we should stop after tool calls
-                if any(m.stop_after_tool_call for m in function_call_results):
-                    break
+                # Handle tool calls if present
+                if assistant_message.tool_calls is not None:
+                    # Prepare function calls
+                    function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
+                        assistant_message=assistant_message, messages=messages, functions=_functions
+                    )
+                    function_call_results: List[Message] = []
 
-                # If we have any tool calls that require confirmation, break the loop
-                if any(fc.function.requires_confirmation for fc in function_calls_to_run):
-                    break
+                    # Execute function calls
+                    for function_call_response in self.run_function_calls(
+                        function_calls=function_calls_to_run,
+                        function_call_results=function_call_results,
+                        current_function_call_count=function_call_count,
+                        function_call_limit=tool_call_limit,
+                    ):
+                        if self.cache_response and isinstance(function_call_response, ModelResponse):
+                            streaming_responses.append(function_call_response)
+                        yield function_call_response
 
-                # If we have any tool calls that require external execution, break the loop
-                if any(fc.function.external_execution for fc in function_calls_to_run):
-                    break
+                    # Add a function call for each successful execution
+                    function_call_count += len(function_call_results)
 
-                # If we have any tool calls that require user input, break the loop
-                if any(fc.function.requires_user_input for fc in function_calls_to_run):
-                    break
+                    # Format and add results to messages
+                    if stream_data and stream_data.extra is not None:
+                        self.format_function_call_results(
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            compress_tool_results=_compress_tool_results,
+                            **stream_data.extra,
+                        )
+                    elif model_response and model_response.extra is not None:
+                        self.format_function_call_results(
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            compress_tool_results=_compress_tool_results,
+                            **model_response.extra,
+                        )
+                    else:
+                        self.format_function_call_results(
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            compress_tool_results=_compress_tool_results,
+                        )
 
-                # Continue loop to get next response
-                continue
+                    # Handle function call media
+                    if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
+                        self._handle_function_call_media(
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            send_media_to_model=send_media_to_model,
+                        )
 
-            # No tool calls or finished processing them
-            break
+                    for function_call_result in function_call_results:
+                        function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
 
-        log_debug(f"{self.get_provider()} Response Stream End", center=True, symbol="-")
+                    # Check if we should stop after tool calls
+                    if any(m.stop_after_tool_call for m in function_call_results):
+                        break
 
-        # Save streaming responses to cache if enabled
-        if self.cache_response and cache_key and streaming_responses:
-            self._save_streaming_responses_to_cache(cache_key, streaming_responses)
+                    # If we have any tool calls that require confirmation, break the loop
+                    if any(fc.function.requires_confirmation for fc in function_calls_to_run):
+                        break
+
+                    # If we have any tool calls that require external execution, break the loop
+                    if any(fc.function.external_execution for fc in function_calls_to_run):
+                        break
+
+                    # If we have any tool calls that require user input, break the loop
+                    if any(fc.function.requires_user_input for fc in function_calls_to_run):
+                        break
+
+                    # Continue loop to get next response
+                    continue
+
+                # No tool calls or finished processing them
+                break
+
+            log_debug(f"{self.get_provider()} Response Stream End", center=True, symbol="-")
+
+            # Save streaming responses to cache if enabled
+            if self.cache_response and cache_key and streaming_responses:
+                self._save_streaming_responses_to_cache(cache_key, streaming_responses)
+        finally:
+            # Close the Gemini client
+            if self.__class__.__name__ == "Gemini" and self.client is not None:
+                try:
+                    self.client.close()  # type: ignore
+                    self.client = None
+                except AttributeError:
+                    log_warning(
+                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                    )
 
     async def aprocess_response_stream(
         self,
@@ -1019,28 +1369,29 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
-        Process a streaming response from the model.
+        Process a streaming response from the model with retry logic for ModelProviderError.
         """
-        async for response_delta in self.ainvoke_stream(
+        async for response_delta in self._ainvoke_stream_with_retry(
             messages=messages,
             assistant_message=assistant_message,
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
             run_response=run_response,
-        ):  # type: ignore
-            for model_response in self._populate_stream_data_and_assistant_message(
+            compress_tool_results=compress_tool_results,
+        ):
+            for model_response_delta in self._populate_stream_data(
                 stream_data=stream_data,
-                assistant_message=assistant_message,
                 model_response_delta=response_delta,
             ):
-                yield model_response
+                yield model_response_delta
 
-        # Populate the assistant message
-        self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response)
+        # Populate assistant message from stream data after the stream ends
+        self._populate_assistant_message_from_stream_data(assistant_message=assistant_message, stream_data=stream_data)
 
     async def aresponse_stream(
         self,
@@ -1050,174 +1401,232 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
-        run_response: Optional[RunOutput] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
+        compression_manager: Optional["CompressionManager"] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
         """
+        try:
+            # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
+            cache_key = None
+            if self.cache_response:
+                cache_key = self._get_model_cache_key(
+                    messages, stream=True, response_format=response_format, tools=tools
+                )
+                cached_data = self._get_cached_model_response(cache_key)
 
-        # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
-        cache_key = None
-        if self.cache_response:
-            cache_key = self._get_model_cache_key(messages, stream=True, response_format=response_format, tools=tools)
-            cached_data = self._get_cached_model_response(cache_key)
+                if cached_data:
+                    log_info("Cache hit for async streaming model response")
+                    # Yield cached responses
+                    for response in self._streaming_responses_from_cache(cached_data["streaming_responses"]):
+                        yield response
+                    return
 
-            if cached_data:
-                log_info("Cache hit for async streaming model response")
-                # Yield cached responses
-                for response in self._streaming_responses_from_cache(cached_data["streaming_responses"]):
-                    yield response
-                return
+                log_info("Cache miss for async streaming model response")
 
-            log_info("Cache miss for async streaming model response")
+            # Track streaming responses for caching
+            streaming_responses: List[ModelResponse] = []
 
-        # Track streaming responses for caching
-        streaming_responses: List[ModelResponse] = []
+            log_debug(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
+            log_debug(f"Model: {self.id}", center=True, symbol="-")
+            _log_messages(messages)
 
-        log_debug(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
-        log_debug(f"Model: {self.id}", center=True, symbol="-")
-        _log_messages(messages)
+            _tool_dicts = self._format_tools(tools) if tools is not None else []
+            _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
-        _tool_dicts = self._format_tools(tools) if tools is not None else []
-        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+            _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+            _compression_manager = compression_manager if _compress_tool_results else None
 
-        function_call_count = 0
+            function_call_count = 0
 
-        while True:
-            # Create assistant message and stream data
-            assistant_message = Message(role=self.assistant_message_role)
-            stream_data = MessageData()
-            model_response = ModelResponse()
-            if stream_model_response:
-                # Generate response
-                async for model_response in self.aprocess_response_stream(
-                    messages=messages,
-                    assistant_message=assistant_message,
-                    stream_data=stream_data,
-                    response_format=response_format,
-                    tools=_tool_dicts,
-                    tool_choice=tool_choice or self._tool_choice,
-                    run_response=run_response,
+            while True:
+                # Compress existing tool results BEFORE making API call to avoid context overflow
+                if _compression_manager is not None and await _compression_manager.ashould_compress(
+                    messages, tools, model=self, response_format=response_format
                 ):
-                    if self.cache_response and isinstance(model_response, ModelResponse):
+                    await _compression_manager.acompress(messages)
+
+                # Create assistant message and stream data
+                assistant_message = Message(role=self.assistant_message_role)
+                stream_data = MessageData()
+                model_response = ModelResponse()
+                if stream_model_response:
+                    # Generate response
+                    async for model_response in self.aprocess_response_stream(
+                        messages=messages,
+                        assistant_message=assistant_message,
+                        stream_data=stream_data,
+                        response_format=response_format,
+                        tools=_tool_dicts,
+                        tool_choice=tool_choice or self._tool_choice,
+                        run_response=run_response,
+                        compress_tool_results=_compress_tool_results,
+                    ):
+                        if self.cache_response and isinstance(model_response, ModelResponse):
+                            streaming_responses.append(model_response)
+                        yield model_response
+
+                else:
+                    await self._aprocess_model_response(
+                        messages=messages,
+                        assistant_message=assistant_message,
+                        model_response=model_response,
+                        response_format=response_format,
+                        tools=_tool_dicts,
+                        tool_choice=tool_choice or self._tool_choice,
+                        run_response=run_response,
+                        compress_tool_results=_compress_tool_results,
+                    )
+                    if self.cache_response:
                         streaming_responses.append(model_response)
                     yield model_response
 
-                # Populate assistant message from stream data
-                if stream_data.response_content:
-                    assistant_message.content = stream_data.response_content
-                if stream_data.response_reasoning_content:
-                    assistant_message.reasoning_content = stream_data.response_reasoning_content
-                if stream_data.response_redacted_reasoning_content:
-                    assistant_message.redacted_reasoning_content = stream_data.response_redacted_reasoning_content
-                if stream_data.response_provider_data:
-                    assistant_message.provider_data = stream_data.response_provider_data
-                if stream_data.response_audio:
-                    assistant_message.audio_output = stream_data.response_audio
-                if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
-                    assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+                # Add assistant message to messages
+                messages.append(assistant_message)
+                assistant_message.log(metrics=True)
 
-            else:
-                await self._aprocess_model_response(
-                    messages=messages,
-                    assistant_message=assistant_message,
-                    model_response=model_response,
-                    response_format=response_format,
-                    tools=_tool_dicts,
-                    tool_choice=tool_choice or self._tool_choice,
-                    run_response=run_response,
-                )
-                if self.cache_response:
-                    streaming_responses.append(model_response)
-                yield model_response
-
-            # Add assistant message to messages
-            messages.append(assistant_message)
-            assistant_message.log(metrics=True)
-
-            # Handle tool calls if present
-            if assistant_message.tool_calls is not None:
-                # Prepare function calls
-                function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
-                    assistant_message=assistant_message, messages=messages, functions=_functions
-                )
-                function_call_results: List[Message] = []
-
-                # Execute function calls
-                async for function_call_response in self.arun_function_calls(
-                    function_calls=function_calls_to_run,
-                    function_call_results=function_call_results,
-                    current_function_call_count=function_call_count,
-                    function_call_limit=tool_call_limit,
-                ):
-                    if self.cache_response and isinstance(function_call_response, ModelResponse):
-                        streaming_responses.append(function_call_response)
-                    yield function_call_response
-
-                # Add a function call for each successful execution
-                function_call_count += len(function_call_results)
-
-                # Format and add results to messages
-                if stream_data and stream_data.extra is not None:
-                    self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **stream_data.extra
+                # Handle tool calls if present
+                if assistant_message.tool_calls is not None:
+                    # Prepare function calls
+                    function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
+                        assistant_message=assistant_message, messages=messages, functions=_functions
                     )
-                elif model_response and model_response.extra is not None:
-                    self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **model_response.extra or {}
-                    )
-                else:
-                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)
+                    function_call_results: List[Message] = []
 
-                # Handle function call media
-                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
-                    self._handle_function_call_media(
-                        messages=messages,
+                    # Execute function calls
+                    async for function_call_response in self.arun_function_calls(
+                        function_calls=function_calls_to_run,
                         function_call_results=function_call_results,
-                        send_media_to_model=send_media_to_model,
+                        current_function_call_count=function_call_count,
+                        function_call_limit=tool_call_limit,
+                    ):
+                        if self.cache_response and isinstance(function_call_response, ModelResponse):
+                            streaming_responses.append(function_call_response)
+                        yield function_call_response
+
+                    # Add a function call for each successful execution
+                    function_call_count += len(function_call_results)
+
+                    # Format and add results to messages
+                    if stream_data and stream_data.extra is not None:
+                        self.format_function_call_results(
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            compress_tool_results=_compress_tool_results,
+                            **stream_data.extra,
+                        )
+                    elif model_response and model_response.extra is not None:
+                        self.format_function_call_results(
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            compress_tool_results=_compress_tool_results,
+                            **model_response.extra or {},
+                        )
+                    else:
+                        self.format_function_call_results(
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            compress_tool_results=_compress_tool_results,
+                        )
+
+                    # Handle function call media
+                    if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
+                        self._handle_function_call_media(
+                            messages=messages,
+                            function_call_results=function_call_results,
+                            send_media_to_model=send_media_to_model,
+                        )
+
+                    for function_call_result in function_call_results:
+                        function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
+
+                    # Check if we should stop after tool calls
+                    if any(m.stop_after_tool_call for m in function_call_results):
+                        break
+
+                    # If we have any tool calls that require confirmation, break the loop
+                    if any(fc.function.requires_confirmation for fc in function_calls_to_run):
+                        break
+
+                    # If we have any tool calls that require external execution, break the loop
+                    if any(fc.function.external_execution for fc in function_calls_to_run):
+                        break
+
+                    # If we have any tool calls that require user input, break the loop
+                    if any(fc.function.requires_user_input for fc in function_calls_to_run):
+                        break
+
+                    # Continue loop to get next response
+                    continue
+
+                # No tool calls or finished processing them
+                break
+
+            log_debug(f"{self.get_provider()} Async Response Stream End", center=True, symbol="-")
+
+            # Save streaming responses to cache if enabled
+            if self.cache_response and cache_key and streaming_responses:
+                self._save_streaming_responses_to_cache(cache_key, streaming_responses)
+
+        finally:
+            # Close the Gemini client
+            if self.__class__.__name__ == "Gemini" and self.client is not None:
+                try:
+                    await self.client.aio.aclose()  # type: ignore
+                    self.client = None
+                except AttributeError:
+                    log_warning(
+                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
+                        " please upgrade Gemini to the latest version: pip install -U google-genai"
                     )
 
-                for function_call_result in function_call_results:
-                    function_call_result.log(metrics=True)
+    def _populate_assistant_message_from_stream_data(
+        self, assistant_message: Message, stream_data: MessageData
+    ) -> None:
+        """
+        Populate an assistant message with the stream data.
+        """
+        if stream_data.response_role is not None:
+            assistant_message.role = stream_data.response_role
+        if stream_data.response_metrics is not None:
+            assistant_message.metrics = stream_data.response_metrics
+        if stream_data.response_content:
+            assistant_message.content = stream_data.response_content
+        if stream_data.response_reasoning_content:
+            assistant_message.reasoning_content = stream_data.response_reasoning_content
+        if stream_data.response_redacted_reasoning_content:
+            assistant_message.redacted_reasoning_content = stream_data.response_redacted_reasoning_content
+        if stream_data.response_provider_data:
+            assistant_message.provider_data = stream_data.response_provider_data
+        if stream_data.response_citations:
+            assistant_message.citations = stream_data.response_citations
+        if stream_data.response_audio:
+            assistant_message.audio_output = stream_data.response_audio
+        if stream_data.response_image:
+            assistant_message.image_output = stream_data.response_image
+        if stream_data.response_video:
+            assistant_message.video_output = stream_data.response_video
+        if stream_data.response_file:
+            assistant_message.file_output = stream_data.response_file
+        if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
+            assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
 
-                # Check if we should stop after tool calls
-                if any(m.stop_after_tool_call for m in function_call_results):
-                    break
-
-                # If we have any tool calls that require confirmation, break the loop
-                if any(fc.function.requires_confirmation for fc in function_calls_to_run):
-                    break
-
-                # If we have any tool calls that require external execution, break the loop
-                if any(fc.function.external_execution for fc in function_calls_to_run):
-                    break
-
-                # If we have any tool calls that require user input, break the loop
-                if any(fc.function.requires_user_input for fc in function_calls_to_run):
-                    break
-
-                # Continue loop to get next response
-                continue
-
-            # No tool calls or finished processing them
-            break
-
-        log_debug(f"{self.get_provider()} Async Response Stream End", center=True, symbol="-")
-
-        # Save streaming responses to cache if enabled
-        if self.cache_response and cache_key and streaming_responses:
-            self._save_streaming_responses_to_cache(cache_key, streaming_responses)
-
-    def _populate_stream_data_and_assistant_message(
-        self, stream_data: MessageData, assistant_message: Message, model_response_delta: ModelResponse
+    def _populate_stream_data(
+        self, stream_data: MessageData, model_response_delta: ModelResponse
     ) -> Iterator[ModelResponse]:
         """Update the stream data and assistant message with the model response."""
-        # Add role to assistant message
-        if model_response_delta.role is not None:
-            assistant_message.role = model_response_delta.role
 
         should_yield = False
+        if model_response_delta.role is not None:
+            stream_data.response_role = model_response_delta.role  # type: ignore
+
+        if model_response_delta.response_usage is not None:
+            if stream_data.response_metrics is None:
+                stream_data.response_metrics = Metrics()
+            stream_data.response_metrics += model_response_delta.response_usage
+
         # Update stream_data content
         if model_response_delta.content is not None:
             stream_data.response_content += model_response_delta.content
@@ -1420,11 +1829,15 @@ class Model(ABC):
 
         # Run function calls sequentially
         function_execution_result: FunctionExecutionResult = FunctionExecutionResult(status="failure")
+        stop_after_tool_call_from_exception = False
         try:
             function_execution_result = function_call.execute()
         except AgentRunException as a_exc:
             # Update additional messages from function call
             _handle_agent_exception(a_exc, additional_input)
+            # If stop_execution is True, mark that we should stop after this tool call
+            if a_exc.stop_execution:
+                stop_after_tool_call_from_exception = True
             # Set function call success to False if an exception occurred
         except Exception as e:
             log_error(f"Error executing function {function_call.function.name}: {e}")
@@ -1439,32 +1852,60 @@ class Model(ABC):
         function_call_output: str = ""
 
         if isinstance(function_execution_result.result, (GeneratorType, collections.abc.Iterator)):
-            for item in function_execution_result.result:
-                # This function yields agent/team run events
-                if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
-                    item, tuple(get_args(TeamRunOutputEvent))
-                ):
-                    # We only capture content events
-                    if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
-                        if item.content is not None and isinstance(item.content, BaseModel):
-                            function_call_output += item.content.model_dump_json()
-                        else:
-                            # Capture output
-                            function_call_output += item.content or ""
+            try:
+                for item in function_execution_result.result:
+                    # This function yields agent/team/workflow run events
+                    if (
+                        isinstance(item, tuple(get_args(RunOutputEvent)))
+                        or isinstance(item, tuple(get_args(TeamRunOutputEvent)))
+                        or isinstance(item, tuple(get_args(WorkflowRunOutputEvent)))
+                    ):
+                        # We only capture content events for output accumulation
+                        if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
+                            if item.content is not None and isinstance(item.content, BaseModel):
+                                function_call_output += item.content.model_dump_json()
+                            else:
+                                # Capture output
+                                function_call_output += item.content or ""
 
-                        if function_call.function.show_result and item.content is not None:
-                            yield ModelResponse(content=item.content)
+                            if function_call.function.show_result and item.content is not None:
+                                yield ModelResponse(content=item.content)
 
-                    if isinstance(item, CustomEvent):
+                        if isinstance(item, CustomEvent):
+                            function_call_output += str(item)
+
+                        # For WorkflowCompletedEvent, extract content for final output
+                        from agno.run.workflow import WorkflowCompletedEvent
+
+                        if isinstance(item, WorkflowCompletedEvent):
+                            if item.content is not None:
+                                if isinstance(item.content, BaseModel):
+                                    function_call_output += item.content.model_dump_json()
+                                else:
+                                    function_call_output += str(item.content)
+
+                        # Yield the event itself to bubble it up
+                        yield item
+
+                    else:
                         function_call_output += str(item)
+                        if function_call.function.show_result and item is not None:
+                            yield ModelResponse(content=str(item))
+            except Exception as e:
+                log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
+                function_call.error = str(e)
+                function_call_success = False
 
-                    # Yield the event itself to bubble it up
-                    yield item
-
-                else:
-                    function_call_output += str(item)
-                    if function_call.function.show_result and item is not None:
-                        yield ModelResponse(content=str(item))
+            # For generators, re-capture updated_session_state after consumption
+            # since session_state modifications were made during iteration
+            if function_execution_result.updated_session_state is None:
+                if (
+                    function_call.function._run_context is not None
+                    and function_call.function._run_context.session_state is not None
+                ):
+                    function_execution_result.updated_session_state = function_call.function._run_context.session_state
+                elif function_call.function._session_state is not None:
+                    function_execution_result.updated_session_state = function_call.function._session_state
         else:
             from agno.tools.function import ToolResult
 
@@ -1496,6 +1937,9 @@ class Model(ABC):
             timer=function_call_timer,
             function_execution_result=function_execution_result,
         )
+        # Override stop_after_tool_call if set by exception
+        if stop_after_tool_call_from_exception:
+            function_call_result.stop_after_tool_call = True
         yield ModelResponse(
             content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
             tool_executions=[
@@ -1543,7 +1987,7 @@ class Model(ABC):
 
             paused_tool_executions = []
 
-            # The function cannot be executed without user confirmation
+            # The function requires user confirmation (HITL)
             if fc.function.requires_confirmation:
                 paused_tool_executions.append(
                     ToolExecution(
@@ -1553,7 +1997,8 @@ class Model(ABC):
                         requires_confirmation=True,
                     )
                 )
-            # If the function requires user input, we yield a message to the user
+
+            # The function requires user input (HITL)
             if fc.function.requires_user_input:
                 user_input_schema = fc.function.user_input_schema
                 if fc.arguments and user_input_schema:
@@ -1571,7 +2016,8 @@ class Model(ABC):
                         user_input_schema=user_input_schema,
                     )
                 )
-            # If the function is from the user control flow tools, we handle it here
+
+            # If the function is from the user control flow (HITL) tools, we handle it here
             if fc.function.name == "get_user_input" and fc.arguments and fc.arguments.get("user_input_fields"):
                 user_input_schema = []
                 for input_field in fc.arguments.get("user_input_fields", []):
@@ -1597,7 +2043,8 @@ class Model(ABC):
                         user_input_schema=user_input_schema,
                     )
                 )
-            # If the function requires external execution, we yield a message to the user
+
+            # The function requires external execution (HITL)
             if fc.function.external_execution:
                 paused_tool_executions.append(
                     ToolExecution(
@@ -1829,9 +2276,12 @@ class Model(ABC):
 
             try:
                 async for item in function_call.result:
-                    # This function yields agent/team run events
-                    if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
-                        item, tuple(get_args(TeamRunOutputEvent))
+                    # This function yields agent/team/workflow run events
+                    if isinstance(
+                        item,
+                        tuple(get_args(RunOutputEvent))
+                        + tuple(get_args(TeamRunOutputEvent))
+                        + tuple(get_args(WorkflowRunOutputEvent)),
                     ):
                         # We only capture content events
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
@@ -1847,6 +2297,16 @@ class Model(ABC):
 
                         if isinstance(item, CustomEvent):
                             function_call_output += str(item)
+
+                            # For WorkflowCompletedEvent, extract content for final output
+                            from agno.run.workflow import WorkflowCompletedEvent
+
+                            if isinstance(item, WorkflowCompletedEvent):
+                                if item.content is not None:
+                                    if isinstance(item.content, BaseModel):
+                                        function_call_output += item.content.model_dump_json()
+                                    else:
+                                        function_call_output += str(item.content)
 
                         # Put the event into the queue to be yielded
                         await event_queue.put(item)
@@ -1922,10 +2382,14 @@ class Model(ABC):
             updated_session_state = function_execution_result.updated_session_state
 
             # Handle AgentRunException
+            stop_after_tool_call_from_exception = False
             if isinstance(function_call_success, AgentRunException):
                 a_exc = function_call_success
                 # Update additional messages from function call
                 _handle_agent_exception(a_exc, additional_input)
+                # If stop_execution is True, mark that we should stop after this tool call
+                if a_exc.stop_execution:
+                    stop_after_tool_call_from_exception = True
                 # Set function call success to False if an exception occurred
                 function_call_success = False
 
@@ -1937,30 +2401,60 @@ class Model(ABC):
                 function_call_output = async_function_call_output
                 # Events from async generators were already yielded in real-time above
             elif isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
-                for item in function_call.result:
-                    # This function yields agent/team run events
-                    if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
-                        item, tuple(get_args(TeamRunOutputEvent))
+                try:
+                    for item in function_call.result:
+                        # This function yields agent/team/workflow run events
+                        if isinstance(
+                            item,
+                            tuple(get_args(RunOutputEvent))
+                            + tuple(get_args(TeamRunOutputEvent))
+                            + tuple(get_args(WorkflowRunOutputEvent)),
+                        ):
+                            # We only capture content events
+                            if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
+                                if item.content is not None and isinstance(item.content, BaseModel):
+                                    function_call_output += item.content.model_dump_json()
+                                else:
+                                    # Capture output
+                                    function_call_output += item.content or ""
+
+                                if function_call.function.show_result and item.content is not None:
+                                    yield ModelResponse(content=item.content)
+                                    continue
+
+                            # Yield the event itself to bubble it up
+                            yield item
+                        else:
+                            function_call_output += str(item)
+                            if function_call.function.show_result and item is not None:
+                                yield ModelResponse(content=str(item))
+                except Exception as e:
+                    log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
+                    function_call.error = str(e)
+                    function_call_success = False
+
+            # For generators (sync or async), re-capture updated_session_state after consumption
+            # since session_state modifications were made during iteration
+            if async_function_call_output is not None or isinstance(
+                function_call.result,
+                (GeneratorType, collections.abc.Iterator, AsyncGeneratorType, collections.abc.AsyncIterator),
+            ):
+                if updated_session_state is None:
+                    if (
+                        function_call.function._run_context is not None
+                        and function_call.function._run_context.session_state is not None
                     ):
-                        # We only capture content events
-                        if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
-                            if item.content is not None and isinstance(item.content, BaseModel):
-                                function_call_output += item.content.model_dump_json()
-                            else:
-                                # Capture output
-                                function_call_output += item.content or ""
+                        updated_session_state = function_call.function._run_context.session_state
+                    elif function_call.function._session_state is not None:
+                        updated_session_state = function_call.function._session_state
 
-                            if function_call.function.show_result and item.content is not None:
-                                yield ModelResponse(content=item.content)
-                                continue
-
-                        # Yield the event itself to bubble it up
-                        yield item
-                    else:
-                        function_call_output += str(item)
-                        if function_call.function.show_result and item is not None:
-                            yield ModelResponse(content=str(item))
-            else:
+            if not (
+                async_function_call_output is not None
+                or isinstance(
+                    function_call.result,
+                    (GeneratorType, collections.abc.Iterator, AsyncGeneratorType, collections.abc.AsyncIterator),
+                )
+            ):
                 from agno.tools.function import ToolResult
 
                 if isinstance(function_execution_result.result, ToolResult):
@@ -1989,6 +2483,9 @@ class Model(ABC):
                 timer=function_call_timer,
                 function_execution_result=function_execution_result,
             )
+            # Override stop_after_tool_call if set by exception
+            if stop_after_tool_call_from_exception:
+                function_call_result.stop_after_tool_call = True
             yield ModelResponse(
                 content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
                 tool_executions=[
@@ -2038,7 +2535,11 @@ class Model(ABC):
         return function_calls_to_run
 
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], **kwargs
+        self,
+        messages: List[Message],
+        function_call_results: List[Message],
+        compress_tool_results: bool = False,
+        **kwargs,
     ) -> None:
         """
         Format function call results.
@@ -2115,9 +2616,13 @@ class Model(ABC):
         new_model = cls.__new__(cls)
         memo[id(self)] = new_model
 
-        # Deep copy all attributes
+        # Deep copy all attributes except client objects
         for k, v in self.__dict__.items():
             if k in {"response_format", "_tools", "_functions"}:
+                continue
+            # Skip client objects
+            if k in {"client", "async_client", "http_client", "mistral_client", "model_client"}:
+                setattr(new_model, k, None)
                 continue
             try:
                 setattr(new_model, k, deepcopy(v, memo))
