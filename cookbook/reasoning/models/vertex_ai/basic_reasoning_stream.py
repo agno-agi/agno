@@ -1,15 +1,20 @@
 import asyncio
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
+from agno.models.google import Gemini
 from agno.run.agent import RunEvent # noqa
 
 
 async def streaming_reasoning():
-    """Test streaming reasoning with a OpenAI Responses model."""
+    """Test streaming reasoning with a VertexAI with Gemini model."""
     # Create an agent with reasoning enabled
     agent = Agent(
-        reasoning_model=OpenAIResponses(id="o3-mini", reasoning_effort="high", reasoning_summary="detailed"),
+        reasoning_model=Gemini(
+            id="gemini-2.5-flash",
+            vertexai=True,
+            thinking_budget=1024,  # Required to enable thinking mode
+            include_thoughts=True,  # Include thought summaries in response
+        ),
         reasoning=True,
         instructions="Think step by step about the problem.",
     )
@@ -51,4 +56,3 @@ async def streaming_reasoning():
 
 if __name__ == "__main__":
     asyncio.run(streaming_reasoning())
-

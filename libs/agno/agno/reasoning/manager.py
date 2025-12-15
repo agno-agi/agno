@@ -433,6 +433,30 @@ class ReasoningManager:
             else:
                 yield (None, ReasoningResult(success=False, error="No reasoning content"))
 
+        elif model_type == "vertexai":
+            from agno.reasoning.vertexai import get_vertexai_reasoning_stream
+
+            log_debug("Starting VertexAI Reasoning (streaming)", center=True, symbol="=")
+            final_message = None
+            for reasoning_delta, message in get_vertexai_reasoning_stream(reasoning_agent, messages):
+                if reasoning_delta is not None:
+                    yield (reasoning_delta, None)
+                if message is not None:
+                    final_message = message
+
+            if final_message:
+                yield (
+                    None,
+                    ReasoningResult(
+                        message=final_message,
+                        steps=[ReasoningStep(result=final_message.content)],
+                        reasoning_messages=[final_message],
+                        success=True,
+                    ),
+                )
+            else:
+                yield (None, ReasoningResult(success=False, error="No reasoning content"))
+
         else:
             # Fall back to non-streaming for other models
             result = self.get_native_reasoning(model, messages)
@@ -535,6 +559,30 @@ class ReasoningManager:
             log_debug("Starting OpenAI Reasoning (streaming)", center=True, symbol="=")
             final_message = None
             async for reasoning_delta, message in aget_openai_reasoning_stream(reasoning_agent, messages):
+                if reasoning_delta is not None:
+                    yield (reasoning_delta, None)
+                if message is not None:
+                    final_message = message
+
+            if final_message:
+                yield (
+                    None,
+                    ReasoningResult(
+                        message=final_message,
+                        steps=[ReasoningStep(result=final_message.content)],
+                        reasoning_messages=[final_message],
+                        success=True,
+                    ),
+                )
+            else:
+                yield (None, ReasoningResult(success=False, error="No reasoning content"))
+
+        elif model_type == "vertexai":
+            from agno.reasoning.vertexai import aget_vertexai_reasoning_stream
+
+            log_debug("Starting VertexAI Reasoning (streaming)", center=True, symbol="=")
+            final_message = None
+            async for reasoning_delta, message in aget_vertexai_reasoning_stream(reasoning_agent, messages):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:

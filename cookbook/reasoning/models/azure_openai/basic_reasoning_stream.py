@@ -1,14 +1,13 @@
 import asyncio
 
 from agno.agent import Agent
-from agno.run.agent import RunEvent
+from agno.run.agent import RunEvent # noqa
 from agno.models.azure.openai_chat import AzureOpenAI
 
 
 async def streaming_reasoning():
     """Test streaming reasoning with a Azure OpenAI model."""
     # Create an agent with reasoning enabled
-    # Note: For Gemini, you MUST set thinking_budget to enable thinking mode
     agent = Agent(
         reasoning_model=AzureOpenAI(id="gpt-4.1"),
         reasoning=True,
