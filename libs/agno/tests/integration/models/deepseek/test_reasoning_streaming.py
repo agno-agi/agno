@@ -1,54 +1,35 @@
-"""Integration tests for Agent reasoning streaming functionality.
+"""Integration tests for DeepSeek reasoning streaming functionality.
 
 This test verifies that reasoning content streams correctly (not all at once)
-for native reasoning models that support streaming:
-- Anthropic Claude models with extended thinking
+for DeepSeek reasoning models when used as a reasoning_model.
 
-These tests verify the new streaming reasoning feature where reasoning content
+These tests verify the streaming reasoning feature where reasoning content
 is delivered incrementally via RunEvent.reasoning_content_delta events.
 """
-
-from textwrap import dedent
 
 import pytest
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
+from agno.models.deepseek import DeepSeek
 from agno.run.agent import RunEvent
 
 
-@pytest.fixture(autouse=True)
-def _show_output(capfd):
-    """Force pytest to show print output for all tests in this module."""
-    yield
-    # Print captured output after test completes
-    captured = capfd.readouterr()
-    if captured.out:
-        print(captured.out)
-    if captured.err:
-        print(captured.err)
+def _get_reasoning_streaming_agent(**kwargs):
+    """Create an agent with DeepSeek reasoning_model for streaming reasoning tests."""
+    default_config = {
+        "model": DeepSeek(id="deepseek-chat"),
+        "reasoning_model": DeepSeek(id="deepseek-reasoner"),
+        "instructions": "You are an expert problem-solving assistant. Think step by step.",
+        "markdown": True,
+        "telemetry": False,
+    }
+    default_config.update(kwargs)
+    return Agent(**default_config)
 
 
-# ============================================================================
-# Anthropic Claude Streaming Reasoning Tests
-# ============================================================================
-
-
-@pytest.mark.integration
-def test_agent_anthropic_reasoning_streams_content_deltas():
-    """Test that Anthropic Claude reasoning streams content via reasoning_content_delta events."""
-    agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),
-        reasoning_model=Claude(
-            id="claude-sonnet-4-20250514",
-            thinking={"type": "enabled", "budget_tokens": 1024},
-        ),
-        instructions=dedent("""\
-            You are an expert problem-solving assistant.
-            Think step by step about the problem.
-            \
-        """),
-    )
+def test_reasoning_model_streams_content_deltas():
+    """Test that DeepSeek reasoning_model streams content via reasoning_content_delta events."""
+    agent = _get_reasoning_streaming_agent()
 
     prompt = "What is 25 * 37? Show your reasoning step by step."
 
@@ -60,17 +41,13 @@ def test_agent_anthropic_reasoning_streams_content_deltas():
     for event in agent.run(prompt, stream=True, stream_events=True):
         if event.event == RunEvent.reasoning_started:
             reasoning_started = True
-            print("\n=== Reasoning Started ===")
 
         elif event.event == RunEvent.reasoning_content_delta:
-            # Collect streaming deltas
             if event.reasoning_content:
                 reasoning_deltas.append(event.reasoning_content)
-                print(event.reasoning_content, end="", flush=True)
 
         elif event.event == RunEvent.reasoning_completed:
             reasoning_completed = True
-            print("\n=== Reasoning Completed ===")
 
     # Assertions
     assert reasoning_started, "Should have received reasoning_started event"
@@ -82,26 +59,12 @@ def test_agent_anthropic_reasoning_streams_content_deltas():
     # Verify we got actual content
     full_reasoning = "".join(reasoning_deltas)
     assert len(full_reasoning) > 0, "Combined reasoning content should not be empty"
-    print(f"\n\nTotal reasoning deltas received: {len(reasoning_deltas)}")
-    print(f"Total reasoning content length: {len(full_reasoning)}")
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio
-async def test_agent_anthropic_reasoning_streams_content_deltas_async():
-    """Test that Anthropic Claude reasoning streams content via reasoning_content_delta events (async)."""
-    agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),
-        reasoning_model=Claude(
-            id="claude-sonnet-4-20250514",
-            thinking={"type": "enabled", "budget_tokens": 1024},
-        ),
-        instructions=dedent("""\
-            You are an expert problem-solving assistant.
-            Think step by step about the problem.
-            \
-        """),
-    )
+async def test_reasoning_model_streams_content_deltas_async():
+    """Test that DeepSeek reasoning_model streams content via reasoning_content_delta events (async)."""
+    agent = _get_reasoning_streaming_agent()
 
     prompt = "What is 25 * 37? Show your reasoning step by step."
 
@@ -113,17 +76,13 @@ async def test_agent_anthropic_reasoning_streams_content_deltas_async():
     async for event in agent.arun(prompt, stream=True, stream_events=True):
         if event.event == RunEvent.reasoning_started:
             reasoning_started = True
-            print("\n=== Reasoning Started (async) ===")
 
         elif event.event == RunEvent.reasoning_content_delta:
-            # Collect streaming deltas
             if event.reasoning_content:
                 reasoning_deltas.append(event.reasoning_content)
-                print(event.reasoning_content, end="", flush=True)
 
         elif event.event == RunEvent.reasoning_completed:
             reasoning_completed = True
-            print("\n=== Reasoning Completed (async) ===")
 
     # Assertions
     assert reasoning_started, "Should have received reasoning_started event"
@@ -135,26 +94,11 @@ async def test_agent_anthropic_reasoning_streams_content_deltas_async():
     # Verify we got actual content
     full_reasoning = "".join(reasoning_deltas)
     assert len(full_reasoning) > 0, "Combined reasoning content should not be empty"
-    print(f"\n\nTotal reasoning deltas received: {len(reasoning_deltas)}")
-    print(f"Total reasoning content length: {len(full_reasoning)}")
 
 
-# ============================================================================
-# Comparison Tests: Streaming vs Non-Streaming
-# ============================================================================
-
-
-@pytest.mark.integration
-def test_anthropic_streaming_delivers_more_events_than_non_streaming():
+def test_reasoning_streaming_delivers_more_events_than_non_streaming():
     """Test that streaming mode delivers multiple delta events vs single batch in non-streaming."""
-    agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),
-        reasoning_model=Claude(
-            id="claude-sonnet-4-20250514",
-            thinking={"type": "enabled", "budget_tokens": 1024},
-        ),
-        instructions="Think step by step.",
-    )
+    agent = _get_reasoning_streaming_agent()
 
     prompt = "What is 12 * 8?"
 
@@ -170,10 +114,6 @@ def test_anthropic_streaming_delivers_more_events_than_non_streaming():
                 streaming_deltas.append(event.reasoning_content)
 
     streaming_reasoning = "".join(streaming_deltas)
-
-    print(f"\nNon-streaming reasoning length: {len(non_streaming_reasoning)}")
-    print(f"Streaming deltas count: {len(streaming_deltas)}")
-    print(f"Streaming reasoning length: {len(streaming_reasoning)}")
 
     # Both should have reasoning content
     assert len(non_streaming_reasoning) > 0, "Non-streaming should have reasoning"
