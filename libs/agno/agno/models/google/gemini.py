@@ -19,8 +19,10 @@ from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.tools.function import Function
 from agno.utils.gemini import format_function_definitions, format_image_for_message, prepare_response_schema
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.tokens import count_schema_tokens, count_text_tokens, count_tool_tokens
 
 try:
     from google import genai
@@ -309,6 +311,113 @@ class Gemini(Model):
         if request_params:
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
+
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        contents, system_instruction = self._format_messages(messages, compress_tool_results=True)
+        schema_tokens = count_schema_tokens(output_schema, self.id)
+
+        if self.vertexai:
+            # VertexAI supports full token counting with system_instruction and tools
+            config: Dict[str, Any] = {}
+            if system_instruction:
+                config["system_instruction"] = system_instruction
+            if tools:
+                formatted_tools = self._format_tools(tools)
+                gemini_tools = format_function_definitions(formatted_tools)
+                if gemini_tools:
+                    config["tools"] = [gemini_tools]
+
+            response = self.get_client().models.count_tokens(
+                model=self.id,
+                contents=contents,
+                config=config if config else None,  # type: ignore
+            )
+            return (response.total_tokens or 0) + schema_tokens
+        else:
+            # Google AI Studio: Use API for content tokens + local estimation for system/tools
+            # The API doesn't support system_instruction or tools in config, so we use a hybrid approach:
+            # 1. Get accurate token count for contents (text + multimodal) from API
+            # 2. Add estimated tokens for system_instruction and tools locally
+            try:
+                response = self.get_client().models.count_tokens(
+                    model=self.id,
+                    contents=contents,
+                )
+                total = response.total_tokens or 0
+            except Exception as e:
+                log_warning(f"Gemini count_tokens API failed: {e}. Falling back to tiktoken-based estimation.")
+                return super().count_tokens(messages, tools, output_schema)
+
+            # Add estimated tokens for system instruction (not supported by Google AI Studio API)
+            if system_instruction:
+                system_text = system_instruction if isinstance(system_instruction, str) else str(system_instruction)
+                total += count_text_tokens(system_text, self.id)
+
+            # Add estimated tokens for tools (not supported by Google AI Studio API)
+            if tools:
+                total += count_tool_tokens(tools, self.id)
+
+            # Add estimated tokens for response_format/output_schema
+            total += schema_tokens
+
+            return total
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        contents, system_instruction = self._format_messages(messages, compress_tool_results=True)
+        schema_tokens = count_schema_tokens(output_schema, self.id)
+
+        # VertexAI supports full token counting with system_instruction and tools
+        if self.vertexai:
+            config: Dict[str, Any] = {}
+            if system_instruction:
+                config["system_instruction"] = system_instruction
+            if tools:
+                formatted_tools = self._format_tools(tools)
+                gemini_tools = format_function_definitions(formatted_tools)
+                if gemini_tools:
+                    config["tools"] = [gemini_tools]
+
+            response = await self.get_client().aio.models.count_tokens(
+                model=self.id,
+                contents=contents,
+                config=config if config else None,  # type: ignore
+            )
+            return (response.total_tokens or 0) + schema_tokens
+        else:
+            # Hybrid approach - Google AI Studio does not support system_instruction or tools in config
+            try:
+                response = await self.get_client().aio.models.count_tokens(
+                    model=self.id,
+                    contents=contents,
+                )
+                total = response.total_tokens or 0
+            except Exception as e:
+                log_warning(f"Gemini count_tokens API failed: {e}. Falling back to tiktoken-based estimation.")
+                return await super().acount_tokens(messages, tools, output_schema)
+
+            # Add estimated tokens for system instruction
+            if system_instruction:
+                system_text = system_instruction if isinstance(system_instruction, str) else str(system_instruction)
+                total += count_text_tokens(system_text, self.id)
+
+            # Add estimated tokens for tools
+            if tools:
+                total += count_tool_tokens(tools, self.id)
+
+            # Add estimated tokens for response_format/output_schema
+            total += schema_tokens
+
+            return total
 
     def invoke(
         self,
@@ -874,6 +983,8 @@ class Gemini(Model):
         """
         combined_original_content: List = []
         combined_function_result: List = []
+        tool_names: List[str] = []
+
         message_metrics = Metrics()
 
         if len(function_call_results) > 0:
@@ -883,13 +994,18 @@ class Gemini(Model):
                 combined_function_result.append(
                     {"tool_call_id": result.tool_call_id, "tool_name": result.tool_name, "content": compressed_content}
                 )
+                if result.tool_name:
+                    tool_names.append(result.tool_name)
                 message_metrics += result.metrics
+
+        tool_name = ", ".join(tool_names) if tool_names else None
 
         if combined_original_content:
             messages.append(
                 Message(
                     role="tool",
                     content=combined_original_content,
+                    tool_name=tool_name,
                     tool_calls=combined_function_result,
                     metrics=message_metrics,
                 )

@@ -110,7 +110,7 @@ class PostgresTools(Toolkit):
         """
         if not self.is_connected:
             return self.connect()
-        return self._connection
+        return self._connection  # type: ignore
 
     def __enter__(self):
         return self.connect()
