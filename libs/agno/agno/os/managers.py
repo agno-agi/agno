@@ -83,36 +83,6 @@ class WebSocketHandler:
         except Exception as e:
             log_warning(f"Failed to handle WebSocket event: {e}")
 
-    async def handle_text(self, message: str) -> None:
-        """Handle a plain text message"""
-        if not self.websocket:
-            return
-
-        try:
-            await self.websocket.send_text(self.format_sse_event(message))
-        except RuntimeError as e:
-            if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
-                log_debug("WebSocket closed, text not sent (expected during disconnection)")
-            else:
-                log_warning(f"Failed to send WebSocket text: {e}")
-        except Exception as e:
-            log_warning(f"Failed to send WebSocket text: {e}")
-
-    async def handle_dict(self, data: Dict[str, Any]) -> None:
-        """Handle a dictionary directly"""
-        if not self.websocket:
-            return
-
-        try:
-            await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
-        except RuntimeError as e:
-            if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
-                log_debug("WebSocket closed, dict not sent (expected during disconnection)")
-            else:
-                log_warning(f"Failed to send WebSocket dict: {e}")
-        except Exception as e:
-            log_warning(f"Failed to send WebSocket dict: {e}")
-
 
 class WebSocketManager:
     """
