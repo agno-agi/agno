@@ -481,6 +481,54 @@ class ReasoningManager:
             else:
                 yield (None, ReasoningResult(success=False, error="No reasoning content"))
 
+        elif model_type == "groq":
+            from agno.reasoning.groq import get_groq_reasoning_stream
+
+            log_debug("Starting Groq Reasoning (streaming)", center=True, symbol="=")
+            final_message = None
+            for reasoning_delta, message in get_groq_reasoning_stream(reasoning_agent, messages):
+                if reasoning_delta is not None:
+                    yield (reasoning_delta, None)
+                if message is not None:
+                    final_message = message
+
+            if final_message:
+                yield (
+                    None,
+                    ReasoningResult(
+                        message=final_message,
+                        steps=[ReasoningStep(result=final_message.content)],
+                        reasoning_messages=[final_message],
+                        success=True,
+                    ),
+                )
+            else:
+                yield (None, ReasoningResult(success=False, error="No reasoning content"))
+
+        elif model_type == "ollama":
+            from agno.reasoning.ollama import get_ollama_reasoning_stream
+
+            log_debug("Starting Ollama Reasoning (streaming)", center=True, symbol="=")
+            final_message = None
+            for reasoning_delta, message in get_ollama_reasoning_stream(reasoning_agent, messages):
+                if reasoning_delta is not None:
+                    yield (reasoning_delta, None)
+                if message is not None:
+                    final_message = message
+
+            if final_message:
+                yield (
+                    None,
+                    ReasoningResult(
+                        message=final_message,
+                        steps=[ReasoningStep(result=final_message.content)],
+                        reasoning_messages=[final_message],
+                        success=True,
+                    ),
+                )
+            else:
+                yield (None, ReasoningResult(success=False, error="No reasoning content"))
+
         else:
             # Fall back to non-streaming for other models
             result = self.get_native_reasoning(model, messages)
@@ -631,6 +679,54 @@ class ReasoningManager:
             log_debug("Starting Azure AI Foundry Reasoning (streaming)", center=True, symbol="=")
             final_message = None
             async for reasoning_delta, message in aget_ai_foundry_reasoning_stream(reasoning_agent, messages):
+                if reasoning_delta is not None:
+                    yield (reasoning_delta, None)
+                if message is not None:
+                    final_message = message
+
+            if final_message:
+                yield (
+                    None,
+                    ReasoningResult(
+                        message=final_message,
+                        steps=[ReasoningStep(result=final_message.content)],
+                        reasoning_messages=[final_message],
+                        success=True,
+                    ),
+                )
+            else:
+                yield (None, ReasoningResult(success=False, error="No reasoning content"))
+
+        elif model_type == "groq":
+            from agno.reasoning.groq import aget_groq_reasoning_stream
+
+            log_debug("Starting Groq Reasoning (streaming)", center=True, symbol="=")
+            final_message = None
+            async for reasoning_delta, message in aget_groq_reasoning_stream(reasoning_agent, messages):
+                if reasoning_delta is not None:
+                    yield (reasoning_delta, None)
+                if message is not None:
+                    final_message = message
+
+            if final_message:
+                yield (
+                    None,
+                    ReasoningResult(
+                        message=final_message,
+                        steps=[ReasoningStep(result=final_message.content)],
+                        reasoning_messages=[final_message],
+                        success=True,
+                    ),
+                )
+            else:
+                yield (None, ReasoningResult(success=False, error="No reasoning content"))
+
+        elif model_type == "ollama":
+            from agno.reasoning.ollama import aget_ollama_reasoning_stream
+
+            log_debug("Starting Ollama Reasoning (streaming)", center=True, symbol="=")
+            final_message = None
+            async for reasoning_delta, message in aget_ollama_reasoning_stream(reasoning_agent, messages):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
