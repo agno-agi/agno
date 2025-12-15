@@ -334,17 +334,6 @@ def get_session_name(session: Dict[str, Any]) -> str:
                             second_user_message = message["content"]
                         break
 
-                # If still missing, fallback to stored input content
-                if first_user_message is None or second_user_message is None:
-                    user_input = get_run_input(run_dict)
-                    if user_input:
-                        if first_user_message is None:
-                            first_user_message = user_input
-                        elif second_user_message is None:
-                            second_user_message = user_input
-
-                if first_user_message and second_user_message:
-                    break
 
             if first_user_message:
                 return first_user_message
