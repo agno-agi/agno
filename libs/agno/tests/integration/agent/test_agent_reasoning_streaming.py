@@ -14,7 +14,6 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from agno.models.deepseek import DeepSeek
 from agno.run.agent import RunEvent
 
 

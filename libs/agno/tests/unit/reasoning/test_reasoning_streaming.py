@@ -4,7 +4,7 @@ These tests verify that reasoning_content_delta events are properly emitted
 during streaming reasoning, without requiring actual API calls.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
