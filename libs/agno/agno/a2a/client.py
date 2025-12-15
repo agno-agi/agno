@@ -3,17 +3,6 @@
 This module provides a Pythonic client for communicating with any A2A-compatible
 agent server, enabling cross-framework agent communication.
 
-Example:
-    ```python
-    from agno.a2a import A2AClient
-
-    async with A2AClient("http://localhost:7777") as client:
-        result = await client.send_message(
-            agent_id="my-agent",
-            message="Hello!"
-        )
-        print(result.content)
-    ```
 """
 
 import json
@@ -29,6 +18,7 @@ from agno.a2a.exceptions import (
     A2ATimeoutError,
 )
 from agno.a2a.schemas import AgentCard, Artifact, StreamEvent, TaskResult
+from agno.media import File, Image
 
 try:
     from httpx import AsyncClient, HTTPStatusError, TimeoutException
@@ -147,8 +137,8 @@ class A2AClient:
         message: str,
         context_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        images: Optional[List[Any]] = None,
-        files: Optional[List[Any]] = None,
+        images: Optional[List[Image]] = None,
+        files: Optional[List[File]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         stream: bool = False,
     ) -> Dict[str, Any]:
@@ -380,8 +370,8 @@ class A2AClient:
         *,
         context_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        images: Optional[List[Any]] = None,
-        files: Optional[List[Any]] = None,
+        images: Optional[List[Image]] = None,
+        files: Optional[List[File]] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> TaskResult:
         """Send a message to an A2A agent and wait for the response.
@@ -391,8 +381,8 @@ class A2AClient:
             message: Text message to send
             context_id: Session/context ID for multi-turn conversations
             user_id: User identifier (optional)
-            images: List of images to include (optional)
-            files: List of files to include (optional)
+            images: List of Image objects to include (optional)
+            files: List of File objects to include (optional)
             metadata: Additional metadata (optional)
 
         Returns:
@@ -467,8 +457,8 @@ class A2AClient:
         *,
         context_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        images: Optional[List[Any]] = None,
-        files: Optional[List[Any]] = None,
+        images: Optional[List[Image]] = None,
+        files: Optional[List[File]] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[StreamEvent]:
         """Stream a message to an A2A agent with real-time events.
@@ -478,8 +468,8 @@ class A2AClient:
             message: Text message to send
             context_id: Session/context ID for multi-turn conversations
             user_id: User identifier (optional)
-            images: List of images to include (optional)
-            files: List of files to include (optional)
+            images: List of Image objects to include (optional)
+            files: List of File objects to include (optional)
             metadata: Additional metadata (optional)
 
         Yields:
