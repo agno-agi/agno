@@ -205,6 +205,11 @@ class AgentOS:
         self.mcp_tools: List[Any] = []
         self._mcp_app: Optional[Any] = None
 
+        # Check for duplicate IDs before initialization
+        self._check_duplicate_ids(self.agents, "Agent")
+        self._check_duplicate_ids(self.teams, "Team")
+        self._check_duplicate_ids(self.workflows, "Workflow")
+
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
@@ -247,6 +252,11 @@ class AgentOS:
 
     def resync(self, app: FastAPI) -> None:
         """Resync the AgentOS to discover, initialize and configure: agents, teams, workflows, databases and knowledge bases."""
+        # Check for duplicate IDs before re-initialization
+        self._check_duplicate_ids(self.agents, "Agent")
+        self._check_duplicate_ids(self.teams, "Team")
+        self._check_duplicate_ids(self.workflows, "Workflow")
+
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
@@ -317,6 +327,51 @@ class AgentOS:
             a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
             self.interfaces.append(a2a_interface)
             self._add_router(app, a2a_interface.get_router())
+
+    def _check_duplicate_ids(
+        self,
+        items: Optional[List[Any]],
+        item_type: str,
+    ) -> None:
+        """Check for duplicate IDs in a list of items.
+
+        Args:
+            items: List of agents, teams, or workflows
+            item_type: Type name for error messages (e.g., "Agent", "Team", "Workflow")
+
+        Raises:
+            ValueError: If duplicate IDs are found
+        """
+        if not items:
+            return
+
+        seen_ids: Dict[str, List[str]] = {}  # id -> list of names with that id
+
+        for item in items:
+            item_id = item.id
+            # If id is None, generate it the same way initialization does
+            if item_id is None:
+                if hasattr(item, "name") and item.name:
+                    item_id = generate_id_from_name(item.name)
+                else:
+                    continue  # Will get unique UUID during initialization
+
+            item_name = getattr(item, "name", None) or "unnamed"
+            if item_id in seen_ids:
+                seen_ids[item_id].append(item_name)
+            else:
+                seen_ids[item_id] = [item_name]
+
+        # Find duplicates
+        duplicates = {id_: names for id_, names in seen_ids.items() if len(names) > 1}
+
+        if duplicates:
+            dup_details = [f"'{id_}' (used by: {', '.join(names)})" for id_, names in duplicates.items()]
+            raise ValueError(
+                f"Duplicate {item_type} IDs found in AgentOS. "
+                f"Each {item_type.lower()} must have a unique ID. "
+                f"Duplicates: {', '.join(dup_details)}"
+            )
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         # Adjust the FastAPI app lifespan to handle MCP connections if relevant
