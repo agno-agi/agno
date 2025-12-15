@@ -494,11 +494,23 @@ def build_panels_stream(
         and response_event.citations is not None
         and response_event.citations.urls is not None
     ):
-        md_content = "\n".join(
+        md_lines = []
+
+        # Add search queries if present
+        if response_event.citations.search_queries:
+            md_lines.append("**Search Queries:**")
+            for query in response_event.citations.search_queries:
+                md_lines.append(f"- {query}")
+            md_lines.append("")  # Empty line before URLs
+
+        # Add URL citations
+        md_lines.extend(
             f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
             for i, citation in enumerate(response_event.citations.urls)
             if citation.url  # Only include citations with valid URLs
         )
+
+        md_content = "\n".join(md_lines)
         if md_content:  # Only create panel if there are citations
             citations_panel = create_panel(
                 content=Markdown(md_content),
@@ -890,11 +902,23 @@ def build_panels(
         and run_response.citations is not None
         and run_response.citations.urls is not None
     ):
-        md_content = "\n".join(
+        md_lines = []
+
+        # Add search queries if present
+        if run_response.citations.search_queries:
+            md_lines.append("**Search Queries:**")
+            for query in run_response.citations.search_queries:
+                md_lines.append(f"- {query}")
+            md_lines.append("")  # Empty line before URLs
+
+        # Add URL citations
+        md_lines.extend(
             f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
             for i, citation in enumerate(run_response.citations.urls)
             if citation.url  # Only include citations with valid URLs
         )
+
+        md_content = "\n".join(md_lines)
         if md_content:  # Only create panel if there are citations
             citations_panel = create_panel(
                 content=Markdown(md_content),

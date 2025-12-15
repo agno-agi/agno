@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.3.12"
+version = "2.3.13"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -47,7 +47,22 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy==1.18.2", "ruff==0.14.3", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "PyJWT", "mcp", "openai"]
+dev = [
+  "mypy==1.18.2", 
+  "ruff==0.14.3", 
+  "pytest", 
+  "pytest-asyncio", 
+  "pytest-cov", 
+  "pytest-mock", 
+  "timeout-decorator", 
+  "types-pyyaml", 
+  "types-aiofiles", 
+  "fastapi", 
+  "uvicorn", 
+  "PyJWT", 
+  "mcp", 
+  "openai"
+]
 
 os = ["fastapi", "uvicorn", "PyJWT"]
 
