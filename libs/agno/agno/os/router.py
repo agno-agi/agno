@@ -208,7 +208,6 @@ def get_base_router(
         return list(unique_models.values())
 
     # -- Database Migration routes ---
-
     @router.post(
         "/databases/{db_id}/migrate",
         tags=["Database"],
