@@ -327,8 +327,11 @@ def get_session_name(session: Dict[str, Any]) -> str:
         first_user_message: Optional[str] = None
         second_user_message: Optional[str] = None
 
-        # For team, we already have a specific run; for agents, iterate all runs
-        runs_to_check = [run] if session.get("session_type") == "team" and run else runs
+        # For team, check all team runs (runs without agent_id); for agents, iterate all runs
+        if session.get("session_type") == "team":
+            runs_to_check = [r for r in runs if not r.get("agent_id")]
+        else:
+            runs_to_check = runs
 
         for r in runs_to_check:
             if r is None:
