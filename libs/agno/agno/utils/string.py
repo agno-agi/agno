@@ -229,3 +229,44 @@ def generate_id_from_name(name: Optional[str] = None) -> str:
         return name.lower().replace(" ", "-").replace("_", "-")
     else:
         return str(uuid4())
+
+
+def truncate_middle(input_string: str, max_length: int) -> str:
+    """
+    Truncate a string with an ellipsis in the middle if it exceeds max_length.
+
+    Behaviour:
+    - If the input string length is less than or equal to max_length, return it unchanged.
+    - If max_length is less than 4, return the input truncated to max_length (no ellipsis).
+    - When truncation is needed, preserve the start and end of the string and place '...' between them.
+
+    Examples:
+        truncate_middle('abcdefghijkl', 8) -> 'abc...kl'
+        truncate_middle('short', 10) -> 'short'
+
+    Args:
+        input_string: The string to truncate.
+        max_length: Maximum allowed length for the result string.
+
+    Returns:
+        The possibly-truncated string.
+    """
+    if max_length <= 0:
+        return ""
+
+    if len(input_string) <= max_length:
+        return input_string
+
+    # If we don't have room for an ellipsis, just cut to max_length
+    if max_length < 4:
+        return input_string[:max_length]
+
+    # Reserve 3 characters for '...'
+    keep = max_length - 3
+    # Split the keep between head and tail
+    head_len = (keep + 1) // 2
+    tail_len = keep // 2
+
+    head = input_string[:head_len]
+    tail = input_string[-tail_len:] if tail_len > 0 else ""
+    return f"{head}...{tail}"

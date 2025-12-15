@@ -346,3 +346,31 @@ def test_parse_json_with_python_code_in_value():
         == "def factorial(n):     # Calculate factorial of n     if n <= 1:         return 1     return n * factorial(n - 1)"
     )
     assert result.description == "A recursive factorial function with comments and multiplication"
+
+
+def test_truncate_middle_no_truncation():
+    assert url_safe_string("keep-me") == "keep-me"
+
+
+def test_truncate_middle_truncates():
+    from agno.utils.string import truncate_middle
+
+    s = "abcdefghijklmnopqrstuvwxyz"
+    # max_length 8 -> keep 5 chars around ellipsis -> head 3 tail 2
+    assert truncate_middle(s, 8) == "abc...yz"
+
+
+def test_truncate_middle_small_max():
+    from agno.utils.string import truncate_middle
+
+    s = "abcdef"
+    # max_length 2 -> no ellipsis used
+    assert truncate_middle(s, 2) == "ab"
+
+
+def test_truncate_middle_edge_case():
+    from agno.utils.string import truncate_middle
+
+    s = "abcd"
+    # max_length equals len(s)
+    assert truncate_middle(s, 4) == "abcd"
