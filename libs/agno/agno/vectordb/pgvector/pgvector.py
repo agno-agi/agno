@@ -28,7 +28,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
@@ -367,7 +367,10 @@ class PgVector(VectorDb):
                         for doc in batch_docs:
                             try:
                                 cleaned_content = self._clean_content(doc.content)
-                                record_id = doc.id or content_hash
+                                # Include content_hash in ID to ensure uniqueness across different content hashes
+                                # This allows the same URL/content to be inserted with different descriptions
+                                base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
+                                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
                                 meta_data = doc.meta_data or {}
                                 if filters:
@@ -456,7 +459,9 @@ class PgVector(VectorDb):
                         batch_records_dict: Dict[str, Dict[str, Any]] = {}  # Use dict to deduplicate by ID
                         for doc in batch_docs:
                             try:
-                                batch_records_dict[doc.id] = self._get_document_record(doc, filters, content_hash)  # type: ignore
+                                record = self._get_document_record(doc, filters, content_hash)
+                                # Use the generated record ID (which includes content_hash) for deduplication
+                                batch_records_dict[record["id"]] = record
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {e}")
 
@@ -497,7 +502,10 @@ class PgVector(VectorDb):
     ) -> Dict[str, Any]:
         doc.embed(embedder=self.embedder)
         cleaned_content = self._clean_content(doc.content)
-        record_id = doc.id or content_hash
+        # Include content_hash in ID to ensure uniqueness across different content hashes
+        # This allows the same URL/content to be inserted with different descriptions
+        base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
+        record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
         meta_data = doc.meta_data or {}
         if filters:
@@ -630,7 +638,10 @@ class PgVector(VectorDb):
                         for idx, doc in enumerate(batch_docs):
                             try:
                                 cleaned_content = self._clean_content(doc.content)
-                                record_id = md5(cleaned_content.encode()).hexdigest()
+                                # Include content_hash in ID to ensure uniqueness across different content hashes
+                                # This allows the same URL/content to be inserted with different descriptions
+                                base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
+                                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
                                 if (
                                     doc.embedding is not None
@@ -695,25 +706,23 @@ class PgVector(VectorDb):
         Update the metadata for a document.
 
         Args:
-            id (str): The ID of the document.
+            content_id (str): The ID of the document.
             metadata (Dict[str, Any]): The metadata to update.
         """
         try:
             with self.Session() as sess:
-                # Merge JSONB instead of overwriting: coalesce(existing, '{}') || :new
+                # Merge JSONB for metadata, but replace filters entirely (absolute value)
                 stmt = (
                     update(self.table)
                     .where(self.table.c.content_id == content_id)
                     .values(
                         meta_data=func.coalesce(self.table.c.meta_data, text("'{}'::jsonb")).op("||")(
-                            bindparam("md", metadata, type_=postgresql.JSONB)
+                            bindparam("md", type_=postgresql.JSONB)
                         ),
-                        filters=func.coalesce(self.table.c.filters, text("'{}'::jsonb")).op("||")(
-                            bindparam("ft", metadata, type_=postgresql.JSONB)
-                        ),
+                        filters=bindparam("ft", type_=postgresql.JSONB),
                     )
                 )
-                sess.execute(stmt)
+                sess.execute(stmt, {"md": metadata, "ft": metadata})
                 sess.commit()
         except Exception as e:
             log_error(f"Error updating metadata for document {content_id}: {e}")
@@ -1111,6 +1120,7 @@ class PgVector(VectorDb):
                 search_results = self.reranker.rerank(query=query, documents=search_results)
 
             log_info(f"Found {len(search_results)} documents")
+
             return search_results
         except Exception as e:
             log_error(f"Error during hybrid search: {e}")
