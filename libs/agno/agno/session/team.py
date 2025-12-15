@@ -96,11 +96,6 @@ class TeamSession:
         if messages is None:
             return
 
-        # Make message duration None
-        for m in messages or []:
-            if m.metrics is not None:
-                m.metrics.duration = None
-
         if not self.runs:
             self.runs = []
 

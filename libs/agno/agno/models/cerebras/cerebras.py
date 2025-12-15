@@ -7,9 +7,9 @@ from typing import Any, Dict, Iterator, List, Optional, Type, Union
 import httpx
 from pydantic import BaseModel
 
+from agno.metrics import RunMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.http import get_default_async_client, get_default_sync_client
@@ -223,16 +223,15 @@ class Cerebras(Model):
         Returns:
             CompletionResponse: The chat completion response from the API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
-        assistant_message.metrics.start_timer()
+        # Initialize MessageMetrics and start timer
+        self._ensure_message_metrics_initialized(assistant_message)
         provider_response = self.get_client().chat.completions.create(
             model=self.id,
             messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             **self.get_request_params(response_format=response_format, tools=tools),
         )
-        assistant_message.metrics.stop_timer()
+        if assistant_message.metrics is not None:
+            assistant_message.metrics.stop_timer()
 
         model_response = self._parse_provider_response(provider_response, response_format=response_format)  # type: ignore
 
@@ -257,16 +256,15 @@ class Cerebras(Model):
         Returns:
             ChatCompletion: The chat completion response from the API.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
-        assistant_message.metrics.start_timer()
+        # Initialize MessageMetrics and start timer
+        self._ensure_message_metrics_initialized(assistant_message)
         provider_response = await self.get_async_client().chat.completions.create(
             model=self.id,
             messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             **self.get_request_params(response_format=response_format, tools=tools),
         )
-        assistant_message.metrics.stop_timer()
+        if assistant_message.metrics is not None:
+            assistant_message.metrics.stop_timer()
 
         model_response = self._parse_provider_response(provider_response, response_format=response_format)  # type: ignore
 
@@ -291,10 +289,8 @@ class Cerebras(Model):
         Returns:
             Iterator[ChatChunkResponse]: An iterator of chat completion chunks.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
-        assistant_message.metrics.start_timer()
+        # Initialize MessageMetrics and start timer
+        self._ensure_message_metrics_initialized(assistant_message)
 
         for chunk in self.get_client().chat.completions.create(
             model=self.id,
@@ -304,7 +300,8 @@ class Cerebras(Model):
         ):
             yield self._parse_provider_response_delta(chunk)  # type: ignore
 
-        assistant_message.metrics.stop_timer()
+        if assistant_message.metrics is not None:
+            assistant_message.metrics.stop_timer()
 
     async def ainvoke_stream(
         self,
@@ -325,10 +322,8 @@ class Cerebras(Model):
         Returns:
             AsyncIterator[ChatChunkResponse]: An asynchronous iterator of chat completion chunks.
         """
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
-        assistant_message.metrics.start_timer()
+        # Initialize MessageMetrics and start timer
+        self._ensure_message_metrics_initialized(assistant_message)
 
         async_stream = await self.get_async_client().chat.completions.create(
             model=self.id,
@@ -340,7 +335,8 @@ class Cerebras(Model):
         async for chunk in async_stream:  # type: ignore
             yield self._parse_provider_response_delta(chunk)  # type: ignore
 
-        assistant_message.metrics.stop_timer()
+        if assistant_message.metrics is not None:
+            assistant_message.metrics.stop_timer()
 
     def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
@@ -546,7 +542,7 @@ class Cerebras(Model):
 
         return complete_tool_calls
 
-    def _get_metrics(self, response_usage: Union[ChatCompletionResponseUsage, ChatChunkResponseUsage]) -> Metrics:
+    def _get_metrics(self, response_usage: Union[ChatCompletionResponseUsage, ChatChunkResponseUsage]) -> RunMetrics:
         """
         Parse the given Cerebras usage into an Agno Metrics object.
 
@@ -556,7 +552,7 @@ class Cerebras(Model):
         Returns:
             Metrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = RunMetrics()
 
         metrics.input_tokens = response_usage.prompt_tokens or 0
         metrics.output_tokens = response_usage.completion_tokens or 0

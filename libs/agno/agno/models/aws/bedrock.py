@@ -6,9 +6,9 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Ty
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
+from agno.metrics import RunMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
@@ -448,12 +448,11 @@ class AwsBedrock(Model):
                 log_debug(f"Calling {self.provider} with request parameters: {self.request_params}", log_level=2)
                 body.update(**self.request_params)
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
             response = self.get_client().converse(modelId=self.id, messages=formatted_messages, **body)
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
             model_response = self._parse_provider_response(response, response_format=response_format)
 
@@ -496,10 +495,8 @@ class AwsBedrock(Model):
             if self.request_params:
                 body.update(**self.request_params)
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             # Track current tool being built across chunks
             current_tool: Dict[str, Any] = {}
@@ -510,7 +507,8 @@ class AwsBedrock(Model):
                 model_response, current_tool = self._parse_provider_response_delta(chunk, current_tool)
                 yield model_response
 
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
         except ClientError as e:
             log_error(f"Unexpected error calling Bedrock API: {str(e)}")
@@ -550,15 +548,14 @@ class AwsBedrock(Model):
                 log_debug(f"Calling {self.provider} with request parameters: {self.request_params}", log_level=2)
                 body.update(**self.request_params)
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             async with self.get_async_client() as client:
                 response = await client.converse(modelId=self.id, messages=formatted_messages, **body)
 
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
             model_response = self._parse_provider_response(response, response_format=response_format)
 
@@ -601,10 +598,8 @@ class AwsBedrock(Model):
             if self.request_params:
                 body.update(**self.request_params)
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             # Track current tool being built across chunks
             current_tool: Dict[str, Any] = {}
@@ -615,7 +610,8 @@ class AwsBedrock(Model):
                     model_response, current_tool = self._parse_provider_response_delta(chunk, current_tool)
                     yield model_response
 
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
         except ClientError as e:
             log_error(f"Unexpected error calling Bedrock API: {str(e)}")
@@ -763,7 +759,7 @@ class AwsBedrock(Model):
 
         return model_response, current_tool
 
-    def _get_metrics(self, response_usage: Dict[str, Any]) -> Metrics:
+    def _get_metrics(self, response_usage: Dict[str, Any]) -> RunMetrics:
         """
         Parse the given AWS Bedrock usage into an Agno Metrics object.
 
@@ -773,7 +769,7 @@ class AwsBedrock(Model):
         Returns:
             Metrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = RunMetrics()
 
         metrics.input_tokens = response_usage.get("inputTokens", 0) or 0
         metrics.output_tokens = response_usage.get("outputTokens", 0) or 0
