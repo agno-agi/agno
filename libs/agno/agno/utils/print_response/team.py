@@ -840,11 +840,23 @@ def print_response_stream(
 
                 # Add citations if any
                 if member_response.citations is not None and member_response.citations.urls is not None:
-                    md_content = "\n".join(
+                    md_lines = []
+
+                    # Add search queries if present
+                    if member_response.citations.search_queries:
+                        md_lines.append("**Search Queries:**")
+                        for query in member_response.citations.search_queries:
+                            md_lines.append(f"- {query}")
+                        md_lines.append("")  # Empty line before URLs
+
+                    # Add URL citations
+                    md_lines.extend(
                         f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                         for i, citation in enumerate(member_response.citations.urls)
                         if citation.url  # Only include citations with valid URLs
                     )
+
+                    md_content = "\n".join(md_lines)
                     if md_content:  # Only create panel if there are citations
                         citations_panel = create_panel(
                             content=Markdown(md_content),
@@ -1769,11 +1781,23 @@ async def aprint_response_stream(
 
                 # Add citations if any
                 if member_response.citations is not None and member_response.citations.urls is not None:
-                    md_content = "\n".join(
+                    md_lines = []
+
+                    # Add search queries if present
+                    if member_response.citations.search_queries:
+                        md_lines.append("**Search Queries:**")
+                        for query in member_response.citations.search_queries:
+                            md_lines.append(f"- {query}")
+                        md_lines.append("")  # Empty line before URLs
+
+                    # Add URL citations
+                    md_lines.extend(
                         f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                         for i, citation in enumerate(member_response.citations.urls)
                         if citation.url  # Only include citations with valid URLs
                     )
+
+                    md_content = "\n".join(md_lines)
                     if md_content:  # Only create panel if there are citations
                         citations_panel = create_panel(
                             content=Markdown(md_content),
@@ -1833,11 +1857,23 @@ async def aprint_response_stream(
 
         # Add team citations
         if hasattr(resp, "citations") and resp.citations is not None and resp.citations.urls is not None:
-            md_content = "\n".join(
+            md_lines = []
+
+            # Add search queries if present
+            if resp.citations.search_queries:
+                md_lines.append("**Search Queries:**")
+                for query in resp.citations.search_queries:
+                    md_lines.append(f"- {query}")
+                md_lines.append("")  # Empty line before URLs
+
+            # Add URL citations
+            md_lines.extend(
                 f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                 for i, citation in enumerate(resp.citations.urls)
                 if citation.url  # Only include citations with valid URLs
             )
+
+            md_content = "\n".join(md_lines)
             if md_content:  # Only create panel if there are citations
                 citations_panel = create_panel(
                     content=Markdown(md_content),
