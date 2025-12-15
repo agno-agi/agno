@@ -1,4 +1,5 @@
 import fnmatch
+from collections.abc import Iterable
 from enum import Enum
 from os import getenv
 from typing import List, Optional
@@ -47,6 +48,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         app,
         secret_key: Optional[str] = None,
         algorithm: str = "HS256",
+        audience: str | Iterable[str] | None = None,
         token_source: TokenSource = TokenSource.HEADER,
         token_header_key: str = "Authorization",
         cookie_name: str = "access_token",
@@ -65,6 +67,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             app: The FastAPI app instance
             secret_key: The secret key to use for JWT validation (optional, will use JWT_SECRET_KEY environment variable if not provided)
             algorithm: The algorithm to use for JWT validation
+            audience: Optional audience claim to validate against the token's 'aud' claim
             token_header_key: The key to use for the Authorization header (only used when token_source is header)
             token_source: Where to extract the JWT token from (header, cookie, or both)
             cookie_name: The name of the cookie containing the JWT token (only used when token_source is cookie/both)
@@ -91,6 +94,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self.session_id_claim = session_id_claim
         self.dependencies_claims = dependencies_claims or []
         self.session_state_claims = session_state_claims or []
+        self.audience = audience
 
     def _extract_token_from_header(self, request: Request) -> Optional[str]:
         """Extract JWT token from Authorization header."""
@@ -163,7 +167,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
         # Decode JWT token
         try:
-            payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])  # type: ignore
+            payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm], audience=self.audience)  # type: ignore
 
             # Extract scopes claims
             scopes = []
@@ -177,6 +181,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
                 request.state.scopes = scopes
 
             # Extract user information
+            user_id = None
             if self.user_id_claim in payload:
                 user_id = payload[self.user_id_claim]
                 request.state.user_id = user_id
@@ -218,6 +223,12 @@ class JWTMiddleware(BaseHTTPMiddleware):
         except jwt.ExpiredSignatureError:
             if self.validate:
                 return JSONResponse(status_code=401, content={"detail": "Token has expired"})
+            request.state.authenticated = False
+            request.state.token = token
+
+        except jwt.InvalidAudienceError:
+            if self.validate:
+                return JSONResponse(status_code=401, content={"detail": "Invalid token audience"})
             request.state.authenticated = False
             request.state.token = token
 
