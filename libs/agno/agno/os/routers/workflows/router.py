@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
+from agno.os.managers import event_buffer, websocket_manager
 from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -31,15 +32,15 @@ from agno.os.utils import (
     get_request_kwargs,
     get_workflow_by_id,
 )
-from agno.run.workflow import WorkflowErrorEvent
-from agno.utils.log import log_warning, logger, log_debug
-from agno.workflow.workflow import Workflow
 from agno.run.base import RunStatus
-from agno.os.managers import websocket_manager, event_buffer
+from agno.run.workflow import WorkflowErrorEvent
+from agno.utils.log import log_debug, log_warning, logger
 from agno.utils.serialize import json_serializer
+from agno.workflow.workflow import Workflow
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
+
 
 async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os: "AgentOS"):
     """Handle workflow execution directly via WebSocket"""
@@ -266,6 +267,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
                 }
             )
         )
+
 
 async def workflow_response_streamer(
     workflow: Workflow,

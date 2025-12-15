@@ -50,7 +50,12 @@ class WebSocketHandler:
             # Fallback to generic message event if parsing fails
             return f"event: message\ndata: {json_data}\n\n"
 
-    async def handle_event(self, event: Any, event_index: Optional[int] = None, run_id: Optional[str] = None) -> None:
+    async def handle_event(
+        self,
+        event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
+        event_index: Optional[int] = None,
+        run_id: Optional[str] = None,
+    ) -> None:
         """Handle an event object - serializes and sends via WebSocket with event_index for reconnection support"""
         if not self.websocket:
             return
@@ -210,7 +215,7 @@ class EventsBuffer:
             cleanup_interval: How long (in seconds) to keep completed runs in buffer
         """
         # Store all event types (WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent)
-        self.buffers: Dict[str, List[Union[WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent]]] = {}
+        self.events: Dict[str, List[Union[WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent]]] = {}
         self.run_metadata: Dict[str, Dict[str, Any]] = {}  # {run_id: {status, last_updated, etc}}
         self.max_events_per_run = max_events_per_run
         self.cleanup_interval = cleanup_interval
@@ -219,23 +224,23 @@ class EventsBuffer:
         """Add event to buffer for a specific run and return the event index (handles workflow, agent, and team events)"""
         current_time = time()
 
-        if run_id not in self.buffers:
-            self.buffers[run_id] = []
+        if run_id not in self.events:
+            self.events[run_id] = []
             self.run_metadata[run_id] = {
                 "status": RunStatus.running,
                 "created_at": current_time,
                 "last_updated": current_time,
             }
 
-        self.buffers[run_id].append(event)
+        self.events[run_id].append(event)
         self.run_metadata[run_id]["last_updated"] = current_time
 
         # Get the index of the event we just added (before potential trimming)
-        event_index = len(self.buffers[run_id]) - 1
+        event_index = len(self.events[run_id]) - 1
 
         # Keep buffer size under control - trim oldest events if exceeded
-        if len(self.buffers[run_id]) > self.max_events_per_run:
-            self.buffers[run_id] = self.buffers[run_id][-self.max_events_per_run :]
+        if len(self.events[run_id]) > self.max_events_per_run:
+            self.events[run_id] = self.events[run_id][-self.max_events_per_run :]
             log_debug(f"Trimmed event buffer for run {run_id} to {self.max_events_per_run} events")
 
         return event_index
@@ -253,7 +258,7 @@ class EventsBuffer:
         Returns:
             List of events since last_event_index, or all events if None
         """
-        events = self.buffers.get(run_id, [])
+        events = self.events.get(run_id, [])
 
         if last_event_index is None:
             # Client has no events, send all
@@ -269,7 +274,7 @@ class EventsBuffer:
 
     def get_event_count(self, run_id: str) -> int:
         """Get the current number of events for a run"""
-        return len(self.buffers.get(run_id, []))
+        return len(self.events.get(run_id, []))
 
     def set_run_completed(self, run_id: str, status: RunStatus) -> None:
         """Mark a run as completed/cancelled/error for future cleanup"""
@@ -283,8 +288,8 @@ class EventsBuffer:
 
     def cleanup_run(self, run_id: str) -> None:
         """Remove buffer for a completed run (called after retention period)"""
-        if run_id in self.buffers:
-            del self.buffers[run_id]
+        if run_id in self.events:
+            del self.events[run_id]
         if run_id in self.run_metadata:
             del self.run_metadata[run_id]
         log_debug(f"Cleaned up event buffer for run {run_id}")

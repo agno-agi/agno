@@ -1,6 +1,6 @@
+import json
 from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional
 from uuid import uuid4
-import json
 
 from fastapi import (
     APIRouter,
@@ -19,6 +19,7 @@ from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import get_authentication_dependency
+from agno.os.managers import event_buffer, websocket_manager
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -37,15 +38,15 @@ from agno.os.utils import (
     process_image,
     process_video,
 )
+from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.team.team import Team
 from agno.utils.log import log_warning, logger
-from agno.run.base import RunStatus
-from agno.os.managers import websocket_manager, event_buffer
 from agno.utils.serialize import json_serializer
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
+
 
 async def handle_team_via_websocket(websocket: WebSocket, message: dict, os: "AgentOS"):
     """Handle team execution directly via WebSocket"""
@@ -238,6 +239,7 @@ async def handle_team_subscription(websocket: WebSocket, message: dict, os: "Age
                 }
             )
         )
+
 
 async def team_response_streamer(
     team: Team,

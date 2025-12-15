@@ -1,5 +1,5 @@
-from typing import TYPE_CHECKING, List, Optional, Union, cast
 import json
+from typing import TYPE_CHECKING, List, Optional, Union, cast
 
 from fastapi import (
     APIRouter,
@@ -15,6 +15,9 @@ from agno.db.base import AsyncBaseDb
 from agno.db.migrations.manager import MigrationManager
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.managers import websocket_manager
+from agno.os.routers.agents.router import handle_agent_subscription, handle_agent_via_websocket
+from agno.os.routers.teams.router import handle_team_subscription, handle_team_via_websocket
+from agno.os.routers.workflows.router import handle_workflow_subscription, handle_workflow_via_websocket
 from agno.os.schema import (
     AgentSummaryResponse,
     BadRequestResponse,
@@ -34,9 +37,6 @@ from agno.os.utils import (
 )
 from agno.team.team import Team
 from agno.utils.log import logger
-from agno.os.routers.workflows.router import handle_workflow_via_websocket, handle_workflow_subscription
-from agno.os.routers.agents.router import handle_agent_via_websocket, handle_agent_subscription
-from agno.os.routers.teams.router import handle_team_via_websocket, handle_team_subscription
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -264,6 +264,7 @@ def get_base_router(
         )
 
     return router
+
 
 def get_websocket_router(
     os: "AgentOS",

@@ -20,6 +20,7 @@ from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import get_authentication_dependency
+from agno.os.managers import event_buffer, websocket_manager
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -39,13 +40,13 @@ from agno.os.utils import (
     process_video,
 )
 from agno.run.agent import RunErrorEvent, RunOutput
-from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.run.base import RunStatus
-from agno.os.managers import websocket_manager, event_buffer
+from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.utils.serialize import json_serializer
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
+
 
 async def handle_agent_via_websocket(websocket: WebSocket, message: dict, os: "AgentOS"):
     """Handle agent execution directly via WebSocket"""
@@ -237,6 +238,7 @@ async def handle_agent_subscription(websocket: WebSocket, message: dict, os: "Ag
                 }
             )
         )
+
 
 async def agent_response_streamer(
     agent: Agent,
