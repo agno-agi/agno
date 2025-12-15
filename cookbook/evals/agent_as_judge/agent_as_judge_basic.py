@@ -31,6 +31,7 @@ evaluation = AgentAsJudgeEval(
     threshold=7,  # Pass if score >= 7
     on_fail=on_evaluation_failure,
     db=db,
+    agent=agent,
 )
 
 result = evaluation.run(
@@ -40,8 +41,8 @@ result = evaluation.run(
     print_summary=True,
 )
 
-print(f"Score: {result.results[0].score}/10")
-print(f"Passed: {result.results[0].passed}")
+# print(f"Score: {result.results[0].score}/10")
+# print(f"Passed: {result.results[0].passed}")
 
 # Query database for stored results
 print("Database Results:")
@@ -49,5 +50,5 @@ eval_runs = db.get_eval_runs()
 print(f"Total evaluations stored: {len(eval_runs)}")
 if eval_runs:
     latest = eval_runs[-1]
-    print(f"Eval ID: {latest.run_id}")
-    print(f"Name: {latest.name}")
+    # print(f"Eval ID: {latest.run_id}")
+    # print(f"Name: {latest.name}")
