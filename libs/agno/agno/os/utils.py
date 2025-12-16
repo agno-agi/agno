@@ -328,7 +328,29 @@ def get_workflow_by_id(
     return None
 
 
-#  INPUT SCHEMA VALIDATIONS
+def resolve_origins(user_origins: Optional[List[str]] = None, default_origins: Optional[List[str]] = None) -> List[str]:
+    """
+    Get CORS origins - user-provided origins override defaults.
+
+    Args:
+        user_origins: Optional list of user-provided CORS origins
+
+    Returns:
+        List of allowed CORS origins (user-provided if set, otherwise defaults)
+    """
+    # User-provided origins override defaults
+    if user_origins:
+        return user_origins
+
+    # Default Agno domains
+    return default_origins or [
+        "http://localhost:3000",
+        "https://agno.com",
+        "https://www.agno.com",
+        "https://app.agno.com",
+        "https://os-stg.agno.com",
+        "https://os.agno.com",
+    ]
 
 
 def update_cors_middleware(app: FastAPI, new_origins: list):
