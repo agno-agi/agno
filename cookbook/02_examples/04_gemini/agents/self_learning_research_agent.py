@@ -155,7 +155,7 @@ Rules:
 self_learning_research_agent = Agent(
     name="Self Learning Research Agent",
     model=Gemini(
-        id="fiercefalcon",
+        id="gemini-3-pro-preview",
         search=True,
     ),
     system_message=system_message,
