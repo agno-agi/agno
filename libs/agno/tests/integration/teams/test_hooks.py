@@ -5,7 +5,7 @@ This test file validates that all Team class parameters are properly initialized
 and configured according to their expected behavior.
 """
 
-from typing import Any, AsyncIterator, Dict, Iterator, Optional
+from typing import Any, AsyncIterator, Iterator, Optional
 from unittest.mock import AsyncMock, Mock
 
 import pytest
