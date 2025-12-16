@@ -18,7 +18,7 @@ from agno.agent.agent import Agent
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.os.auth import get_authentication_dependency
+from agno.os.auth import get_authentication_dependency, require_resource_access
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -187,6 +187,7 @@ def get_agent_router(
             400: {"description": "Invalid request or unsupported file type", "model": BadRequestResponse},
             404: {"description": "Agent not found", "model": NotFoundResponse},
         },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
     )
     async def create_agent_run(
         agent_id: str,
@@ -372,6 +373,7 @@ def get_agent_router(
             404: {"description": "Agent not found", "model": NotFoundResponse},
             500: {"description": "Failed to cancel run", "model": InternalServerErrorResponse},
         },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
     )
     async def cancel_agent_run(
         agent_id: str,
@@ -412,6 +414,7 @@ def get_agent_router(
             400: {"description": "Invalid JSON in tools field or invalid tool structure", "model": BadRequestResponse},
             404: {"description": "Agent not found", "model": NotFoundResponse},
         },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
     )
     async def continue_agent_run(
         agent_id: str,
@@ -521,13 +524,27 @@ def get_agent_router(
             }
         },
     )
-    async def get_agents() -> List[AgentResponse]:
+    async def get_agents(request: Request) -> List[AgentResponse]:
         """Return the list of all Agents present in the contextual OS"""
         if os.agents is None:
             return []
 
+        # Filter agents based on user's scopes (only if authorization is enabled)
+        if getattr(request.state, "authorization_enabled", False):
+            from agno.os.auth import filter_resources_by_access, get_accessible_resources
+
+            # Check if user has any agent scopes at all
+            accessible_ids = get_accessible_resources(request, "agents")
+            if not accessible_ids:
+                raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+            # Limit results based on the user's access/scopes
+            accessible_agents = filter_resources_by_access(request, os.agents, "agents")
+        else:
+            accessible_agents = os.agents
+
         agents = []
-        for agent in os.agents:
+        for agent in accessible_agents:
             agent_response = await AgentResponse.from_agent(agent=agent)
             agents.append(agent_response)
 
@@ -570,8 +587,9 @@ def get_agent_router(
             },
             404: {"description": "Agent not found", "model": NotFoundResponse},
         },
+        dependencies=[Depends(require_resource_access("agents", "read", "agent_id"))],
     )
-    async def get_agent(agent_id: str) -> AgentResponse:
+    async def get_agent(agent_id: str, request: Request) -> AgentResponse:
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")

@@ -627,7 +627,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/test_setup.sh
-      - name: Run agent integration tests (slow tests)
+      - name: Run agent integration tests
         working-directory: .
         env:
           AGNO_TELEMETRY: false
