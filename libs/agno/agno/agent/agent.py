@@ -9177,6 +9177,88 @@ class Agent:
 
         return updated_reasoning_content
 
+    def _handle_reasoning_event(
+        self,
+        event: "ReasoningEvent",  # type: ignore # noqa: F821
+        run_response: RunOutput,
+        stream_events: Optional[bool] = None,
+    ) -> Iterator[RunOutputEvent]:
+        """
+        Convert a ReasoningEvent from the ReasoningManager to Agent-specific RunOutputEvents.
+
+        This method handles the conversion of generic reasoning events to Agent events,
+        keeping the Agent._reason() method clean and simple.
+        """
+        from agno.reasoning.manager import ReasoningEventType
+
+        if event.event_type == ReasoningEventType.started:
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    create_reasoning_started_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
+
+        elif event.event_type == ReasoningEventType.content_delta:
+            if stream_events and event.reasoning_content:
+                yield handle_event(  # type: ignore
+                    create_reasoning_content_delta_event(
+                        from_run_response=run_response,
+                        reasoning_content=event.reasoning_content,
+                    ),
+                    run_response,
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
+
+        elif event.event_type == ReasoningEventType.step:
+            if event.reasoning_step:
+                # Update run_response with this step
+                update_run_output_with_reasoning(
+                    run_response=run_response,
+                    reasoning_steps=[event.reasoning_step],
+                    reasoning_agent_messages=[],
+                )
+                if stream_events:
+                    updated_reasoning_content = self._format_reasoning_step_content(
+                        run_response=run_response,
+                        reasoning_step=event.reasoning_step,
+                    )
+                    yield handle_event(  # type: ignore
+                        create_reasoning_step_event(
+                            from_run_response=run_response,
+                            reasoning_step=event.reasoning_step,
+                            reasoning_content=updated_reasoning_content,
+                        ),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
+
+        elif event.event_type == ReasoningEventType.completed:
+            if event.message and event.reasoning_steps:
+                # This is from native reasoning - update with the message and steps
+                update_run_output_with_reasoning(
+                    run_response=run_response,
+                    reasoning_steps=event.reasoning_steps,
+                    reasoning_agent_messages=event.reasoning_messages,
+                )
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    create_reasoning_completed_event(
+                        from_run_response=run_response,
+                        content=ReasoningSteps(reasoning_steps=event.reasoning_steps),
+                        content_type=ReasoningSteps.__name__,
+                    ),
+                    run_response,
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
+
+        elif event.event_type == ReasoningEventType.error:
+            log_warning(f"Reasoning error. {event.error}, continuing regular session...")
+
     def _reason(
         self, run_response: RunOutput, run_messages: RunMessages, stream_events: Optional[bool] = None
     ) -> Iterator[RunOutputEvent]:
@@ -9188,27 +9270,14 @@ class Agent:
         """
         from agno.reasoning.manager import ReasoningConfig, ReasoningManager
 
-        # Yield a reasoning started event
-        if stream_events:
-            yield handle_event(  # type: ignore
-                create_reasoning_started_event(from_run_response=run_response),
-                run_response,
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
-
-        # Get the reasoning model
+        # Get the reasoning model (use copy of main model if not provided)
         reasoning_model: Optional[Model] = self.reasoning_model
-        reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
             from copy import deepcopy
 
             reasoning_model = deepcopy(self.model)
-        if reasoning_model is None:
-            log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
-            return
 
-        # Create reasoning manager
+        # Create reasoning manager with config
         manager = ReasoningManager(
             ReasoningConfig(
                 reasoning_model=reasoning_model,
@@ -9227,106 +9296,9 @@ class Agent:
             )
         )
 
-        # If a reasoning model is provided, use native reasoning if supported
-        if reasoning_model_provided and manager.is_native_reasoning_model(reasoning_model):
-            # Use streaming for native models when stream_events is enabled
-            if stream_events:
-                for reasoning_delta, result in manager.stream_native_reasoning(
-                    reasoning_model, run_messages.get_input_messages()
-                ):
-                    if reasoning_delta is not None:
-                        yield handle_event(  # type: ignore
-                            create_reasoning_content_delta_event(
-                                from_run_response=run_response,
-                                reasoning_content=reasoning_delta,
-                            ),
-                            run_response,
-                            events_to_skip=self.events_to_skip,  # type: ignore
-                            store_events=self.store_events,
-                        )
-                    if result is not None:
-                        if not result.success:
-                            log_warning(f"Reasoning error. {result.error}, continuing regular session...")
-                            return
-                        if result.message:
-                            run_messages.messages.append(result.message)
-                            update_run_output_with_reasoning(
-                                run_response=run_response,
-                                reasoning_steps=result.steps,
-                                reasoning_agent_messages=result.reasoning_messages,
-                            )
-                            yield handle_event(  # type: ignore
-                                create_reasoning_completed_event(
-                                    from_run_response=run_response,
-                                    content=ReasoningSteps(reasoning_steps=result.steps),
-                                    content_type=ReasoningSteps.__name__,
-                                ),
-                                run_response,
-                                events_to_skip=self.events_to_skip,  # type: ignore
-                                store_events=self.store_events,
-                            )
-            else:
-                # Non-streaming native reasoning
-                result = manager.get_native_reasoning(reasoning_model, run_messages.get_input_messages())
-                if not result.success:
-                    log_warning(f"Reasoning error. {result.error}, continuing regular session...")
-                    return
-                if result.message:
-                    run_messages.messages.append(result.message)
-                    update_run_output_with_reasoning(
-                        run_response=run_response,
-                        reasoning_steps=result.steps,
-                        reasoning_agent_messages=result.reasoning_messages,
-                    )
-        else:
-            # Use default Chain-of-Thought reasoning
-            if reasoning_model_provided:
-                log_info(
-                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
-                )
-
-            all_reasoning_steps: List[ReasoningStep] = []
-            for reasoning_step, result in manager.run_default_reasoning(reasoning_model, run_messages):
-                if reasoning_step is not None:
-                    all_reasoning_steps.append(reasoning_step)
-                    if stream_events:
-                        updated_reasoning_content = self._format_reasoning_step_content(
-                            run_response=run_response,
-                            reasoning_step=reasoning_step,
-                        )
-                        yield handle_event(  # type: ignore
-                            create_reasoning_step_event(
-                                from_run_response=run_response,
-                                reasoning_step=reasoning_step,
-                                reasoning_content=updated_reasoning_content,
-                            ),
-                            run_response,
-                            events_to_skip=self.events_to_skip,  # type: ignore
-                            store_events=self.store_events,
-                        )
-                    # Update run_response with each step
-                    update_run_output_with_reasoning(
-                        run_response=run_response,
-                        reasoning_steps=[reasoning_step],
-                        reasoning_agent_messages=[],
-                    )
-                if result is not None:
-                    if not result.success:
-                        log_warning(f"Reasoning error. {result.error}, continuing regular session...")
-                        return
-
-            # Yield the final reasoning completed event
-            if stream_events and all_reasoning_steps:
-                yield handle_event(  # type: ignore
-                    create_reasoning_completed_event(
-                        from_run_response=run_response,
-                        content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
-                        content_type=ReasoningSteps.__name__,
-                    ),
-                    run_response,
-                    events_to_skip=self.events_to_skip,  # type: ignore
-                    store_events=self.store_events,
-                )
+        # Use the unified reason() method and convert events
+        for event in manager.reason(run_messages, stream=bool(stream_events)):
+            yield from self._handle_reasoning_event(event, run_response, stream_events)
 
     async def _areason(
         self, run_response: RunOutput, run_messages: RunMessages, stream_events: Optional[bool] = None
@@ -9339,27 +9311,14 @@ class Agent:
         """
         from agno.reasoning.manager import ReasoningConfig, ReasoningManager
 
-        # Yield a reasoning started event
-        if stream_events:
-            yield handle_event(
-                create_reasoning_started_event(from_run_response=run_response),
-                run_response,
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
-
-        # Get the reasoning model
+        # Get the reasoning model (use copy of main model if not provided)
         reasoning_model: Optional[Model] = self.reasoning_model
-        reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
             from copy import deepcopy
 
             reasoning_model = deepcopy(self.model)
-        if reasoning_model is None:
-            log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
-            return
 
-        # Create reasoning manager
+        # Create reasoning manager with config
         manager = ReasoningManager(
             ReasoningConfig(
                 reasoning_model=reasoning_model,
@@ -9378,106 +9337,10 @@ class Agent:
             )
         )
 
-        # If a reasoning model is provided, use native reasoning if supported
-        if reasoning_model_provided and manager.is_native_reasoning_model(reasoning_model):
-            # Use streaming for native models when stream_events is enabled
-            if stream_events:
-                async for reasoning_delta, result in manager.astream_native_reasoning(
-                    reasoning_model, run_messages.get_input_messages()
-                ):
-                    if reasoning_delta is not None:
-                        yield handle_event(
-                            create_reasoning_content_delta_event(
-                                from_run_response=run_response,
-                                reasoning_content=reasoning_delta,
-                            ),
-                            run_response,
-                            events_to_skip=self.events_to_skip,  # type: ignore
-                            store_events=self.store_events,
-                        )
-                    if result is not None:
-                        if not result.success:
-                            log_warning(f"Reasoning error. {result.error}, continuing regular session...")
-                            return
-                        if result.message:
-                            run_messages.messages.append(result.message)
-                            update_run_output_with_reasoning(
-                                run_response=run_response,
-                                reasoning_steps=result.steps,
-                                reasoning_agent_messages=result.reasoning_messages,
-                            )
-                            yield handle_event(
-                                create_reasoning_completed_event(
-                                    from_run_response=run_response,
-                                    content=ReasoningSteps(reasoning_steps=result.steps),
-                                    content_type=ReasoningSteps.__name__,
-                                ),
-                                run_response,
-                                events_to_skip=self.events_to_skip,  # type: ignore
-                                store_events=self.store_events,
-                            )
-            else:
-                # Non-streaming native reasoning
-                result = await manager.aget_native_reasoning(reasoning_model, run_messages.get_input_messages())
-                if not result.success:
-                    log_warning(f"Reasoning error. {result.error}, continuing regular session...")
-                    return
-                if result.message:
-                    run_messages.messages.append(result.message)
-                    update_run_output_with_reasoning(
-                        run_response=run_response,
-                        reasoning_steps=result.steps,
-                        reasoning_agent_messages=result.reasoning_messages,
-                    )
-        else:
-            # Use default Chain-of-Thought reasoning
-            if reasoning_model_provided:
-                log_info(
-                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
-                )
-
-            all_reasoning_steps: List[ReasoningStep] = []
-            async for reasoning_step, result in manager.arun_default_reasoning(reasoning_model, run_messages):
-                if reasoning_step is not None:
-                    all_reasoning_steps.append(reasoning_step)
-                    if stream_events:
-                        updated_reasoning_content = self._format_reasoning_step_content(
-                            run_response=run_response,
-                            reasoning_step=reasoning_step,
-                        )
-                        yield handle_event(
-                            create_reasoning_step_event(
-                                from_run_response=run_response,
-                                reasoning_step=reasoning_step,
-                                reasoning_content=updated_reasoning_content,
-                            ),
-                            run_response,
-                            events_to_skip=self.events_to_skip,  # type: ignore
-                            store_events=self.store_events,
-                        )
-                    # Update run_response with each step
-                    update_run_output_with_reasoning(
-                        run_response=run_response,
-                        reasoning_steps=[reasoning_step],
-                        reasoning_agent_messages=[],
-                    )
-                if result is not None:
-                    if not result.success:
-                        log_warning(f"Reasoning error. {result.error}, continuing regular session...")
-                        return
-
-            # Yield the final reasoning completed event
-            if stream_events and all_reasoning_steps:
-                yield handle_event(
-                    create_reasoning_completed_event(
-                        from_run_response=run_response,
-                        content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
-                        content_type=ReasoningSteps.__name__,
-                    ),
-                    run_response,
-                    events_to_skip=self.events_to_skip,  # type: ignore
-                    store_events=self.store_events,
-                )
+        # Use the unified areason() method and convert events
+        async for event in manager.areason(run_messages, stream=bool(stream_events)):
+            for output_event in self._handle_reasoning_event(event, run_response, stream_events):
+                yield output_event
 
     def _process_parser_response(
         self,

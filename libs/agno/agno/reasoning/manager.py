@@ -11,6 +11,7 @@ maintainable manager that handles:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -31,11 +32,45 @@ from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.messages import RunMessages
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 if TYPE_CHECKING:
     from agno.agent import Agent
     from agno.run.agent import RunOutput
+
+
+class ReasoningEventType(str, Enum):
+    """Types of reasoning events that can be emitted."""
+
+    started = "reasoning_started"
+    content_delta = "reasoning_content_delta"
+    step = "reasoning_step"
+    completed = "reasoning_completed"
+    error = "reasoning_error"
+
+
+@dataclass
+class ReasoningEvent:
+    """
+    A unified reasoning event that can be converted to Agent or Team specific events.
+
+    This allows the ReasoningManager to emit events without knowing about the
+    specific event types used by Agent or Team.
+    """
+
+    event_type: ReasoningEventType
+    # For content_delta events
+    reasoning_content: Optional[str] = None
+    # For step events
+    reasoning_step: Optional[ReasoningStep] = None
+    # For completed events
+    reasoning_steps: List[ReasoningStep] = field(default_factory=list)
+    # For error events
+    error: Optional[str] = None
+    # The message to append to run_messages (for native reasoning)
+    message: Optional[Message] = None
+    # All reasoning messages (for updating run_output)
+    reasoning_messages: List[Message] = field(default_factory=list)
 
 
 @dataclass
@@ -959,3 +994,251 @@ class ReasoningManager:
                 success=True,
             ),
         )
+
+    def reason(
+        self,
+        run_messages: RunMessages,
+        stream: bool = False,
+    ) -> Iterator[ReasoningEvent]:
+        """
+        Run reasoning and yield ReasoningEvent objects.
+
+        Args:
+            run_messages: The messages to reason about
+            stream: Whether to stream reasoning content
+
+        Yields:
+            ReasoningEvent objects for each stage of reasoning
+        """
+        # Get the reasoning model
+        reasoning_model: Optional[Model] = self.config.reasoning_model
+        reasoning_model_provided = reasoning_model is not None
+
+        if reasoning_model is None:
+            yield ReasoningEvent(
+                event_type=ReasoningEventType.error,
+                error="Reasoning model is None",
+            )
+            return
+
+        # Yield started event
+        yield ReasoningEvent(event_type=ReasoningEventType.started)
+
+        # Check if this is a native reasoning model
+        if reasoning_model_provided and self.is_native_reasoning_model(reasoning_model):
+            # Use streaming for native models when stream is enabled
+            if stream:
+                yield from self._stream_native_reasoning_events(reasoning_model, run_messages)
+            else:
+                yield from self._get_native_reasoning_events(reasoning_model, run_messages)
+        else:
+            # Use default Chain-of-Thought reasoning
+            if reasoning_model_provided:
+                log_info(
+                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, "
+                    "defaulting to manual Chain-of-Thought reasoning"
+                )
+            yield from self._run_default_reasoning_events(reasoning_model, run_messages)
+
+    async def areason(
+        self,
+        run_messages: RunMessages,
+        stream: bool = False,
+    ) -> AsyncIterator[ReasoningEvent]:
+        """
+        Unified async reasoning interface that yields ReasoningEvent objects.
+
+        This method handles all reasoning logic and yields events that can be
+        converted to Agent or Team specific events by the caller.
+
+        Args:
+            run_messages: The messages to reason about
+            stream: Whether to stream reasoning content deltas
+
+        Yields:
+            ReasoningEvent objects for each stage of reasoning
+        """
+        # Get the reasoning model
+        reasoning_model: Optional[Model] = self.config.reasoning_model
+        reasoning_model_provided = reasoning_model is not None
+
+        if reasoning_model is None:
+            yield ReasoningEvent(
+                event_type=ReasoningEventType.error,
+                error="Reasoning model is None",
+            )
+            return
+
+        # Yield started event
+        yield ReasoningEvent(event_type=ReasoningEventType.started)
+
+        # Check if this is a native reasoning model
+        if reasoning_model_provided and self.is_native_reasoning_model(reasoning_model):
+            # Use streaming for native models when stream is enabled
+            if stream:
+                async for event in self._astream_native_reasoning_events(reasoning_model, run_messages):
+                    yield event
+            else:
+                async for event in self._aget_native_reasoning_events(reasoning_model, run_messages):
+                    yield event
+        else:
+            # Use default Chain-of-Thought reasoning
+            if reasoning_model_provided:
+                log_info(
+                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, "
+                    "defaulting to manual Chain-of-Thought reasoning"
+                )
+            async for event in self._arun_default_reasoning_events(reasoning_model, run_messages):
+                yield event
+
+    def _stream_native_reasoning_events(self, model: Model, run_messages: RunMessages) -> Iterator[ReasoningEvent]:
+        """Stream native reasoning and yield ReasoningEvent objects."""
+        messages = run_messages.get_input_messages()
+
+        for reasoning_delta, result in self.stream_native_reasoning(model, messages):
+            if reasoning_delta is not None:
+                yield ReasoningEvent(
+                    event_type=ReasoningEventType.content_delta,
+                    reasoning_content=reasoning_delta,
+                )
+            if result is not None:
+                if not result.success:
+                    yield ReasoningEvent(
+                        event_type=ReasoningEventType.error,
+                        error=result.error,
+                    )
+                    return
+                if result.message:
+                    run_messages.messages.append(result.message)
+                    yield ReasoningEvent(
+                        event_type=ReasoningEventType.completed,
+                        reasoning_steps=result.steps,
+                        message=result.message,
+                        reasoning_messages=result.reasoning_messages,
+                    )
+
+    def _get_native_reasoning_events(self, model: Model, run_messages: RunMessages) -> Iterator[ReasoningEvent]:
+        """Get native reasoning (non-streaming) and yield ReasoningEvent objects."""
+        messages = run_messages.get_input_messages()
+        result = self.get_native_reasoning(model, messages)
+
+        if not result.success:
+            yield ReasoningEvent(
+                event_type=ReasoningEventType.error,
+                error=result.error,
+            )
+            return
+
+        if result.message:
+            run_messages.messages.append(result.message)
+            yield ReasoningEvent(
+                event_type=ReasoningEventType.completed,
+                reasoning_steps=result.steps,
+                message=result.message,
+                reasoning_messages=result.reasoning_messages,
+            )
+
+    def _run_default_reasoning_events(self, model: Model, run_messages: RunMessages) -> Iterator[ReasoningEvent]:
+        """Run default CoT reasoning and yield ReasoningEvent objects."""
+        all_reasoning_steps: List[ReasoningStep] = []
+
+        for reasoning_step, result in self.run_default_reasoning(model, run_messages):
+            if reasoning_step is not None:
+                all_reasoning_steps.append(reasoning_step)
+                yield ReasoningEvent(
+                    event_type=ReasoningEventType.step,
+                    reasoning_step=reasoning_step,
+                )
+            if result is not None:
+                if not result.success:
+                    yield ReasoningEvent(
+                        event_type=ReasoningEventType.error,
+                        error=result.error,
+                    )
+                    return
+
+        # Yield completed event with all steps
+        if all_reasoning_steps:
+            yield ReasoningEvent(
+                event_type=ReasoningEventType.completed,
+                reasoning_steps=all_reasoning_steps,
+            )
+
+    async def _astream_native_reasoning_events(
+        self, model: Model, run_messages: RunMessages
+    ) -> AsyncIterator[ReasoningEvent]:
+        """Stream native reasoning asynchronously and yield ReasoningEvent objects."""
+        messages = run_messages.get_input_messages()
+
+        async for reasoning_delta, result in self.astream_native_reasoning(model, messages):
+            if reasoning_delta is not None:
+                yield ReasoningEvent(
+                    event_type=ReasoningEventType.content_delta,
+                    reasoning_content=reasoning_delta,
+                )
+            if result is not None:
+                if not result.success:
+                    yield ReasoningEvent(
+                        event_type=ReasoningEventType.error,
+                        error=result.error,
+                    )
+                    return
+                if result.message:
+                    run_messages.messages.append(result.message)
+                    yield ReasoningEvent(
+                        event_type=ReasoningEventType.completed,
+                        reasoning_steps=result.steps,
+                        message=result.message,
+                        reasoning_messages=result.reasoning_messages,
+                    )
+
+    async def _aget_native_reasoning_events(
+        self, model: Model, run_messages: RunMessages
+    ) -> AsyncIterator[ReasoningEvent]:
+        """Get native reasoning asynchronously (non-streaming) and yield ReasoningEvent objects."""
+        messages = run_messages.get_input_messages()
+        result = await self.aget_native_reasoning(model, messages)
+
+        if not result.success:
+            yield ReasoningEvent(
+                event_type=ReasoningEventType.error,
+                error=result.error,
+            )
+            return
+
+        if result.message:
+            run_messages.messages.append(result.message)
+            yield ReasoningEvent(
+                event_type=ReasoningEventType.completed,
+                reasoning_steps=result.steps,
+                message=result.message,
+                reasoning_messages=result.reasoning_messages,
+            )
+
+    async def _arun_default_reasoning_events(
+        self, model: Model, run_messages: RunMessages
+    ) -> AsyncIterator[ReasoningEvent]:
+        """Run default CoT reasoning asynchronously and yield ReasoningEvent objects."""
+        all_reasoning_steps: List[ReasoningStep] = []
+
+        async for reasoning_step, result in self.arun_default_reasoning(model, run_messages):
+            if reasoning_step is not None:
+                all_reasoning_steps.append(reasoning_step)
+                yield ReasoningEvent(
+                    event_type=ReasoningEventType.step,
+                    reasoning_step=reasoning_step,
+                )
+            if result is not None:
+                if not result.success:
+                    yield ReasoningEvent(
+                        event_type=ReasoningEventType.error,
+                        error=result.error,
+                    )
+                    return
+
+        # Yield completed event with all steps
+        if all_reasoning_steps:
+            yield ReasoningEvent(
+                event_type=ReasoningEventType.completed,
+                reasoning_steps=all_reasoning_steps,
+            )
