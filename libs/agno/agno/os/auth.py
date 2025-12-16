@@ -21,7 +21,7 @@ def get_authentication_dependency(settings: AgnoAPISettings):
         A dependency function that can be used with FastAPI's Depends()
     """
 
-    def auth_dependency(credentials: HTTPAuthorizationCredentials = Depends(security)) -> bool:
+    async def auth_dependency(credentials: HTTPAuthorizationCredentials = Depends(security)) -> bool:
         # If no security key is set, skip authentication entirely
         if not settings or not settings.os_security_key:
             return True
