@@ -4700,7 +4700,7 @@ class Agent:
                         if isinstance(run_response, RunOutput):
                             run_response.content_type = "dict"
                     else:
-                        log_warning("Failed to parse JSON response")
+                        log_warning("Failed to parse JSON response against the provided output schema.")
             # Handle Pydantic schema
             elif not isinstance(run_response.content, output_schema):
                 if isinstance(run_response.content, str) and self.parse_response:
