@@ -225,7 +225,6 @@ class AgentOS:
         self._initialize_teams()
         self._initialize_workflows()
 
-        # Check for duplicate IDs
         self._check_duplicate_ids()
 
         if self.tracing:
