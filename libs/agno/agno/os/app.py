@@ -221,14 +221,12 @@ class AgentOS:
         self.mcp_tools: List[Any] = []
         self._mcp_app: Optional[Any] = None
 
-        # Check for duplicate IDs before initialization
-        self._check_duplicate_ids(self.agents)
-        self._check_duplicate_ids(self.teams)
-        self._check_duplicate_ids(self.workflows)
-
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
+
+        # Check for duplicate IDs
+        self._check_duplicate_ids()
 
         if self.tracing:
             self._setup_tracing()
@@ -268,14 +266,12 @@ class AgentOS:
 
     def resync(self, app: FastAPI) -> None:
         """Resync the AgentOS to discover, initialize and configure: agents, teams, workflows, databases and knowledge bases."""
-        # Check for duplicate IDs before re-initialization
-        self._check_duplicate_ids(self.agents)
-        self._check_duplicate_ids(self.teams)
-        self._check_duplicate_ids(self.workflows)
-
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
+
+        # Check for duplicate IDs
+        self._check_duplicate_ids()
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
 
@@ -344,35 +340,28 @@ class AgentOS:
             self.interfaces.append(a2a_interface)
             self._add_router(app, a2a_interface.get_router())
 
-    def _check_duplicate_ids(
-        self,
-        entities: Optional[List[Any]],
-    ) -> None:
-        """Check for duplicate IDs in a list of entities.
-
-        Args:
-            entities: List of agents, teams, or workflows
+    def _check_duplicate_ids(self) -> None:
+        """Check for duplicate IDs across all agents, teams, and workflows.
 
         Raises:
             ValueError: If duplicate IDs are found
         """
-        if not entities:
-            return
-
         seen_ids: List[str] = []
+        duplicate_ids: List[str] = []
 
-        for entity in entities:
-            entity_id = entity.id
-            # If id is None, generate it the same way initialization does
-            if entity_id is None:
-                if hasattr(entity, "name") and entity.name:
-                    entity_id = generate_id_from_name(entity.name)
+        for entities in [self.agents, self.teams, self.workflows]:
+            if not entities:
+                continue
+            for entity in entities:
+                entity_id = entity.id
+                if entity_id in seen_ids:
+                    if entity_id not in duplicate_ids:
+                        duplicate_ids.append(entity_id)
                 else:
-                    continue  # Will get unique UUID during initialization
+                    seen_ids.append(entity_id)
 
-            if entity_id in seen_ids:
-                raise ValueError(f"Duplicate IDs found in AgentOS: '{entity_id}'")
-            seen_ids.append(entity_id)
+        if duplicate_ids:
+            raise ValueError(f"Duplicate IDs found in AgentOS: {', '.join(repr(id_) for id_ in duplicate_ids)}")
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         # Adjust the FastAPI app lifespan to handle MCP connections if relevant

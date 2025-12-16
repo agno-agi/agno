@@ -146,3 +146,19 @@ def test_error_message_contains_duplicate_id():
 
     error_message = str(exc_info.value)
     assert "duplicate-id" in error_message
+
+
+def test_multiple_duplicate_ids_all_reported():
+    """Test that all duplicate IDs are reported in a single error."""
+    agent1 = Agent(name="Agent 1", id="dup-1", telemetry=False)
+    agent2 = Agent(name="Agent 2", id="dup-1", telemetry=False)
+    agent3 = Agent(name="Agent 3", id="dup-2", telemetry=False)
+    agent4 = Agent(name="Agent 4", id="dup-2", telemetry=False)
+
+    with pytest.raises(ValueError) as exc_info:
+        AgentOS(agents=[agent1, agent2, agent3, agent4], telemetry=False)
+
+    error_message = str(exc_info.value)
+    assert "Duplicate IDs found in AgentOS" in error_message
+    assert "dup-1" in error_message
+    assert "dup-2" in error_message
