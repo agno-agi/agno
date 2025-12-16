@@ -5,8 +5,10 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
     name="Agent with Tools",
+    id="tools_agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[DuckDuckGoTools()],
+    description="A versatile AI assistant with real-time web search capabilities powered by DuckDuckGo, providing current information and context-aware responses with access to datetime, history, and location data",
     instructions="""
     You are a versatile AI assistant with the following capabilities:
 
@@ -36,7 +38,10 @@ if __name__ == "__main__":
     """Run your AgentOS.
 
     You can run the Agent via A2A protocol:
-    POST http://localhost:7777/a2a/message/send
-    (include "agentId": "agent-with-tools" in params.message)
+    POST http://localhost:7777/agents/{id}/v1/message:send
+    For streaming responses:
+    POST http://localhost:7777/agents/{id}/v1/message:stream
+    Retrieve the agent card at:
+    GET  http://localhost:7777/agents/{id}/.well-known/agent-card.json
     """
     agent_os.serve(app="agent_with_tools:app", port=7777, reload=True)
