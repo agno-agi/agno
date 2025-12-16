@@ -1020,9 +1020,9 @@ class AgentOS:
         # Adding *.yaml to reload_includes to reload the app when the yaml config file changes.
         if reload:
             if reload_includes is not None:
-                reload_includes.append("*.yaml")
+                reload_includes += ["*.yaml", "*.yml"]
             else:
-                reload_includes = ["*.yaml"]
+                reload_includes = ["*.yaml", "*.yml"]
 
         uvicorn.run(
             app=app,
