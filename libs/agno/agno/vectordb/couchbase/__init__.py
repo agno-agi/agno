@@ -1,3 +1,3 @@
-from agno.vectordb.couchbase.couchbase import CouchbaseSearch
+from agno.vectordb.couchbase.couchbase import CouchbaseSearch, CouchbaseQuery
 
-__all__ = ["CouchbaseSearch"]
+__all__ = ["CouchbaseSearch", "CouchbaseQuery"]

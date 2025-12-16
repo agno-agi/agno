@@ -152,6 +152,7 @@ vector_db = CouchbaseSearch(
     couchbase_connection_string=connection_string,
     cluster_options=cluster_options,
     search_index=search_index,
+    # Embedder is optional - if not provided, OpenAIEmbedder with dimensions=1536 will be used by default
     embedder=OpenAIEmbedder(
         dimensions=1536,
     ),
