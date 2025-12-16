@@ -5,13 +5,13 @@ from agno.run.agent import RunEvent  # noqa
 # Create an agent with reasoning enabled
 agent = Agent(
     reasoning_model=OpenAIResponses(
-        id="o3-mini", reasoning_effort="high", reasoning_summary="detailed"
+        id="o3-mini", reasoning_effort="low",
     ),
     reasoning=True,
     instructions="Think step by step about the problem.",
 )
 
-prompt = "What is 25 * 37? Show your reasoning."
+prompt = "Analyze the key factors that led to the signing of the Treaty of Versailles in 1919 Discuss the political, economic, and social impacts of the treaty on Germany and how it contributed to the onset of World War II. Provide a nuanced assessment that includes multiple historical perspectives."
 
 agent.print_response(prompt, stream=True, stream_events=True)
 
