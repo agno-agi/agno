@@ -1,12 +1,14 @@
 import base64
 from os import getenv
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from agno.agent.agent import Agent
+from agno.agent.remote import RemoteAgent
 from agno.media import Audio, File, Image, Video
+from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 from agno.tools.whatsapp import WhatsAppTools
 from agno.utils.log import log_error, log_info, log_warning
@@ -15,7 +17,9 @@ from agno.utils.whatsapp import get_media_async, send_image_message_async, typin
 from .security import validate_webhook_signature
 
 
-def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
+def attach_routes(
+    router: APIRouter, agent: Optional[Union[Agent, RemoteAgent]] = None, team: Optional[Union[Team, RemoteTeam]] = None
+) -> APIRouter:
     if agent is None and team is None:
         raise ValueError("Either agent or team must be provided.")
 

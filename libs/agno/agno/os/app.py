@@ -7,11 +7,12 @@ from uuid import uuid4
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from httpx import HTTPStatusError
 from rich import box
 from rich.panel import Panel
 from starlette.requests import Request
 
-from agno.agent.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
@@ -52,10 +53,11 @@ from agno.os.utils import (
     setup_tracing_for_os,
     update_cors_middleware,
 )
-from agno.team.team import Team
+from agno.remote.base import RemoteDb, RemoteKnowledge
+from agno.team import RemoteTeam, Team
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
-from agno.workflow.workflow import Workflow
+from agno.workflow import RemoteWorkflow, Workflow
 
 
 @asynccontextmanager
@@ -112,9 +114,9 @@ class AgentOS:
         name: Optional[str] = None,
         description: Optional[str] = None,
         version: Optional[str] = None,
-        agents: Optional[List[Agent]] = None,
-        teams: Optional[List[Team]] = None,
-        workflows: Optional[List[Workflow]] = None,
+        agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+        teams: Optional[List[Union[Team, RemoteTeam]]] = None,
+        workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
@@ -161,9 +163,9 @@ class AgentOS:
 
         self.config = load_yaml_config(config) if isinstance(config, str) else config
 
-        self.agents: Optional[List[Agent]] = agents
-        self.workflows: Optional[List[Workflow]] = workflows
-        self.teams: Optional[List[Team]] = teams
+        self.agents: Optional[List[Union[Agent, RemoteAgent]]] = agents
+        self.workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = workflows
+        self.teams: Optional[List[Union[Team, RemoteTeam]]] = teams
         self.interfaces = interfaces or []
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
@@ -352,6 +354,8 @@ class AgentOS:
         if not self.agents:
             return
         for agent in self.agents:
+            if isinstance(agent, RemoteAgent):
+                continue
             # Track all MCP tools to later handle their connection
             if agent.tools:
                 for tool in agent.tools:
@@ -376,6 +380,8 @@ class AgentOS:
             return
 
         for team in self.teams:
+            if isinstance(team, RemoteTeam):
+                continue
             # Track all MCP tools recursively
             collect_mcp_tools_from_team(team, self.mcp_tools)
 
@@ -401,6 +407,8 @@ class AgentOS:
 
         if self.workflows:
             for workflow in self.workflows:
+                if isinstance(workflow, RemoteWorkflow):
+                    continue
                 # Track MCP tools recursively in workflow members
                 collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
 
@@ -425,7 +433,7 @@ class AgentOS:
             return
 
         # Fall back to finding the first available database
-        db: Optional[Union[BaseDb, AsyncBaseDb]] = None
+        db: Optional[Union[BaseDb, AsyncBaseDb, RemoteDb]] = None
 
         for agent in self.agents or []:
             if agent.db:
@@ -546,6 +554,16 @@ class AgentOS:
                     content={"detail": str(exc.detail)},
                 )
 
+            @fastapi_app.exception_handler(HTTPStatusError)
+            async def http_status_error_handler(_: Request, exc: HTTPStatusError) -> JSONResponse:
+                status_code = exc.response.status_code
+                detail = exc.response.text
+                log_error(f"Downstream server returned HTTP status error: {status_code} {detail}")
+                return JSONResponse(
+                    status_code=status_code,
+                    content={"detail": detail},
+                )
+
             @fastapi_app.exception_handler(Exception)
             async def general_exception_handler(_: Request, exc: Exception) -> JSONResponse:
                 import traceback
@@ -630,19 +648,28 @@ class AgentOS:
 
     def _get_telemetry_data(self) -> Dict[str, Any]:
         """Get the telemetry data for the OS"""
+        agent_ids = []
+        team_ids = []
+        workflow_ids = []
+        for agent in self.agents or []:
+            agent_ids.append(agent.id)
+        for team in self.teams or []:
+            team_ids.append(team.id)
+        for workflow in self.workflows or []:
+            workflow_ids.append(workflow.id)
         return {
-            "agents": [agent.id for agent in self.agents] if self.agents else None,
-            "teams": [team.id for team in self.teams] if self.teams else None,
-            "workflows": [workflow.id for workflow in self.workflows] if self.workflows else None,
+            "agents": agent_ids,
+            "teams": team_ids,
+            "workflows": workflow_ids,
             "interfaces": [interface.type for interface in self.interfaces] if self.interfaces else None,
         }
 
     def _auto_discover_databases(self) -> None:
         """Auto-discover and initialize the databases used by all contextual agents, teams and workflows."""
 
-        dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]] = {}
+        dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]] = {}
         knowledge_dbs: Dict[
-            str, List[Union[BaseDb, AsyncBaseDb]]
+            str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]
         ] = {}  # Track databases specifically used for knowledge
 
         for agent in self.agents or []:
@@ -742,7 +769,9 @@ class AgentOS:
         return {k: v for k, v in table_names.items() if v is not None}
 
     def _register_db_with_validation(
-        self, registered_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]], db: Union[BaseDb, AsyncBaseDb]
+        self,
+        registered_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+        db: Union[BaseDb, AsyncBaseDb, RemoteDb],
     ) -> None:
         """Register a database in the contextual OS after validating it is not conflicting with registered databases"""
         if db.id in registered_dbs:
@@ -753,9 +782,9 @@ class AgentOS:
     def _auto_discover_knowledge_instances(self) -> None:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
         seen_ids = set()
-        knowledge_instances: List[Knowledge] = []
+        knowledge_instances: List[Union[Knowledge, RemoteKnowledge]] = []
 
-        def _add_knowledge_if_not_duplicate(knowledge: "Knowledge") -> None:
+        def _add_knowledge_if_not_duplicate(knowledge: Union["Knowledge", RemoteKnowledge]) -> None:
             """Add knowledge instance if it's not already in the list (by object identity or db_id)."""
             # Use database ID if available, otherwise use object ID as fallback
             if not knowledge.contents_db:

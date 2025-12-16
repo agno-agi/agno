@@ -30,12 +30,13 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db
+from agno.remote.base import RemoteDb
 
 logger = logging.getLogger(__name__)
 
 
 def get_memory_router(
-    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
 ) -> APIRouter:
     """Create memory router with comprehensive OpenAPI documentation for user memory management endpoints."""
     router = APIRouter(
@@ -52,7 +53,7 @@ def get_memory_router(
     return attach_routes(router=router, dbs=dbs)
 
 
-def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]]) -> APIRouter:
+def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> APIRouter:
     @router.post(
         "/memories",
         response_model=UserMemorySchema,
@@ -98,6 +99,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             raise HTTPException(status_code=400, detail="User ID is required")
 
         db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, RemoteDb):
+            return await db.create_memory(
+                memory=payload.memory,
+                topics=payload.topics or [],
+                user_id=payload.user_id,
+                db_id=db_id,
+                table=table,
+            )
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -145,6 +155,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
         db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, RemoteDb):
+            return await db.delete_memory(
+                memory_id=memory_id,
+                user_id=user_id,
+                db_id=db_id,
+                table=table,
+            )
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_user_memory(memory_id=memory_id, user_id=user_id)
@@ -172,6 +190,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
         db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, RemoteDb):
+            return await db.delete_memories(
+                memory_ids=request.memory_ids,
+                user_id=request.user_id,
+                db_id=db_id,
+                table=table,
+            )
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_user_memories(memory_ids=request.memory_ids, user_id=request.user_id)
@@ -229,6 +256,21 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
+
+        if isinstance(db, RemoteDb):
+            return await db.get_memories(
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                topics=topics,
+                search_content=search_content,
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order.value if sort_order else "desc",
+                db_id=db_id,
+                table=table,
+            )
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -308,6 +350,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
 
+        if isinstance(db, RemoteDb):
+            return await db.get_memory(
+                memory_id=memory_id,
+                user_id=user_id,
+                db_id=db_id,
+                table=table,
+            )
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             user_memory = await db.get_user_memory(memory_id=memory_id, user_id=user_id, deserialize=False)
@@ -354,6 +404,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         table: Optional[str] = Query(default=None, description="Table to query topics from"),
     ) -> List[str]:
         db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, RemoteDb):
+            return await db.get_all_memory_topics(
+                db_id=db_id,
+                table=table,
+            )
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             return await db.get_all_memory_topics()
@@ -408,6 +465,16 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             raise HTTPException(status_code=400, detail="User ID is required")
 
         db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, RemoteDb):
+            return await db.update_memory(
+                memory_id=memory_id,
+                user_id=payload.user_id,
+                memory=payload.memory,
+                topics=payload.topics or [],
+                db_id=db_id,
+                table=table,
+            )
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -472,6 +539,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         table: Optional[str] = Query(default=None, description="Table to query statistics from"),
     ) -> PaginatedResponse[UserStatsSchema]:
         db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, RemoteDb):
+            return await db.get_user_memory_stats(
+                limit=limit,
+                page=page,
+                db_id=db_id,
+                table=table,
+            )
+
         try:
             # Ensure limit and page are integers
             limit = int(limit) if limit is not None else 20
@@ -560,6 +636,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         try:
             # Get database instance
             db = await get_db(dbs, db_id, table)
+
+            if isinstance(db, RemoteDb):
+                return await db.optimize_memories(
+                    user_id=request.user_id,
+                    model=request.model,
+                    apply=request.apply,
+                    db_id=db_id,
+                    table=table,
+                )
 
             # Create memory manager with optional model
             if request.model:

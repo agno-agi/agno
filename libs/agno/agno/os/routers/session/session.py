@@ -29,13 +29,14 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db
+from agno.remote.base import RemoteDb
 from agno.session import AgentSession, TeamSession, WorkflowSession
 
 logger = logging.getLogger(__name__)
 
 
 def get_session_router(
-    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]], settings: AgnoAPISettings = AgnoAPISettings()
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], settings: AgnoAPISettings = AgnoAPISettings()
 ) -> APIRouter:
     """Create session router with comprehensive OpenAPI documentation for session management endpoints."""
     session_router = APIRouter(
@@ -52,7 +53,7 @@ def get_session_router(
     return attach_routes(router=session_router, dbs=dbs)
 
 
-def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]]) -> APIRouter:
+def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> APIRouter:
     @router.get(
         "/sessions",
         response_model=PaginatedResponse[SessionSchema],
@@ -64,6 +65,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             "Supports filtering by session type (agent, team, workflow), component, user, and name. "
             "Sessions represent conversation histories and execution contexts."
         ),
+        response_model_exclude_none=True,
         responses={
             200: {
                 "description": "Sessions retrieved successfully",
@@ -120,6 +122,20 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
 
+        if isinstance(db, RemoteDb):
+            return await db.get_sessions(
+                session_type=session_type,
+                component_id=component_id,
+                user_id=user_id,
+                session_name=session_name,
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order.value,
+                db_id=db_id,
+                table=table,
+            )
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             sessions, total_count = await db.get_sessions(
@@ -168,6 +184,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             "before running any agent/team/workflow interactions. "
             "The session can later be used by providing its session_id in run requests."
         ),
+        response_model_exclude_none=True,
         responses={
             201: {
                 "description": "Session created successfully",
@@ -213,6 +230,20 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         user_id = create_session_request.user_id
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
+
+        if isinstance(db, RemoteDb):
+            return await db.create_session(
+                session_type=session_type,
+                session_id=create_session_request.session_id,
+                session_name=create_session_request.session_name,
+                session_state=create_session_request.session_state,
+                metadata=create_session_request.metadata,
+                user_id=user_id,
+                agent_id=create_session_request.agent_id,
+                team_id=create_session_request.team_id,
+                workflow_id=create_session_request.workflow_id,
+                db_id=db_id,
+            )
 
         # Generate session_id if not provided
         session_id = create_session_request.session_id or str(uuid4())
@@ -293,6 +324,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             "Retrieve detailed information about a specific session including metadata, configuration, "
             "and run history. Response schema varies based on session type (agent, team, or workflow)."
         ),
+        response_model_exclude_none=True,
         responses={
             200: {
                 "description": "Session details retrieved successfully",
@@ -385,6 +417,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
 
+        if isinstance(db, RemoteDb):
+            return await db.get_session(
+                session_id=session_id, session_type=session_type, user_id=user_id, db_id=db_id, table=table
+            )
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             session = await db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
@@ -413,6 +450,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             "Runs represent individual interactions or executions within a session. "
             "Response schema varies based on session type."
         ),
+        response_model_exclude_none=True,
         responses={
             200: {
                 "description": "Session runs retrieved successfully",
@@ -541,6 +579,17 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
 
+        if isinstance(db, RemoteDb):
+            return await db.get_session_runs(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=user_id,
+                created_after=created_after,
+                created_before=created_before,
+                db_id=db_id,
+                table=table,
+            )
+
         # Use timestamp filters directly (already in epoch format)
         start_timestamp = created_after
         end_timestamp = created_before
@@ -650,11 +699,22 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         ),
         user_id: Optional[str] = Query(default=None, description="User ID to query run from"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query run from"),
+        table: Optional[str] = Query(default=None, description="Table to query run from"),
     ) -> Union[RunSchema, TeamRunSchema, WorkflowRunSchema]:
         db = await get_db(dbs, db_id)
 
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
+
+        if isinstance(db, RemoteDb):
+            return await db.get_session_run(
+                session_id=session_id,
+                run_id=run_id,
+                session_type=session_type,
+                user_id=user_id,
+                db_id=db_id,
+                table=table,
+            )
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -712,6 +772,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
         db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, RemoteDb):
+            await db.delete_session(session_id=session_id, db_id=db_id, table=table)
+            return
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_session(session_id=session_id)
@@ -738,9 +803,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     )
     async def delete_sessions(
         request: DeleteSessionRequest,
-        session_type: SessionType = Query(
-            default=SessionType.AGENT, description="Default session type filter", alias="type"
-        ),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
@@ -748,6 +810,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             raise HTTPException(status_code=400, detail="Session IDs and session types must have the same length")
 
         db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, RemoteDb):
+            await db.delete_sessions(
+                session_ids=request.session_ids, session_types=request.session_types, db_id=db_id, table=table
+            )
+            return
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_sessions(session_ids=request.session_ids)
@@ -852,6 +921,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         table: Optional[str] = Query(default=None, description="Table to use for rename operation"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, RemoteDb):
+            return await db.rename_session(
+                session_id=session_id, session_name=session_name, session_type=session_type, db_id=db_id, table=table
+            )
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             session = await db.rename_session(
@@ -935,11 +1010,25 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         update_data: UpdateSessionRequest = Body(description="Session update data"),
         user_id: Optional[str] = Query(default=None, description="User ID"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for update operation"),
+        table: Optional[str] = Query(default=None, description="Table to use for update operation"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         db = await get_db(dbs, db_id)
 
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
+
+        if isinstance(db, RemoteDb):
+            return await db.update_session(
+                session_id=session_id,
+                session_type=session_type,
+                session_name=update_data.session_name,
+                session_state=update_data.session_state,
+                metadata=update_data.metadata,
+                summary=update_data.summary,
+                user_id=user_id,
+                db_id=db_id,
+                table=table,
+            )
 
         # Get the existing session
         if isinstance(db, AsyncBaseDb):

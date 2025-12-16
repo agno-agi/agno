@@ -4,7 +4,7 @@ from typing import List, Optional, Union, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from agno.agent.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalFilterType, EvalType
 from agno.models.utils import get_model
@@ -33,15 +33,17 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_agent_by_id, get_db, get_team_by_id
-from agno.team.team import Team
+from agno.remote.base import RemoteDb
+from agno.team import RemoteTeam, Team
+from agno.utils.log import log_warning
 
 logger = logging.getLogger(__name__)
 
 
 def get_eval_router(
-    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]],
-    agents: Optional[List[Agent]] = None,
-    teams: Optional[List[Team]] = None,
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+    agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    teams: Optional[List[Union[Team, RemoteTeam]]] = None,
     settings: AgnoAPISettings = AgnoAPISettings(),
 ) -> APIRouter:
     """Create eval router with comprehensive OpenAPI documentation for agent/team evaluation endpoints."""
@@ -61,9 +63,9 @@ def get_eval_router(
 
 def attach_routes(
     router: APIRouter,
-    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]],
-    agents: Optional[List[Agent]] = None,
-    teams: Optional[List[Team]] = None,
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+    agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    teams: Optional[List[Union[Team, RemoteTeam]]] = None,
 ) -> APIRouter:
     @router.get(
         "/eval-runs",
@@ -123,6 +125,20 @@ def attach_routes(
         table: Optional[str] = Query(default=None, description="The database table to use"),
     ) -> PaginatedResponse[EvalSchema]:
         db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, RemoteDb):
+            return await db.get_eval_runs(
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order.value,
+                agent_id=agent_id,
+                team_id=team_id,
+                workflow_id=workflow_id,
+                model_id=model_id,
+                eval_types=eval_types,
+                filter_type=filter_type.value if filter_type else None,
+            )
 
         # TODO: Delete me:
         # Filtering out agent-as-judge by default for now,
@@ -216,6 +232,9 @@ def attach_routes(
         table: Optional[str] = Query(default=None, description="Table to query eval run from"),
     ) -> EvalSchema:
         db = await get_db(dbs, db_id, table)
+        if isinstance(db, RemoteDb):
+            return await db.get_eval_run(eval_run_id=eval_run_id, db_id=db_id, table=table)
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             eval_run = await db.get_eval_run(eval_run_id=eval_run_id, deserialize=False)
@@ -244,6 +263,9 @@ def attach_routes(
     ) -> None:
         try:
             db = await get_db(dbs, db_id, table)
+            if isinstance(db, RemoteDb):
+                return await db.delete_eval_runs(eval_run_ids=request.eval_run_ids, db_id=db_id, table=table)
+
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
                 await db.delete_eval_runs(eval_run_ids=request.eval_run_ids)
@@ -298,6 +320,9 @@ def attach_routes(
     ) -> EvalSchema:
         try:
             db = await get_db(dbs, db_id, table)
+            if isinstance(db, RemoteDb):
+                return await db.update_eval_run(eval_run_id=eval_run_id, name=request.name, db_id=db_id, table=table)
+
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
                 eval_run = await db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False)
@@ -357,6 +382,20 @@ def attach_routes(
         table: Optional[str] = Query(default=None, description="Table to use for evaluation"),
     ) -> Optional[EvalSchema]:
         db = await get_db(dbs, db_id, table)
+        if isinstance(db, RemoteDb):
+            return await db.create_eval_run(
+                eval_type=eval_run_input.eval_type,
+                input_text=eval_run_input.input,
+                agent_id=eval_run_input.agent_id,
+                team_id=eval_run_input.team_id,
+                model_id=eval_run_input.model_id,
+                model_provider=eval_run_input.model_provider,
+                expected_output=eval_run_input.expected_output,
+                expected_tool_calls=eval_run_input.expected_tool_calls,
+                num_iterations=eval_run_input.num_iterations,
+                db_id=db_id,
+                table=table,
+            )
 
         if eval_run_input.agent_id and eval_run_input.team_id:
             raise HTTPException(status_code=400, detail="Only one of agent_id or team_id must be provided")
@@ -411,21 +450,37 @@ def attach_routes(
 
         # Run the evaluation
         if eval_run_input.eval_type == EvalType.ACCURACY:
+            if isinstance(agent, RemoteAgent) or isinstance(team, RemoteTeam):
+                # TODO: Handle remote evaluation
+                log_warning("Evaluation against remote agents are not supported yet")
+                return None
             return await run_accuracy_eval(
                 eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
             )
 
         elif eval_run_input.eval_type == EvalType.AGENT_AS_JUDGE:
             return await run_agent_as_judge_eval(
-                eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
+                eval_run_input=eval_run_input,
+                db=db,
+                agent=agent,
+                team=team,
+                default_model=default_model,  # type: ignore
             )
 
         elif eval_run_input.eval_type == EvalType.PERFORMANCE:
+            if isinstance(agent, RemoteAgent) or isinstance(team, RemoteTeam):
+                # TODO: Handle remote evaluation
+                log_warning("Evaluation against remote agents are not supported yet")
+                return None
             return await run_performance_eval(
                 eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
             )
 
         else:
+            if isinstance(agent, RemoteAgent) or isinstance(team, RemoteTeam):
+                # TODO: Handle remote evaluation
+                log_warning("Evaluation against remote agents are not supported yet")
+                return None
             return await run_reliability_eval(
                 eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
             )
