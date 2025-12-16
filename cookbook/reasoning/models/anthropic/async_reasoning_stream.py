@@ -1,16 +1,24 @@
+"""
+Test script for streaming reasoning content.
+
+This demonstrates the new streaming reasoning feature where reasoning content
+is streamed as it arrives instead of all at once.
+"""
+
 import asyncio
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
+from agno.models.anthropic import Claude
 from agno.run.agent import RunEvent  # noqa
 
 
 async def streaming_reasoning():
-    """Test streaming reasoning with a OpenAI Responses model."""
+    """Test streaming reasoning with an OpenAI model."""
     # Create an agent with reasoning enabled
     agent = Agent(
-        reasoning_model=OpenAIResponses(
-            id="o3-mini", reasoning_effort="high", reasoning_summary="detailed"
+        reasoning_model=Claude(
+            id="claude-sonnet-4-5",
+            thinking={"type": "enabled", "budget_tokens": 1024},
         ),
         reasoning=True,
         instructions="Think step by step about the problem.",
@@ -20,11 +28,11 @@ async def streaming_reasoning():
 
     await agent.aprint_response(prompt, stream=True, stream_events=True)
 
-    # Use manual event loop to see all events
+    # # or you can capture the event using
     # async for run_output_event in agent.arun(
     #     prompt,
     #     stream=True,
-    #     stream_events=True,
+    #     stream_events=True,  # Use stream_events instead of deprecated stream_intermediate_steps
     # ):
     #     if run_output_event.event == RunEvent.run_started:
     #         print(f"\nEVENT: {run_output_event.event}")
@@ -35,13 +43,8 @@ async def streaming_reasoning():
 
     #     elif run_output_event.event == RunEvent.reasoning_content_delta:
     #         # This is the NEW streaming event for reasoning content
+    #         # It streams the raw content as it's being generated
     #         print(run_output_event.reasoning_content, end="", flush=True)
-
-    #     elif run_output_event.event == RunEvent.reasoning_step:
-    #         print(f"\nEVENT: {run_output_event.event}")
-
-    #     elif run_output_event.event == RunEvent.reasoning_completed:
-    #         print(f"\n\nEVENT: {run_output_event.event}")
 
     #     elif run_output_event.event == RunEvent.run_content:
     #         if run_output_event.content:
