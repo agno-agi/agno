@@ -9,6 +9,8 @@ from agno.knowledge.reader.text_reader import TextReader
 from agno.models.google import Gemini
 from agno.utils.log import logger
 from agno.vectordb.pgvector import PgVector, SearchType
+
+from agno.tools.parallel import ParallelTools
 from db import db_url, gemini_agents_db
 
 # =============================================================================
@@ -84,18 +86,22 @@ def save_research_snapshot(
 # System message
 # =============================================================================
 system_message = """\
-You are a self-learning research agent with access to the web and a knowledge base
+You are a self-learning research agent with access to web search and a knowledge base
 containing prior research snapshots.
 
 Your job:
-- Answer the user's question using web search.
+- Answer the user's question using web search (via parallel_search).
 - Summarize the current internet consensus as structured claims.
 - Search your knowledge base for the most recent snapshot of a similar question.
 - Compare the current claims to the prior snapshot and explain what changed and why.
 - Ask the user if they want to save the new snapshot to the knowledge base.
 
 You MUST follow this flow:
-1) Use web search to gather current information.
+1) Use `parallel_search` tool to gather current information.
+   - Issue MULTIPLE search queries in parallel (fan-out) and then aggregate results.
+   - Cover at least:
+     - Primary/official sources (docs, vendor pages, standards bodies)
+     - Independent analysis (reputable industry blogs, benchmarks, research labs)
 2) Use `search_knowledge` to retrieve up to 3 similar snapshots (if any).
 3) From the retrieved snapshots, select the one with the newest `created_at` as "previous consensus".
 4) Diff the current claims against the previous claims.
@@ -139,7 +145,6 @@ Provide 4-10 claims. Each claim must include:
 After the response, add:
 
 ## Save Snapshot?
-
 "Want me to save this snapshot to the knowledge base for future comparisons?"
 
 Rules:
@@ -154,14 +159,11 @@ Rules:
 # =============================================================================
 self_learning_research_agent = Agent(
     name="Self Learning Research Agent",
-    model=Gemini(
-        id="gemini-3-pro-preview",
-        search=True,
-    ),
+    model=Gemini(id="fiercefalcon"),
     system_message=system_message,
     db=gemini_agents_db,
     knowledge=research_knowledge,
-    tools=[save_research_snapshot],
+    tools=[ParallelTools(), save_research_snapshot],
     # Enable the agent to remember user information and preferences
     enable_agentic_memory=True,
     # Enable the agent to search the knowledge base (i.e previous research snapshots)
