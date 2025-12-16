@@ -281,56 +281,41 @@ def get_session_name(session: Dict[str, Any]) -> str:
     if session_data is not None and session_data.get("session_name") is not None:
         return session_data["session_name"]
 
-    # Otherwise use the original user message
-    else:
-        runs = session.get("runs", []) or []
+    runs = session.get("runs", []) or []
+    session_type = session.get("session_type")
 
-        # For teams, identify the first Team run and avoid using the first member's run
-        if session.get("session_type") == "team":
-            run = None
-            for r in runs:
-                # If agent_id is not present, it's a team run
-                if not r.get("agent_id"):
-                    run = r
-                    break
-
-            # Fallback to first run if no team run found
-            if run is None and runs:
-                run = runs[0]
-
-        elif session.get("session_type") == "workflow":
-            try:
-                workflow_run = runs[0]
-                workflow_input = workflow_run.get("input")
-                if isinstance(workflow_input, str):
-                    return workflow_input
-                elif isinstance(workflow_input, dict):
-                    try:
-                        import json
-
-                        return json.dumps(workflow_input)
-                    except (TypeError, ValueError):
-                        pass
-
-                workflow_name = session.get("workflow_data", {}).get("name")
-                return f"New {workflow_name} Session" if workflow_name else ""
-            except (KeyError, IndexError, TypeError):
-                return ""
-
-        # For agents, use the first run
-        else:
-            run = runs[0] if runs else None
-
-        if run is None:
+    # Handle workflows separately
+    if session_type == "workflow":
+        if not runs:
             return ""
+        workflow_run = runs[0]
+        workflow_input = workflow_run.get("input")
+        if isinstance(workflow_input, str):
+            return workflow_input
+        elif isinstance(workflow_input, dict):
+            try:
+                return json.dumps(workflow_input)
+            except (TypeError, ValueError):
+                pass
+        workflow_name = session.get("workflow_data", {}).get("name")
+        return f"New {workflow_name} Session" if workflow_name else ""
 
-        if not isinstance(run, dict):
-            run = run.to_dict()
+    # For team, filter to team runs (runs without agent_id); for agents, use all runs
+    if session_type == "team":
+        runs_to_check = [r for r in runs if not r.get("agent_id")]
+    else:
+        runs_to_check = runs
 
-        if run and run.get("messages"):
-            for message in run["messages"]:
-                if message["role"] == "user":
-                    return message["content"]
+    # Find the first user message across runs
+    for r in runs_to_check:
+        if r is None:
+            continue
+        run_dict = r if isinstance(r, dict) else r.to_dict()
+
+        for message in run_dict.get("messages") or []:
+            if message.get("role") == "user" and message.get("content"):
+                return message["content"]
+
     return ""
 
 
@@ -862,7 +847,7 @@ def _get_python_type_from_json_schema(field_schema: Dict[str, Any], field_name: 
         # Unknown or unspecified type - fallback to Any
         if json_type:
             logger.warning(f"Unknown JSON schema type '{json_type}' for field '{field_name}', using Any")
-        return Any
+        return Any  # type: ignore
 
 
 def json_schema_to_pydantic_model(schema: Dict[str, Any]) -> Type[BaseModel]:
