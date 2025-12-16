@@ -27,8 +27,9 @@ class MovieScript(BaseModel):
 
 structured_agent = Agent(
     name="structured-output-agent",
+    id="structured_output_agent",
     model=OpenAIChat(id="gpt-4o"),
-    description="You write movie scripts.",
+    description="A creative AI screenwriter that generates detailed, well-structured movie scripts with compelling settings, characters, storylines, and complete plot arcs in a standardized format",
     markdown=True,
     output_schema=MovieScript,
 )
@@ -43,9 +44,11 @@ app = agent_os.get_app()
 
 if __name__ == "__main__":
     """Run your AgentOS with A2A interface.
-
-    You can run the structured-output-agent via A2A protocol:
-    POST http://localhost:7777/a2a/message/send
-    (include "agentId": "structured-output-agent" in params.message)
+    You can run the Agent via A2A protocol:
+    POST http://localhost:7777/agents/{id}/v1/message:send
+    For streaming responses:
+    POST http://localhost:7777/agents/{id}/v1/message:stream
+    Retrieve the agent card at:
+    GET  http://localhost:7777/agents/{id}/.well-known/agent-card.json
     """
     agent_os.serve(app="structured_output:app", port=7777, reload=True)

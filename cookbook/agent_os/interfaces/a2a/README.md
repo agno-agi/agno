@@ -13,6 +13,7 @@ from agno.os import AgentOS
 # Setup the Agno Agent
 chat_agent = Agent(
     name="my-agent",
+    id="my_agent",
     model=OpenAIChat(id="gpt-4o")
 )
 
@@ -50,7 +51,7 @@ python cookbook/agent_os/interfaces/a2a/basic.py
 ### Access your agent
 
 Once running, your agent will be available at:
-- **Agent endpoint**: `http://localhost:7777/a2a/message/send`
+- **Agent endpoint**: `http://localhost:7777/a2a/agents/{id}/message:send`
 - **API documentation**: `http://localhost:7777/docs`
 
 ### Making API calls
@@ -58,7 +59,7 @@ Once running, your agent will be available at:
 You can interact with your agent via A2A protocol (JSON-RPC 2.0):
 
 ```bash
-curl -X POST http://localhost:7777/a2a/message/send \
+curl -X POST http://localhost:7777/a2a/agents/{id}/message:send \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -107,9 +108,9 @@ Check out these example agents and teams:
 
 When you enable A2A interface, the following endpoints are automatically created:
 
-- `POST /a2a/message/send` - Send a message to an agent or team (standard A2A protocol)
-- `POST /a2a/message/stream` - Stream messages to/from an agent or team (standard A2A protocol)
+- `POST /a2a/agents/{id}/message:send` - Send a message to an agent or team (standard A2A protocol)
+- `POST /a2a/agents/{id}/message:stream` - Stream messages to/from an agent or team (standard A2A protocol)
+- `GET /agents/{id}/.well-known/agent-card.json` - Get Agent Card (standard A2A protocol)
 - `GET /docs` - OpenAPI documentation
 - `GET /config` - View AgentOS configuration
 
-The agent or team is identified via the `agentId` field in the request body's `params.message` object.
