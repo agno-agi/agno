@@ -1124,9 +1124,6 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
-            "metadata": run_context.metadata,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
             "debug_mode": debug_mode or self.debug_mode,
         }
 
@@ -1216,9 +1213,6 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
-            "metadata": run_context.metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
 
@@ -1313,9 +1307,6 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
-            "metadata": run_context.metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
 
@@ -1399,9 +1390,6 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
-            "metadata": run_context.metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
 
@@ -5615,8 +5603,6 @@ class Team:
             for func in _functions:  # type: ignore
                 if isinstance(func, Function):
                     func._run_context = run_context
-                    func._session_state = run_context.session_state
-                    func._dependencies = run_context.dependencies
                     func._images = joint_images
                     func._files = joint_files
                     func._audios = joint_audios

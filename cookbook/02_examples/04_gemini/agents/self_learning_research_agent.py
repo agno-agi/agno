@@ -7,10 +7,9 @@ from agno.knowledge.embedder.google import GeminiEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.text_reader import TextReader
 from agno.models.google import Gemini
+from agno.tools.parallel import ParallelTools
 from agno.utils.log import logger
 from agno.vectordb.pgvector import PgVector, SearchType
-
-from agno.tools.parallel import ParallelTools
 from db import db_url, gemini_agents_db
 
 # =============================================================================
