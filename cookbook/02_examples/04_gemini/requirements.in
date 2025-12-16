@@ -1,0 +1,13 @@
+agno
+google-genai
+pillow
+sqlalchemy
+fastapi[standard]
+mcp
+nest_asyncio
+pgvector
+psycopg[binary]
+sqlalchemy
+opentelemetry-api
+opentelemetry-sdk
+openinference-instrumentation-agno
