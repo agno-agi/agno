@@ -1,5 +1,6 @@
 import json
 
+import agno.utils.os
 import nest_asyncio
 import pandas as pd
 import streamlit as st
@@ -203,7 +204,7 @@ def main():
             session_id = st.session_state.get("session_id")
             if session_id:
                 try:
-                    session_name = main_agent.get_session_name()
+                    session_name = agno.utils.os.get_session_name()
                     if session_name:
                         filename = f"paperpal_research_{session_name}.md"
                     else:

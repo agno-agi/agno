@@ -23,13 +23,14 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db, parse_datetime_to_utc
+from agno.remote.base import RemoteDb
 from agno.utils.log import log_error
 
 logger = logging.getLogger(__name__)
 
 
 def get_traces_router(
-    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
 ) -> APIRouter:
     """Create traces router with comprehensive OpenAPI documentation for trace endpoints."""
     router = APIRouter(
@@ -46,7 +47,7 @@ def get_traces_router(
     return attach_routes(router=router, dbs=dbs)
 
 
-def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]]) -> APIRouter:
+def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> APIRouter:
     @router.get(
         "/traces",
         response_model=PaginatedResponse[TraceSummary],
@@ -133,6 +134,22 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         # Get database using db_id or default to first available
         db = await get_db(dbs, db_id)
+
+        if isinstance(db, RemoteDb):
+            return await db.get_traces(
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                workflow_id=workflow_id,
+                status=status,
+                start_time=start_time,
+                end_time=end_time,
+                limit=limit,
+                page=page,
+                db_id=db_id,
+            )
 
         try:
             start_time_ms = time_module.time() * 1000
@@ -312,6 +329,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         # Get database using db_id or default to first available
         db = await get_db(dbs, db_id)
 
+        if isinstance(db, RemoteDb):
+            return await db.get_trace(
+                trace_id=trace_id,
+                span_id=span_id,
+                run_id=run_id,
+                db_id=db_id,
+            )
+
         try:
             # If span_id is provided, return just that span
             if span_id:
@@ -429,6 +454,19 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         # Get database using db_id or default to first available
         db = await get_db(dbs, db_id)
+
+        if isinstance(db, RemoteDb):
+            return await db.get_trace_session_stats(
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                workflow_id=workflow_id,
+                start_time=start_time,
+                end_time=end_time,
+                limit=limit,
+                page=page,
+                db_id=db_id,
+            )
 
         try:
             start_time_ms = time_module.time() * 1000

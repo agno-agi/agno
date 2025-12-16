@@ -33,6 +33,7 @@ from agno.os.utils import (
 )
 from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutput
 from agno.utils.log import log_warning, logger
+from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
 if TYPE_CHECKING:
@@ -201,7 +202,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
 
 
 async def workflow_response_streamer(
-    workflow: Workflow,
+    workflow: Union[Workflow, RemoteWorkflow],
     input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -213,12 +214,17 @@ async def workflow_response_streamer(
         if background_tasks is not None:
             kwargs["background_tasks"] = background_tasks
 
+        if "stream_events" in kwargs:
+            stream_events = kwargs.pop("stream_events")
+        else:
+            stream_events = True
+
         run_response = workflow.arun(
             input=input,
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_events=True,
+            stream_events=stream_events,
             **kwargs,
         )
 
@@ -402,8 +408,10 @@ def get_workflow_router(
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
-
-        return await WorkflowResponse.from_workflow(workflow)
+        if isinstance(workflow, RemoteWorkflow):
+            return await workflow.get_workflow_config()
+        else:
+            return await WorkflowResponse.from_workflow(workflow=workflow)
 
     @router.post(
         "/workflows/{workflow_id}/runs",

@@ -8,7 +8,6 @@ from agno.models.message import Message
 from agno.os.schema import ModelResponse
 from agno.os.utils import (
     format_tools,
-    get_agent_input_schema_dict,
 )
 from agno.run import RunContext
 from agno.run.agent import RunOutput
@@ -20,6 +19,7 @@ class AgentResponse(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
     db_id: Optional[str] = None
+    description: Optional[str] = None
     model: Optional[ModelResponse] = None
     tools: Optional[Dict[str, Any]] = None
     sessions: Optional[Dict[str, Any]] = None
@@ -110,6 +110,16 @@ class AgentResponse(BaseModel):
         if additional_input and isinstance(additional_input[0], Message):
             additional_input = [message.to_dict() for message in additional_input]  # type: ignore
 
+        input_schema_dict = None
+        if agent.input_schema is not None:
+            if isinstance(agent.input_schema, dict):
+                input_schema_dict = agent.input_schema
+            else:
+                try:
+                    input_schema_dict = agent.input_schema.model_json_schema()
+                except Exception:
+                    pass
+
         # Build model only if it has at least one non-null field
         model_name = agent.model.name if (agent.model and agent.model.name) else None
         model_provider = agent.model.provider if (agent.model and agent.model.provider) else None
@@ -142,6 +152,7 @@ class AgentResponse(BaseModel):
         }
 
         knowledge_info = {
+            "db_id": agent.knowledge.contents_db.id if agent.knowledge and agent.knowledge.contents_db else None,
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": agent.enable_agentic_knowledge_filters,
             "knowledge_filters": agent.knowledge_filters,
@@ -244,6 +255,7 @@ class AgentResponse(BaseModel):
             id=agent.id,
             name=agent.name,
             db_id=agent.db.id if agent.db else None,
+            description=agent.description,
             model=ModelResponse(**_agent_model_data) if _agent_model_data else None,
             tools=filter_meaningful_config(tools_info, {}),
             sessions=filter_meaningful_config(sessions_info, agent_defaults),
@@ -257,5 +269,5 @@ class AgentResponse(BaseModel):
             streaming=filter_meaningful_config(streaming_info, agent_defaults),
             introduction=agent.introduction,
             metadata=agent.metadata,
-            input_schema=get_agent_input_schema_dict(agent),
+            input_schema=input_schema_dict,
         )

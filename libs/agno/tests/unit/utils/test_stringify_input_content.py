@@ -9,7 +9,7 @@ import json
 import pytest
 
 from agno.models.message import Message
-from agno.os.utils import get_run_input, stringify_input_content
+from agno.utils.os import get_run_input, stringify_input_content
 
 
 def test_stringify_string_input():
