@@ -48,7 +48,7 @@ from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
-from agno.models.metrics import Metrics
+from agno.models.metrics import Metrics, ModelMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
@@ -1153,9 +1153,26 @@ class Agent:
             # If a parser model is provided, structure the response separately
             self._parse_response_with_parser_model(model_response, run_messages, run_context=run_context)
 
+            # TODO: Convert into a function and move inside update run response
+            try:
+                memory_manager_metrics = ModelMetrics(
+                    type="memory_manager",
+                    id=self.memory_manager.model.id,
+                    provider=self.memory_manager.model.provider,
+                    input_tokens=memory_future.result()["metrics"]["input_tokens"],
+                    output_tokens=memory_future.result()["metrics"]["output_tokens"],
+                    total_tokens=memory_future.result()["metrics"]["total_tokens"],
+                )
+                log_debug(f"Sucessfully added memory manager metrics to run response")
+            except Exception as e:
+                log_warning(f"Error in getting metrics for memory manager: {str(e)}")
+
             # 7. Update the RunOutput with the model response
             self._update_run_response(
-                model_response=model_response, run_response=run_response, run_messages=run_messages
+                model_response=model_response,
+                run_response=run_response,
+                run_messages=run_messages,
+                memory_manager_metrics=memory_manager_metrics,
             )
 
             # We should break out of the run function
@@ -5039,6 +5056,7 @@ class Agent:
         run_response: RunOutput,
         run_messages: RunMessages,
         run_context: Optional[RunContext] = None,
+        memory_manager_metrics: Optional[ModelMetrics] = None,
     ):
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
@@ -5103,6 +5121,12 @@ class Agent:
         run_response.metrics = self._calculate_run_metrics(
             messages=messages_for_run_response, current_run_metrics=run_response.metrics
         )
+
+        # Update the run_response metrics with the memory manager metrics
+        if memory_manager_metrics is not None:
+            if run_response.metrics.details is None:
+                run_response.metrics.details = []
+            run_response.metrics.details.append(memory_manager_metrics)
 
     def _update_session_metrics(self, session: AgentSession, run_response: RunOutput):
         """Calculate session metrics"""
@@ -5670,36 +5694,38 @@ class Agent:
             and self.enable_user_memories
         ):
             log_debug("Managing user memories")
-            self.memory_manager.create_user_memories(  # type: ignore
+            memory_manager_response = self.memory_manager.create_user_memories(  # type: ignore
                 message=user_message_str,
                 user_id=user_id,
                 agent_id=self.id,
             )
 
-        if run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0:
-            parsed_messages = []
-            for _im in run_messages.extra_messages:
-                if isinstance(_im, Message):
-                    parsed_messages.append(_im)
-                elif isinstance(_im, dict):
-                    try:
-                        parsed_messages.append(Message(**_im))
-                    except Exception as e:
-                        log_warning(f"Failed to validate message during memory update: {e}")
-                else:
-                    log_warning(f"Unsupported message type: {type(_im)}")
-                    continue
+            return memory_manager_response
 
-            # Filter out messages with empty content before passing to memory manager
-            non_empty_messages = [
-                msg
-                for msg in parsed_messages
-                if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
-            ]
-            if len(non_empty_messages) > 0 and self.memory_manager is not None and self.enable_user_memories:
-                self.memory_manager.create_user_memories(messages=non_empty_messages, user_id=user_id, agent_id=self.id)  # type: ignore
-            else:
-                log_warning("Unable to add messages to memory")
+        # if run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0:
+        #     parsed_messages = []
+        #     for _im in run_messages.extra_messages:
+        #         if isinstance(_im, Message):
+        #             parsed_messages.append(_im)
+        #         elif isinstance(_im, dict):
+        #             try:
+        #                 parsed_messages.append(Message(**_im))
+        #             except Exception as e:
+        #                 log_warning(f"Failed to validate message during memory update: {e}")
+        #         else:
+        #             log_warning(f"Unsupported message type: {type(_im)}")
+        #             continue
+
+        #     # Filter out messages with empty content before passing to memory manager
+        #     non_empty_messages = [
+        #         msg
+        #         for msg in parsed_messages
+        #         if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
+        #     ]
+        #     if len(non_empty_messages) > 0 and self.memory_manager is not None and self.enable_user_memories:
+        #         self.memory_manager.create_user_memories(messages=non_empty_messages, user_id=user_id, agent_id=self.id)  # type: ignore
+        #     else:
+        #         log_warning("Unable to add messages to memory")
 
     async def _amake_memories(
         self,
