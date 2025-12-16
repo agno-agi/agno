@@ -18,4 +18,4 @@ chat:
     self-learning-research-agent:
       - "What is the current consensus on using AI agents in enterprise production systems?"
       - "Has the consensus on AI agents in enterprise production systems changed recently?"
-      - "Which is the best AI model for enterprise use cases?"
+      - "How are companies currently deploying Gemini models in production?"
