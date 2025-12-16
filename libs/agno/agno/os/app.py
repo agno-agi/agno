@@ -226,7 +226,7 @@ class AgentOS:
         self._initialize_workflows()
 
         # Check for duplicate IDs
-        self._check_duplicate_ids()
+        self._raise_if_duplicate_ids()
 
         if self.tracing:
             self._setup_tracing()
@@ -271,7 +271,7 @@ class AgentOS:
         self._initialize_workflows()
 
         # Check for duplicate IDs
-        self._check_duplicate_ids()
+        self._raise_if_duplicate_ids()
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
 
@@ -340,7 +340,7 @@ class AgentOS:
             self.interfaces.append(a2a_interface)
             self._add_router(app, a2a_interface.get_router())
 
-    def _check_duplicate_ids(self) -> None:
+    def _raise_if_duplicate_ids(self) -> None:
         """Check for duplicate IDs across all agents, teams, and workflows.
 
         Raises:
@@ -354,6 +354,8 @@ class AgentOS:
                 continue
             for entity in entities:
                 entity_id = entity.id
+                if entity_id is None:
+                    continue
                 if entity_id in seen_ids:
                     if entity_id not in duplicate_ids:
                         duplicate_ids.append(entity_id)
