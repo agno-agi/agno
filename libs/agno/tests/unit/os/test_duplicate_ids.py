@@ -124,6 +124,7 @@ def test_unique_workflow_ids_work_correctly():
 
 # Mixed component tests
 
+
 def test_mixed_components_with_unique_ids():
     """Test that mixed components with unique IDs work correctly."""
     agent = Agent(name="Agent", id="agent-id", telemetry=False)
