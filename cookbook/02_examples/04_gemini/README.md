@@ -1,25 +1,20 @@
 # Gemini Agents
 
-Let's **build production-grade agents with Gemini 3 and Agno**. We'll showcase features like:
-- **NanoBanana** (native image generation)
-- **Google Search & Grounding** (real-time web search)
-- **URL Context** (direct web page analysis)
+This cookbook shows how to build production-grade agents with Gemini and Agno. It showcases how to combine Gemini's built-in features with Agno's agent runtime, memory, and knowledge systems.
 
-## Agents
-
-The `/agents` directory contains the following agents designed to showcase Gemini 3's native multi-modal, search, and reasoning capabilities:
-
-| Agent | File | Key Feature | Description |
+We'll build:
+| Agent | File | Key Features | Description |
 | :--- | :--- | :--- | :--- |
-| **Creative Studio** | `creative_studio_agent.py` | **NanoBanana** | Generates high-quality images natively using the `gemini-3-pro-image-preview` model and NanoBanana tools. |
-| **Research Agent** | `research_agent.py` | **Grounding** | Performs deep web searches with `search=True`, providing factual answers with source citations. |
-| **Product Comparison** | `product_comparison_agent.py` | **URL Context** | Reads content directly from URLs (`url_context=True`) to compare products or articles side-by-side. |
+| **Simple Research Agent** | `simple_research_agent.py` | **Grounding**, **Search** | Performs web research using built-in Gemini grounding and returns cited answers. |
+| **Creative Studio** | `creative_studio_agent.py` | **NanoBanana** | Generates high-quality images natively using NanoBanana. |
+| **Product Comparison** | `product_comparison_agent.py` | **URL Context** | Reads and compares content directly from URLs using `url_context=True`. |
+| **Self Learning Research Agent** | `self_learning_research_agent.py` | **Parallel Search**, **Continuous Learning** | Tracks internet consensus over time, explains what changed, and stores historical snapshots for future comparison. |
 
-## Why Gemini 3 shines for agentic use cases
+## Why Gemini shines for agentic use cases
 
-- **Speed**: Blazing fast inference helps to improve the chat experience when interacting with the agents.
-- **Reasoning**: With strong native reasoning capabilities, Gemini 3 ensures answers are accurate and well-reasoned.
-- **Search & Context**: When adding web search and URL context to the agents that use Gemini 3, the native web search provides better results than external search tools.
+- **Speed**: Fast inference makes interactive agent workflows feel responsive.
+- **Reasoning**: Strong native reasoning produces cleaner synthesis and fewer hallucinations.
+- **Multi-modal primitives**: Image generation, URL context, and grounding are first-class capabilities.
 
 ## Getting Started
 
@@ -46,7 +41,11 @@ uv pip install -r cookbook/02_examples/04_gemini/requirements.txt
 ### 4. Set Environment Variables
 
 ```bash
-export GOOGLE_API_KEY=your-api-key
+# Required for Gemini models
+export GOOGLE_API_KEY=your-google-api-key
+
+# Required for Self-learning Research Agent
+export PARALLEL_API_KEY=your-parallel-api-key
 ```
 
 ### 5. Run Postgres with PgVector
@@ -75,8 +74,6 @@ Visit [os.agno.com](https://os.agno.com) and add `http://localhost:7777` as an O
 
 ### Optional: Run Agents Individually
 
-You can also run each agent individually:
-
 ```bash
 # Image Generation
 python cookbook/02_examples/04_gemini/agents/creative_studio_agent.py
@@ -84,31 +81,16 @@ python cookbook/02_examples/04_gemini/agents/creative_studio_agent.py
 # Research with Grounding
 python cookbook/02_examples/04_gemini/agents/simple_research_agent.py
 
-# Product Comparison (URL Context + Search)
+# Product Comparison
 python cookbook/02_examples/04_gemini/agents/product_comparison_agent.py
 
+# Self Learning Research Agent
+python cookbook/02_examples/04_gemini/agents/self_learning_research_agent.py
 ```
 
-## Examples Overview
+## Native Gemini Features
 
-| Example                       | Agent                      | Google Features         | Memory Features                   |
-| ----------------------------- | -------------------------- | ----------------------- | --------------------------------- |
-| `creative_studio_agent.py`    | `creative_studio_agent`    | NanoBanana              | history                           |
-| `research_agent.py`           | `research_agent`           | Grounding               | user_memories + session_summaries |
-| `product_comparison_agent.py` | `product_comparison_agent` | URL Context + Grounding | user_memories + history           |
-
-### Database
-
-All agents use SqliteDb for persistence (configured in `db.py`):
-
-```python
-from db import demo_db
-# Stores to: tmp/google_examples.db
-```
-
-## Google-Specific Features
-
-Agno supports a variety of Google-specific features. Learn more about them [here](https://docs.agno.com/integrations/models/native/google/overview).
+Agno supports all native Gemini features. Learn more about them [here](https://docs.agno.com/integrations/models/native/google/overview).
 
 | Feature       | Parameter           | Description                  |
 | ------------- | ------------------- | ---------------------------- |
@@ -116,7 +98,6 @@ Agno supports a variety of Google-specific features. Learn more about them [here
 | Grounding     | `grounding=True`    | Search with citations        |
 | URL Context   | `url_context=True`  | Analyze web page content     |
 | NanoBanana    | `NanoBananaTools()` | Image generation toolkit     |
-
 
 ## Screenshots
 
