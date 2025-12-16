@@ -22,7 +22,7 @@ class RunContext:
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
-    output_schema: Optional[Type[BaseModel]] = None
+    output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 
 
 @dataclass
