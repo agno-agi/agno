@@ -19,9 +19,10 @@ from agno.a2a.exceptions import (
 )
 from agno.a2a.schemas import AgentCard, Artifact, StreamEvent, TaskResult
 from agno.media import File, Image
+from agno.utils.log import log_warning
 
 try:
-    from httpx import AsyncClient, HTTPStatusError, TimeoutException
+    from httpx import AsyncClient, Client, HTTPStatusError, TimeoutException
 except ImportError:
     raise ImportError("`httpx` not installed. Please install using `pip install httpx`")
 
@@ -84,48 +85,91 @@ class A2AClient:
     def __init__(
         self,
         base_url: str,
-        timeout: float = 300.0,
+        timeout: int = 30,
         a2a_prefix: str = "/a2a",
     ):
         """Initialize A2AClient.
 
         Args:
             base_url: Base URL of the A2A server (e.g., "http://localhost:7777")
-            timeout: Request timeout in seconds (default: 300)
+            timeout: Request timeout in seconds (default: 30)
             a2a_prefix: URL prefix for A2A endpoints (default: "/a2a")
         """
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.a2a_prefix = a2a_prefix
-        self._http_client: Optional[AsyncClient] = None
+        self._async_client: Optional[AsyncClient] = None
+        self._sync_client: Optional[Client] = None
 
+    # Sync context manager support
+    def __enter__(self) -> "A2AClient":
+        """Enter sync context manager."""
+        self.connect_sync()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit sync context manager and cleanup resources."""
+        self.close_sync()
+
+    # Async context manager support
     async def __aenter__(self) -> "A2AClient":
         """Enter async context manager."""
-        self._http_client = AsyncClient(timeout=self.timeout)
+        await self.connect()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit async context manager and cleanup resources."""
         await self.close()
 
-    async def connect(self) -> "A2AClient":
-        """Explicitly create HTTP client connection.
+    def _get_async_client(self) -> AsyncClient:
+        """Get or create async HTTP client.
+
+        Returns:
+            AsyncClient: The httpx async client instance
+        """
+        if self._async_client is None:
+            self._async_client = AsyncClient(timeout=self.timeout)
+        return self._async_client
+
+    def _get_sync_client(self) -> Client:
+        """Get or create sync HTTP client.
+
+        Returns:
+            Client: The httpx sync client instance
+        """
+        if self._sync_client is None:
+            self._sync_client = Client(timeout=self.timeout)
+        return self._sync_client
+
+    async def connect(self) -> None:
+        """Explicitly create async HTTP client connection.
 
         Use this when you need to manage the client lifecycle manually
         without using the async context manager.
-
-        Returns:
-            A2AClient: self for method chaining
         """
-        if not self._http_client:
-            self._http_client = AsyncClient(timeout=self.timeout)
-        return self
+        if self._async_client is None:
+            self._async_client = AsyncClient(timeout=self.timeout)
+
+    def connect_sync(self) -> None:
+        """Explicitly create sync HTTP client connection.
+
+        Use this when you need to manage the client lifecycle manually
+        without using the sync context manager.
+        """
+        if self._sync_client is None:
+            self._sync_client = Client(timeout=self.timeout)
 
     async def close(self) -> None:
-        """Close HTTP client connections."""
-        if self._http_client:
-            await self._http_client.aclose()
-            self._http_client = None
+        """Close async HTTP client connections."""
+        if self._async_client:
+            await self._async_client.aclose()
+            self._async_client = None
+
+    def close_sync(self) -> None:
+        """Close sync HTTP client connections."""
+        if self._sync_client:
+            self._sync_client.close()
+            self._sync_client = None
 
     def _get_endpoint(self, path: str) -> str:
         """Build full endpoint URL."""
@@ -395,8 +439,7 @@ class A2AClient:
             A2AConnectionError: If connection fails
             A2ATimeoutError: If request times out
         """
-        if not self._http_client:
-            await self.connect()
+        client = self._get_async_client()
 
         request_body = self._build_message_request(
             agent_id=agent_id,
@@ -410,7 +453,7 @@ class A2AClient:
         )
 
         try:
-            response = await self._http_client.post(  # type: ignore
+            response = await client.post(
                 self._get_endpoint("/message/send"),
                 json=request_body,
             )
@@ -490,8 +533,7 @@ class A2AClient:
                     print()  # Newline at end
             ```
         """
-        if not self._http_client:
-            await self.connect()
+        http_client = self._get_async_client()
 
         request_body = self._build_message_request(
             agent_id=agent_id,
@@ -505,7 +547,7 @@ class A2AClient:
         )
 
         try:
-            async with self._http_client.stream(  # type: ignore
+            async with http_client.stream(
                 "POST",
                 self._get_endpoint("/message/stream"),
                 json=request_body,
@@ -528,8 +570,8 @@ class A2AClient:
                         if event.event_type == "started":
                             pass  # Could store task_id/context_id if needed
 
-                    except json.JSONDecodeError:
-                        # Skip non-JSON lines
+                    except json.JSONDecodeError as e:
+                        log_warning(f"Failed to decode JSON from stream line: {line[:100]}. Error: {e}")
                         continue
 
         except HTTPStatusError as e:
@@ -558,11 +600,10 @@ class A2AClient:
         Returns:
             AgentCard if available, None otherwise
         """
-        if not self._http_client:
-            await self.connect()
+        client = self._get_async_client()
 
         try:
-            response = await self._http_client.get(  # type: ignore
+            response = await client.get(
                 f"{self.base_url}{agent_card_path}",
             )
             if response.status_code != 200:
