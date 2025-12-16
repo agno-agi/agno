@@ -159,7 +159,7 @@ Rules:
 # =============================================================================
 self_learning_research_agent = Agent(
     name="Self Learning Research Agent",
-    model=Gemini(id="fiercefalcon"),
+    model=Gemini(id="gemini-flash-latest"),
     system_message=system_message,
     db=gemini_agents_db,
     knowledge=research_knowledge,
