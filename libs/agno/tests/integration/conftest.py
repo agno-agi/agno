@@ -14,8 +14,10 @@ from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import Session
 from agno.session.agent import AgentSession
+from agno.session.workflow import WorkflowSession
 
 
 @pytest.fixture(autouse=True)
@@ -291,5 +293,73 @@ def session_with_introduction(test_agent: Agent):
         session_id="session-with-intro",
         agent_id=test_agent.id,
         user_id="test-user",
+        runs=[run],
+    )
+
+
+# -- Workflow session fixtures --
+
+
+@pytest.fixture
+def workflow_session_with_string_input():
+    """Workflow session with string input."""
+    run = WorkflowRunOutput(
+        run_id="workflow-run-1",
+        workflow_id="test-workflow",
+        status=RunStatus.completed,
+        input="Generate a blog post about AI",
+        created_at=int(time.time()),
+    )
+    return WorkflowSession(
+        session_id="workflow-session-string",
+        workflow_id="test-workflow",
+        user_id="test-user",
+        runs=[run],
+    )
+
+
+@pytest.fixture
+def workflow_session_with_dict_input():
+    """Workflow session with dict input."""
+    run = WorkflowRunOutput(
+        run_id="workflow-run-1",
+        workflow_id="test-workflow",
+        status=RunStatus.completed,
+        input={"topic": "AI", "style": "formal"},
+        created_at=int(time.time()),
+    )
+    return WorkflowSession(
+        session_id="workflow-session-dict",
+        workflow_id="test-workflow",
+        user_id="test-user",
+        runs=[run],
+    )
+
+
+@pytest.fixture
+def workflow_session_empty_runs():
+    """Workflow session with no runs."""
+    return WorkflowSession(
+        session_id="workflow-session-empty",
+        workflow_id="test-workflow",
+        user_id="test-user",
+        runs=[],
+    )
+
+
+@pytest.fixture
+def workflow_session_no_input():
+    """Workflow session with run but no input."""
+    run = WorkflowRunOutput(
+        run_id="workflow-run-1",
+        workflow_id="test-workflow",
+        status=RunStatus.completed,
+        created_at=int(time.time()),
+    )
+    return WorkflowSession(
+        session_id="workflow-session-no-input",
+        workflow_id="test-workflow",
+        user_id="test-user",
+        workflow_data={"name": "BlogGenerator"},
         runs=[run],
     )

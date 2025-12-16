@@ -1,7 +1,7 @@
 """Integration tests for session and run endpoints in AgentOS."""
 
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -245,7 +245,7 @@ def test_get_session_runs_with_epoch_timestamp(session_with_runs, shared_db):
     client = TestClient(app)
 
     # Get timestamp for start of today
-    start_of_today = int(datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    start_of_today = int(datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
 
     # Get runs from today
     response = client.get(
@@ -441,7 +441,7 @@ def test_update_session_summary(session_with_runs, shared_db, test_agent: Agent)
     # Update session summary
     summary_data = {
         "summary": "The user asked about AI capabilities and received information about available features.",
-        "updated_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
     }
 
     response = client.patch(
@@ -555,7 +555,7 @@ def test_update_multiple_session_fields(session_with_runs, shared_db, test_agent
         },
         "summary": {
             "summary": "Session was updated with multiple fields.",
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         },
     }
 
@@ -994,3 +994,33 @@ def test_get_session_name_team_fallback_to_second_run(team_session_with_fallback
 def test_get_session_name_team_first_user_message(team_session_with_user_message):
     """Test that get_session_name returns first user message from team run."""
     assert get_session_name(team_session_with_user_message.to_dict()) == "Research AI trends"
+
+
+# --- Workflow session name tests ---
+
+
+def test_get_session_name_workflow_string_input(workflow_session_with_string_input):
+    """Test that get_session_name returns string input for workflow sessions."""
+    session_dict = {**workflow_session_with_string_input.to_dict(), "session_type": "workflow"}
+    assert get_session_name(session_dict) == "Generate a blog post about AI"
+
+
+def test_get_session_name_workflow_dict_input(workflow_session_with_dict_input):
+    """Test that get_session_name returns JSON dumped dict input for workflow sessions."""
+    import json
+
+    session_dict = {**workflow_session_with_dict_input.to_dict(), "session_type": "workflow"}
+    result = get_session_name(session_dict)
+    assert json.loads(result) == {"topic": "AI", "style": "formal"}
+
+
+def test_get_session_name_workflow_empty_runs(workflow_session_empty_runs):
+    """Test that get_session_name returns empty string for workflow with no runs."""
+    session_dict = {**workflow_session_empty_runs.to_dict(), "session_type": "workflow"}
+    assert get_session_name(session_dict) == ""
+
+
+def test_get_session_name_workflow_no_input(workflow_session_no_input):
+    """Test that get_session_name returns 'New {name} Session' when workflow has no input."""
+    session_dict = {**workflow_session_no_input.to_dict(), "session_type": "workflow"}
+    assert get_session_name(session_dict) == "New BlogGenerator Session"
