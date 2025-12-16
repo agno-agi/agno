@@ -369,7 +369,8 @@ class Agent:
     # --- Agent Response Model Settings ---
     # Provide an input schema to validate the input
     input_schema: Optional[Type[BaseModel]] = None
-    # Provide a response model to get the response as a Pydantic model
+    # Provide a response model to get the response in the implied format.
+    # You can use a Pydantic model or a JSON fitting the provider's expected schema.
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
     # Provide a secondary model to parse the response from the primary model
     parser_model: Optional[Model] = None
