@@ -20,12 +20,23 @@ A2A (Agent-to-Agent) is a standardized protocol for agent-to-agent communication
 
 ## Examples
 
+### Agno AgentOS Examples (localhost:7777)
+
 | File | Description |
 |------|-------------|
 | `01_basic_messaging.py` | Simple send/receive with A2AClient |
 | `02_streaming.py` | Real-time streaming responses |
 | `03_multi_turn.py` | Multi-turn conversations with context |
 | `04_error_handling.py` | Handling errors and edge cases |
+
+### Google ADK Examples (localhost:8001)
+
+| File | Description |
+|------|-------------|
+| `05_connect_to_google_adk.py` | Connect to Google ADK A2A server |
+| `06_streaming_with_google_adk.py` | Streaming with Google ADK |
+| `07_multi_turn_with_google_adk.py` | Multi-turn conversations with ADK |
+| `servers/google_adk_server.py` | Google ADK A2A server |
 
 ## Quick Start
 
@@ -74,13 +85,53 @@ A2AClient(
 
 ## Running Examples
 
+### With Agno AgentOS Server
+
 ```bash
-# Start the A2A server first
+# Start the Agno A2A server first
 python cookbook/agent_os/interfaces/a2a/basic.py
 
 # In another terminal, run examples
 python cookbook/agent_os/a2a_client/01_basic_messaging.py
 python cookbook/agent_os/a2a_client/02_streaming.py
 python cookbook/agent_os/a2a_client/03_multi_turn.py
+```
+
+### With Google ADK Server
+
+This demonstrates cross-framework A2A communication (Agno client -> Google ADK server).
+
+**Prerequisites:**
+
+1. Install Google ADK:
+   ```bash
+   pip install google-adk uvicorn
+   ```
+
+2. Set your Google API key:
+   ```bash
+   export GOOGLE_API_KEY=your_api_key_here
+   ```
+
+3. Start the Google ADK server:
+   ```bash
+   python cookbook/agent_os/a2a_client/servers/google_adk_server.py
+   ```
+
+4. Run the examples:
+   ```bash
+   python cookbook/agent_os/a2a_client/05_connect_to_google_adk.py
+   python cookbook/agent_os/a2a_client/07_multi_turn_with_google_adk.py
+   ```
+
+**Key Difference:** Google ADK uses pure JSON-RPC at root "/", so use `json_rpc_endpoint="/"`:
+
+```python
+# Google ADK uses pure JSON-RPC mode (all calls POST to root "/")
+async with A2AClient("http://localhost:8001", json_rpc_endpoint="/") as client:
+    result = await client.send_message(
+        agent_id="facts_agent",
+        message="Hello!"
+    )
 ```
 

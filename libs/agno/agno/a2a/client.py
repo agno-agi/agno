@@ -44,42 +44,6 @@ class A2AClient:
         timeout: Request timeout in seconds
         a2a_prefix: URL prefix for A2A endpoints (default: "/a2a")
 
-    Example:
-        Basic messaging:
-        ```python
-        async with A2AClient("http://localhost:7777") as client:
-            result = await client.send_message(
-                agent_id="my-agent",
-                message="What is 2 + 2?"
-            )
-            print(result.content)
-        ```
-
-        Streaming:
-        ```python
-        async with A2AClient("http://localhost:7777") as client:
-            async for event in client.stream_message(
-                agent_id="my-agent",
-                message="Tell me a story"
-            ):
-                if event.is_content:
-                    print(event.content, end="", flush=True)
-        ```
-
-        Multi-turn conversation:
-        ```python
-        async with A2AClient("http://localhost:7777") as client:
-            # First message
-            result1 = await client.send_message("agent", "My name is Alice")
-            context_id = result1.context_id
-
-            # Continue conversation
-            result2 = await client.send_message(
-                "agent",
-                "What is my name?",
-                context_id=context_id
-            )
-        ```
     """
 
     def __init__(
@@ -87,6 +51,7 @@ class A2AClient:
         base_url: str,
         timeout: int = 30,
         a2a_prefix: str = "/a2a",
+        json_rpc_endpoint: Optional[str] = None,
     ):
         """Initialize A2AClient.
 
@@ -94,10 +59,15 @@ class A2AClient:
             base_url: Base URL of the A2A server (e.g., "http://localhost:7777")
             timeout: Request timeout in seconds (default: 30)
             a2a_prefix: URL prefix for A2A endpoints (default: "/a2a")
+            json_rpc_endpoint: Optional single endpoint for all JSON-RPC calls.
+                If set, all A2A methods will POST to this endpoint instead of
+                individual REST endpoints. Use "/" for Google ADK compatibility.
+                Example: json_rpc_endpoint="/" for Google ADK servers.
         """
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.a2a_prefix = a2a_prefix
+        self.json_rpc_endpoint = json_rpc_endpoint
         self._async_client: Optional[AsyncClient] = None
         self._sync_client: Optional[Client] = None
 
@@ -172,7 +142,13 @@ class A2AClient:
             self._sync_client = None
 
     def _get_endpoint(self, path: str) -> str:
-        """Build full endpoint URL."""
+        """Build full endpoint URL.
+
+        If json_rpc_endpoint is set, always use that endpoint. Otherwise, use the traditional
+        REST-style endpoints.
+        """
+        if self.json_rpc_endpoint is not None:
+            return f"{self.base_url}{self.json_rpc_endpoint}"
         return f"{self.base_url}{self.a2a_prefix}{path}"
 
     def _build_message_request(
