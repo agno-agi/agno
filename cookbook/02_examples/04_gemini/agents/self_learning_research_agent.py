@@ -7,10 +7,9 @@ from agno.knowledge.embedder.google import GeminiEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.text_reader import TextReader
 from agno.models.google import Gemini
+from agno.tools.parallel import ParallelTools
 from agno.utils.log import logger
 from agno.vectordb.pgvector import PgVector, SearchType
-
-from agno.tools.parallel import ParallelTools
 from db import db_url, gemini_agents_db
 
 # =============================================================================
@@ -159,7 +158,7 @@ Rules:
 # =============================================================================
 self_learning_research_agent = Agent(
     name="Self Learning Research Agent",
-    model=Gemini(id="fiercefalcon"),
+    model=Gemini(id="gemini-flash-latest"),
     system_message=system_message,
     db=gemini_agents_db,
     knowledge=research_knowledge,

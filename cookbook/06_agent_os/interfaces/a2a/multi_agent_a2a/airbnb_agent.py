@@ -1,20 +1,16 @@
 from textwrap import dedent
-from agno.agent import Agent
-from agno.os import AgentOS
-from agno.models.openai import OpenAIChat
-from agno.tools.mcp import MCPTools
 
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.os import AgentOS
+from agno.tools.mcp import MCPTools
 
 airbnb_agent = Agent(
     id="airbnb-search-agent",
     name="Airbnb Search Agent",
     description="A specialized agent for finding and detailing Airbnb listings using the OpenBNB MCP server.",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        MCPTools(
-            "npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt"
-        )
-    ],
+    tools=[MCPTools("npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt")],
     instructions=dedent("""
         You are an expert travel assistant.
         Use the 'airbnb_search' tool to find properties based on location, dates, and people.
@@ -29,7 +25,8 @@ agent_os = AgentOS(
     description="An AgentOS serving specialized Agent for Airbnb search",
     agents=[
         airbnb_agent,
-    ],a2a_interface=True
+    ],
+    a2a_interface=True,
 )
 app = agent_os.get_app()
 

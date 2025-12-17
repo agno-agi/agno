@@ -1,8 +1,10 @@
-from agno.os import AgentOS
 import uuid
+
 import requests
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.os import AgentOS
+
 
 # --- 1. A2A Helper Function (The Protocol) ---
 def _send_a2a_message(url: str, text: str) -> str:
@@ -17,9 +19,9 @@ def _send_a2a_message(url: str, text: str) -> str:
             "message": {
                 "message_id": str(uuid.uuid4()),
                 "role": "user",
-                "parts": [{"text": text}]
+                "parts": [{"text": text}],
             }
-        }
+        },
     }
 
     try:
@@ -45,10 +47,11 @@ def _send_a2a_message(url: str, text: str) -> str:
 
 # --- 2. The Two Tool Functions ---
 
+
 def ask_airbnb_agent(request: str) -> str:
     """
     Contacts the specialized Airbnb Agent to find listings or get details.
-    
+
     Args:
         request (str): A natural language request (e.g., "Find a 2-bed apartment in Paris for under $200").
     """
@@ -60,12 +63,14 @@ def ask_airbnb_agent(request: str) -> str:
 def ask_weather_agent(request: str) -> str:
     """
     Contacts the specialized Weather Agent to get forecasts or current conditions.
-    
+
     Args:
         request (str): A natural language request (e.g., "What is the weather in Tokyo next week?").
     """
     # URL for the Weather Agent Service
-    WEATHER_URL = "http://localhost:7770/a2a/agents/weather-reporter-agent/v1/message:send"
+    WEATHER_URL = (
+        "http://localhost:7770/a2a/agents/weather-reporter-agent/v1/message:send"
+    )
     return _send_a2a_message(WEATHER_URL, request)
 
 
@@ -84,10 +89,10 @@ trip_planner = Agent(
         "1. Always check the weather for the destination/dates FIRST using 'ask_weather_agent'.",
         "2. Based on the weather suitability, search for accommodation using 'ask_airbnb_agent'.",
         "3. Synthesize the information from both agents into a final itinerary proposal.",
-        "If an agent returns an error, inform the user and try to proceed with the available information."
-    ]
+        "If an agent returns an error, inform the user and try to proceed with the available information.",
+    ],
 )
-agent_os=AgentOS(
+agent_os = AgentOS(
     id="trip-planning-service",
     description="AgentOS hosting the Trip Planning Orchestrator.",
     agents=[
