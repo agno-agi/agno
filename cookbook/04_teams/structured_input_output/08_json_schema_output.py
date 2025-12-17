@@ -1,7 +1,7 @@
 """
-Example showing how to use JSON as output schema. 
+Example showing how to use JSON as output schema.
 
-Note: JSON schemas must be in the provider's expected format. 
+Note: JSON schemas must be in the provider's expected format.
 For example, OpenAI expects:
 {"type": "json_schema", "json_schema": {"name": "...", "schema": {...}}}
 """
