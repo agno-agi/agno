@@ -4827,7 +4827,7 @@ class Agent:
         if output_schema is not None:
             # parse JSON directly
             if isinstance(output_schema, dict):
-                if isinstance(run_response.content, str) and self.parse_response:
+                if isinstance(run_response.content, str):
                     parsed_dict = parse_response_dict_str(run_response.content)
                     if parsed_dict is not None:
                         run_response.content = parsed_dict
