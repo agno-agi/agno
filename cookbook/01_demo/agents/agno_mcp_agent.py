@@ -1,25 +1,9 @@
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
-from agno.vectordb.pgvector import PgVector, SearchType
-from db import db_url, demo_db
-
-# ============================================================================
-# Setup knowledge base for storing Agno documentation
-# ============================================================================
-knowledge = Knowledge(
-    name="Agno Documentation",
-    vector_db=PgVector(
-        db_url=db_url,
-        table_name="agno_docs",
-        search_type=SearchType.hybrid,
-        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-    ),
-    contents_db=demo_db,
-)
+from agno.tools.mcp import MCPTools
+from db import demo_db
 
 # ============================================================================
 # Description & Instructions
@@ -27,7 +11,7 @@ knowledge = Knowledge(
 description = dedent(
     """\
     You are AgnoAssist — an AI Agent built to help developers learn and master the Agno framework.
-    Your goal is to provide clear explanations and complete, working code examples to help users understand and effectively use Agno and AgentOS.\
+    Your goal is to provide clear explanations and complete, working code examples to help developers understand and effectively use Agno and AgentOS.\
     """
 )
 
@@ -44,14 +28,16 @@ instructions = dedent(
     After analysis, immediately begin the search process (no need to ask for confirmation).
 
     2. **Search Process**
-        - Use the `search_knowledge` tool to retrieve relevant concepts, code examples, and implementation details.
+        - Use the `SearchAgno` tool to retrieve relevant concepts, code examples, and implementation details.
         - Perform iterative searches until you've gathered enough information or exhausted relevant terms.
 
     Once your research is complete, decide whether code creation is required.
-    If it is, ask the user if they'd like you to generate an Agent for them.
+    If it is, ask the developer if they'd like you to generate an Agent for them.
 
     3. **Code Creation**
         - Provide fully working code examples that can be run as-is.
+        - Write good description and instructuctions for the agents to follow.
+            This is key to the success of the agents.
         - Always use `agent.run()` (not `agent.print_response()`).
         - Include all imports, setup, and dependencies.
         - Add clear comments, type hints, and docstrings.
@@ -73,10 +59,10 @@ instructions = dedent(
 # ============================================================================
 # Create the Agent
 # ============================================================================
-agno_knowledge_agent = Agent(
-    name="Agno Knowledge Agent",
+agno_mcp_agent = Agent(
+    name="Agno MCP Agent",
     model=Claude(id="claude-sonnet-4-5"),
-    knowledge=knowledge,
+    tools=[MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")],
     description=description,
     instructions=instructions,
     add_history_to_context=True,
@@ -86,8 +72,3 @@ agno_knowledge_agent = Agent(
     markdown=True,
     db=demo_db,
 )
-
-if __name__ == "__main__":
-    knowledge.add_content(
-        name="Agno Documentation", url="https://docs.agno.com/llms-full.txt"
-    )
