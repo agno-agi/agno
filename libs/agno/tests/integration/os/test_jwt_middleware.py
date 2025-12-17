@@ -170,42 +170,33 @@ def test_with_expired_token_fails(jwt_test_client):
 
 
 def test_validation_disabled(jwt_test_agent):
-    """Test JWT middleware with validation disabled."""
+    """Test JWT middleware with signature validation disabled still requires token."""
 
-    # Create AgentOS with JWT middleware but validation disabled
     agent_os = AgentOS(agents=[jwt_test_agent])
     app = agent_os.get_app()
 
     app.add_middleware(
         JWTMiddleware,
-        verification_keys=[JWT_SECRET],
-        algorithm="HS256",
-        token_header_key="Authorization",
-        user_id_claim="sub",
-        session_id_claim="session_id",
-        dependencies_claims=["name", "email", "roles"],
-        validate=False,  # Disable validation
+        validate=False,
     )
 
     client = TestClient(app)
 
-    # Mock the agent's arun method
-    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "Success without validation"}})()
+    # Request without token should still fail - token is always required
+    response = client.get("/agents")
+    assert response.status_code == 401
+    assert "Authorization header missing" in response.json()["detail"]
 
-    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
-        mock_arun.return_value = mock_run_output
+    # Request with token (any signature) should work since validate=False
+    payload = {
+        "sub": "test_user_123",
+        "scopes": ["agents:read"],
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+    }
+    token = jwt.encode(payload, "any-secret-doesnt-matter", algorithm="HS256")
 
-        # Request without token should succeed when validation is disabled
-        response = client.post(
-            "/agents/jwt-test-agent/runs",
-            data={
-                "message": "This should work without token",
-                "stream": "false",
-            },
-        )
-
-        assert response.status_code == 200, response.json()
-        mock_arun.assert_called_once()
+    response = client.get("/agents", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
 
 
 def test_custom_claims_configuration(jwt_test_agent):
@@ -1464,3 +1455,82 @@ def test_wildcard_scope_grants_resource_access(jwt_test_agent):
         )
 
         assert response.status_code == 200
+
+
+
+
+def test_validate_false_extracts_scopes(jwt_test_agent):
+    """Test that validate=False still extracts scopes from token."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    @app.get("/test-scopes")
+    async def test_endpoint(request: Request):
+        return {
+            "authenticated": getattr(request.state, "authenticated", None),
+            "scopes": getattr(request.state, "scopes", None),
+            "user_id": getattr(request.state, "user_id", None),
+        }
+
+    app.add_middleware(
+        JWTMiddleware,
+        validate=False,
+        user_id_claim="sub",
+        scope_mappings={
+            "GET /test-scopes": [],
+        },
+    )
+
+    client = TestClient(app)
+
+    payload = {
+        "sub": "test_user_123",
+        "scopes": ["agents:read", "agents:run"],
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, "any-secret", algorithm="HS256")
+
+    response = client.get("/test-scopes", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["authenticated"] is True
+    assert data["scopes"] == ["agents:read", "agents:run"]
+    assert data["user_id"] == "test_user_123"
+
+
+def test_validate_false_with_authorization_checks_scopes(jwt_test_agent):
+    """Test that validate=False with authorization=True still enforces scopes."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        validate=False,
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    # Token with no scopes should get 403
+    payload = {
+        "sub": "test_user_123",
+        "scopes": [],
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, "any-secret", algorithm="HS256")
+
+    response = client.get("/agents", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 403
+    assert "Insufficient permissions" in response.json()["detail"]
+
+    # Token with correct scopes should succeed
+    payload["scopes"] = ["agents:read"]
+    token = jwt.encode(payload, "any-secret", algorithm="HS256")
+
+    response = client.get("/agents", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
