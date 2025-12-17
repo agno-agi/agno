@@ -195,8 +195,6 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             )
         )
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         logger.error(f"Error executing workflow via WebSocket: {e}")
         error_payload = {
             "event": "error",

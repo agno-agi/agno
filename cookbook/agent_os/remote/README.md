@@ -47,18 +47,18 @@ Once the server is running, you can run any of the client examples:
 
 ```bash
 # Remote agent examples
-python cookbook/agent_os/remote/02_remote_agent.py
+python cookbook/agent_os/remote/01_remote_agent.py
 
 # Remote team examples
-python cookbook/agent_os/remote/03_remote_team.py
+python cookbook/agent_os/remote/02_remote_team.py
 
 # AgentOS gateway (combines remote and local agents)
-python cookbook/agent_os/remote/01_agent_os_gateway.py
+python cookbook/agent_os/remote/03_agent_os_gateway.py
 ```
 
 ## Examples
 
-### Remote Agent (`02_remote_agent.py`)
+### Remote Agent (`01_remote_agent.py`)
 
 Call agents hosted on a remote AgentOS instance:
 
@@ -89,7 +89,7 @@ async for chunk in agent.arun(
         print(chunk.content, end="", flush=True)
 ```
 
-### Remote Team (`03_remote_team.py`)
+### Remote Team (`02_remote_team.py`)
 
 Call teams hosted on a remote AgentOS instance:
 
@@ -111,7 +111,7 @@ response = await team.arun(
 print(response.content)
 ```
 
-### AgentOS Gateway (`01_agent_os_gateway.py`)
+### AgentOS Gateway (`03_agent_os_gateway.py`)
 
 Build a gateway that combines remote and local agents:
 
@@ -213,81 +213,3 @@ agent = Agent(model=OpenAIChat(id="gpt-4o"), tools=[...])
 # Production - same agent, remote execution
 agent = RemoteAgent(base_url=PRODUCTION_URL, agent_id="agent-id")
 ```
-
-## Key Features
-
-### Session & Memory Management
-
-Remote agents maintain sessions and memory on the server:
-
-```python
-agent = RemoteAgent(base_url="...", agent_id="assistant-agent")
-
-# First conversation
-await agent.arun("My name is Alice", session_id="session-1")
-
-# Later conversation - agent remembers
-await agent.arun("What's my name?", session_id="session-1")
-# Returns: "Your name is Alice"
-```
-
-### Streaming
-
-Full streaming support for real-time responses:
-
-```python
-async for chunk in agent.arun("Tell me a story", stream=True):
-    print(chunk.content, end="", flush=True)
-```
-
-### Tool Execution
-
-Tools are executed on the server, not the client:
-
-```python
-# Client side - no need to install tools
-agent = RemoteAgent(base_url="...", agent_id="researcher-agent")
-
-# Server side - tools installed and executed here
-agent = Agent(
-    id="researcher-agent",
-    tools=[DuckDuckGoTools(), BrowserTools()],
-)
-```
-
-## Best Practices
-
-1. **Use RemoteAgent for microservices** - Deploy agents as independent services
-2. **Keep sessions on the server** - Let the server manage memory and state
-3. **Handle network errors** - Wrap remote calls in try-except for resilience
-4. **Use connection pooling** - RemoteAgent reuses HTTP connections efficiently
-5. **Monitor server health** - AgentOS provides health check endpoints
-6. **Secure your endpoints** - Add authentication in production
-
-## Production Deployment
-
-For production use:
-
-```python
-from agno.db.postgres import PostgresDb
-
-# Server configuration
-agent_os = AgentOS(
-    agents=[agent],
-    db=PostgresDb(db_url=os.getenv("DATABASE_URL")),
-)
-
-# Run with production ASGI server
-agent_os.serve(
-    app="server:app",
-    host="0.0.0.0",
-    port=8000,
-    workers=4,
-)
-```
-
-## Learn More
-
-- [AgentOS Documentation](https://docs.agno.com/agentos)
-- [RemoteAgent API Reference](https://docs.agno.com/api/remote-agent)
-- [Deployment Guide](https://docs.agno.com/deployment)

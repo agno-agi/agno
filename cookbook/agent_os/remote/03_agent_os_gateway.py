@@ -2,6 +2,10 @@
 Example showing how to use an AgentOS instance as a gateway to remote agents, teams and workflows.
 
 Run `agent_os_setup.py` to start the remote AgentOS instance.
+
+# Note:
+- Remote Workflows via Websocket are not yet supported
+- If authorization is enabled on remote servers and all endpoints are protected, not all of the functions work correctly on the gateway. Specifically /config, /workflows, /workflows/{workflow_id}, /agents, /teams, /agent/{agent_id}, /team/{team_id} need to be unprotected for the gateway to work correctly.
 """
 
 from agno.agent import Agent, RemoteAgent
@@ -116,4 +120,4 @@ if __name__ == "__main__":
     """
     Run your AgentOS.
     """
-    agent_os.serve(app="01_agent_os_gateway:app", reload=True, port=7777)
+    agent_os.serve(app="03_agent_os_gateway:app", reload=True, port=7777)

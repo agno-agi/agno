@@ -3467,7 +3467,9 @@ class Workflow:
         run_id = run_id or str(uuid4())
         register_run(run_id)
 
-        if input is not None:
+        if input is None and self.input_schema is not None:
+            raise ValueError("Input is required when input_schema is provided")
+        if input is not None and self.input_schema is not None:
             input = validate_input(input, self.input_schema)
         if background:
             raise RuntimeError("Background execution is not supported for sync run()")
@@ -3580,7 +3582,7 @@ class Workflow:
     @overload
     async def arun(
         self,
-        input: Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]],
+        input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         run_id: Optional[str] = None,
@@ -3601,7 +3603,7 @@ class Workflow:
     @overload
     def arun(
         self,
-        input: Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]],
+        input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         run_id: Optional[str] = None,
@@ -3621,7 +3623,7 @@ class Workflow:
 
     def arun(  # type: ignore
         self,
-        input: Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]],
+        input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         run_id: Optional[str] = None,
@@ -3641,8 +3643,11 @@ class Workflow:
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
 
-        input = validate_input(input, self.input_schema)
-
+        if input is None and self.input_schema is not None:
+            raise ValueError("Input is required when input_schema is provided")
+        if input is not None and self.input_schema is not None:
+            input = validate_input(input, self.input_schema)
+            
         websocket_handler = None
         if websocket:
             from agno.workflow.types import WebSocketHandler
