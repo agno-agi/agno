@@ -651,7 +651,11 @@ class Milvus(VectorDb):
         return MILVUS_DISTANCE_MAP.get(self.distance, "COSINE")
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        search_params: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
         """
         Search for documents matching the query.
@@ -660,6 +664,10 @@ class Milvus(VectorDb):
             query (str): Query string to search for
             limit (int): Maximum number of results to return
             filters (Optional[Dict[str, Any]]): Filters to apply to the search
+            search_params (Optional[Dict[str, Any]]): Milvus search parameters including:
+                - radius (float): Minimum similarity threshold for range search
+                - range_filter (float): Maximum similarity threshold for range search
+                - params (dict): Index-specific search params (e.g., nprobe, ef)
 
         Returns:
             List[Document]: List of matching documents
@@ -681,6 +689,7 @@ class Milvus(VectorDb):
             filter=self._build_expr(filters),
             output_fields=["*"],
             limit=limit,
+            search_params=search_params,
         )
 
         # Build search results
@@ -708,8 +717,27 @@ class Milvus(VectorDb):
         return search_results
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        search_params: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
+        """
+        Asynchronously search for documents matching the query.
+
+        Args:
+            query (str): Query string to search for
+            limit (int): Maximum number of results to return
+            filters (Optional[Dict[str, Any]]): Filters to apply to the search
+            search_params (Optional[Dict[str, Any]]): Milvus search parameters including:
+                - radius (float): Minimum similarity threshold for range search
+                - range_filter (float): Maximum similarity threshold for range search
+                - params (dict): Index-specific search params (e.g., nprobe, ef)
+
+        Returns:
+            List[Document]: List of matching documents
+        """
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in Milvus. No filters will be applied.")
             filters = None
@@ -727,6 +755,7 @@ class Milvus(VectorDb):
             filter=self._build_expr(filters),
             output_fields=["*"],
             limit=limit,
+            search_params=search_params,
         )
 
         # Build search results
@@ -1073,7 +1102,7 @@ class Milvus(VectorDb):
             if isinstance(v, (list, tuple)):
                 # For array values, use json_contains_any
                 values_str = json.dumps(v)
-                expr = f'json_contains_any(meta_data, {values_str}, "{k}")'
+                expr = f'json_contains_any(meta_data["{k}"], {values_str})'
             elif isinstance(v, str):
                 # For string values
                 expr = f'meta_data["{k}"] == "{v}"'

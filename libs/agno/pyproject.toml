@@ -48,19 +48,19 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "mypy==1.18.2", 
-  "ruff==0.14.3", 
-  "pytest", 
-  "pytest-asyncio", 
-  "pytest-cov", 
-  "pytest-mock", 
-  "timeout-decorator", 
-  "types-pyyaml", 
-  "types-aiofiles", 
-  "fastapi", 
-  "uvicorn", 
-  "PyJWT", 
-  "mcp", 
+  "mypy==1.18.2",
+  "ruff==0.14.3",
+  "pytest",
+  "pytest-asyncio",
+  "pytest-cov",
+  "pytest-mock",
+  "timeout-decorator",
+  "types-pyyaml",
+  "types-aiofiles",
+  "fastapi",
+  "uvicorn",
+  "PyJWT",
+  "mcp",
   "openai"
 ]
 
@@ -293,6 +293,7 @@ vectordbs = [
   "agno[surrealdb]",
   "agno[upstash]",
   "agno[pylance]",
+  "agno[redis]",
 ]
 
 # All knowledge
