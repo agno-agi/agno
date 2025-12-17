@@ -36,6 +36,7 @@ A2A (Agent-to-Agent) is a standardized protocol for agent-to-agent communication
 | `05_connect_to_google_adk.py` | Connect to Google ADK A2A server |
 | `06_streaming_with_google_adk.py` | Streaming with Google ADK |
 | `07_multi_turn_with_google_adk.py` | Multi-turn conversations with ADK |
+| `08_remote_agent_a2a.py` | **RemoteAgent with A2A protocol** |
 | `servers/google_adk_server.py` | Google ADK A2A server |
 
 ## Quick Start
@@ -134,4 +135,32 @@ async with A2AClient("http://localhost:8001", json_rpc_endpoint="/") as client:
         message="Hello!"
     )
 ```
+
+## RemoteAgent with A2A Protocol
+
+For a more familiar interface, you can use `RemoteAgent` with `protocol="a2a"`:
+
+```python
+from agno.agent import RemoteAgent
+
+# Connect to Google ADK via A2A protocol
+agent = RemoteAgent(
+    base_url="http://localhost:8001",
+    agent_id="facts_agent",
+    protocol="a2a",
+    json_rpc_endpoint="/",  # Required for Google ADK
+)
+
+# Use the same interface as local agents
+result = await agent.arun("Tell me about the moon")
+print(result.content)
+
+# Streaming works too
+async for event in agent.arun("Tell me a story", stream=True):
+    print(event.content, end="")
+```
+
+**Protocol Options:**
+- `protocol="agentos"` (default): Use Agno's proprietary REST API
+- `protocol="a2a"`: Use A2A protocol for cross-framework communication
 

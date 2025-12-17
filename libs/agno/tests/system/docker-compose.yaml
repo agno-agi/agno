@@ -48,6 +48,28 @@ services:
     networks:
       - agno-test-network
 
+  # Google ADK A2A Server
+  adk-server:
+    build:
+      context: ../..
+      dockerfile: tests/system/Dockerfile.adk
+    container_name: system-test-adk
+    environment:
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      PORT: "8001"
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./adk_server.py:/app/adk_server.py
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-X", "POST", "-H", "Content-Type: application/json", "-d", "{\"jsonrpc\":\"2.0\",\"method\":\"agent/card\",\"id\":1}", "http://localhost:8001/"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
+    networks:
+      - agno-test-network
+
   # Gateway AgentOS Server (consumes remote agents via RemoteAgent, RemoteTeam, RemoteWorkflow)
   gateway-server:
     build:
@@ -57,6 +79,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://ai:ai@postgres:5432/ai
       REMOTE_SERVER_URL: http://remote-server:7002
+      ADK_SERVER_URL: http://adk-server:8001
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       RELOAD: "true"
     ports:
@@ -68,6 +91,8 @@ services:
       - ./gateway_server.py:/app/gateway_server.py
     depends_on:
       remote-server:
+        condition: service_healthy
+      adk-server:
         condition: service_healthy
       postgres:
         condition: service_healthy

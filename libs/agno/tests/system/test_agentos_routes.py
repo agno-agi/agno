@@ -17,7 +17,7 @@ REQUEST_TIMEOUT = 60.0  # seconds
 
 # Expected agents, teams, and workflows
 EXPECTED_LOCAL_AGENTS = ["gateway-agent"]
-EXPECTED_REMOTE_AGENTS = ["assistant-agent", "researcher-agent"]
+EXPECTED_REMOTE_AGENTS = ["assistant-agent", "researcher-agent", "facts_agent"]
 EXPECTED_ALL_AGENTS = EXPECTED_LOCAL_AGENTS + EXPECTED_REMOTE_AGENTS
 
 EXPECTED_REMOTE_TEAMS = ["research-team"]

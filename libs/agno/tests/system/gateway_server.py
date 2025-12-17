@@ -75,6 +75,7 @@ local_workflow = Workflow(
 # =============================================================================
 
 REMOTE_SERVER_URL = os.getenv("REMOTE_SERVER_URL", "http://remote-server:7002")
+ADK_SERVER_URL = os.getenv("ADK_SERVER_URL", "http://adk-server:8001")
 
 # =============================================================================
 # AgentOS Configuration
@@ -87,6 +88,12 @@ agent_os = AgentOS(
         local_agent,
         RemoteAgent(base_url=REMOTE_SERVER_URL, agent_id="assistant-agent"),
         RemoteAgent(base_url=REMOTE_SERVER_URL, agent_id="researcher-agent"),
+        RemoteAgent(
+            base_url=ADK_SERVER_URL,
+            agent_id="facts_agent",
+            protocol="a2a",
+            json_rpc_endpoint="/",
+        ),
     ],
     teams=[
         RemoteTeam(base_url=REMOTE_SERVER_URL, team_id="research-team"),

@@ -23,3 +23,9 @@ def gateway_url() -> str:
 def remote_url() -> str:
     """Get the remote server URL from environment or use default."""
     return os.getenv("REMOTE_SERVER_URL", "http://localhost:7002")
+
+
+@pytest.fixture(scope="session")
+def adk_url() -> str:
+    """Get the Google ADK server URL from environment or use default."""
+    return os.getenv("ADK_SERVER_URL", "http://localhost:8001")

@@ -14,6 +14,7 @@ from agno.utils.agent import validate_input
 from agno.utils.remote import serialize_input
 
 if TYPE_CHECKING:
+    from agno.a2a import A2AClient
     from agno.os.routers.agents.schema import AgentResponse
 
 
@@ -24,30 +25,71 @@ class RemoteAgent(BaseRemote):
         base_url: str,
         agent_id: str,
         timeout: float = 60.0,
+        protocol: Literal["agentos", "a2a"] = "agentos",
+        json_rpc_endpoint: Optional[str] = None,
     ):
-        """Initialize AgentOSRunner for local or remote execution.
+        """Initialize RemoteAgent for remote execution.
 
-        For remote execution, provide base_url and agent_id.
+        Supports two protocols:
+        - "agentos": Agno's proprietary AgentOS REST API (default)
+        - "a2a": A2A (Agent-to-Agent) protocol for cross-framework communication
 
         Args:
-            base_url: Base URL for remote AgentOS instance (e.g., "http://localhost:7777")
-            agent_id: ID of remote agent
+            base_url: Base URL for remote instance (e.g., "http://localhost:7777")
+            agent_id: ID of remote agent on the remote server
             timeout: Request timeout in seconds (default: 60)
+            protocol: Communication protocol - "agentos" (default) or "a2a"
+            json_rpc_endpoint: For A2A protocol only - endpoint for JSON-RPC calls.
+                Use "/" for Google ADK servers. If None, uses REST-style endpoints.
         """
         super().__init__(base_url, timeout)
         self.agent_id = agent_id
+        self.protocol = protocol
+        self.json_rpc_endpoint = json_rpc_endpoint
+
+        # Initialize A2A client if using A2A protocol
+        self._a2a_client: Optional["A2AClient"] = None
+        if protocol == "a2a":
+            from agno.a2a import A2AClient
+
+            self._a2a_client = A2AClient(
+                base_url=base_url,
+                timeout=int(timeout),
+                json_rpc_endpoint=json_rpc_endpoint,
+            )
 
     @property
     def id(self) -> str:
         return self.agent_id
 
     async def get_agent_config(self) -> "AgentResponse":
-        """Get the agent config from remote, cached after first access."""
+        """Get the agent config from remote, cached after first access.
+
+        For A2A protocol, returns a minimal AgentResponse since A2A servers
+        don't expose the same config endpoints as AgentOS.
+        """
+        from agno.os.routers.agents.schema import AgentResponse
+
+        # A2A protocol doesn't have agent config endpoint - return minimal response
+        if self.protocol == "a2a":
+            return AgentResponse(
+                id=self.agent_id,
+                name=self.agent_id,
+                description=f"A2A agent: {self.agent_id}",
+            )
+
         return await self.client.aget_agent(self.agent_id)
 
     @cached_property
-    def _agent_config(self) -> "AgentResponse":
-        """Get the agent config from remote, cached after first access."""
+    def _agent_config(self) -> Optional["AgentResponse"]:
+        """Get the agent config from remote, cached after first access.
+
+        Returns None for A2A protocol since A2A servers don't expose agent config endpoints.
+        """
+        # A2A protocol doesn't have agent config endpoint
+        if self.protocol == "a2a":
+            return None
+
         from agno.os.routers.agents.schema import AgentResponse
 
         config: AgentResponse = self.client.get_agent(self.agent_id)
@@ -121,7 +163,10 @@ class RemoteAgent(BaseRemote):
         return False
 
     @cached_property
-    def model(self) -> Model:
+    def model(self) -> Optional[Model]:
+        if self._agent_config is None:
+            return None
+
         from agno.models.utils import get_model
 
         model_response = self._agent_config.model
@@ -129,7 +174,7 @@ class RemoteAgent(BaseRemote):
         return get_model(model_str)
 
     async def aget_tools(self, **kwargs: Any) -> List[Dict]:
-        if self._agent_config.tools is not None:
+        if self._agent_config is not None and self._agent_config.tools is not None:
             return self._agent_config.tools
         return []
 
@@ -208,6 +253,18 @@ class RemoteAgent(BaseRemote):
         validated_input = validate_input(input)
         serialized_input = serialize_input(validated_input)
 
+        # A2A protocol path
+        if self.protocol == "a2a":
+            return self._arun_a2a(
+                message=serialized_input,
+                stream=stream or False,
+                user_id=user_id,
+                context_id=session_id,  # Map session_id → context_id for A2A
+                images=images,
+                files=files,
+            )
+
+        # AgentOS protocol path (default)
         if stream:
             # Handle streaming response
             return self.get_client().run_agent_stream(
@@ -251,6 +308,79 @@ class RemoteAgent(BaseRemote):
                 metadata=metadata,
                 **kwargs,
             )
+
+    def _arun_a2a(
+        self,
+        message: str,
+        stream: bool,
+        user_id: Optional[str],
+        context_id: Optional[str],
+        images: Optional[Sequence[Image]],
+        files: Optional[Sequence[File]],
+    ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
+        """Execute via A2A protocol.
+
+        Args:
+            message: Serialized message string
+            stream: Whether to stream the response
+            user_id: User identifier
+            context_id: Session/context ID (maps to session_id)
+            images: Images to include
+            files: Files to include
+
+        Returns:
+            RunOutput for non-streaming, AsyncIterator[RunOutputEvent] for streaming
+        """
+        from agno.a2a.utils import map_stream_events_to_run_events, map_task_result_to_run_output
+
+        if self._a2a_client is None:
+            raise RuntimeError("A2A client not initialized. Use protocol='a2a' to enable A2A support.")
+
+        if stream:
+            # Return async generator for streaming
+            event_stream = self._a2a_client.stream_message(
+                agent_id=self.agent_id,
+                message=message,
+                context_id=context_id,
+                user_id=user_id,
+                images=list(images) if images else None,
+                files=list(files) if files else None,
+            )
+            return map_stream_events_to_run_events(event_stream, agent_id=self.agent_id)
+        else:
+            # Return coroutine for non-streaming
+            return self._arun_a2a_send(
+                message=message,
+                user_id=user_id,
+                context_id=context_id,
+                images=images,
+                files=files,
+            )
+
+    async def _arun_a2a_send(
+        self,
+        message: str,
+        user_id: Optional[str],
+        context_id: Optional[str],
+        images: Optional[Sequence[Image]],
+        files: Optional[Sequence[File]],
+    ) -> RunOutput:
+        """Send a non-streaming A2A message and convert response to RunOutput."""
+        from agno.a2a.utils import map_task_result_to_run_output
+
+        if self._a2a_client is None:
+            raise RuntimeError("A2A client not initialized.")
+
+        async with self._a2a_client:
+            task_result = await self._a2a_client.send_message(
+                agent_id=self.agent_id,
+                message=message,
+                context_id=context_id,
+                user_id=user_id,
+                images=list(images) if images else None,
+                files=list(files) if files else None,
+            )
+        return map_task_result_to_run_output(task_result, agent_id=self.agent_id)
 
     @overload
     async def acontinue_run(

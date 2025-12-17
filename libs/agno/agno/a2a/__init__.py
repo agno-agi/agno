@@ -33,6 +33,7 @@ from agno.a2a.exceptions import (
     A2ATimeoutError,
 )
 from agno.a2a.schemas import AgentCard, Artifact, StreamEvent, TaskResult
+from agno.a2a.utils import map_stream_events_to_run_events, map_task_result_to_run_output
 
 __all__ = [
     # Client
@@ -42,6 +43,9 @@ __all__ = [
     "Artifact",
     "StreamEvent",
     "TaskResult",
+    # Utils
+    "map_task_result_to_run_output",
+    "map_stream_events_to_run_events",
     # Exceptions
     "A2AError",
     "A2AConnectionError",
