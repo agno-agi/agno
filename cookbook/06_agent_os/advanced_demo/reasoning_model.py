@@ -1,0 +1,38 @@
+"""
+Test script for streaming reasoning content.
+
+This demonstrates the new streaming reasoning feature where reasoning content
+is streamed as it arrives instead of all at once.
+"""
+
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.run.agent import RunEvent  # noqa
+from agno.os import AgentOS
+
+# Create an agent with reasoning enabled
+agent = Agent(
+    reasoning_model=Claude(
+        id="claude-sonnet-4-5",
+        thinking={"type": "enabled", "budget_tokens": 1024},
+    ),
+    reasoning=True,
+    instructions="Think step by step about the problem.",
+)
+
+# Setup our AgentOS app
+agent_os = AgentOS(
+    description="Reasoning model streaming",
+    agents=[agent],
+)
+app = agent_os.get_app()
+
+
+if __name__ == "__main__":
+    """Run your AgentOS.
+
+    You can see the configuration and available apps at:
+    http://localhost:7777/config
+
+    """
+    agent_os.serve(app="reasoning_model:app", reload=True) 
