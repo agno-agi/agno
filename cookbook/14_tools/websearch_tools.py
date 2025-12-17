@@ -15,7 +15,9 @@ agent_all = Agent(tools=[WebSearchTools(all=True)])
 news_agent = Agent(
     tools=[WebSearchTools(enable_search=False, enable_news=True)],
     description="You are a news agent that helps users find the latest news.",
-    instructions=["Given a topic by the user, respond with the latest news about that topic."],
+    instructions=[
+        "Given a topic by the user, respond with the latest news about that topic."
+    ],
 )
 
 # Example 4: Use DuckDuckGo backend explicitly
