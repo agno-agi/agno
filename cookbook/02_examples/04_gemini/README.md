@@ -118,7 +118,7 @@ Agno provides a web interface for interacting with agents. Start the server:
 python cookbook/02_examples/04_gemini/run.py
 ```
 
-Then visit [os.agno.com](https://os.agno.com) and add `http://localhost:7777` as an endpoint.
+Then visit [os.agno.com](https://os.agno.com?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-flash&utm_term=gemini-flash) and add `http://localhost:7777` as an endpoint.
 
 ---
 
@@ -182,7 +182,7 @@ cookbook/02_examples/04_gemini/
 
 ## Learn More
 
-- [Agno Documentation](https://docs.agno.com)
-- [Gemini Native Features](https://docs.agno.com/integrations/models/native/google/overview)
-- [Session State Guide](https://docs.agno.com/basics/state/agent)
-- [Agent OS](https://docs.agno.com/agent-os/overview)
+- [Agno Documentation](https://docs.agno.com/?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-flash&utm_term=gemini-flash)
+- [Gemini Native Features](https://docs.agno.com/integrations/models/native/google/overview?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-flash&utm_term=gemini-flash)
+- [Session State Guide](https://docs.agno.com/basics/state/agent?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-flash&utm_term=gemini-flash)
+- [Agent OS Overview](https://docs.agno.com/agent-os/overview?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-flash&utm_term=gemini-flash)
