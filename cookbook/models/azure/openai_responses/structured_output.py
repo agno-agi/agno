@@ -12,8 +12,9 @@ Required environment variables:
 from typing import List
 
 from pydantic import BaseModel, Field
+from rich.pretty import pprint
 
-from agno.agent import Agent
+from agno.agent import Agent, RunOutput
 from agno.models.azure import AzureOpenAIResponses
 
 
@@ -30,8 +31,10 @@ class MovieScript(BaseModel):
 
 agent = Agent(
     model=AzureOpenAIResponses(id="gpt-4o"),
-    description="You are a Hollywood screenwriter.",
-    response_model=MovieScript,
+    description="You help people write movie scripts.",
+    output_schema=MovieScript,
 )
 
-agent.print_response("Write a movie about robots taking over the world")
+# Get the response in a variable
+run: RunOutput = agent.run("New York")
+pprint(run.content)

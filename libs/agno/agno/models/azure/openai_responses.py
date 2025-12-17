@@ -44,7 +44,8 @@ class AzureOpenAIResponses(OpenAIResponses):
     provider: str = "Azure"
 
     # Azure-specific parameters
-    api_version: Optional[str] = "2024-10-21"
+    # Note: Responses API requires api-version 2025-03-01-preview or later
+    api_version: Optional[str] = "2025-03-01-preview"
     azure_endpoint: Optional[str] = None
     azure_deployment: Optional[str] = None
     azure_ad_token: Optional[str] = None

@@ -16,7 +16,6 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 agent = Agent(
     model=AzureOpenAIResponses(id="gpt-4o"),
     tools=[DuckDuckGoTools()],
-    show_tool_calls=True,
     markdown=True,
 )
 
