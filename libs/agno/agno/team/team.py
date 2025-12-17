@@ -3864,7 +3864,7 @@ class Team:
 
         # Convert the response to the structured format if needed
         if output_schema is not None:
-            # Handle dict schema - parse JSON directly
+            # If the output schema is a dict, do not convert it into a BaseModel
             if isinstance(output_schema, dict):
                 if isinstance(run_response.content, dict):
                     # Content is already a dict - just set content_type
@@ -3878,7 +3878,7 @@ class Team:
                             run_response.content_type = "dict"
                     else:
                         log_warning("Failed to parse JSON response")
-            # Handle Pydantic schema
+            # If the output schema is a Pydantic model and parse_response is True, parse it into a BaseModel
             elif not isinstance(run_response.content, output_schema):
                 if isinstance(run_response.content, str) and self.parse_response:
                     try:
