@@ -67,6 +67,18 @@ class RemoteAgent(BaseRemote):
         return ""
 
     @cached_property
+    def role(self) -> Optional[str]:
+        if self._agent_config is not None:
+            return self._agent_config.role
+        return None
+    
+    @cached_property
+    def tools(self) -> Optional[List[Dict[str, Any]]]:
+        if self._agent_config is not None:
+            return self._agent_config.tools
+        return None
+
+    @cached_property
     def db(self) -> Optional[RemoteDb]:
         if self._agent_config is not None and self._agent_config.db_id is not None:
             config = self._config

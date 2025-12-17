@@ -20,6 +20,7 @@ class AgentResponse(BaseModel):
     name: Optional[str] = None
     db_id: Optional[str] = None
     description: Optional[str] = None
+    role: Optional[str] = None
     model: Optional[ModelResponse] = None
     tools: Optional[Dict[str, Any]] = None
     sessions: Optional[Dict[str, Any]] = None
@@ -254,6 +255,7 @@ class AgentResponse(BaseModel):
             name=agent.name,
             db_id=agent.db.id if agent.db else None,
             description=agent.description,
+            role=agent.role,
             model=ModelResponse(**_agent_model_data) if _agent_model_data else None,
             tools=filter_meaningful_config(tools_info, {}),
             sessions=filter_meaningful_config(sessions_info, agent_defaults),

@@ -21,6 +21,7 @@ class TeamResponse(BaseModel):
     name: Optional[str] = None
     db_id: Optional[str] = None
     description: Optional[str] = None
+    role: Optional[str] = None
     model: Optional[ModelResponse] = None
     tools: Optional[Dict[str, Any]] = None
     sessions: Optional[Dict[str, Any]] = None
@@ -246,6 +247,7 @@ class TeamResponse(BaseModel):
             name=team.name,
             db_id=team.db.id if team.db else None,
             description=team.description,
+            role=team.role,
             model=ModelResponse(**_team_model_data) if _team_model_data else None,
             tools=filter_meaningful_config(tools_info, {}),
             sessions=filter_meaningful_config(sessions_info, team_defaults),

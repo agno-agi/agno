@@ -5607,6 +5607,10 @@ class Team:
                             system_message_content += f"{indent * ' '}    - {_tool.name}\n"
                         elif callable(_tool):
                             system_message_content += f"{indent * ' '}    - {_tool.__name__}\n"
+                        elif "name" in _tool and _tool["name"] is not None:
+                            system_message_content += f"{indent * ' '}    - {_tool['name']}\n"
+                        else:
+                            system_message_content += f"{indent * ' '}    - {str(_tool)}\n"
 
         return system_message_content
 
@@ -7484,7 +7488,7 @@ class Team:
 
             # 7. Add member-level history for the member if enabled (because we won't load the session for the member, so history won't be loaded automatically)
             history = None
-            if member_agent.add_history_to_context:
+            if hasattr(member_agent, "add_history_to_context") and member_agent.add_history_to_context:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
                     if isinstance(member_agent_task, str):
