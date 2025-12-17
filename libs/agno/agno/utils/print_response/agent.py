@@ -141,6 +141,12 @@ def print_response_stream(
                                 log_warning(f"Failed to convert response to JSON: {e}")
                     if hasattr(response_event, "reasoning_content") and response_event.reasoning_content is not None:  # type: ignore
                         _response_reasoning_content += response_event.reasoning_content  # type: ignore
+
+                # Handle streaming reasoning content delta events
+                if response_event.event == RunEvent.reasoning_content_delta:  # type: ignore
+                    if hasattr(response_event, "reasoning_content") and response_event.reasoning_content is not None:  # type: ignore
+                        _response_reasoning_content += response_event.reasoning_content  # type: ignore
+
                 if hasattr(response_event, "reasoning_steps") and response_event.reasoning_steps is not None:  # type: ignore
                     reasoning_steps = response_event.reasoning_steps  # type: ignore
 
@@ -331,6 +337,11 @@ async def aprint_response_stream(
                         except Exception as e:
                             log_warning(f"Failed to convert response to JSON: {e}")
                     if resp.reasoning_content is not None:  # type: ignore
+                        _response_reasoning_content += resp.reasoning_content  # type: ignore
+
+                # Handle streaming reasoning content delta events
+                if resp.event == RunEvent.reasoning_content_delta:  # type: ignore
+                    if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:  # type: ignore
                         _response_reasoning_content += resp.reasoning_content  # type: ignore
 
                 if hasattr(resp, "reasoning_steps") and resp.reasoning_steps is not None:  # type: ignore
