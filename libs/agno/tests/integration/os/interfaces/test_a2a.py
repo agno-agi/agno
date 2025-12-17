@@ -794,7 +794,9 @@ def test_a2a_user_id_from_header(test_agent: Agent, test_client: TestClient):
             },
         }
 
-        response = test_client.post(f"/a2a/agents/{test_agent.id}/v1/message:send", json=request_body, headers={"X-User-ID": "user-456"})
+        response = test_client.post(
+            f"/a2a/agents/{test_agent.id}/v1/message:send", json=request_body, headers={"X-User-ID": "user-456"}
+        )
 
         assert response.status_code == 200
         mock_arun.assert_called_once()
@@ -1069,7 +1071,9 @@ def test_a2a_user_id_in_response_metadata(test_agent: Agent, test_client: TestCl
             },
         }
 
-        response = test_client.post(f"/a2a/agents/{test_agent.id}/v1/message:send", json=request_body, headers={"X-User-ID": "user-456"})
+        response = test_client.post(
+            f"/a2a/agents/{test_agent.id}/v1/message:send", json=request_body, headers={"X-User-ID": "user-456"}
+        )
 
         assert response.status_code == 200
         data = response.json()

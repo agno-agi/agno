@@ -10,6 +10,7 @@ These tests verify that when an agent is cancelled mid-execution:
 import pytest
 
 from agno.agent.agent import Agent
+from agno.exceptions import RunCancelledException
 from agno.models.openai import OpenAIChat
 from agno.run.agent import RunCancelledEvent
 from agno.run.base import RunStatus
