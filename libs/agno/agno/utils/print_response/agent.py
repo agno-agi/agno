@@ -134,6 +134,11 @@ def print_response_stream(
                                 )
                             except Exception as e:
                                 log_warning(f"Failed to convert response to JSON: {e}")
+                        elif agent.output_schema is not None and isinstance(response_event.content, dict):
+                            try:
+                                response_content_batch = JSON(json.dumps(response_event.content), indent=2)  # type: ignore
+                            except Exception as e:
+                                log_warning(f"Failed to convert response to JSON: {e}")
                         else:
                             try:
                                 response_content_batch = JSON(json.dumps(response_event.content), indent=4)
@@ -141,6 +146,12 @@ def print_response_stream(
                                 log_warning(f"Failed to convert response to JSON: {e}")
                     if hasattr(response_event, "reasoning_content") and response_event.reasoning_content is not None:  # type: ignore
                         _response_reasoning_content += response_event.reasoning_content  # type: ignore
+
+                # Handle streaming reasoning content delta events
+                if response_event.event == RunEvent.reasoning_content_delta:  # type: ignore
+                    if hasattr(response_event, "reasoning_content") and response_event.reasoning_content is not None:  # type: ignore
+                        _response_reasoning_content += response_event.reasoning_content  # type: ignore
+
                 if hasattr(response_event, "reasoning_steps") and response_event.reasoning_steps is not None:  # type: ignore
                     reasoning_steps = response_event.reasoning_steps  # type: ignore
 
@@ -325,12 +336,22 @@ async def aprint_response_stream(
                             response_content_batch = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                         except Exception as e:
                             log_warning(f"Failed to convert response to JSON: {e}")
+                    elif agent.output_schema is not None and isinstance(resp.content, dict):
+                        try:
+                            response_content_batch = JSON(json.dumps(resp.content), indent=2)  # type: ignore
+                        except Exception as e:
+                            log_warning(f"Failed to convert response to JSON: {e}")
                     else:
                         try:
                             response_content_batch = JSON(json.dumps(resp.content), indent=4)
                         except Exception as e:
                             log_warning(f"Failed to convert response to JSON: {e}")
                     if resp.reasoning_content is not None:  # type: ignore
+                        _response_reasoning_content += resp.reasoning_content  # type: ignore
+
+                # Handle streaming reasoning content delta events
+                if resp.event == RunEvent.reasoning_content_delta:  # type: ignore
+                    if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:  # type: ignore
                         _response_reasoning_content += resp.reasoning_content  # type: ignore
 
                 if hasattr(resp, "reasoning_steps") and resp.reasoning_steps is not None:  # type: ignore
@@ -881,6 +902,11 @@ def build_panels(
         elif output_schema is not None and isinstance(run_response.content, BaseModel):
             try:
                 response_content_batch = JSON(run_response.content.model_dump_json(exclude_none=True), indent=2)
+            except Exception as e:
+                log_warning(f"Failed to convert response to JSON: {e}")
+        elif output_schema is not None and isinstance(run_response.content, dict):
+            try:
+                response_content_batch = JSON(json.dumps(run_response.content), indent=2)
             except Exception as e:
                 log_warning(f"Failed to convert response to JSON: {e}")
         else:

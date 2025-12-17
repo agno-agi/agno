@@ -197,8 +197,21 @@ class TeamResponse(BaseModel):
             "resolve_in_context": team.resolve_in_context,
         }
 
+        # Handle output_schema name for both Pydantic models and JSON schemas
+        output_schema_name = None
+        if team.output_schema is not None:
+            if isinstance(team.output_schema, dict):
+                if "json_schema" in team.output_schema:
+                    output_schema_name = team.output_schema["json_schema"].get("name", "JSONSchema")
+                elif "schema" in team.output_schema and isinstance(team.output_schema["schema"], dict):
+                    output_schema_name = team.output_schema["schema"].get("title", "JSONSchema")
+                else:
+                    output_schema_name = team.output_schema.get("title", "JSONSchema")
+            elif hasattr(team.output_schema, "__name__"):
+                output_schema_name = team.output_schema.__name__
+
         response_settings_info: Dict[str, Any] = {
-            "output_schema_name": team.output_schema.__name__ if team.output_schema else None,
+            "output_schema_name": output_schema_name,
             "parser_model_prompt": team.parser_model_prompt,
             "parse_response": team.parse_response,
             "use_json_mode": team.use_json_mode,

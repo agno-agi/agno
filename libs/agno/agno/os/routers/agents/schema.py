@@ -215,11 +215,24 @@ class AgentResponse(BaseModel):
             "build_user_context": agent.build_user_context,
         }
 
+        # Handle output_schema name for both Pydantic models and JSON schemas
+        output_schema_name = None
+        if agent.output_schema is not None:
+            if isinstance(agent.output_schema, dict):
+                if "json_schema" in agent.output_schema:
+                    output_schema_name = agent.output_schema["json_schema"].get("name", "JSONSchema")
+                elif "schema" in agent.output_schema and isinstance(agent.output_schema["schema"], dict):
+                    output_schema_name = agent.output_schema["schema"].get("title", "JSONSchema")
+                else:
+                    output_schema_name = agent.output_schema.get("title", "JSONSchema")
+            elif hasattr(agent.output_schema, "__name__"):
+                output_schema_name = agent.output_schema.__name__
+
         response_settings_info: Dict[str, Any] = {
             "retries": agent.retries,
             "delay_between_retries": agent.delay_between_retries,
             "exponential_backoff": agent.exponential_backoff,
-            "output_schema_name": agent.output_schema.__name__ if agent.output_schema else None,
+            "output_schema_name": output_schema_name,
             "parser_model_prompt": agent.parser_model_prompt,
             "parse_response": agent.parse_response,
             "structured_outputs": agent.structured_outputs,
