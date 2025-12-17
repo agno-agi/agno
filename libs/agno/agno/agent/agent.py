@@ -172,7 +172,7 @@ from agno.utils.response import (
     get_paused_content,
 )
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import generate_id_from_name, parse_response_model_str
+from agno.utils.string import generate_id_from_name, parse_response_dict_str, parse_response_model_str
 from agno.utils.timer import Timer
 
 
@@ -368,8 +368,9 @@ class Agent:
     # --- Agent Response Model Settings ---
     # Provide an input schema to validate the input
     input_schema: Optional[Type[BaseModel]] = None
-    # Provide a response model to get the response as a Pydantic model
-    output_schema: Optional[Type[BaseModel]] = None
+    # Provide a response model to get the response in the implied format.
+    # You can use a Pydantic model or a JSON fitting the provider's expected schema.
+    output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
     # Provide a secondary model to parse the response from the primary model
     parser_model: Optional[Model] = None
     # Provide a prompt for the parser model
@@ -521,7 +522,7 @@ class Agent:
         parser_model: Optional[Union[Model, str]] = None,
         parser_model_prompt: Optional[str] = None,
         input_schema: Optional[Type[BaseModel]] = None,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         parse_response: bool = True,
         output_model: Optional[Union[Model, str]] = None,
         output_model_prompt: Optional[str] = None,
@@ -1549,7 +1550,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput: ...
@@ -1577,7 +1578,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         debug_mode: Optional[bool] = None,
@@ -1606,7 +1607,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
@@ -2739,7 +2740,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput: ...
@@ -2766,7 +2767,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
@@ -2795,7 +2796,7 @@ class Agent:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
@@ -4823,22 +4824,34 @@ class Agent:
         output_schema = run_context.output_schema if run_context else None
 
         # Convert the response to the structured format if needed
-        if output_schema is not None and not isinstance(run_response.content, output_schema):
-            if isinstance(run_response.content, str) and self.parse_response:
-                try:
-                    structured_output = parse_response_model_str(run_response.content, output_schema)
-
-                    # Update RunOutput
-                    if structured_output is not None:
-                        run_response.content = structured_output
+        if output_schema is not None:
+            # If the output schema is a dict, do not convert it into a BaseModel
+            if isinstance(output_schema, dict):
+                if isinstance(run_response.content, str):
+                    parsed_dict = parse_response_dict_str(run_response.content)
+                    if parsed_dict is not None:
+                        run_response.content = parsed_dict
                         if isinstance(run_response, RunOutput):
-                            run_response.content_type = output_schema.__name__
+                            run_response.content_type = "dict"
                     else:
-                        log_warning("Failed to convert response to output_schema")
-                except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
-            else:
-                log_warning("Something went wrong. Run response content is not a string")
+                        log_warning("Failed to parse JSON response against the provided output schema.")
+            # If the output schema is a Pydantic model and parse_response is True, parse it into a BaseModel
+            elif not isinstance(run_response.content, output_schema):
+                if isinstance(run_response.content, str) and self.parse_response:
+                    try:
+                        structured_output = parse_response_model_str(run_response.content, output_schema)
+
+                        # Update RunOutput
+                        if structured_output is not None:
+                            run_response.content = structured_output
+                            if isinstance(run_response, RunOutput):
+                                run_response.content_type = output_schema.__name__
+                        else:
+                            log_warning("Failed to convert response to output_schema")
+                    except Exception as e:
+                        log_warning(f"Failed to convert response to output model: {e}")
+                else:
+                    log_warning("Something went wrong. Run response content is not a string")
 
     def _handle_external_execution_update(self, run_messages: RunMessages, tool: ToolExecution):
         self.model = cast(Model, self.model)
@@ -5187,7 +5200,7 @@ class Agent:
                 # Update the run_response content with the structured output
                 run_response.content = model_response.parsed
                 # Update the run_response content_type with the structured output class name
-                run_response.content_type = output_schema.__name__
+                run_response.content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__
         else:
             # Update the run_response content with the model response content
             run_response.content = model_response.content
@@ -5473,7 +5486,7 @@ class Agent:
 
                         # Get output_schema from run_context
                         output_schema = run_context.output_schema if run_context else None
-                        content_type = output_schema.__name__  # type: ignore
+                        content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
                         run_response.content = model_response.content
                         run_response.content_type = content_type
                     else:
@@ -6243,6 +6256,10 @@ class Agent:
             elif model.supports_json_schema_outputs:
                 if self.use_json_mode or (not self.structured_outputs):
                     log_debug("Setting Model.response_format to JSON response mode")
+                    # Handle JSON schema - pass through directly (user provides full provider format)
+                    if isinstance(output_schema, dict):
+                        return output_schema
+                    # Handle Pydantic schema
                     return {
                         "type": "json_schema",
                         "json_schema": {
@@ -7655,8 +7672,8 @@ class Agent:
         ):
             system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
 
-        # 3.3.14 Add the response model format prompt if output_schema is provided
-        if output_schema is not None and self.parser_model is not None:
+        # 3.3.14 Add the response model format prompt if output_schema is provided (Pydantic only)
+        if output_schema is not None and self.parser_model is not None and not isinstance(output_schema, dict):
             system_message_content += f"{get_response_model_format_prompt(output_schema)}"
 
         # 3.3.15 Add the session state to the system message
@@ -8002,8 +8019,8 @@ class Agent:
         ):
             system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
 
-        # 3.3.14 Add the response model format prompt if output_schema is provided
-        if output_schema is not None and self.parser_model is not None:
+        # 3.3.14 Add the response model format prompt if output_schema is provided (Pydantic only)
+        if output_schema is not None and self.parser_model is not None and not isinstance(output_schema, dict):
             system_message_content += f"{get_response_model_format_prompt(output_schema)}"
 
         # 3.3.15 Add the session state to the system message

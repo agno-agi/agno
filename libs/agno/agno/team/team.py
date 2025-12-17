@@ -170,7 +170,7 @@ from agno.utils.response import (
     generator_wrapper,
 )
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import generate_id_from_name, parse_response_model_str
+from agno.utils.string import generate_id_from_name, parse_response_dict_str, parse_response_model_str
 from agno.utils.team import (
     add_interaction_to_team_run_context,
     format_member_agent_task,
@@ -367,8 +367,9 @@ class Team:
     # --- Structured output ---
     # Input schema for validating input
     input_schema: Optional[Type[BaseModel]] = None
-    # Output schema for the team response
-    output_schema: Optional[Type[BaseModel]] = None
+    # Provide a response model to get the response in the implied format.
+    # You can use a Pydantic model or a JSON fitting the provider's expected schema.
+    output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
     # Provide a secondary model to parse the response from the primary model
     parser_model: Optional[Model] = None
     # Provide a prompt for the parser model
@@ -532,7 +533,7 @@ class Team:
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         input_schema: Optional[Type[BaseModel]] = None,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         parser_model: Optional[Union[Model, str]] = None,
         parser_model_prompt: Optional[str] = None,
         output_model: Optional[Union[Model, str]] = None,
@@ -732,7 +733,7 @@ class Team:
         self._tool_instructions: Optional[List[str]] = None
 
         # True if we should parse a member response model
-        self._member_response_model: Optional[Type[BaseModel]] = None
+        self._member_response_model: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 
         self._formatter: Optional[SafeFormatter] = None
 
@@ -1973,7 +1974,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
 
@@ -2003,7 +2004,7 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
 
@@ -2032,7 +2033,7 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team and return the response."""
@@ -3048,7 +3049,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
 
@@ -3078,7 +3079,7 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
 
@@ -3107,7 +3108,7 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team asynchronously and return the response."""
@@ -3302,7 +3303,7 @@ class Team:
             # Update the run_response content with the structured output
             run_response.content = model_response.parsed
             # Update the run_response content_type with the structured output class name
-            run_response.content_type = output_schema.__name__
+            run_response.content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__
         else:
             # Update the run_response content with the model response content
             if not run_response.content:
@@ -3601,12 +3602,16 @@ class Team:
                         self._convert_response_to_structured_format(full_model_response, run_context=run_context)
                         # Get output_schema from run_context
                         output_schema = run_context.output_schema if run_context else None
-                        content_type = output_schema.__name__  # type: ignore
+                        content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
                         run_response.content_type = content_type
                     elif self._member_response_model is not None:
                         full_model_response.content = model_response_event.content
                         self._convert_response_to_structured_format(full_model_response, run_context=run_context)
-                        content_type = self._member_response_model.__name__  # type: ignore
+                        content_type = (
+                            "dict"
+                            if isinstance(self._member_response_model, dict)
+                            else self._member_response_model.__name__
+                        )  # type: ignore
                         run_response.content_type = content_type
                     elif isinstance(model_response_event.content, str):
                         full_model_response.content = (full_model_response.content or "") + model_response_event.content
@@ -3858,41 +3863,71 @@ class Team:
         output_schema = run_context.output_schema if run_context else None
 
         # Convert the response to the structured format if needed
-        if output_schema is not None and not isinstance(run_response.content, output_schema):
-            if isinstance(run_response.content, str) and self.parse_response:
-                try:
-                    parsed_response_content = parse_response_model_str(run_response.content, output_schema)
+        if output_schema is not None:
+            # If the output schema is a dict, do not convert it into a BaseModel
+            if isinstance(output_schema, dict):
+                if isinstance(run_response.content, dict):
+                    # Content is already a dict - just set content_type
+                    if hasattr(run_response, "content_type"):
+                        run_response.content_type = "dict"
+                elif isinstance(run_response.content, str):
+                    parsed_dict = parse_response_dict_str(run_response.content)
+                    if parsed_dict is not None:
+                        run_response.content = parsed_dict
+                        if hasattr(run_response, "content_type"):
+                            run_response.content_type = "dict"
+                    else:
+                        log_warning("Failed to parse JSON response")
+            # If the output schema is a Pydantic model and parse_response is True, parse it into a BaseModel
+            elif not isinstance(run_response.content, output_schema):
+                if isinstance(run_response.content, str) and self.parse_response:
+                    try:
+                        parsed_response_content = parse_response_model_str(run_response.content, output_schema)
 
-                    # Update TeamRunOutput
-                    if parsed_response_content is not None:
-                        run_response.content = parsed_response_content
+                        # Update TeamRunOutput
+                        if parsed_response_content is not None:
+                            run_response.content = parsed_response_content
+                            if hasattr(run_response, "content_type"):
+                                run_response.content_type = output_schema.__name__
+                        else:
+                            log_warning("Failed to convert response to output_schema")
+                    except Exception as e:
+                        log_warning(f"Failed to convert response to output model: {e}")
+                else:
+                    log_warning("Something went wrong. Team run response content is not a string")
+        elif self._member_response_model is not None:
+            # Handle dict schema from member
+            if isinstance(self._member_response_model, dict):
+                if isinstance(run_response.content, dict):
+                    # Content is already a dict - just set content_type
+                    if hasattr(run_response, "content_type"):
+                        run_response.content_type = "dict"
+                elif isinstance(run_response.content, str):
+                    parsed_dict = parse_response_dict_str(run_response.content)
+                    if parsed_dict is not None:
+                        run_response.content = parsed_dict
                         if hasattr(run_response, "content_type"):
-                            run_response.content_type = output_schema.__name__
+                            run_response.content_type = "dict"
                     else:
-                        log_warning("Failed to convert response to output_schema")
-                except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
-            else:
-                log_warning("Something went wrong. Team run response content is not a string")
-        elif self._member_response_model is not None and not isinstance(
-            run_response.content, self._member_response_model
-        ):
-            if isinstance(run_response.content, str):
-                try:
-                    parsed_response_content = parse_response_model_str(
-                        run_response.content, self._member_response_model
-                    )
-                    # Update TeamRunOutput
-                    if parsed_response_content is not None:
-                        run_response.content = parsed_response_content
-                        if hasattr(run_response, "content_type"):
-                            run_response.content_type = self._member_response_model.__name__
-                    else:
-                        log_warning("Failed to convert response to output_schema")
-                except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
-            else:
-                log_warning("Something went wrong. Member run response content is not a string")
+                        log_warning("Failed to parse JSON response")
+            # Handle Pydantic schema from member
+            elif not isinstance(run_response.content, self._member_response_model):
+                if isinstance(run_response.content, str):
+                    try:
+                        parsed_response_content = parse_response_model_str(
+                            run_response.content, self._member_response_model
+                        )
+                        # Update TeamRunOutput
+                        if parsed_response_content is not None:
+                            run_response.content = parsed_response_content
+                            if hasattr(run_response, "content_type"):
+                                run_response.content_type = self._member_response_model.__name__
+                        else:
+                            log_warning("Failed to convert response to output_schema")
+                    except Exception as e:
+                        log_warning(f"Failed to convert response to output model: {e}")
+                else:
+                    log_warning("Something went wrong. Member run response content is not a string")
 
     def _cleanup_and_store(self, run_response: TeamRunOutput, session: TeamSession) -> None:
         #  Scrub the stored run based on storage flags
@@ -3995,6 +4030,10 @@ class Team:
             elif model.supports_json_schema_outputs:
                 if self.use_json_mode:
                     log_debug("Setting Model.response_format to JSON response mode")
+                    # Handle JSON schema - pass through directly (user provides full provider format)
+                    if isinstance(output_schema, dict):
+                        return output_schema
+                    # Handle Pydantic schema
                     return {
                         "type": "json_schema",
                         "json_schema": {
@@ -6732,7 +6771,7 @@ class Team:
                 log_error(f"Failed to convert sanitized context to JSON: {e}")
                 return str(context)
 
-    def _get_json_output_prompt(self, output_schema: Optional[Type[BaseModel]] = None) -> str:
+    def _get_json_output_prompt(self, output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None) -> str:
         """Return the JSON output prompt for the Agent.
 
         This is added to the system prompt when the output_schema is set and structured_outputs is False.
@@ -6749,7 +6788,11 @@ class Team:
                 json_output_prompt += "\n<json_fields>"
                 json_output_prompt += f"\n{json.dumps(output_schema)}"
                 json_output_prompt += "\n</json_fields>"
-            elif issubclass(output_schema, BaseModel):
+            elif isinstance(output_schema, dict):
+                json_output_prompt += "\n<json_fields>"
+                json_output_prompt += f"\n{json.dumps(output_schema)}"
+                json_output_prompt += "\n</json_fields>"
+            elif isinstance(output_schema, type) and issubclass(output_schema, BaseModel):
                 json_schema = output_schema.model_json_schema()
                 if json_schema is not None:
                     response_model_properties = {}

@@ -9,7 +9,6 @@ You should see the error in the AgentOS UI.
 """
 
 from agno.agent import Agent
-from agno.team import Team
 from agno.db.postgres import PostgresDb
 from agno.guardrails import (
     OpenAIModerationGuardrail,
@@ -18,6 +17,7 @@ from agno.guardrails import (
 )
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.team import Team
 
 # Setup the database
 db = PostgresDb(id="basic-db", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")

@@ -5,7 +5,8 @@ from agno.run.agent import RunEvent  # noqa
 # Create an agent with reasoning enabled
 agent = Agent(
     reasoning_model=OpenAIResponses(
-        id="o3-mini", reasoning_effort="low",
+        id="o3-mini",
+        reasoning_effort="low",
     ),
     reasoning=True,
     instructions="Think step by step about the problem.",
