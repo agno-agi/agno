@@ -28,7 +28,7 @@ class AgnoToolSearch(Toolkit):
         self._discoverable_functions: Dict[str, Function] = {}
         self._process_discoverable_tools()
 
-        super().__init__(name="agno_tool_search", tools=[self.search_tools], **kwargs)
+        super().__init__(name="agno_tool_search", tools=[self.search_tools, self.list_all_tools], **kwargs)
 
     def _process_discoverable_tools(self) -> None:
         """Process and index all discoverable tools."""
