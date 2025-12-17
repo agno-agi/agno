@@ -484,6 +484,15 @@ class WorkflowRunSchema(BaseModel):
 
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
+        import json
+        print("--- Debugging from_dict ---")
+        print("Full run_response received:")
+        print(json.dumps(run_response, indent=2)) # Pretty print the whole dict
+        
+        files_content = run_response.get("files", [])
+        print(f'run_response.get("files", []) result: {files_content}')
+        
+        # ... rest of your code ...
         run_input = get_run_input(run_response, is_workflow_run=True)
         return cls(
             run_id=run_response.get("run_id", ""),
@@ -497,7 +506,7 @@ class WorkflowRunSchema(BaseModel):
             metrics=run_response.get("metrics", {}),
             step_results=run_response.get("step_results", []),
             step_executor_runs=run_response.get("step_executor_runs", []),
-            created_at=run_response["created_at"],
+            created_at=run_response["created_at"], # This line could cause KeyError if 'created_at' is missing
             reasoning_content=run_response.get("reasoning_content", ""),
             reasoning_steps=run_response.get("reasoning_steps", []),
             references=run_response.get("references", []),
@@ -506,7 +515,7 @@ class WorkflowRunSchema(BaseModel):
             images=run_response.get("images", []),
             videos=run_response.get("videos", []),
             audio=run_response.get("audio", []),
-            files=run_response.get("files", []),
+            files=files_content, # Use the already retrieved files_content
             response_audio=run_response.get("response_audio", None),
         )
 

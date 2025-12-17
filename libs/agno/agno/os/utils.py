@@ -328,10 +328,11 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     input = run_dict.get("input", {})
-    input_media["images"].extend(input.get("images", []))
-    input_media["videos"].extend(input.get("videos", []))
-    input_media["audios"].extend(input.get("audios", []))
-    input_media["files"].extend(input.get("files", []))
+    if isinstance(input, dict):
+        input_media["images"].extend(input.get("images", []))
+        input_media["videos"].extend(input.get("videos", []))
+        input_media["audios"].extend(input.get("audios", []))
+        input_media["files"].extend(input.get("files", []))
 
     return input_media
 
