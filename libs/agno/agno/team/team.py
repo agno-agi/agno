@@ -3902,7 +3902,7 @@ class Team:
                     # Content is already a dict - just set content_type
                     if hasattr(run_response, "content_type"):
                         run_response.content_type = "dict"
-                elif isinstance(run_response.content, str) and self.parse_response:
+                elif isinstance(run_response.content, str):
                     parsed_dict = parse_response_dict_str(run_response.content)
                     if parsed_dict is not None:
                         run_response.content = parsed_dict
