@@ -852,7 +852,6 @@ def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Call
     return formatted_tools
 
 
-
 def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any], BaseModel]) -> str:
     """Convert any given input_content into its string representation.
 
