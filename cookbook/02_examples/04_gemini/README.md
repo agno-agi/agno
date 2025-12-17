@@ -118,7 +118,7 @@ Agno provides a web interface for interacting with agents. Start the server:
 python cookbook/02_examples/04_gemini/run.py
 ```
 
-Then visit [os.agno.com](https://os.agno.com?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-flash&utm_term=gemini-flash) and add `http://localhost:7777` as an endpoint.
+Then visit [os.agno.com](https://os.agno.com/?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-flash&utm_term=gemini-flash) and add `http://localhost:7777` as an endpoint.
 
 ---
 
