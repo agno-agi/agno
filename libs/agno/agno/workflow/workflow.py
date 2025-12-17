@@ -3647,7 +3647,7 @@ class Workflow:
             raise ValueError("Input is required when input_schema is provided")
         if input is not None and self.input_schema is not None:
             input = validate_input(input, self.input_schema)
-            
+
         websocket_handler = None
         if websocket:
             from agno.workflow.types import WebSocketHandler

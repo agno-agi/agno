@@ -124,6 +124,7 @@ def test_unique_workflow_ids_work_correctly():
 
 # Mixed component tests
 
+
 def test_mixed_components_with_unique_ids():
     """Test that mixed components with unique IDs work correctly."""
     agent = Agent(name="Agent", id="agent-id", telemetry=False)
@@ -162,3 +163,19 @@ def test_multiple_duplicate_ids_all_reported():
     assert "Duplicate IDs found in AgentOS" in error_message
     assert "dup-1" in error_message
     assert "dup-2" in error_message
+
+
+def test_same_id_across_different_entity_types_allowed():
+    """Test that same ID across different entity types (agent, team, workflow) is allowed."""
+    shared_id = "shared-entity-id"
+
+    agent = Agent(name="Test Agent", id=shared_id, telemetry=False)
+    team = Team(name="Test Team", id=shared_id, members=[Agent(name="Team Member", telemetry=False)])
+    workflow = Workflow(name="Test Workflow", id=shared_id)
+
+    # Should NOT raise - same ID across different types is OK
+    app = AgentOS(agents=[agent], teams=[team], workflows=[workflow], telemetry=False)
+    assert app is not None
+    assert len(app.agents) == 1
+    assert len(app.teams) == 1
+    assert len(app.workflows) == 1
