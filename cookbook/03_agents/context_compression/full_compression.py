@@ -28,7 +28,7 @@ compression_manager = CompressionManager(
 
 agent = Agent(
     model=OpenAIChat(id="gpt-5-mini"),
-    tools=[DuckDuckGoTools(verify_ssl=False), ParallelTools()],
+    tools=[DuckDuckGoTools(), ParallelTools()],
     description="A research assistant that can search the web for information",
     instructions="Use the search tools to find the latest information. Be thorough and cite sources.",
     db=SqliteDb(db_file="tmp/full_compression.db"),

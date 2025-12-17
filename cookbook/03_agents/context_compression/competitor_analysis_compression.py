@@ -14,7 +14,7 @@ compression_manager = CompressionManager(
 competitor_analysis_agent = Agent(
     model=Gemini(id="gemini-2.5-pro"),
     tools=[
-        DuckDuckGoTools(verify_ssl=False),
+        DuckDuckGoTools(),
         ParallelTools(),
     ],
     instructions=[
