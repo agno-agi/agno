@@ -7263,7 +7263,7 @@ class Team:
                 member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
 
             # Update the top-level team run_response tool call to have the run_id of the member run
-            if run_response.tools is not None:
+            if run_response.tools is not None and member_agent_run_response is not None:
                 for tool in run_response.tools:
                     if tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member":
                         tool.child_run_id = member_agent_run_response.run_id  # type: ignore
@@ -7493,9 +7493,9 @@ class Team:
                     check_if_run_cancelled(member_agent_run_response_event)
 
                     # Yield the member event directly
-                    member_agent_run_response_event.parent_run_id = (
-                        getattr(member_agent_run_response_event, "parent_run_id", None) or run_response.run_id
-                    )
+                    member_agent_run_response_event.parent_run_id = getattr(
+                        member_agent_run_response_event, "parent_run_id", None
+                    ) or (run_response.run_id if run_response is not None else None)
                     yield member_agent_run_response_event  # type: ignore
             else:
                 member_agent_run_response = await member_agent.arun(  # type: ignore
@@ -7606,7 +7606,8 @@ class Team:
 
                         # Yield the member event directly
                         member_agent_run_response_chunk.parent_run_id = (
-                            member_agent_run_response_chunk.parent_run_id or run_response.run_id
+                            member_agent_run_response_chunk.parent_run_id
+                            or (run_response.run_id if run_response is not None else None)
                         )
                         yield member_agent_run_response_chunk  # type: ignore
 
@@ -7716,7 +7717,8 @@ class Team:
 
                             check_if_run_cancelled(member_agent_run_output_event)
                             member_agent_run_output_event.parent_run_id = (
-                                member_agent_run_output_event.parent_run_id or run_response.run_id
+                                member_agent_run_output_event.parent_run_id
+                                or (run_response.run_id if run_response is not None else None)
                             )
                             await queue.put(member_agent_run_output_event)
                     finally:
