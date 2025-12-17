@@ -1,8 +1,8 @@
 """
-Test script for streaming reasoning content.
+Example showing a reasoning Agent in the AgentOS.
 
-This demonstrates the new streaming reasoning feature where reasoning content
-is streamed as it arrives instead of all at once.
+You can interact with the Agent as normally. It will reason before providing a final answer.
+You will see its chain of thought live as it is generated.
 """
 
 from agno.agent import Agent
