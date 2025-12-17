@@ -183,6 +183,6 @@ cookbook/02_examples/04_gemini/
 ## Learn More
 
 - [Agno Documentation](https://docs.agno.com/?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-flash&utm_term=gemini-flash)
-- [Gemini Native Features](https://docs.agno.com/integrations/models/native/google/overview?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-flash&utm_term=gemini-flash)
-- [Session State Guide](https://docs.agno.com/basics/state/agent?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-flash&utm_term=gemini-flash)
-- [Agent OS Overview](https://docs.agno.com/agent-os/overview?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-flash&utm_term=gemini-flash)
+- [Gemini Native Features](https://docs.agno.com/integrations/models/native/google/overview/?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-flash&utm_term=gemini-flash)
+- [Session State Guide](https://docs.agno.com/basics/state/agent/?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-flash&utm_term=gemini-flash)
+- [Agent OS Overview](https://docs.agno.com/agent-os/overview/?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-flash&utm_term=gemini-flash)
