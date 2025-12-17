@@ -1003,7 +1003,6 @@ class Gemini(Model):
                 )
                 if result.tool_name:
                     tool_names.append(result.tool_name)
-                message_metrics += result.metrics
                 if result.metrics is not None:
                     message_metrics += result.metrics
 

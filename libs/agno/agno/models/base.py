@@ -541,6 +541,7 @@ class Model(ABC):
         output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         return self.count_tokens(messages, tools, output_schema=output_schema)
+
     def _ensure_message_metrics_initialized(self, assistant_message: Message) -> None:
         """
         Ensure message metrics are initialized and timer is started.
