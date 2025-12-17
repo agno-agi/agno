@@ -48,3 +48,7 @@ class DuckDuckGoTools(WebSearchTools):
             verify_ssl=verify_ssl,
             **kwargs,
         )
+
+        # Backward compatibility aliases for old method names
+        self.duckduckgo_search = self.web_search
+        self.duckduckgo_news = self.web_news
