@@ -225,6 +225,9 @@ class AgentOS:
         self._initialize_teams()
         self._initialize_workflows()
 
+        # Check for duplicate IDs
+        self._raise_if_duplicate_ids()
+
         if self.tracing:
             self._setup_tracing()
 
@@ -266,6 +269,9 @@ class AgentOS:
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
+
+        # Check for duplicate IDs
+        self._raise_if_duplicate_ids()
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
 
@@ -333,6 +339,31 @@ class AgentOS:
             a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
             self.interfaces.append(a2a_interface)
             self._add_router(app, a2a_interface.get_router())
+
+    def _raise_if_duplicate_ids(self) -> None:
+        """Check for duplicate IDs within each entity type.
+
+        Raises:
+            ValueError: If duplicate IDs are found within the same entity type
+        """
+        duplicate_ids: List[str] = []
+
+        for entities in [self.agents, self.teams, self.workflows]:
+            if not entities:
+                continue
+            seen_ids: set[str] = set()
+            for entity in entities:
+                entity_id = entity.id
+                if entity_id is None:
+                    continue
+                if entity_id in seen_ids:
+                    if entity_id not in duplicate_ids:
+                        duplicate_ids.append(entity_id)
+                else:
+                    seen_ids.add(entity_id)
+
+        if duplicate_ids:
+            raise ValueError(f"Duplicate IDs found in AgentOS: {', '.join(repr(id_) for id_ in duplicate_ids)}")
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         # Adjust the FastAPI app lifespan to handle MCP connections if relevant
