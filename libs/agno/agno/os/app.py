@@ -981,6 +981,8 @@ class AgentOS:
         host: str = "localhost",
         port: int = 7777,
         reload: bool = False,
+        reload_includes: Optional[List[str]] = None,
+        reload_excludes: Optional[List[str]] = None,
         workers: Optional[int] = None,
         access_log: bool = False,
         **kwargs,
@@ -1015,11 +1017,17 @@ class AgentOS:
             )
         )
 
+        # Adding *.yaml to reload_includes to reload the app when the yaml config file changes.
+        if reload and reload_includes is not None:
+            reload_includes = ["*.yaml", "*.yml"]
+
         uvicorn.run(
             app=app,
             host=host,
             port=port,
             reload=reload,
+            reload_includes=reload_includes,
+            reload_excludes=reload_excludes,
             workers=workers,
             access_log=access_log,
             lifespan="on",

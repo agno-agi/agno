@@ -1,0 +1,62 @@
+
+{
+  "table_name": "race_results",
+  "table_description": "Holds comprehensive race data for each Formula 1 race from 1950-2020, including positions, drivers, teams, and points.",
+  "table_columns": [
+      {
+          "name": "index",
+          "type": "int",
+          "description": "Unique index for each entry."
+      },
+      {
+          "name": "year",
+          "type": "int",
+          "description": "The year of the race."
+      },
+      {
+          "name": "position",
+          "type": "text",
+          "description": "The finishing position of the driver."
+      },
+      {
+          "name": "driver_no",
+          "type": "int",
+          "description": "Driver number."
+      },
+      {
+          "name": "venue",
+          "type": "text",
+          "description": "Location of the race."
+      },
+      {
+          "name": "name",
+          "type": "text",
+          "description": "Name of the driver."
+      },
+      {
+          "name": "name_tag",
+          "type": "text",
+          "description": "Abbreviated tag of the driver's name."
+      },
+      {
+          "name": "team",
+          "type": "text",
+          "description": "The racing team of the driver."
+      },
+      {
+          "name": "laps",
+          "type": "float",
+          "description": "Number of laps completed."
+      },
+      {
+          "name": "time",
+          "type": "text",
+          "description": "Finishing time or gap to the leader."
+      },
+      {
+          "name": "points",
+          "type": "float",
+          "description": "Points earned in the race."
+      }
+  ]
+}

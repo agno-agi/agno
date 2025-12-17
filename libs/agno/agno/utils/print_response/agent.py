@@ -141,6 +141,12 @@ def print_response_stream(
                                 log_warning(f"Failed to convert response to JSON: {e}")
                     if hasattr(response_event, "reasoning_content") and response_event.reasoning_content is not None:  # type: ignore
                         _response_reasoning_content += response_event.reasoning_content  # type: ignore
+
+                # Handle streaming reasoning content delta events
+                if response_event.event == RunEvent.reasoning_content_delta:  # type: ignore
+                    if hasattr(response_event, "reasoning_content") and response_event.reasoning_content is not None:  # type: ignore
+                        _response_reasoning_content += response_event.reasoning_content  # type: ignore
+
                 if hasattr(response_event, "reasoning_steps") and response_event.reasoning_steps is not None:  # type: ignore
                     reasoning_steps = response_event.reasoning_steps  # type: ignore
 
@@ -333,6 +339,11 @@ async def aprint_response_stream(
                     if resp.reasoning_content is not None:  # type: ignore
                         _response_reasoning_content += resp.reasoning_content  # type: ignore
 
+                # Handle streaming reasoning content delta events
+                if resp.event == RunEvent.reasoning_content_delta:  # type: ignore
+                    if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:  # type: ignore
+                        _response_reasoning_content += resp.reasoning_content  # type: ignore
+
                 if hasattr(resp, "reasoning_steps") and resp.reasoning_steps is not None:  # type: ignore
                     reasoning_steps = resp.reasoning_steps  # type: ignore
 
@@ -494,11 +505,23 @@ def build_panels_stream(
         and response_event.citations is not None
         and response_event.citations.urls is not None
     ):
-        md_content = "\n".join(
+        md_lines = []
+
+        # Add search queries if present
+        if response_event.citations.search_queries:
+            md_lines.append("**Search Queries:**")
+            for query in response_event.citations.search_queries:
+                md_lines.append(f"- {query}")
+            md_lines.append("")  # Empty line before URLs
+
+        # Add URL citations
+        md_lines.extend(
             f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
             for i, citation in enumerate(response_event.citations.urls)
             if citation.url  # Only include citations with valid URLs
         )
+
+        md_content = "\n".join(md_lines)
         if md_content:  # Only create panel if there are citations
             citations_panel = create_panel(
                 content=Markdown(md_content),
@@ -890,11 +913,23 @@ def build_panels(
         and run_response.citations is not None
         and run_response.citations.urls is not None
     ):
-        md_content = "\n".join(
+        md_lines = []
+
+        # Add search queries if present
+        if run_response.citations.search_queries:
+            md_lines.append("**Search Queries:**")
+            for query in run_response.citations.search_queries:
+                md_lines.append(f"- {query}")
+            md_lines.append("")  # Empty line before URLs
+
+        # Add URL citations
+        md_lines.extend(
             f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
             for i, citation in enumerate(run_response.citations.urls)
             if citation.url  # Only include citations with valid URLs
         )
+
+        md_content = "\n".join(md_lines)
         if md_content:  # Only create panel if there are citations
             citations_panel = create_panel(
                 content=Markdown(md_content),
