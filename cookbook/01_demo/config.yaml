@@ -1,0 +1,56 @@
+chat:
+  quick_prompts:
+    agno-mcp-agent:
+      - "What is Agno?"
+      - "What is AgentOS?"
+      - "What are Agno's key features?"
+
+    finance-agent:
+      - "How are my fav stocks performing?"
+      - "Prepare an investment brief on Apple (AAPL)."
+      - "Summarize key financial metrics for TSLA."
+
+    research-agent:
+      - "Competitive landscape for vector databases."
+      - "Latest breakthroughs in small language models."
+      - "What has changed recently in the Japanese yen carry trade and why is it becoming more volatile?"
+
+    reasoning-research-agent:
+      - "Competitive landscape for vector databases."
+      - "Latest breakthroughs in small language models."
+      - "What has changed recently in the Japanese yen carry trade and why is it becoming more volatile?"
+
+    memory-manager:
+      - "What do you know about me?"
+      - "I live in New York City"
+      - "I like to hike and swim on the weekends"
+
+    deep-knowledge-agent:
+      - "What is Agno?"
+      - "What are Agno's key features?"
+      - "How does Agno handle knowledge base management?"
+
+    youtube-agent:
+      - "Summarize this video: https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+      - "Explain this video in simple terms: https://www.youtube.com/watch?v=nLkBNnnA8Ac&t=1s"
+      - "What can you do?"
+
+    finance-team:
+      - "Analyze current sentiment around AI stocks."
+      - "Analyze the semiconductor market performance focusing on: NVIDIA (NVDA), AMD (AMD), Intel (INTC), and Taiwan Semiconductor (TSM)."
+      - "Analyze the automotive industry: Tesla, Ford, General Motors, and Toyota."
+
+    agno-knowledge-agent:
+      - "What is Agno?"
+      - "What is AgentOS?"
+      - "What are Agno's key features?"
+
+    self-learning-research-agent:
+      - "What is the consensus on AI agents in enterprise production systems?"
+      - "Has the consensus on AI agents in production systems changed recently?"
+      - "How are companies currently deploying Gemini models in production?"
+
+    self-learning-agent:
+      - "Analyze nvidia and tsla performance and suggest a rule of thumb for when to buy or sell."
+      - "What's a reliable way to evaluate AI stocks today?"
+      - "What prior learnings can I use?"
