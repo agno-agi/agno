@@ -507,6 +507,19 @@ class Knowledge:
             return self.csv_reader, "data.csv"
         elif file_extension == ".pdf":
             return self.pdf_reader, ""
+        elif file_extension in [".xlsx", ".xls"] or file_extension in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]:
+            # Try to get excel reader from custom readers first
+            log_debug(f"[ReaderSelection] Looking for Excel reader, readers type: {type(self.readers)}, readers keys: {list(self.readers.keys()) if isinstance(self.readers, dict) else 'not dict'}")
+            if isinstance(self.readers, dict):
+                excel_reader = self.readers.get("excel") or self.readers.get("xlsx")
+                if excel_reader:
+                    log_debug(f"[ReaderSelection] Found Excel reader: {excel_reader.__class__.__name__}")
+                    return excel_reader, ""
+                else:
+                    log_debug("[ReaderSelection] No Excel reader found in custom readers")
+            # Fallback to csv reader (which claims to support Excel but probably doesn't)
+            log_debug("[ReaderSelection] Falling back to CSV reader for Excel file")
+            return self.csv_reader, ""
         elif file_extension == ".docx":
             return self.docx_reader, ""
         elif file_extension == ".pptx":
@@ -1097,7 +1110,11 @@ class Knowledge:
 
                     # Immediately update ContentDB with extracted metadata before vector insert
                     log_debug(f"[Knowledge] Updating ContentDB with extracted metadata for {content.id}")
-                    await self._aupdate_content(content)
+                    update_coro = self._aupdate_content(content)
+                    if update_coro is not None:
+                        await update_coro
+                    else:
+                        log_error(f"[Knowledge] _aupdate_content returned None for {content.id}")
 
                 log_debug(f"[Knowledge] Post-merge content.metadata for {content.id}: {content.metadata}")
 
@@ -1666,7 +1683,15 @@ class Knowledge:
 
         if self.vector_db.upsert_available() and upsert:
             try:
-                await self.vector_db.async_upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
+                upsert_coro = self.vector_db.async_upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
+                if upsert_coro is not None:
+                    await upsert_coro
+                else:
+                    log_error(f"async_upsert returned None for content {content.id}")
+                    content.status = ContentStatus.FAILED
+                    content.status_message = "Vector DB upsert returned None"
+                    await self._aupdate_content(content)
+                    return
             except Exception as e:
                 log_error(f"Error upserting document: {e}")
                 content.status = ContentStatus.FAILED
@@ -1675,11 +1700,19 @@ class Knowledge:
                 return
         else:
             try:
-                await self.vector_db.async_insert(
+                insert_coro = self.vector_db.async_insert(
                     content.content_hash,  # type: ignore[arg-type]
                     documents=read_documents,
                     filters=content.metadata,  # type: ignore[arg-type]
                 )
+                if insert_coro is not None:
+                    await insert_coro
+                else:
+                    log_error(f"async_insert returned None for content {content.id}")
+                    content.status = ContentStatus.FAILED
+                    content.status_message = "Vector DB insert returned None"
+                    await self._aupdate_content(content)
+                    return
             except Exception as e:
                 log_error(f"Error inserting document: {e}")
                 content.status = ContentStatus.FAILED
@@ -2833,6 +2866,18 @@ class Knowledge:
     def _select_reader(self, extension: str) -> Reader:
         """Select the appropriate reader for a file extension."""
         log_info(f"Selecting reader for extension: {extension}")
+
+        # Check for Excel MIME types and extensions
+        extension_lower = extension.lower()
+        if extension_lower in [".xlsx", ".xls"] or extension_lower in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]:
+            # Try custom excel readers first
+            if isinstance(self.readers, dict):
+                excel_reader = self.readers.get("excel") or self.readers.get("xlsx")
+                if excel_reader:
+                    log_debug(f"Using custom excel reader for extension: {extension}")
+                    return excel_reader
+            return ReaderFactory.get_reader_for_extension(extension)
+
         return ReaderFactory.get_reader_for_extension(extension)
 
     # --- Convenience Properties for Backward Compatibility ---

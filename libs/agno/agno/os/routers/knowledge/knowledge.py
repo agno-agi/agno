@@ -63,6 +63,8 @@ async def _async_extract_and_update_metadata(knowledge: Knowledge, content_id: s
         log_info(f"[MetadataExtraction] Required modules not available: {e}")
         return
 
+    log_info(f"[MetadataExtraction] Starting async metadata extraction for {content_id}")
+
     # Try to import the schema; if missing, skip
     DocumentMetadata = None
     # Try to import the schema from the app source
@@ -85,11 +87,12 @@ async def _async_extract_and_update_metadata(knowledge: Knowledge, content_id: s
         log_info(f"[MetadataExtraction] Starting async metadata extraction for {content_id}")
         # Use a non-empty query and vector search to avoid hybrid empty-text errors
         # Use filter-only search to fetch chunks by content_id without needing a real query
+        # Use a broad query to get documents, then filter by content_id
+        # This is needed because LanceDB applies filters after search results
         docs = knowledge.search(
-            query="*",
+            query="",  # Empty query for filter-only search
             filters={"content_id": content_id},
             max_results=50,
-            search_type="filter",
         )
         markdown_chunks = [doc.content for doc in docs if doc.content]
         full_markdown = "\n\n".join(markdown_chunks)
@@ -121,12 +124,41 @@ async def _async_extract_and_update_metadata(knowledge: Knowledge, content_id: s
             log_info(f"[MetadataExtraction] No metadata extracted for {content_id}")
             return
 
-        content_info = await knowledge.aget_content_by_id(content_id)
+        try:
+            content_info_coro = knowledge.aget_content_by_id(content_id)
+            if content_info_coro is None:
+                log_info(f"[MetadataExtraction] aget_content_by_id returned None for {content_id}")
+                return
+            content_info = await content_info_coro
+            log_debug(f"[MetadataExtraction] Retrieved content info for {content_id}: {type(content_info)}")
+        except Exception as content_e:
+            log_info(f"[MetadataExtraction] Failed to get content {content_id}: {content_e}")
+            return
+
         existing = content_info.get("metadata", {}) if content_info else {}
         merged = {**(existing or {}), **extracted}
 
+        # Check if this is a Trial Balance and trigger ingestion
+        doc_type = merged.get("doc_type") or existing.get("doc_type")
+        if doc_type == "Trial_Balance":
+            log_info(f"[MetadataExtraction] Trial Balance detected for {content_id}, triggering ingestion")
+            try:
+                # Try to import and run the Trial Balance ingestion
+                from experiments.rag_api.ocr_agent import extract_and_update_metadata_async
+                await extract_and_update_metadata_async(knowledge, content_id)
+            except Exception as tb_e:
+                log_info(f"[MetadataExtraction] Trial Balance ingestion failed for {content_id}: {tb_e}")
+
         content_update = Content(id=content_id, metadata=merged)
-        await knowledge.apatch_content(content_update)
+        try:
+            patch_coro = knowledge.apatch_content(content_update)
+            if patch_coro is None:
+                log_info(f"[MetadataExtraction] apatch_content returned None for {content_id}")
+                return
+            await patch_coro
+        except Exception as patch_e:
+            log_info(f"[MetadataExtraction] Failed to patch content {content_id}: {patch_e}")
+            return
         if knowledge.vector_db:
             knowledge.vector_db.update_metadata(content_id=content_id, metadata=merged)
         log_info(f"[MetadataExtraction] ✅ Updated metadata for {content_id}")
@@ -286,8 +318,21 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                     first_reader_key = next(iter(knowledge.readers.keys()))
                     content.reader = knowledge.readers[first_reader_key]
                     log_debug(f"[upload_content] Assigned reader fallback from knowledge.readers[{first_reader_key!r}]")
+            elif file_data.type and ("excel" in file_data.type.lower() or "spreadsheet" in file_data.type.lower()):
+                # Handle Excel files
+                if knowledge.readers and "excel" in knowledge.readers:
+                    content.reader = knowledge.readers["excel"]
+                    log_debug("[upload_content] Assigned reader from knowledge.readers['excel']")
+                elif knowledge.readers and "xlsx" in knowledge.readers:
+                    content.reader = knowledge.readers["xlsx"]
+                    log_debug("[upload_content] Assigned reader from knowledge.readers['xlsx']")
+                elif knowledge.readers and len(knowledge.readers) > 0:
+                    # Fallback to first custom reader if defined
+                    first_reader_key = next(iter(knowledge.readers.keys()))
+                    content.reader = knowledge.readers[first_reader_key]
+                    log_debug(f"[upload_content] Assigned reader fallback from knowledge.readers[{first_reader_key!r}]")
             else:
-                log_debug("[upload_content] No PDF-type detected; reader not forced")
+                log_debug("[upload_content] Reader assignment not applicable for this file type")
 
         # Persist uploaded file to disk for future download
         if file_data and file_data.content and file_data.filename:
@@ -1156,23 +1201,49 @@ async def process_content(
             log_debug(f"Set chunking strategy: {chunker}")
 
         log_debug(f"Using reader: {content.reader.__class__.__name__ if content.reader else 'None'} for content {content.id}")
-        await knowledge._load_content(content, upsert=False, skip_if_exists=True)
+        await knowledge._load_content_async(content, upsert=False, skip_if_exists=True)
         log_info(f"Content {content.id} processed successfully")
 
         # Trigger async metadata extraction if reader supports it
         if content.reader and hasattr(content.reader, 'extract_metadata_inline'):
-            if not content.reader.extract_metadata_inline:
+            should_trigger_async = False
+
+            # Special case: ExcelIntelReader needs async processing for Trial Balance ingestion
+            if content.reader.__class__.__name__ == 'ExcelIntelReader':
+                should_trigger_async = True
+                log_info(f"Queueing async metadata extraction for ExcelIntelReader {content.id} (needed for Trial Balance ingestion)")
+            elif not content.reader.extract_metadata_inline:
+                should_trigger_async = True
                 log_info(f"Queueing async metadata extraction for {content.id}")
+
+            if should_trigger_async:
                 # Import and queue the async metadata extraction
                 try:
                     import asyncio
-                    asyncio.create_task(_async_extract_and_update_metadata(knowledge, content.id))
-                    log_info(f"Async metadata extraction task created for {content.id}")
+                    task = asyncio.create_task(_async_extract_and_update_metadata(knowledge, content.id))
+                    log_info(f"Async metadata extraction task created for {content.id}: {task}")
                 except Exception as meta_e:
                     log_info(f"Could not queue metadata extraction for {content.id}: {meta_e}")
+            else:
+                log_debug(f"Skipping async metadata extraction for {content.id} - reader has extract_metadata_inline=True and is not ExcelIntelReader")
+        else:
+            log_debug(f"Skipping async metadata extraction for {content.id} - no reader or no extract_metadata_inline attribute")
 
     except Exception as e:
-        log_info(f"Error processing content: {e}")
+        error_msg = str(e)
+        log_info(f"Error processing content: {error_msg}")
+
+        # Special handling for "await None" errors
+        if "object NoneType can't be used in 'await' expression" in error_msg:
+            log_info(f"[DEBUG] NoneType await error detected for content {content.id}")
+            log_info(f"[DEBUG] Content reader: {content.reader}")
+            log_info(f"[DEBUG] Content has file_data: {content.file_data is not None}")
+            if content.file_data:
+                log_info(f"[DEBUG] File type: {content.file_data.type}")
+                log_info(f"[DEBUG] File size: {len(content.file_data.content) if content.file_data.content else 'None'}")
+
+        import traceback
+        log_info(f"Full traceback: {traceback.format_exc()}")
         # Mark content as failed in the contents DB
         try:
             from agno.knowledge.content import ContentStatus as KnowledgeContentStatus
@@ -1180,6 +1251,7 @@ async def process_content(
             content.status = KnowledgeContentStatus.FAILED
             content.status_message = str(e)
             knowledge.patch_content(content)
-        except Exception:
+        except Exception as patch_e:
+            log_info(f"Failed to mark content as failed: {patch_e}")
             # Swallow any secondary errors to avoid crashing the background task
             pass

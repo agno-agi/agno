@@ -227,6 +227,8 @@ class ReaderFactory:
             return cls.create_reader("pdf")
         elif extension in [".csv", "text/csv"]:
             return cls.create_reader("csv")
+        elif extension in [".xlsx", ".xls", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]:
+            return cls.create_reader("csv")
         elif extension in [".docx", ".doc", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
             return cls.create_reader("docx")
         elif extension == ".pptx":
