@@ -412,6 +412,87 @@ class TestA2AStreaming:
 
 
 # =============================================================================
+# A2A Interface Tests - Agent Card Discovery
+# =============================================================================
+
+
+class TestA2AAgentCardDiscovery:
+    """Test A2A agent card discovery endpoints."""
+
+    def test_get_agent_card(self, client: httpx.Client):
+        """Test retrieving agent card for local agent."""
+        response = client.get("/a2a/agents/gateway-agent/.well-known/agent-card.json")
+        assert response.status_code == 200
+
+        card = response.json()
+        assert "name" in card
+        assert "version" in card
+        assert "description" in card
+        assert "url" in card
+        assert "capabilities" in card
+        assert "skills" in card
+
+        # Verify capabilities structure
+        capabilities = card["capabilities"]
+        assert "streaming" in capabilities
+        assert capabilities["streaming"] is True
+
+        # Verify URL points to streaming endpoint
+        assert "message:stream" in card["url"]
+        assert "gateway-agent" in card["url"]
+
+    def test_get_team_card(self, client: httpx.Client):
+        """Test retrieving agent card for team."""
+        response = client.get("/a2a/teams/research-team/.well-known/agent-card.json")
+        assert response.status_code == 200
+
+        card = response.json()
+        assert "name" in card
+        assert "version" in card
+        assert "capabilities" in card
+        assert "skills" in card
+
+        # Verify URL points to team endpoint
+        assert "teams/research-team" in card["url"]
+        assert "message:stream" in card["url"]
+
+    def test_get_workflow_card(self, client: httpx.Client):
+        """Test retrieving agent card for workflow."""
+        response = client.get("/a2a/workflows/gateway-workflow/.well-known/agent-card.json")
+        assert response.status_code == 200
+
+        card = response.json()
+        assert "name" in card
+        assert "version" in card
+        assert "capabilities" in card
+        assert "skills" in card
+
+        # Verify URL points to workflow endpoint
+        assert "workflows/gateway-workflow" in card["url"]
+
+    def test_get_agent_card_not_found(self, client: httpx.Client):
+        """Test agent card 404 for non-existent agent."""
+        response = client.get("/a2a/agents/non-existent-agent/.well-known/agent-card.json")
+        assert response.status_code == 404
+        data = response.json()
+        assert "detail" in data
+
+    def test_get_team_card_not_found(self, client: httpx.Client):
+        """Test agent card 404 for non-existent team."""
+        response = client.get("/a2a/teams/non-existent-team/.well-known/agent-card.json")
+        assert response.status_code == 404
+        data = response.json()
+        assert "detail" in data
+
+    def test_get_workflow_card_not_found(self, client: httpx.Client):
+        """Test agent card 404 for non-existent workflow."""
+        response = client.get("/a2a/workflows/non-existent-workflow/.well-known/agent-card.json")
+        assert response.status_code == 404
+        data = response.json()
+        assert "detail" in data
+
+
+# =============================================================================
 # A2A Interface Tests - Error Handling
 # =============================================================================
 
