@@ -1,3 +1,4 @@
+import json
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Union, get_args
 
 from pydantic import BaseModel
@@ -486,6 +487,11 @@ def print_response_stream(
                     elif team.output_schema is not None and isinstance(resp.content, BaseModel):
                         try:
                             _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
+                        except Exception as e:
+                            log_warning(f"Failed to convert response to JSON: {e}")
+                    elif team.output_schema is not None and isinstance(resp.content, dict):
+                        try:
+                            _response_content = JSON(json.dumps(resp.content), indent=2)  # type: ignore
                         except Exception as e:
                             log_warning(f"Failed to convert response to JSON: {e}")
                     if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:  # type: ignore
@@ -1410,6 +1416,11 @@ async def aprint_response_stream(
                     elif team.output_schema is not None and isinstance(resp.content, BaseModel):
                         try:
                             _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
+                        except Exception as e:
+                            log_warning(f"Failed to convert response to JSON: {e}")
+                    elif team.output_schema is not None and isinstance(resp.content, dict):
+                        try:
+                            _response_content = JSON(json.dumps(resp.content), indent=2)  # type: ignore
                         except Exception as e:
                             log_warning(f"Failed to convert response to JSON: {e}")
                     if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:  # type: ignore

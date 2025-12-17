@@ -7,11 +7,11 @@ from db import gemini_agents_db
 product_comparison_agent = Agent(
     name="Product Comparison Agent",
     model=Gemini(
-        id="gemini-3-pro-preview",
+        id="gemini-3-flash-preview",
         url_context=True,
         search=True,
     ),
-    system_message=dedent("""\
+    instructions=dedent("""\
     You are a product comparison agent with access to the web and URL context.
 
     Your task is to compare products, services, or options by analyzing:
@@ -36,11 +36,9 @@ product_comparison_agent = Agent(
     - Keep explanations concise and decision-oriented.
 
     Formatting rules:
-    - End with a **Sources** section with clickable URLs. Make sure to link the URLs to the actual sources. You can use markdown formatting to make the URLs clickable.
+    - End with a **Sources** section with clickable URLs. Make sure to link the URLs to the actual sources. You can use markdown formatting to make the URLs clickable.\
     """),
     db=gemini_agents_db,
-    # Enable the agent to remember user information and preferences
-    enable_agentic_memory=True,
     # Add the current date and time to the context
     add_datetime_to_context=True,
     # Add the history of the agent's runs to the context

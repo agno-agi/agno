@@ -163,23 +163,41 @@ def create_run_continued_event(from_run_response: RunOutput) -> RunContinuedEven
     )
 
 
-def create_team_run_error_event(from_run_response: TeamRunOutput, error: str) -> TeamRunErrorEvent:
+def create_team_run_error_event(
+    from_run_response: TeamRunOutput,
+    error: str,
+    error_type: Optional[str] = None,
+    error_id: Optional[str] = None,
+    additional_data: Optional[Dict[str, Any]] = None,
+) -> TeamRunErrorEvent:
     return TeamRunErrorEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
         content=error,
+        error_type=error_type,
+        error_id=error_id,
+        additional_data=additional_data,
     )
 
 
-def create_run_error_event(from_run_response: RunOutput, error: str) -> RunErrorEvent:
+def create_run_error_event(
+    from_run_response: RunOutput,
+    error: str,
+    error_type: Optional[str] = None,
+    error_id: Optional[str] = None,
+    additional_data: Optional[Dict[str, Any]] = None,
+) -> RunErrorEvent:
     return RunErrorEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
         content=error,
+        error_type=error_type,
+        error_id=error_id,
+        additional_data=additional_data,
     )
 
 
@@ -726,3 +744,24 @@ def handle_event(
             run_response.events = []
         run_response.events.append(event)  # type: ignore
     return event
+
+
+def add_error_event(
+    error: RunErrorEvent,
+    events: Optional[List[RunOutputEvent]],
+):
+    if events is None:
+        events = []
+    events.append(error)
+
+    return events
+
+
+def add_team_error_event(
+    error: TeamRunErrorEvent,
+    events: Optional[List[Union[RunOutputEvent, TeamRunOutputEvent]]],
+):
+    if events is None:
+        events = []
+    events.append(error)
+    return events
