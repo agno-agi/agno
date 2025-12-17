@@ -77,8 +77,8 @@ async def aget_vertexai_reasoning(reasoning_agent: "Agent", messages: List[Messa
 
 
 def get_vertexai_reasoning_stream(
-    reasoning_agent: "Agent",
-    messages: List[Message],  # type: ignore  # noqa: F821
+    reasoning_agent: "Agent",  # type: ignore  # noqa: F821
+    messages: List[Message],
 ) -> Iterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from VertexAI Claude model.
@@ -119,8 +119,8 @@ def get_vertexai_reasoning_stream(
 
 
 async def aget_vertexai_reasoning_stream(
-    reasoning_agent: "Agent",
-    messages: List[Message],  # type: ignore  # noqa: F821
+    reasoning_agent: "Agent",  # type: ignore  # noqa: F821
+    messages: List[Message],
 ) -> AsyncIterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from VertexAI Claude model asynchronously.

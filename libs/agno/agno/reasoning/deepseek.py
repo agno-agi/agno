@@ -38,8 +38,8 @@ def get_deepseek_reasoning(reasoning_agent: "Agent", messages: List[Message]) ->
 
 
 def get_deepseek_reasoning_stream(
-    reasoning_agent: "Agent",
-    messages: List[Message],  # type: ignore  # noqa: F821
+    reasoning_agent: "Agent",  # type: ignore  # noqa: F821
+    messages: List[Message],
 ) -> Iterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from DeepSeek model.
@@ -109,8 +109,8 @@ async def aget_deepseek_reasoning(reasoning_agent: "Agent", messages: List[Messa
 
 
 async def aget_deepseek_reasoning_stream(
-    reasoning_agent: "Agent",
-    messages: List[Message],  # type: ignore  # noqa: F821
+    reasoning_agent: "Agent",  # type: ignore  # noqa: F821
+    messages: List[Message],
 ) -> AsyncIterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from DeepSeek model asynchronously.
