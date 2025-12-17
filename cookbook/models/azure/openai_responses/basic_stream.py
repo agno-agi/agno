@@ -17,5 +17,4 @@ agent = Agent(
     markdown=True,
 )
 
-# Print the response on the terminal with streaming
 agent.print_response("Share a 2 sentence horror story", stream=True)

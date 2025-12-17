@@ -34,5 +34,4 @@ agent = Agent(
     response_model=MovieScript,
 )
 
-# Print the response on the terminal
 agent.print_response("Write a movie about robots taking over the world")
