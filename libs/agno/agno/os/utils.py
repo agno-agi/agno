@@ -159,13 +159,13 @@ def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRu
 
 async def get_db(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], db_id: Optional[str] = None, table: Optional[str] = None
-) -> Union[BaseDb, AsyncBaseDb]:
+) -> Union[BaseDb, AsyncBaseDb, RemoteDb]:
     """Return the database with the given ID and/or table, or the first database if no ID/table is provided."""
 
     if table and not db_id:
         raise HTTPException(status_code=400, detail="The db_id query parameter is required when passing a table")
 
-    async def _has_table(db: Union[BaseDb, AsyncBaseDb], table_name: str) -> bool:
+    async def _has_table(db: Union[BaseDb, AsyncBaseDb, RemoteDb], table_name: str) -> bool:
         """Check if this database has the specified table (configured and actually exists)."""
         # First check if table name is configured
         is_configured = (
@@ -328,7 +328,29 @@ def get_workflow_by_id(
     return None
 
 
-#  INPUT SCHEMA VALIDATIONS
+def resolve_origins(user_origins: Optional[List[str]] = None, default_origins: Optional[List[str]] = None) -> List[str]:
+    """
+    Get CORS origins - user-provided origins override defaults.
+
+    Args:
+        user_origins: Optional list of user-provided CORS origins
+
+    Returns:
+        List of allowed CORS origins (user-provided if set, otherwise defaults)
+    """
+    # User-provided origins override defaults
+    if user_origins:
+        return user_origins
+
+    # Default Agno domains
+    return default_origins or [
+        "http://localhost:3000",
+        "https://agno.com",
+        "https://www.agno.com",
+        "https://app.agno.com",
+        "https://os-stg.agno.com",
+        "https://os.agno.com",
+    ]
 
 
 def update_cors_middleware(app: FastAPI, new_origins: list):

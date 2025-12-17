@@ -58,6 +58,18 @@ The test system consists of three containers:
 
 ### 1. Set up environment
 
+Create virtual environment
+```bash
+uv venv --python 3.13
+source .venv/bin/activate
+```
+
+Install dependencies
+```bash
+uv pip install -r requirements.txt
+```
+
+Export API key
 ```bash
 # Create .env file with your API key
 echo "OPENAI_API_KEY=your-api-key-here" > .env
@@ -83,13 +95,26 @@ docker compose logs -f
 pip install -r requirements.txt
 
 # Run all tests
-pytest test_agentos_routes.py -v
+pytest -v
+
+# Run specific test modules independently
+pytest test_config_routes.py -v          # Health & config tests
+pytest test_agents_routes.py -v          # Agent route tests
+pytest test_teams_routes.py -v           # Team route tests
+pytest test_workflows_routes.py -v       # Workflow route tests
+pytest test_session_routes.py -v         # Session route tests
+pytest test_memory_routes.py -v          # Memory route tests
+pytest test_knowledge_routes.py -v       # Knowledge route tests
+pytest test_traces_routes.py -v          # Traces route tests
+pytest test_evals_routes.py -v           # Eval route tests
+pytest test_metrics_routes.py -v         # Metrics route tests
+pytest test_agentos_routes.py -v         # Integration tests (remote resources, error handling, auth)
 
 # Run specific test class
-pytest test_agentos_routes.py::TestAgentRoutes -v
+pytest test_agents_routes.py::test_get_agents_list -v
 
 # Run with more output
-pytest test_agentos_routes.py -v --tb=long
+pytest test_agents_routes.py -v --tb=long
 ```
 
 ### 4. Tear down
@@ -101,6 +126,28 @@ docker compose down
 # Remove volumes too
 docker compose down -v
 ```
+
+## Test Structure
+
+The tests are organized into separate modules for independent execution:
+
+- **`test_utils.py`** - Shared utilities, fixtures, and helper functions
+- **`test_config_routes.py`** - Health check and config routes
+- **`test_agents_routes.py`** - Agent routes (list, details, runs)
+- **`test_teams_routes.py`** - Team routes (list, details, runs)
+- **`test_workflows_routes.py`** - Workflow routes (list, details, runs)
+- **`test_session_routes.py`** - Session management routes
+- **`test_memory_routes.py`** - Memory management routes
+- **`test_knowledge_routes.py`** - Knowledge base routes
+- **`test_traces_routes.py`** - Trace monitoring routes
+- **`test_evals_routes.py`** - Evaluation routes
+- **`test_metrics_routes.py`** - Metrics routes
+- **`test_agentos_routes.py`** - Integration tests (remote resources, error handling, auth)
+
+Each test module can be run independently, making it easier to:
+- Debug specific functionality
+- Run focused test suites in CI/CD
+- Reduce test execution time during development
 
 ## Test Coverage
 

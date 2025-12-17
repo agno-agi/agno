@@ -2,11 +2,11 @@ import logging
 from datetime import date, datetime, timezone
 from typing import List, Optional, Union, cast
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import Depends, HTTPException, Query, Request
 from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.os.auth import get_authentication_dependency
+from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -93,6 +93,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def get_metrics(
+        request: Request,
         starting_date: Optional[date] = Query(
             default=None, description="Starting date for metrics range (YYYY-MM-DD format)"
         ),
@@ -106,8 +107,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             db = await get_db(dbs, db_id, table)
 
             if isinstance(db, RemoteDb):
+                auth_token = get_auth_token_from_request(request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
                 return await db.get_metrics(
-                    starting_date=starting_date, ending_date=ending_date, db_id=db_id, table=table
+                    starting_date=starting_date, ending_date=ending_date, db_id=db_id, table=table, headers=headers
                 )
 
             if isinstance(db, AsyncBaseDb):
@@ -176,6 +179,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def calculate_metrics(
+        request: Request,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for metrics calculation"),
         table: Optional[str] = Query(default=None, description="Table to use for metrics calculation"),
     ) -> List[DayAggregatedMetrics]:
@@ -183,7 +187,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             db = await get_db(dbs, db_id, table)
 
             if isinstance(db, RemoteDb):
-                return await db.refresh_metrics(db_id=db_id, table=table)
+                auth_token = get_auth_token_from_request(request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                return await db.refresh_metrics(db_id=db_id, table=table, headers=headers)
 
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)

@@ -1,6 +1,6 @@
 import json
 from datetime import date
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence, Union
 
 from fastapi import UploadFile
 from httpx import AsyncClient, ConnectError, ConnectTimeout, TimeoutException
@@ -524,10 +524,10 @@ class AgentOSClient:
         message: str,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        images: Optional[List[Image]] = None,
-        audio: Optional[List[Audio]] = None,
-        videos: Optional[List[Video]] = None,
-        files: Optional[List[MediaFile]] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[MediaFile]] = None,
         headers: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ) -> RunOutput:
@@ -589,10 +589,10 @@ class AgentOSClient:
         message: str,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        images: Optional[List[Image]] = None,
-        audio: Optional[List[Audio]] = None,
-        videos: Optional[List[Video]] = None,
-        files: Optional[List[MediaFile]] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[MediaFile]] = None,
         headers: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]:
@@ -801,10 +801,10 @@ class AgentOSClient:
         message: str,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        images: Optional[List[Image]] = None,
-        audio: Optional[List[Audio]] = None,
-        videos: Optional[List[Video]] = None,
-        files: Optional[List[MediaFile]] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[MediaFile]] = None,
         headers: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ) -> TeamRunOutput:
@@ -861,10 +861,10 @@ class AgentOSClient:
         message: str,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        images: Optional[List[Image]] = None,
-        audio: Optional[List[Audio]] = None,
-        videos: Optional[List[Video]] = None,
-        files: Optional[List[MediaFile]] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[MediaFile]] = None,
         headers: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[TeamRunOutputEvent]:
@@ -987,10 +987,10 @@ class AgentOSClient:
         message: str,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        images: Optional[List[Image]] = None,
-        audio: Optional[List[Audio]] = None,
-        videos: Optional[List[Video]] = None,
-        files: Optional[List[MediaFile]] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[MediaFile]] = None,
         headers: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
@@ -1046,10 +1046,10 @@ class AgentOSClient:
         message: str,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        images: Optional[List[Image]] = None,
-        audio: Optional[List[Audio]] = None,
-        videos: Optional[List[Video]] = None,
-        files: Optional[List[MediaFile]] = None,
+        images: Optional[Sequence[Image]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[MediaFile]] = None,
         headers: Optional[Dict[str, str]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
@@ -1497,7 +1497,7 @@ class AgentOSClient:
             PaginatedResponse[SessionSchema]
         """
         params: Dict[str, Any] = {
-            "type": session_type.value,
+            "type": session_type.value if session_type else None,
             "limit": str(limit),
             "page": str(page),
             "sort_by": sort_by,
@@ -2210,10 +2210,10 @@ class AgentOSClient:
 
     async def list_knowledge_content(
         self,
-        limit: int = 20,
-        page: int = 1,
-        sort_by: str = "created_at",
-        sort_order: str = "desc",
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+        sort_by: Optional[str] = "created_at",
+        sort_order: Optional[str] = "desc",
         db_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> PaginatedResponse[ContentResponseSchema]:
