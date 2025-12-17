@@ -12,6 +12,7 @@ from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
+from agno.run.requirement import RunRequirement
 from agno.utils.log import log_error
 from agno.utils.media import (
     reconstruct_audio_list,
@@ -148,6 +149,7 @@ class TeamRunEvent(str, Enum):
 
     reasoning_started = "TeamReasoningStarted"
     reasoning_step = "TeamReasoningStep"
+    reasoning_content_delta = "TeamReasoningContentDelta"
     reasoning_completed = "TeamReasoningCompleted"
 
     memory_update_started = "TeamMemoryUpdateStarted"
@@ -346,6 +348,14 @@ class ReasoningStepEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class ReasoningContentDeltaEvent(BaseTeamRunEvent):
+    """Event for streaming reasoning content chunks as they arrive."""
+
+    event: str = TeamRunEvent.reasoning_content_delta.value
+    reasoning_content: str = ""  # The delta/chunk of reasoning content
+
+
+@dataclass
 class ReasoningCompletedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.reasoning_completed.value
     content: Optional[Any] = None
@@ -410,6 +420,7 @@ TeamRunOutputEvent = Union[
     PreHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
+    ReasoningContentDeltaEvent,
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
@@ -439,6 +450,7 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.post_hook_completed.value: PostHookCompletedEvent,
     TeamRunEvent.reasoning_started.value: ReasoningStartedEvent,
     TeamRunEvent.reasoning_step.value: ReasoningStepEvent,
+    TeamRunEvent.reasoning_content_delta.value: ReasoningContentDeltaEvent,
     TeamRunEvent.reasoning_completed.value: ReasoningCompletedEvent,
     TeamRunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
     TeamRunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
@@ -515,10 +527,19 @@ class TeamRunOutput:
 
     status: RunStatus = RunStatus.running
 
+    # User control flow (HITL) requirements to continue a run when paused, in order of arrival
+    requirements: Optional[list[RunRequirement]] = None
+
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity
     workflow_step_id: Optional[str] = None  # FK: Points to StepOutput.step_id
+
+    @property
+    def active_requirements(self) -> list[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [requirement for requirement in self.requirements if not requirement.is_resolved()]
 
     @property
     def is_paused(self):
@@ -536,6 +557,7 @@ class TeamRunOutput:
             and k
             not in [
                 "messages",
+                "metrics",
                 "status",
                 "tools",
                 "metadata",
@@ -554,6 +576,9 @@ class TeamRunOutput:
         }
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]
+
+        if self.metrics is not None:
+            _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, Metrics) else self.metrics
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status

@@ -30,6 +30,7 @@ def print_response(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -81,6 +82,7 @@ def print_response(
         # Run the agent
         run_response: TeamRunOutput = team.run(  # type: ignore
             input=input,
+            run_id=run_id,
             images=images,
             audio=audio,
             videos=videos,
@@ -227,11 +229,23 @@ def print_response(
                     panels.append(member_response_panel)
 
                     if member_response.citations is not None and member_response.citations.urls is not None:
-                        md_content = "\n".join(
+                        md_lines = []
+
+                        # Add search queries if present
+                        if member_response.citations.search_queries:
+                            md_lines.append("**Search Queries:**")
+                            for query in member_response.citations.search_queries:
+                                md_lines.append(f"- {query}")
+                            md_lines.append("")  # Empty line before URLs
+
+                        # Add URL citations
+                        md_lines.extend(
                             f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                             for i, citation in enumerate(member_response.citations.urls)
                             if citation.url  # Only include citations with valid URLs
                         )
+
+                        md_content = "\n".join(md_lines)
                         if md_content:  # Only create panel if there are citations
                             citations_panel = create_panel(
                                 content=Markdown(md_content),
@@ -260,6 +274,15 @@ def print_response(
                     # Join with blank lines between items
                     tool_calls_text = "\n\n".join(lines)
 
+                    # Add compression stats at end of tool calls
+                    if team.compression_manager is not None and team.compression_manager.stats:
+                        stats = team.compression_manager.stats
+                        saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
+                        orig = stats.get("original_size", 1)
+                        if stats.get("tool_results_compressed", 0) > 0:
+                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                        team.compression_manager.stats.clear()
+
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
                         title="Team Tool Calls",
@@ -282,11 +305,23 @@ def print_response(
 
             # Add citations
             if run_response.citations is not None and run_response.citations.urls is not None:
-                md_content = "\n".join(
+                md_lines = []
+
+                # Add search queries if present
+                if run_response.citations.search_queries:
+                    md_lines.append("**Search Queries:**")
+                    for query in run_response.citations.search_queries:
+                        md_lines.append(f"- {query}")
+                    md_lines.append("")  # Empty line before URLs
+
+                # Add URL citations
+                md_lines.extend(
                     f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                     for i, citation in enumerate(run_response.citations.urls)
                     if citation.url  # Only include citations with valid URLs
                 )
+
+                md_content = "\n".join(md_lines)
                 if md_content:  # Only create panel if there are citations
                     citations_panel = create_panel(
                         content=Markdown(md_content),
@@ -330,6 +365,7 @@ def print_response_stream(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -408,6 +444,7 @@ def print_response_stream(
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
+            run_id=run_id,
             knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
             dependencies=dependencies,
@@ -613,6 +650,14 @@ def print_response_stream(
                     # Join with blank lines between items
                     tool_calls_text = "\n\n".join(lines)
 
+                    # Add compression stats if available (don't clear - will be cleared in final_panels)
+                    if team.compression_manager is not None and team.compression_manager.stats:
+                        stats = team.compression_manager.stats
+                        saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
+                        orig = stats.get("original_size", 1)
+                        if stats.get("tool_results_compressed", 0) > 0:
+                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
                         title="Team Tool Calls",
@@ -639,11 +684,23 @@ def print_response_stream(
 
         # Add citations
         if hasattr(resp, "citations") and resp.citations is not None and resp.citations.urls is not None:
-            md_content = "\n".join(
+            md_lines = []
+
+            # Add search queries if present
+            if resp.citations.search_queries:
+                md_lines.append("**Search Queries:**")
+                for query in resp.citations.search_queries:
+                    md_lines.append(f"- {query}")
+                md_lines.append("")  # Empty line before URLs
+
+            # Add URL citations
+            md_lines.extend(
                 f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                 for i, citation in enumerate(resp.citations.urls)
                 if citation.url  # Only include citations with valid URLs
             )
+
+            md_content = "\n".join(md_lines)
             if md_content:  # Only create panel if there are citations
                 citations_panel = create_panel(
                     content=Markdown(md_content),
@@ -783,11 +840,23 @@ def print_response_stream(
 
                 # Add citations if any
                 if member_response.citations is not None and member_response.citations.urls is not None:
-                    md_content = "\n".join(
+                    md_lines = []
+
+                    # Add search queries if present
+                    if member_response.citations.search_queries:
+                        md_lines.append("**Search Queries:**")
+                        for query in member_response.citations.search_queries:
+                            md_lines.append(f"- {query}")
+                        md_lines.append("")  # Empty line before URLs
+
+                    # Add URL citations
+                    md_lines.extend(
                         f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                         for i, citation in enumerate(member_response.citations.urls)
                         if citation.url  # Only include citations with valid URLs
                     )
+
+                    md_content = "\n".join(md_lines)
                     if md_content:  # Only create panel if there are citations
                         citations_panel = create_panel(
                             content=Markdown(md_content),
@@ -815,6 +884,15 @@ def print_response_stream(
 
                 tool_calls_text = "\n\n".join(lines)
 
+                # Add compression stats at end of tool calls
+                if team.compression_manager is not None and team.compression_manager.stats:
+                    stats = team.compression_manager.stats
+                    saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
+                    orig = stats.get("original_size", 1)
+                    if stats.get("tool_results_compressed", 0) > 0:
+                        tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                    team.compression_manager.stats.clear()
+
                 team_tool_calls_panel = create_panel(
                     content=tool_calls_text,
                     title="Team Tool Calls",
@@ -838,11 +916,23 @@ def print_response_stream(
 
         # Add team citations
         if hasattr(resp, "citations") and resp.citations is not None and resp.citations.urls is not None:
-            md_content = "\n".join(
+            md_lines = []
+
+            # Add search queries if present
+            if resp.citations.search_queries:
+                md_lines.append("**Search Queries:**")
+                for query in resp.citations.search_queries:
+                    md_lines.append(f"- {query}")
+                md_lines.append("")  # Empty line before URLs
+
+            # Add URL citations
+            md_lines.extend(
                 f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                 for i, citation in enumerate(resp.citations.urls)
                 if citation.url  # Only include citations with valid URLs
             )
+
+            md_content = "\n".join(md_lines)
             if md_content:  # Only create panel if there are citations
                 citations_panel = create_panel(
                     content=Markdown(md_content),
@@ -867,6 +957,7 @@ async def aprint_response(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -918,6 +1009,7 @@ async def aprint_response(
         # Run the agent
         run_response: TeamRunOutput = await team.arun(  # type: ignore
             input=input,
+            run_id=run_id,
             images=images,
             audio=audio,
             videos=videos,
@@ -1064,11 +1156,23 @@ async def aprint_response(
                     panels.append(member_response_panel)
 
                     if member_response.citations is not None and member_response.citations.urls is not None:
-                        md_content = "\n".join(
+                        md_lines = []
+
+                        # Add search queries if present
+                        if member_response.citations.search_queries:
+                            md_lines.append("**Search Queries:**")
+                            for query in member_response.citations.search_queries:
+                                md_lines.append(f"- {query}")
+                            md_lines.append("")  # Empty line before URLs
+
+                        # Add URL citations
+                        md_lines.extend(
                             f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                             for i, citation in enumerate(member_response.citations.urls)
                             if citation.url  # Only include citations with valid URLs
                         )
+
+                        md_content = "\n".join(md_lines)
                         if md_content:
                             citations_panel = create_panel(
                                 content=Markdown(md_content),
@@ -1095,6 +1199,15 @@ async def aprint_response(
 
                     tool_calls_text = "\n\n".join(lines)
 
+                    # Add compression stats at end of tool calls
+                    if team.compression_manager is not None and team.compression_manager.stats:
+                        stats = team.compression_manager.stats
+                        saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
+                        orig = stats.get("original_size", 1)
+                        if stats.get("tool_results_compressed", 0) > 0:
+                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                        team.compression_manager.stats.clear()
+
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
                         title="Team Tool Calls",
@@ -1117,11 +1230,23 @@ async def aprint_response(
 
             # Add citations
             if run_response.citations is not None and run_response.citations.urls is not None:
-                md_content = "\n".join(
+                md_lines = []
+
+                # Add search queries if present
+                if run_response.citations.search_queries:
+                    md_lines.append("**Search Queries:**")
+                    for query in run_response.citations.search_queries:
+                        md_lines.append(f"- {query}")
+                    md_lines.append("")  # Empty line before URLs
+
+                # Add URL citations
+                md_lines.extend(
                     f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                     for i, citation in enumerate(run_response.citations.urls)
                     if citation.url  # Only include citations with valid URLs
                 )
+
+                md_content = "\n".join(md_lines)
                 if md_content:  # Only create panel if there are citations
                     citations_panel = create_panel(
                         content=Markdown(md_content),
@@ -1165,6 +1290,7 @@ async def aprint_response_stream(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
@@ -1253,6 +1379,7 @@ async def aprint_response_stream(
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
+            run_id=run_id,
             knowledge_filters=knowledge_filters,
             add_history_to_context=add_history_to_context,
             add_dependencies_to_context=add_dependencies_to_context,
@@ -1446,6 +1573,14 @@ async def aprint_response_stream(
                     # Join with blank lines between items
                     tool_calls_text = "\n\n".join(lines)
 
+                    # Add compression stats if available (don't clear - will be cleared in final_panels)
+                    if team.compression_manager is not None and team.compression_manager.stats:
+                        stats = team.compression_manager.stats
+                        saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
+                        orig = stats.get("original_size", 1)
+                        if stats.get("tool_results_compressed", 0) > 0:
+                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
                         title="Team Tool Calls",
@@ -1473,11 +1608,23 @@ async def aprint_response_stream(
 
         # Add citations
         if hasattr(resp, "citations") and resp.citations is not None and resp.citations.urls is not None:
-            md_content = "\n".join(
+            md_lines = []
+
+            # Add search queries if present
+            if resp.citations.search_queries:
+                md_lines.append("**Search Queries:**")
+                for query in resp.citations.search_queries:
+                    md_lines.append(f"- {query}")
+                md_lines.append("")  # Empty line before URLs
+
+            # Add URL citations
+            md_lines.extend(
                 f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                 for i, citation in enumerate(resp.citations.urls)
                 if citation.url  # Only include citations with valid URLs
             )
+
+            md_content = "\n".join(md_lines)
             if md_content:  # Only create panel if there are citations
                 citations_panel = create_panel(
                     content=Markdown(md_content),
@@ -1634,11 +1781,23 @@ async def aprint_response_stream(
 
                 # Add citations if any
                 if member_response.citations is not None and member_response.citations.urls is not None:
-                    md_content = "\n".join(
+                    md_lines = []
+
+                    # Add search queries if present
+                    if member_response.citations.search_queries:
+                        md_lines.append("**Search Queries:**")
+                        for query in member_response.citations.search_queries:
+                            md_lines.append(f"- {query}")
+                        md_lines.append("")  # Empty line before URLs
+
+                    # Add URL citations
+                    md_lines.extend(
                         f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                         for i, citation in enumerate(member_response.citations.urls)
                         if citation.url  # Only include citations with valid URLs
                     )
+
+                    md_content = "\n".join(md_lines)
                     if md_content:  # Only create panel if there are citations
                         citations_panel = create_panel(
                             content=Markdown(md_content),
@@ -1666,6 +1825,15 @@ async def aprint_response_stream(
 
                 tool_calls_text = "\n\n".join(lines)
 
+                # Add compression stats at end of tool calls
+                if team.compression_manager is not None and team.compression_manager.stats:
+                    stats = team.compression_manager.stats
+                    saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
+                    orig = stats.get("original_size", 1)
+                    if stats.get("tool_results_compressed", 0) > 0:
+                        tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                    team.compression_manager.stats.clear()
+
                 team_tool_calls_panel = create_panel(
                     content=tool_calls_text,
                     title="Team Tool Calls",
@@ -1689,11 +1857,23 @@ async def aprint_response_stream(
 
         # Add team citations
         if hasattr(resp, "citations") and resp.citations is not None and resp.citations.urls is not None:
-            md_content = "\n".join(
+            md_lines = []
+
+            # Add search queries if present
+            if resp.citations.search_queries:
+                md_lines.append("**Search Queries:**")
+                for query in resp.citations.search_queries:
+                    md_lines.append(f"- {query}")
+                md_lines.append("")  # Empty line before URLs
+
+            # Add URL citations
+            md_lines.extend(
                 f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                 for i, citation in enumerate(resp.citations.urls)
                 if citation.url  # Only include citations with valid URLs
             )
+
+            md_content = "\n".join(md_lines)
             if md_content:  # Only create panel if there are citations
                 citations_panel = create_panel(
                     content=Markdown(md_content),

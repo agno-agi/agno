@@ -16,6 +16,7 @@ from agno.run.agent import (
     PreHookCompletedEvent,
     PreHookStartedEvent,
     ReasoningCompletedEvent,
+    ReasoningContentDeltaEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     RunCancelledEvent,
@@ -35,6 +36,7 @@ from agno.run.agent import (
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
+from agno.run.requirement import RunRequirement
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
 from agno.run.team import OutputModelResponseCompletedEvent as TeamOutputModelResponseCompletedEvent
@@ -46,6 +48,7 @@ from agno.run.team import PostHookStartedEvent as TeamPostHookStartedEvent
 from agno.run.team import PreHookCompletedEvent as TeamPreHookCompletedEvent
 from agno.run.team import PreHookStartedEvent as TeamPreHookStartedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
+from agno.run.team import ReasoningContentDeltaEvent as TeamReasoningContentDeltaEvent
 from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
 from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
 from agno.run.team import RunCancelledEvent as TeamRunCancelledEvent
@@ -136,7 +139,9 @@ def create_run_completed_event(from_run_response: RunOutput) -> RunCompletedEven
 
 
 def create_run_paused_event(
-    from_run_response: RunOutput, tools: Optional[List[ToolExecution]] = None
+    from_run_response: RunOutput,
+    tools: Optional[List[ToolExecution]] = None,
+    requirements: Optional[List[RunRequirement]] = None,
 ) -> RunPausedEvent:
     return RunPausedEvent(
         session_id=from_run_response.session_id,
@@ -144,6 +149,7 @@ def create_run_paused_event(
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
         tools=tools,
+        requirements=requirements,
         content=from_run_response.content,
     )
 
@@ -417,6 +423,19 @@ def create_reasoning_step_event(
     )
 
 
+def create_reasoning_content_delta_event(
+    from_run_response: RunOutput, reasoning_content: str
+) -> ReasoningContentDeltaEvent:
+    """Create an event for streaming reasoning content chunks."""
+    return ReasoningContentDeltaEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        reasoning_content=reasoning_content,
+    )
+
+
 def create_team_reasoning_step_event(
     from_run_response: TeamRunOutput, reasoning_step: ReasoningStep, reasoning_content: str
 ) -> TeamReasoningStepEvent:
@@ -427,6 +446,19 @@ def create_team_reasoning_step_event(
         run_id=from_run_response.run_id,
         content=reasoning_step,
         content_type=reasoning_step.__class__.__name__,
+        reasoning_content=reasoning_content,
+    )
+
+
+def create_team_reasoning_content_delta_event(
+    from_run_response: TeamRunOutput, reasoning_content: str
+) -> TeamReasoningContentDeltaEvent:
+    """Create an event for streaming reasoning content chunks for Team."""
+    return TeamReasoningContentDeltaEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
         reasoning_content=reasoning_content,
     )
 

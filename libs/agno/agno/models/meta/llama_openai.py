@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Optional
 
@@ -7,6 +7,7 @@ try:
 except ImportError:
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
+from agno.exceptions import ModelAuthenticationError
 from agno.models.meta.llama import Message
 from agno.models.openai.like import OpenAILike
 from agno.utils.models.llama import format_message
@@ -29,7 +30,7 @@ class LlamaOpenAI(OpenAILike):
     name: str = "LlamaOpenAI"
     provider: str = "LlamaOpenAI"
 
-    api_key: Optional[str] = field(default_factory=lambda: getenv("LLAMA_API_KEY"))
+    api_key: Optional[str] = None
     base_url: Optional[str] = "https://api.llama.com/compat/v1/"
 
     # Request parameters
@@ -48,6 +49,22 @@ class LlamaOpenAI(OpenAILike):
 
     # Cached async client
     openai_async_client: Optional[AsyncOpenAIClient] = None
+
+    def _get_client_params(self) -> Dict[str, Any]:
+        """
+        Returns client parameters for API requests, checking for LLAMA_API_KEY.
+
+        Returns:
+            Dict[str, Any]: A dictionary of client parameters for API requests.
+        """
+        if not self.api_key:
+            self.api_key = getenv("LLAMA_API_KEY")
+            if not self.api_key:
+                raise ModelAuthenticationError(
+                    message="LLAMA_API_KEY not set. Please set the LLAMA_API_KEY environment variable.",
+                    model_name=self.name,
+                )
+        return super()._get_client_params()
 
     def _format_message(self, message: Message) -> Dict[str, Any]:
         """

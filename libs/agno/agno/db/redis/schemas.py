@@ -97,6 +97,36 @@ CULTURAL_KNOWLEDGE_SCHEMA = {
     "team_id": {"type": "string"},
 }
 
+TRACE_SCHEMA = {
+    "trace_id": {"type": "string", "primary_key": True},
+    "name": {"type": "string"},
+    "status": {"type": "string"},
+    "duration_ms": {"type": "integer"},
+    "run_id": {"type": "string"},
+    "session_id": {"type": "string"},
+    "user_id": {"type": "string"},
+    "agent_id": {"type": "string"},
+    "team_id": {"type": "string"},
+    "workflow_id": {"type": "string"},
+    "start_time": {"type": "string"},
+    "end_time": {"type": "string"},
+    "created_at": {"type": "string"},
+}
+
+SPAN_SCHEMA = {
+    "span_id": {"type": "string", "primary_key": True},
+    "trace_id": {"type": "string"},
+    "parent_span_id": {"type": "string"},
+    "name": {"type": "string"},
+    "span_kind": {"type": "string"},
+    "status_code": {"type": "string"},
+    "status_message": {"type": "string"},
+    "start_time": {"type": "string"},
+    "end_time": {"type": "string"},
+    "attributes": {"type": "json"},
+    "created_at": {"type": "string"},
+}
+
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
@@ -118,6 +148,8 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "evals": EVAL_SCHEMA,
         "knowledge": KNOWLEDGE_SCHEMA,
         "culture": CULTURAL_KNOWLEDGE_SCHEMA,
+        "traces": TRACE_SCHEMA,
+        "spans": SPAN_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

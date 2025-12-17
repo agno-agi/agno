@@ -5,6 +5,15 @@ from typing import Generic, List, Optional, TypeVar
 from pydantic import BaseModel, field_validator
 
 
+class AuthorizationConfig(BaseModel):
+    """Configuration for the JWT middleware"""
+
+    verification_keys: Optional[List[str]] = None
+    jwks_file: Optional[str] = None
+    algorithm: Optional[str] = None
+    verify_audience: Optional[bool] = None
+
+
 class EvalsDomainConfig(BaseModel):
     """Configuration for the Evals domain of the AgentOS"""
 
@@ -32,6 +41,12 @@ class MetricsDomainConfig(BaseModel):
 
 class MemoryDomainConfig(BaseModel):
     """Configuration for the Memory domain of the AgentOS"""
+
+    display_name: Optional[str] = None
+
+
+class TracesDomainConfig(BaseModel):
+    """Configuration for the Traces domain of the AgentOS"""
 
     display_name: Optional[str] = None
 
@@ -77,6 +92,12 @@ class MetricsConfig(MetricsDomainConfig):
     dbs: Optional[List[DatabaseConfig[MetricsDomainConfig]]] = None
 
 
+class TracesConfig(TracesDomainConfig):
+    """Configuration for the Traces domain of the AgentOS"""
+
+    dbs: Optional[List[DatabaseConfig[TracesDomainConfig]]] = None
+
+
 class ChatConfig(BaseModel):
     """Configuration for the Chat page of the AgentOS"""
 
@@ -102,3 +123,4 @@ class AgentOSConfig(BaseModel):
     memory: Optional[MemoryConfig] = None
     session: Optional[SessionConfig] = None
     metrics: Optional[MetricsConfig] = None
+    traces: Optional[TracesConfig] = None

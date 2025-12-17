@@ -43,7 +43,7 @@ class MCPTools(Toolkit):
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
         refresh_connection: bool = False,
-        tool_name_prefix: Optional[str] = "",
+        tool_name_prefix: Optional[str] = None,
         **kwargs,
     ):
         """

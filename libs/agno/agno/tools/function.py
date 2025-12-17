@@ -897,7 +897,7 @@ class FunctionCall(BaseModel):
                 return FunctionExecutionResult(status="success", result=cached_result)
 
         # Execute function
-        execution_result = None
+        execution_result: FunctionExecutionResult
         exception_to_raise = None
 
         try:
@@ -908,21 +908,16 @@ class FunctionCall(BaseModel):
             else:
                 result = self.function.entrypoint(**entrypoint_args, **self.arguments)  # type: ignore
 
-            updated_session_state = None
-            if entrypoint_args.get("run_context") is not None:
-                run_context = entrypoint_args.get("run_context")
-                updated_session_state = (
-                    run_context.session_state
-                    if run_context is not None and run_context.session_state is not None
-                    else None
-                )
-            else:
-                if self.function._session_state is not None:
-                    updated_session_state = self.function._session_state
-
             # Handle generator case
             if isgenerator(result):
                 self.result = result  # Store generator directly, can't cache
+                # For generators, don't capture updated_session_state yet -
+                # session_state is passed by reference, so mutations made during
+                # generator iteration are already reflected in the original dict.
+                # Returning None prevents stale state from being merged later.
+                execution_result = FunctionExecutionResult(
+                    status="success", result=self.result, updated_session_state=None
+                )
             else:
                 self.result = result
                 # Only cache non-generator results
@@ -931,14 +926,27 @@ class FunctionCall(BaseModel):
                     cache_file = self.function._get_cache_file_path(cache_key)
                     self.function._save_to_cache(cache_file, self.result)
 
-            execution_result = FunctionExecutionResult(
-                status="success", result=self.result, updated_session_state=updated_session_state
-            )
+                updated_session_state = None
+                if entrypoint_args.get("run_context") is not None:
+                    run_context = entrypoint_args.get("run_context")
+                    updated_session_state = (
+                        run_context.session_state
+                        if run_context is not None and run_context.session_state is not None
+                        else None
+                    )
+                else:
+                    if self.function._session_state is not None:
+                        updated_session_state = self.function._session_state
+
+                execution_result = FunctionExecutionResult(
+                    status="success", result=self.result, updated_session_state=updated_session_state
+                )
 
         except AgentRunException as e:
             log_debug(f"{e.__class__.__name__}: {e}")
             self.error = str(e)
             exception_to_raise = e
+            execution_result = FunctionExecutionResult(status="failure", error=str(e))
         except Exception as e:
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
@@ -948,10 +956,10 @@ class FunctionCall(BaseModel):
         finally:
             self._handle_post_hook()
 
-            if exception_to_raise is not None:
-                raise exception_to_raise
+        if exception_to_raise is not None:
+            raise exception_to_raise
 
-            return execution_result  # type: ignore[return-value]
+        return execution_result
 
     async def _handle_pre_hook_async(self):
         """Handles the async pre-hook for the function call."""
@@ -1117,7 +1125,7 @@ class FunctionCall(BaseModel):
                 return FunctionExecutionResult(status="success", result=cached_result)
 
         # Execute function
-        execution_result = None
+        execution_result: FunctionExecutionResult
         exception_to_raise = None
 
         try:
@@ -1142,14 +1150,21 @@ class FunctionCall(BaseModel):
                 cache_file = self.function._get_cache_file_path(cache_key)
                 self.function._save_to_cache(cache_file, self.result)
 
-            updated_session_state = None
-            if entrypoint_args.get("run_context") is not None:
-                run_context = entrypoint_args.get("run_context")
-                updated_session_state = (
-                    run_context.session_state
-                    if run_context is not None and run_context.session_state is not None
-                    else None
-                )
+            # For generators, don't capture updated_session_state -
+            # session_state is passed by reference, so mutations made during
+            # generator iteration are already reflected in the original dict.
+            # Returning None prevents stale state from being merged later.
+            if isgenerator(self.result) or isasyncgen(self.result):
+                updated_session_state = None
+            else:
+                updated_session_state = None
+                if entrypoint_args.get("run_context") is not None:
+                    run_context = entrypoint_args.get("run_context")
+                    updated_session_state = (
+                        run_context.session_state
+                        if run_context is not None and run_context.session_state is not None
+                        else None
+                    )
 
             execution_result = FunctionExecutionResult(
                 status="success", result=self.result, updated_session_state=updated_session_state
@@ -1159,6 +1174,7 @@ class FunctionCall(BaseModel):
             log_debug(f"{e.__class__.__name__}: {e}")
             self.error = str(e)
             exception_to_raise = e
+            execution_result = FunctionExecutionResult(status="failure", error=str(e))
         except Exception as e:
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
@@ -1171,10 +1187,10 @@ class FunctionCall(BaseModel):
             else:
                 self._handle_post_hook()
 
-            if exception_to_raise is not None:
-                raise exception_to_raise
+        if exception_to_raise is not None:
+            raise exception_to_raise
 
-            return execution_result  # type: ignore[return-value]
+        return execution_result
 
 
 class ToolResult(BaseModel):

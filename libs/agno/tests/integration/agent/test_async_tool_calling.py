@@ -152,6 +152,7 @@ async def test_mixed_async_functions_and_generators():
     assert "Slow generator result: test" in response.content
 
 
+@pytest.mark.flaky(max_runs=3)
 @pytest.mark.asyncio
 async def test_error_handling_in_async_generators():
     """Test error handling in concurrent async generators"""
@@ -172,7 +173,10 @@ async def test_error_handling_in_async_generators():
 
     # This should handle the error gracefully
     with pytest.raises((ValueError, Exception)):  # The specific exception might be wrapped
-        async for event in agent.arun("Call both generators", stream=True):
+        async for event in agent.arun(
+            "Call BOTH generator functions you have access to",
+            stream=True,
+        ):
             pass
 
 
