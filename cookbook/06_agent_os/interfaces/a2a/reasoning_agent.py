@@ -2,13 +2,16 @@ from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.db.sqlite import SqliteDb
 
+# Setup the SQLite database
+db = SqliteDb(db_file="tmp/data.db")
 reasoning_agent = Agent(
     name="reasoning-agent",
     id="reasoning_agent",
-    model=OpenAIChat(id="o4-mini"),
+    model=OpenAIChat(id="o4-mini"), db=db,
     description="An advanced AI assistant with deep reasoning and analytical capabilities, enhanced with real-time web search to deliver thorough, well-thought-out responses with contextual awareness",
-    instructions="You are a helpful AI assistant with reasoning capabilities.",
+    instructions="You are a helpful AI assistant with reasoning capabilities.", debug_mode=True,
     add_datetime_to_context=True,
     add_history_to_context=True,
     add_location_to_context=True,
