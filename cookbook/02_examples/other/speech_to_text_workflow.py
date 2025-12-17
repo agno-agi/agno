@@ -1,17 +1,17 @@
+import io
 from textwrap import dedent
 from typing import Optional
-from agno.os import AgentOS
-from pydantic import BaseModel, Field
+
+import requests
+from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.utils.log import log_info, logger
+from agno.media import Audio
+from agno.models.openai import OpenAIChat
+from agno.os import AgentOS
+from agno.utils.log import logger
 from agno.workflow import Step, Workflow
 from agno.workflow.types import StepInput, StepOutput
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.media import Audio
-import requests
-
-import io
+from pydantic import BaseModel, Field
 from pydub import AudioSegment
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -22,10 +22,13 @@ db = PostgresDb(
     session_table="invoice_processing_sessions",
 )
 
+
 class Transcription(BaseModel):
     transcript: str = Field(..., description="The transcript of the audio conversation")
     description: str = Field(..., description="A description of the audio conversation")
-    speakers: list[str] = Field(..., description="The speakers in the audio conversation")
+    speakers: list[str] = Field(
+        ..., description="The speakers in the audio conversation"
+    )
 
 
 def get_transcription_agent(additional_instructions: Optional[str] = None):
@@ -35,17 +38,18 @@ def get_transcription_agent(additional_instructions: Optional[str] = None):
         instructions=dedent(f"""You are an audio transcription agent. You are given an audio file and you need to transcribe it into text.
             You are an audio transcription agent. You are given an audio file and you need to transcribe it into text.
             Give a transcript of the audio conversation. Use speaker A, speaker B,  speaker C etc. to identify speakers.
-            {additional_instructions}"""
-        ),
+            {additional_instructions}"""),
     )
     return transcription_agent
 
 
-
 class TranscriptionRequest(BaseModel):
-    audio_file: str = "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/QA-01.mp3"
+    audio_file: str = (
+        "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/QA-01.mp3"
+    )
     model_id: str = "gpt-4o-audio-preview"
     additional_instructions: Optional[str] = None
+
 
 def echo_input_file(step_input: StepInput) -> StepOutput:
     request = step_input.input
@@ -57,6 +61,7 @@ def echo_input_file(step_input: StepInput) -> StepOutput:
         },
         success=True,
     )
+
 
 # TODO: Find a cleaner way to create wav files. Probably need a step in the workflow to check file types first
 def get_audio_content(step_input: StepInput, session_state) -> bytes:
@@ -76,14 +81,22 @@ def get_audio_content(step_input: StepInput, session_state) -> bytes:
     wav_io.seek(0)  # Reset to beginning before reading
     audio_content = wav_io.read()
     session_state["audio_content"] = audio_content
-    return StepOutput(  
+    return StepOutput(
         success=True,
     )
 
-async def transcription_agent_executor(step_input: StepInput, session_state) -> StepOutput:
+
+async def transcription_agent_executor(
+    step_input: StepInput, session_state
+) -> StepOutput:
     audio_content = session_state["audio_content"]
-    transcription_agent = get_transcription_agent(additional_instructions=step_input.input.additional_instructions)
-    response = await transcription_agent.arun(input="Give a transcript of the audio conversation", audio=[Audio(content=audio_content, format="wav")])
+    transcription_agent = get_transcription_agent(
+        additional_instructions=step_input.input.additional_instructions
+    )
+    response = await transcription_agent.arun(
+        input="Give a transcript of the audio conversation",
+        audio=[Audio(content=audio_content, format="wav")],
+    )
     return StepOutput(
         content=response.content,
         success=True,
