@@ -147,7 +147,7 @@ async_mongo = ["pymongo>=4.9", "motor"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
-redis = ["redis", "redisvl"]
+redis = ["redis", "redisvl>=0.12.1"]
 mysql = ["pymysql", "asyncmy"]
 
 # Dependencies for Vector databases
