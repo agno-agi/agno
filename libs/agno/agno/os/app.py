@@ -341,17 +341,17 @@ class AgentOS:
             self._add_router(app, a2a_interface.get_router())
 
     def _raise_if_duplicate_ids(self) -> None:
-        """Check for duplicate IDs across all agents, teams, and workflows.
+        """Check for duplicate IDs within each entity type.
 
         Raises:
-            ValueError: If duplicate IDs are found
+            ValueError: If duplicate IDs are found within the same entity type
         """
-        seen_ids: List[str] = []
         duplicate_ids: List[str] = []
 
         for entities in [self.agents, self.teams, self.workflows]:
             if not entities:
                 continue
+            seen_ids: set[str] = set()
             for entity in entities:
                 entity_id = entity.id
                 if entity_id is None:
@@ -360,7 +360,7 @@ class AgentOS:
                     if entity_id not in duplicate_ids:
                         duplicate_ids.append(entity_id)
                 else:
-                    seen_ids.append(entity_id)
+                    seen_ids.add(entity_id)
 
         if duplicate_ids:
             raise ValueError(f"Duplicate IDs found in AgentOS: {', '.join(repr(id_) for id_ in duplicate_ids)}")
