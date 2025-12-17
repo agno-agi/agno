@@ -159,13 +159,13 @@ def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRu
 
 async def get_db(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], db_id: Optional[str] = None, table: Optional[str] = None
-) -> Union[BaseDb, AsyncBaseDb]:
+) -> Union[BaseDb, AsyncBaseDb, RemoteDb]:
     """Return the database with the given ID and/or table, or the first database if no ID/table is provided."""
 
     if table and not db_id:
         raise HTTPException(status_code=400, detail="The db_id query parameter is required when passing a table")
 
-    async def _has_table(db: Union[BaseDb, AsyncBaseDb], table_name: str) -> bool:
+    async def _has_table(db: Union[BaseDb, AsyncBaseDb, RemoteDb], table_name: str) -> bool:
         """Check if this database has the specified table (configured and actually exists)."""
         # First check if table name is configured
         is_configured = (

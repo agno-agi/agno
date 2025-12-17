@@ -3467,7 +3467,8 @@ class Workflow:
         run_id = run_id or str(uuid4())
         register_run(run_id)
 
-        input = validate_input(input, self.input_schema)
+        if input is not None:
+            input = validate_input(input, self.input_schema)
         if background:
             raise RuntimeError("Background execution is not supported for sync run()")
 
@@ -3579,7 +3580,7 @@ class Workflow:
     @overload
     async def arun(
         self,
-        input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
+        input: Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]],
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         run_id: Optional[str] = None,
@@ -3600,7 +3601,7 @@ class Workflow:
     @overload
     def arun(
         self,
-        input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
+        input: Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]],
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         run_id: Optional[str] = None,
@@ -3620,7 +3621,7 @@ class Workflow:
 
     def arun(  # type: ignore
         self,
-        input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
+        input: Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]],
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         run_id: Optional[str] = None,

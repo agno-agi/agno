@@ -73,22 +73,22 @@ class RemoteWorkflow(BaseRemote):
             metrics_table_name = None
             eval_table_name = None
             traces_table_name = None
-            if config and config.session:
+            if config and config.session and config.session.dbs is not None:
                 session_dbs = [db for db in config.session.dbs if db.db_id == db_id]
                 session_table_name = session_dbs[0].tables[0] if session_dbs and session_dbs[0].tables else None
-            if config and config.knowledge:
+            if config and config.knowledge and config.knowledge.dbs is not None:
                 knowledge_dbs = [db for db in config.knowledge.dbs if db.db_id == db_id]
                 knowledge_table_name = knowledge_dbs[0].tables[0] if knowledge_dbs and knowledge_dbs[0].tables else None
-            if config and config.memory:
+            if config and config.memory and config.memory.dbs is not None:
                 memory_dbs = [db for db in config.memory.dbs if db.db_id == db_id]
                 memory_table_name = memory_dbs[0].tables[0] if memory_dbs and memory_dbs[0].tables else None
-            if config and config.metrics:
+            if config and config.metrics and config.metrics.dbs is not None:
                 metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
                 metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
-            if config and config.evals:
+            if config and config.evals and config.evals.dbs is not None:
                 eval_dbs = [db for db in config.evals.dbs if db.db_id == db_id]
                 eval_table_name = eval_dbs[0].tables[0] if eval_dbs and eval_dbs[0].tables else None
-            if config and config.traces:
+            if config and config.traces and config.traces.dbs is not None:
                 traces_dbs = [db for db in config.traces.dbs if db.db_id == db_id]
                 traces_table_name = traces_dbs[0].tables[0] if traces_dbs and traces_dbs[0].tables else None
             return RemoteDb(
@@ -122,6 +122,7 @@ class RemoteWorkflow(BaseRemote):
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
+        auth_token: Optional[str] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -143,6 +144,7 @@ class RemoteWorkflow(BaseRemote):
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
+        auth_token: Optional[str] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
     def arun(  # type: ignore
@@ -162,11 +164,13 @@ class RemoteWorkflow(BaseRemote):
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
+        auth_token: Optional[str] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         # TODO: Deal with background
         validated_input = validate_input(input)
         serialized_input = serialize_input(validated_input)
+        headers = self._get_auth_headers(auth_token)
 
         if stream:
             # Handle streaming response
@@ -183,10 +187,11 @@ class RemoteWorkflow(BaseRemote):
                 files=files,
                 session_state=session_state,
                 stream_events=stream_events,
+                headers=headers,
                 **kwargs,
             )
         else:
-            return self.get_client().run_workflow(
+            return self.get_client().run_workflow(  # type: ignore
                 workflow_id=self.workflow_id,
                 message=serialized_input,
                 additional_data=additional_data,
@@ -198,19 +203,24 @@ class RemoteWorkflow(BaseRemote):
                 videos=videos,
                 files=files,
                 session_state=session_state,
+                headers=headers,
                 **kwargs,
             )
 
-    async def cancel_run(self, run_id: str) -> bool:
+    async def cancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
         """Cancel a running workflow execution.
 
         Args:
             run_id (str): The run_id to cancel.
+            auth_token: Optional JWT token for authentication.
 
         Returns:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
-        return await self.get_client().cancel_workflow_run(
+        headers = self._get_auth_headers(auth_token)
+        await self.get_client().cancel_workflow_run(
             workflow_id=self.workflow_id,
             run_id=run_id,
+            headers=headers,
         )
+        return True

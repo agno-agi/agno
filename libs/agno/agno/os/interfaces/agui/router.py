@@ -4,14 +4,18 @@ import logging
 import uuid
 from typing import AsyncIterator, Optional, Union
 
-from ag_ui.core import (
-    BaseEvent,
-    EventType,
-    RunAgentInput,
-    RunErrorEvent,
-    RunStartedEvent,
-)
-from ag_ui.encoder import EventEncoder
+try:
+    from ag_ui.core import (
+        BaseEvent,
+        EventType,
+        RunAgentInput,
+        RunErrorEvent,
+        RunStartedEvent,
+    )
+    from ag_ui.encoder import EventEncoder
+except ImportError as e:
+    raise ImportError("`ag_ui` not installed. Please install it with `pip install -U ag-ui`") from e
+
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 

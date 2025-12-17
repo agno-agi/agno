@@ -29,6 +29,8 @@ services:
       DATABASE_URL: postgresql+psycopg://ai:ai@postgres:5432/ai
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       RELOAD: "true"
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-test-secret-key-for-system-tests-do-not-use-in-production}
+      ENABLE_AUTHORIZATION: ${ENABLE_AUTHORIZATION:-true}
     ports:
       - "7002:7002"
     volumes:
@@ -59,6 +61,9 @@ services:
       REMOTE_SERVER_URL: http://remote-server:7002
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       RELOAD: "true"
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-test-secret-key-for-system-tests-do-not-use-in-production}
+      ENABLE_AUTHORIZATION: ${ENABLE_AUTHORIZATION:-true}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-test-signing-secret}
     ports:
       - "7001:7001"
     volumes:

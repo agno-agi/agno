@@ -15,7 +15,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from agno.exceptions import InputCheckError, OutputCheckError
-from agno.os.auth import get_authentication_dependency, require_resource_access, validate_websocket_token
+from agno.os.auth import (
+    get_auth_token_from_request,
+    get_authentication_dependency,
+    require_resource_access,
+    validate_websocket_token,
+)
 from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -154,13 +159,13 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
             return
 
-        # Generate session_id if not provided
-        # Use workflow's default session_id if not provided in message
-        if not session_id:
-            if workflow.session_id:
-                session_id = workflow.session_id
-            else:
-                session_id = str(uuid4())
+        # # Generate session_id if not provided
+        # # Use workflow's default session_id if not provided in message
+        # if not session_id:
+        #     if workflow.session_id:
+        #         session_id = workflow.session_id
+        #     else:
+        #         session_id = str(uuid4())
 
         # Execute workflow in background with streaming
         workflow_result = await workflow.arun(  # type: ignore
@@ -203,10 +208,11 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
 
 async def workflow_response_streamer(
     workflow: Union[Workflow, RemoteWorkflow],
-    input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+    input: Union[str, Dict[str, Any], List[Any], BaseModel],
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
+    auth_token: Optional[str] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     try:
@@ -219,7 +225,11 @@ async def workflow_response_streamer(
         else:
             stream_events = True
 
-        run_response = workflow.arun(
+        # Pass auth_token for remote workflows
+        if auth_token and isinstance(workflow, RemoteWorkflow):
+            kwargs["auth_token"] = auth_token
+
+        run_response = workflow.arun(  # type: ignore
             input=input,
             session_id=session_id,
             user_id=user_id,
@@ -536,25 +546,25 @@ def get_workflow_router(
     ):
         kwargs = await get_request_kwargs(request, create_workflow_run)
 
-        if hasattr(request.state, "user_id"):
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
             if user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = request.state.user_id
-        if hasattr(request.state, "session_id"):
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
             session_id = request.state.session_id
-        if hasattr(request.state, "session_state"):
+        if hasattr(request.state, "session_state") and request.state.session_state is not None:
             session_state = request.state.session_state
             if "session_state" in kwargs:
                 log_warning("Session state parameter passed in both request state and kwargs, using request state")
             kwargs["session_state"] = session_state
-        if hasattr(request.state, "dependencies"):
+        if hasattr(request.state, "dependencies") and request.state.dependencies is not None:
             dependencies = request.state.dependencies
             if "dependencies" in kwargs:
                 log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
-        if hasattr(request.state, "metadata"):
+        if hasattr(request.state, "metadata") and request.state.metadata is not None:
             metadata = request.state.metadata
             if "metadata" in kwargs:
                 log_warning("Metadata parameter passed in both request state and kwargs, using request state")
@@ -571,6 +581,9 @@ def get_workflow_router(
             logger.debug("Creating new session")
             session_id = str(uuid4())
 
+        # Extract auth token for remote workflows
+        auth_token = get_auth_token_from_request(request)
+
         # Return based on stream parameter
         try:
             if stream:
@@ -581,11 +594,16 @@ def get_workflow_router(
                         session_id=session_id,
                         user_id=user_id,
                         background_tasks=background_tasks,
+                        auth_token=auth_token,
                         **kwargs,
                     ),
                     media_type="text/event-stream",
                 )
             else:
+                # Pass auth_token for remote workflows
+                if auth_token and isinstance(workflow, RemoteWorkflow):
+                    kwargs["auth_token"] = auth_token
+
                 run_response = await workflow.arun(
                     input=message,
                     session_id=session_id,

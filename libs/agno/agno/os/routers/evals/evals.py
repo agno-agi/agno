@@ -2,13 +2,13 @@ import logging
 from copy import deepcopy
 from typing import List, Optional, Union, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalFilterType, EvalType
 from agno.models.utils import get_model
-from agno.os.auth import get_authentication_dependency
+from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.routers.evals.schemas import (
     DeleteEvalRunsRequest,
     EvalRunInput,
@@ -111,6 +111,7 @@ def attach_routes(
         },
     )
     async def get_eval_runs(
+        request: Request,
         agent_id: Optional[str] = Query(default=None, description="Agent ID"),
         team_id: Optional[str] = Query(default=None, description="Team ID"),
         workflow_id: Optional[str] = Query(default=None, description="Workflow ID"),
@@ -127,17 +128,20 @@ def attach_routes(
         db = await get_db(dbs, db_id, table)
 
         if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.get_eval_runs(
                 limit=limit,
                 page=page,
                 sort_by=sort_by,
-                sort_order=sort_order.value,
+                sort_order=sort_order.value if sort_order else None,
                 agent_id=agent_id,
                 team_id=team_id,
                 workflow_id=workflow_id,
                 model_id=model_id,
                 eval_types=eval_types,
                 filter_type=filter_type.value if filter_type else None,
+                headers=headers,
             )
 
         # TODO: Delete me:
@@ -227,13 +231,16 @@ def attach_routes(
         },
     )
     async def get_eval_run(
+        request: Request,
         eval_run_id: str,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
         table: Optional[str] = Query(default=None, description="Table to query eval run from"),
     ) -> EvalSchema:
         db = await get_db(dbs, db_id, table)
         if isinstance(db, RemoteDb):
-            return await db.get_eval_run(eval_run_id=eval_run_id, db_id=db_id, table=table)
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_eval_run(eval_run_id=eval_run_id, db_id=db_id, table=table, headers=headers)
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -257,6 +264,7 @@ def attach_routes(
         },
     )
     async def delete_eval_runs(
+        http_request: Request,
         request: DeleteEvalRunsRequest,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
@@ -264,7 +272,11 @@ def attach_routes(
         try:
             db = await get_db(dbs, db_id, table)
             if isinstance(db, RemoteDb):
-                return await db.delete_eval_runs(eval_run_ids=request.eval_run_ids, db_id=db_id, table=table)
+                auth_token = get_auth_token_from_request(http_request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                return await db.delete_eval_runs(
+                    eval_run_ids=request.eval_run_ids, db_id=db_id, table=table, headers=headers
+                )
 
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
@@ -313,6 +325,7 @@ def attach_routes(
         },
     )
     async def update_eval_run(
+        http_request: Request,
         eval_run_id: str,
         request: UpdateEvalRunRequest,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
@@ -321,7 +334,11 @@ def attach_routes(
         try:
             db = await get_db(dbs, db_id, table)
             if isinstance(db, RemoteDb):
-                return await db.update_eval_run(eval_run_id=eval_run_id, name=request.name, db_id=db_id, table=table)
+                auth_token = get_auth_token_from_request(http_request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                return await db.update_eval_run(
+                    eval_run_id=eval_run_id, name=request.name, db_id=db_id, table=table, headers=headers
+                )
 
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
@@ -377,12 +394,15 @@ def attach_routes(
         },
     )
     async def run_eval(
+        request: Request,
         eval_run_input: EvalRunInput,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for evaluation"),
         table: Optional[str] = Query(default=None, description="Table to use for evaluation"),
     ) -> Optional[EvalSchema]:
         db = await get_db(dbs, db_id, table)
         if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.create_eval_run(
                 eval_type=eval_run_input.eval_type,
                 input_text=eval_run_input.input,
@@ -395,6 +415,7 @@ def attach_routes(
                 num_iterations=eval_run_input.num_iterations,
                 db_id=db_id,
                 table=table,
+                headers=headers,
             )
 
         if eval_run_input.agent_id and eval_run_input.team_id:

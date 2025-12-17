@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from httpx import HTTPStatusError
@@ -57,7 +58,7 @@ from agno.os.utils import (
 )
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.team import RemoteTeam, Team
-from agno.utils.log import log_debug, log_error, log_warning, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow import RemoteWorkflow, Workflow
 
@@ -561,6 +562,14 @@ class AgentOS:
             fastapi_app.mount("/", self._mcp_app)
 
         if not self._app_set:
+
+            @fastapi_app.exception_handler(RequestValidationError)
+            async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+                log_error(f"Validation error (422): {exc.errors()}")
+                return JSONResponse(
+                    status_code=422,
+                    content={"detail": exc.errors()},
+                )
 
             @fastapi_app.exception_handler(HTTPException)
             async def http_exception_handler(_, exc: HTTPException) -> JSONResponse:
