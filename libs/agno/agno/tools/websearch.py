@@ -53,7 +53,7 @@ class WebSearchTools(Toolkit):
         if all or enable_search:
             tools.append(self.web_search)
         if all or enable_news:
-            tools.append(self.web_news)
+            tools.append(self.search_news)
 
         super().__init__(name="websearch", tools=tools, **kwargs)
 
@@ -76,7 +76,7 @@ class WebSearchTools(Toolkit):
 
         return json.dumps(results, indent=2)
 
-    def web_news(self, query: str, max_results: int = 5) -> str:
+    def search_news(self, query: str, max_results: int = 5) -> str:
         """Use this function to get the latest news from the web.
 
         Args:

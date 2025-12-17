@@ -51,4 +51,4 @@ class DuckDuckGoTools(WebSearchTools):
 
         # Backward compatibility aliases for old method names
         self.duckduckgo_search = self.web_search
-        self.duckduckgo_news = self.web_news
+        self.duckduckgo_news = self.search_news
