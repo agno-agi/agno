@@ -19,10 +19,10 @@ REQUEST_TIMEOUT = 60.0  # seconds
 
 
 def parse_ndjson_events(content: str) -> List[Dict[str, Any]]:
-    """Parse NDJSON stream content into a list of event dictionaries.
+    """Parse SSE (Server-Sent Events) stream content into a list of event dictionaries.
 
     Args:
-        content: Raw NDJSON content string
+        content: Raw SSE content string (format: "event: Name\ndata: {...}\n\n")
 
     Returns:
         List of parsed event dictionaries
@@ -32,11 +32,21 @@ def parse_ndjson_events(content: str) -> List[Dict[str, Any]]:
         line = line.strip()
         if not line:
             continue
-        try:
-            event = json.loads(line)
-            events.append(event)
-        except json.JSONDecodeError:
-            continue
+        # SSE format uses "data: " prefix for JSON content
+        if line.startswith("data: "):
+            try:
+                json_str = line[6:]  # Remove "data: " prefix
+                event = json.loads(json_str)
+                events.append(event)
+            except json.JSONDecodeError:
+                continue
+        # Also support plain NDJSON for backward compatibility
+        elif not line.startswith("event:"):
+            try:
+                event = json.loads(line)
+                events.append(event)
+            except json.JSONDecodeError:
+                continue
     return events
 
 
@@ -99,7 +109,7 @@ class TestA2ALocalAgentNonStreaming:
     def test_a2a_send_message_local_agent(self, client: httpx.Client, test_context_id: str, test_user_id: str):
         """Test A2A send message to local agent."""
         response = client.post(
-            "/a2a/message/send",
+            "/a2a/agents/gateway-agent/v1/message:send",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -115,7 +125,6 @@ class TestA2ALocalAgentNonStreaming:
                     }
                 },
             },
-            headers={"X-Agent-ID": "gateway-agent"},
         )
         assert response.status_code == 200
 
@@ -132,7 +141,7 @@ class TestA2ALocalAgentNonStreaming:
 
         # First message
         response1 = client.post(
-            "/a2a/message/send",
+            "/a2a/agents/gateway-agent/v1/message:send",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -148,13 +157,12 @@ class TestA2ALocalAgentNonStreaming:
                     }
                 },
             },
-            headers={"X-Agent-ID": "gateway-agent"},
         )
         assert response1.status_code == 200
 
         # Second message in same context
         response2 = client.post(
-            "/a2a/message/send",
+            "/a2a/agents/gateway-agent/v1/message:send",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -170,7 +178,6 @@ class TestA2ALocalAgentNonStreaming:
                     }
                 },
             },
-            headers={"X-Agent-ID": "gateway-agent"},
         )
         assert response2.status_code == 200
 
@@ -188,7 +195,7 @@ class TestA2ARemoteAgentNonStreaming:
         context_id = str(uuid.uuid4())
 
         response = client.post(
-            "/a2a/message/send",
+            "/a2a/agents/assistant-agent/v1/message:send",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -204,7 +211,6 @@ class TestA2ARemoteAgentNonStreaming:
                     }
                 },
             },
-            headers={"X-Agent-ID": "assistant-agent"},
         )
         assert response.status_code == 200
 
@@ -226,7 +232,7 @@ class TestA2ATeamNonStreaming:
         context_id = str(uuid.uuid4())
 
         response = client.post(
-            "/a2a/message/send",
+            "/a2a/teams/research-team/v1/message:send",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -242,7 +248,6 @@ class TestA2ATeamNonStreaming:
                     }
                 },
             },
-            headers={"X-Agent-ID": "research-team"},
         )
         assert response.status_code == 200
 
@@ -264,7 +269,7 @@ class TestA2AWorkflowNonStreaming:
         context_id = str(uuid.uuid4())
 
         response = client.post(
-            "/a2a/message/send",
+            "/a2a/workflows/gateway-workflow/v1/message:send",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -280,7 +285,6 @@ class TestA2AWorkflowNonStreaming:
                     }
                 },
             },
-            headers={"X-Agent-ID": "gateway-workflow"},
         )
         assert response.status_code == 200
 
@@ -293,7 +297,7 @@ class TestA2AWorkflowNonStreaming:
         context_id = str(uuid.uuid4())
 
         response = client.post(
-            "/a2a/message/send",
+            "/a2a/workflows/qa-workflow/v1/message:send",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -309,7 +313,6 @@ class TestA2AWorkflowNonStreaming:
                     }
                 },
             },
-            headers={"X-Agent-ID": "qa-workflow"},
         )
         assert response.status_code == 200
 
@@ -331,7 +334,7 @@ class TestA2AStreaming:
         context_id = str(uuid.uuid4())
 
         response = client.post(
-            "/a2a/message/stream",
+            "/a2a/agents/gateway-agent/v1/message:stream",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -347,10 +350,9 @@ class TestA2AStreaming:
                     }
                 },
             },
-            headers={"X-Agent-ID": "gateway-agent"},
         )
         assert response.status_code == 200
-        assert "application/x-ndjson" in response.headers.get("content-type", "")
+        assert "text/event-stream" in response.headers.get("content-type", "")
 
         events = parse_ndjson_events(response.text)
         assert len(events) >= 1, "Should receive at least one event"
@@ -360,7 +362,7 @@ class TestA2AStreaming:
         context_id = str(uuid.uuid4())
 
         response = client.post(
-            "/a2a/message/stream",
+            "/a2a/agents/assistant-agent/v1/message:stream",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -376,10 +378,9 @@ class TestA2AStreaming:
                     }
                 },
             },
-            headers={"X-Agent-ID": "assistant-agent"},
         )
         assert response.status_code == 200
-        assert "application/x-ndjson" in response.headers.get("content-type", "")
+        assert "text/event-stream" in response.headers.get("content-type", "")
 
         events = parse_ndjson_events(response.text)
         assert len(events) >= 1, "Should receive at least one event"
@@ -389,7 +390,7 @@ class TestA2AStreaming:
         context_id = str(uuid.uuid4())
 
         response = client.post(
-            "/a2a/message/stream",
+            "/a2a/teams/research-team/v1/message:stream",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -405,10 +406,9 @@ class TestA2AStreaming:
                     }
                 },
             },
-            headers={"X-Agent-ID": "research-team"},
         )
         assert response.status_code == 200
-        assert "application/x-ndjson" in response.headers.get("content-type", "")
+        assert "text/event-stream" in response.headers.get("content-type", "")
 
 
 # =============================================================================
@@ -419,32 +419,10 @@ class TestA2AStreaming:
 class TestA2AErrorHandling:
     """Test A2A interface error handling."""
 
-    def test_a2a_missing_agent_id(self, client: httpx.Client):
-        """Test A2A error when agent ID is missing."""
-        response = client.post(
-            "/a2a/message/send",
-            json={
-                "jsonrpc": "2.0",
-                "id": str(uuid.uuid4()),
-                "method": "message/send",
-                "params": {
-                    "message": {
-                        "contextId": str(uuid.uuid4()),
-                        "messageId": str(uuid.uuid4()),
-                        "role": "user",
-                        "parts": [{"kind": "text", "text": "Hello"}],
-                    }
-                },
-            },
-        )
-        assert response.status_code == 400
-        data = response.json()
-        assert "detail" in data
-
     def test_a2a_agent_not_found(self, client: httpx.Client):
         """Test A2A error when agent is not found."""
         response = client.post(
-            "/a2a/message/send",
+            "/a2a/agents/non-existent-agent/v1/message:send",
             json={
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -459,7 +437,52 @@ class TestA2AErrorHandling:
                     }
                 },
             },
-            headers={"X-Agent-ID": "non-existent-agent"},
+        )
+        assert response.status_code == 404
+        data = response.json()
+        assert "detail" in data
+
+    def test_a2a_team_not_found(self, client: httpx.Client):
+        """Test A2A error when team is not found."""
+        response = client.post(
+            "/a2a/teams/non-existent-team/v1/message:send",
+            json={
+                "jsonrpc": "2.0",
+                "id": str(uuid.uuid4()),
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "agentId": "non-existent-team",
+                        "contextId": str(uuid.uuid4()),
+                        "messageId": str(uuid.uuid4()),
+                        "role": "user",
+                        "parts": [{"kind": "text", "text": "Hello"}],
+                    }
+                },
+            },
+        )
+        assert response.status_code == 404
+        data = response.json()
+        assert "detail" in data
+
+    def test_a2a_workflow_not_found(self, client: httpx.Client):
+        """Test A2A error when workflow is not found."""
+        response = client.post(
+            "/a2a/workflows/non-existent-workflow/v1/message:send",
+            json={
+                "jsonrpc": "2.0",
+                "id": str(uuid.uuid4()),
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "agentId": "non-existent-workflow",
+                        "contextId": str(uuid.uuid4()),
+                        "messageId": str(uuid.uuid4()),
+                        "role": "user",
+                        "parts": [{"kind": "text", "text": "Hello"}],
+                    }
+                },
+            },
         )
         assert response.status_code == 404
         data = response.json()
