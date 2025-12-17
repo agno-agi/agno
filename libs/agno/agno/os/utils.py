@@ -335,6 +335,10 @@ def get_session_name(session: Dict[str, Any]) -> str:
             if message.get("role") == "user" and message.get("content"):
                 return message["content"]
 
+        run_input = r.get("input")
+        if run_input is not None:
+            return run_input.get("input_content")
+
     return ""
 
 

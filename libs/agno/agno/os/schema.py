@@ -24,7 +24,6 @@ from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
 from agno.workflow.workflow import Workflow
 
-
 class BadRequestResponse(BaseModel):
     model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}})
 
@@ -360,7 +359,6 @@ class RunSchema(BaseModel):
     files: Optional[List[dict]] = Field(None, description="Files included in the run")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
-
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
         run_input = get_run_input(run_dict)
@@ -481,7 +479,6 @@ class WorkflowRunSchema(BaseModel):
     audio: Optional[List[dict]] = Field(None, description="Audio files included in the workflow")
     files: Optional[List[dict]] = Field(None, description="Files included in the workflow")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
-
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
         run_input = get_run_input(run_response, is_workflow_run=True)
