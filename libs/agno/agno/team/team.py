@@ -5607,6 +5607,10 @@ class Team:
                             system_message_content += f"{indent * ' '}    - {_tool.name}\n"
                         elif callable(_tool):
                             system_message_content += f"{indent * ' '}    - {_tool.__name__}\n"
+                        elif "name" in _tool and _tool["name"] is not None:
+                            system_message_content += f"{indent * ' '}    - {_tool['name']}\n"
+                        else:
+                            system_message_content += f"{indent * ' '}    - {str(_tool)}\n"
 
         return system_message_content
 
@@ -7484,7 +7488,7 @@ class Team:
 
             # 7. Add member-level history for the member if enabled (because we won't load the session for the member, so history won't be loaded automatically)
             history = None
-            if member_agent.add_history_to_context:
+            if hasattr(member_agent, "add_history_to_context") and member_agent.add_history_to_context:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
                     if isinstance(member_agent_task, str):
@@ -9038,8 +9042,8 @@ class Team:
         """Use this function to add information to the knowledge base for future use.
 
         Args:
-            query: The query to add.
-            result: The result of the query.
+            query (str): The query or topic to add.
+            result (str): The actual content or information to store.
 
         Returns:
             str: A string indicating the status of the addition.
@@ -9055,13 +9059,9 @@ class Team:
         document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
-        import asyncio
-
         from agno.knowledge.reader.text_reader import TextReader
 
-        asyncio.run(
-            self.knowledge.add_content_async(name=document_name, text_content=document_content, reader=TextReader())
-        )
+        self.knowledge.add_content(name=document_name, text_content=document_content, reader=TextReader())
         return "Successfully added to knowledge base"
 
     def get_relevant_docs_from_knowledge(

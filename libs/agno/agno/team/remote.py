@@ -62,6 +62,19 @@ class RemoteTeam(BaseRemote):
         if self._team_config is not None:
             return self._team_config.description
         return ""
+    
+    @cached_property
+    def role(self) -> Optional[str]:
+        if self._team_config is not None:
+            return self._team_config.role
+        return None
+    
+    @cached_property
+    def tools(self) -> Optional[List[Dict[str, Any]]]:
+        if self._team_config is not None:
+            return self._team_config.tools
+        return None
+
 
     @cached_property
     def db(self) -> Optional[RemoteDb]:
@@ -74,22 +87,22 @@ class RemoteTeam(BaseRemote):
             metrics_table_name = None
             eval_table_name = None
             traces_table_name = None
-            if config and config.session:
+            if config and config.session and config.session.dbs is not None:
                 session_dbs = [db for db in config.session.dbs if db.db_id == db_id]
                 session_table_name = session_dbs[0].tables[0] if session_dbs and session_dbs[0].tables else None
-            if config and config.knowledge:
+            if config and config.knowledge and config.knowledge.dbs is not None:
                 knowledge_dbs = [db for db in config.knowledge.dbs if db.db_id == db_id]
                 knowledge_table_name = knowledge_dbs[0].tables[0] if knowledge_dbs and knowledge_dbs[0].tables else None
-            if config and config.memory:
+            if config and config.memory and config.memory.dbs is not None:
                 memory_dbs = [db for db in config.memory.dbs if db.db_id == db_id]
                 memory_table_name = memory_dbs[0].tables[0] if memory_dbs and memory_dbs[0].tables else None
-            if config and config.metrics:
+            if config and config.metrics and config.metrics.dbs is not None:
                 metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
                 metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
-            if config and config.evals:
+            if config and config.evals and config.evals.dbs is not None:
                 eval_dbs = [db for db in config.evals.dbs if db.db_id == db_id]
                 eval_table_name = eval_dbs[0].tables[0] if eval_dbs and eval_dbs[0].tables else None
-            if config and config.traces:
+            if config and config.traces and config.traces.dbs is not None:
                 traces_dbs = [db for db in config.traces.dbs if db.db_id == db_id]
                 traces_table_name = traces_dbs[0].tables[0] if traces_dbs and traces_dbs[0].tables else None
             return RemoteDb(
@@ -111,20 +124,24 @@ class RemoteTeam(BaseRemote):
             return RemoteKnowledge(
                 client=self.client,
                 contents_db=RemoteDb(
-                    id=self._team_config.knowledge.get("db_id"),
+                    id=self._team_config.knowledge.get("db_id"),  # type: ignore
                     client=self.client,
                     knowledge_table_name=self._team_config.knowledge.get("knowledge_table"),
-                ),
+                )
+                if self._team_config.knowledge.get("db_id") is not None
+                else None,
             )
-        return False
+        return None
 
     @cached_property
-    def model(self) -> Model:
+    def model(self) -> Optional[Model]:
         from agno.models.utils import get_model
 
-        model_response = self._team_config.model
-        model_str = f"{model_response.provider}:{model_response.model}"
-        return get_model(model_str)
+        model_response = self._team_config.model  # type: ignore
+        if model_response is not None:
+            model_str = f"{model_response.provider}:{model_response.model}"
+            return get_model(model_str)
+        return None
 
     @cached_property
     def user_id(self) -> Optional[str]:
@@ -151,6 +168,7 @@ class RemoteTeam(BaseRemote):
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        auth_token: Optional[str] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
 
@@ -174,6 +192,7 @@ class RemoteTeam(BaseRemote):
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        auth_token: Optional[str] = None,
         **kwargs: Any,
     ) -> AsyncIterator[TeamRunOutputEvent]: ...
 
@@ -197,6 +216,7 @@ class RemoteTeam(BaseRemote):
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        auth_token: Optional[str] = None,
         **kwargs: Any,
     ) -> Union[
         TeamRunOutput,
@@ -204,10 +224,11 @@ class RemoteTeam(BaseRemote):
     ]:
         validated_input = validate_input(input)
         serialized_input = serialize_input(validated_input)
+        headers = self._get_auth_headers(auth_token)
 
         if stream:
             # Handle streaming response
-            return self.get_client().run_team_stream(
+            return self.get_client().run_team_stream(  # type: ignore
                 team_id=self.team_id,
                 message=serialized_input,
                 session_id=session_id,
@@ -225,10 +246,11 @@ class RemoteTeam(BaseRemote):
                 add_session_state_to_context=add_session_state_to_context,
                 dependencies=dependencies,
                 metadata=metadata,
+                headers=headers,
                 **kwargs,
             )
         else:
-            return self.get_client().run_team(
+            return self.get_client().run_team(  # type: ignore
                 team_id=self.team_id,
                 message=serialized_input,
                 session_id=session_id,
@@ -246,19 +268,24 @@ class RemoteTeam(BaseRemote):
                 add_session_state_to_context=add_session_state_to_context,
                 dependencies=dependencies,
                 metadata=metadata,
+                headers=headers,
                 **kwargs,
             )
 
-    async def cancel_run(self, run_id: str) -> bool:
+    async def cancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
         """Cancel a running team execution.
 
         Args:
             run_id (str): The run_id to cancel.
+            auth_token: Optional JWT token for authentication.
 
         Returns:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
-        return await self.get_client().cancel_team_run(
+        headers = self._get_auth_headers(auth_token)
+        await self.get_client().cancel_team_run(
             team_id=self.team_id,
             run_id=run_id,
+            headers=headers,
         )
+        return True

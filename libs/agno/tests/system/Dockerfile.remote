@@ -30,7 +30,14 @@ RUN pip install --no-cache-dir \
     openai \
     opentelemetry-api \
     opentelemetry-sdk \
-    openinference-instrumentation-agno
+    openinference-instrumentation-agno \
+    PyJWT \
+    mcp \
+    fastmcp \
+    a2a-sdk \
+    agui \
+    ag-ui-protocol \
+    slack-sdk
 
 # Copy the remote server script
 WORKDIR /app

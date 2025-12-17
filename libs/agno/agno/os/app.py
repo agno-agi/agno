@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from httpx import HTTPStatusError
@@ -17,6 +18,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
     AgentOSConfig,
+    AuthorizationConfig,
     DatabaseConfig,
     EvalsConfig,
     EvalsDomainConfig,
@@ -50,12 +52,13 @@ from agno.os.utils import (
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
     load_yaml_config,
+    resolve_origins,
     setup_tracing_for_os,
     update_cors_middleware,
 )
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.team import RemoteTeam, Team
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow import RemoteWorkflow, Workflow
 
@@ -120,17 +123,20 @@ class AgentOS:
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
+        authorization: bool = False,
+        authorization_config: Optional[AuthorizationConfig] = None,
+        cors_allowed_origins: Optional[List[str]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
         enable_mcp_server: bool = False,
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
-        telemetry: bool = True,
         tracing: bool = False,
         tracing_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         auto_provision_dbs: bool = True,
         run_hooks_in_background: bool = False,
+        telemetry: bool = True,
     ):
         """Initialize AgentOS.
 
@@ -151,11 +157,15 @@ class AgentOS:
             enable_mcp_server: Whether to enable MCP (Model Context Protocol)
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
-            telemetry: Whether to enable telemetry
+            auto_provision_dbs: Whether to automatically provision databases
+            authorization: Whether to enable authorization
+            authorization_config: Configuration for the authorization middleware
+            cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
             tracing_db: Dedicated database for storing and reading traces. Recommended for multi-db setups.
                        If not provided and tracing=True, the first available db from agents/teams/workflows is used.
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
+            telemetry: Whether to enable telemetry
 
         """
         if not agents and not workflows and not teams and not knowledge:
@@ -200,6 +210,13 @@ class AgentOS:
         self.enable_mcp_server = enable_mcp_server
         self.lifespan = lifespan
 
+        # RBAC
+        self.authorization = authorization
+        self.authorization_config = authorization_config
+
+        # CORS configuration - merge user-provided origins with defaults from settings
+        self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
+
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
 
@@ -210,6 +227,9 @@ class AgentOS:
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
+
+        # Check for duplicate IDs after initialization
+        self._check_duplicate_ids()
 
         if self.tracing:
             self._setup_tracing()
@@ -252,6 +272,9 @@ class AgentOS:
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
+
+        # Check for duplicate IDs after initialization
+        self._check_duplicate_ids()
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
 
@@ -319,6 +342,29 @@ class AgentOS:
             a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
             self.interfaces.append(a2a_interface)
             self._add_router(app, a2a_interface.get_router())
+
+    def _check_duplicate_ids(self) -> None:
+        """Check for duplicate IDs across all agents, teams, and workflows.
+
+        Raises:
+            ValueError: If duplicate IDs are found
+        """
+        seen_ids: List[str] = []
+        duplicate_ids: List[str] = []
+
+        for entities in [self.agents, self.teams, self.workflows]:
+            if not entities:
+                continue
+            for entity in entities:
+                entity_id = entity.id
+                if entity_id in seen_ids:
+                    if entity_id not in duplicate_ids:
+                        duplicate_ids.append(entity_id)
+                else:
+                    seen_ids.append(entity_id)
+
+        if duplicate_ids:
+            raise ValueError(f"Duplicate IDs found in AgentOS: {', '.join(repr(id_) for id_ in duplicate_ids)}")
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         # Adjust the FastAPI app lifespan to handle MCP connections if relevant
@@ -546,6 +592,14 @@ class AgentOS:
 
         if not self._app_set:
 
+            @fastapi_app.exception_handler(RequestValidationError)
+            async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+                log_error(f"Validation error (422): {exc.errors()}")
+                return JSONResponse(
+                    status_code=422,
+                    content={"detail": exc.errors()},
+                )
+
             @fastapi_app.exception_handler(HTTPException)
             async def http_exception_handler(_, exc: HTTPException) -> JSONResponse:
                 log_error(f"HTTP exception: {exc.status_code} {exc.detail}")
@@ -576,9 +630,52 @@ class AgentOS:
                 )
 
         # Update CORS middleware
-        update_cors_middleware(fastapi_app, self.settings.cors_origin_list)  # type: ignore
+        update_cors_middleware(fastapi_app, self.cors_allowed_origins)  # type: ignore
+
+        # Set agent_os_id and cors_allowed_origins on app state
+        # This allows middleware (like JWT) to access these values
+        fastapi_app.state.agent_os_id = self.id
+        fastapi_app.state.cors_allowed_origins = self.cors_allowed_origins
+
+        # Add JWT middleware if authorization is enabled
+        if self.authorization:
+            self._add_jwt_middleware(fastapi_app)
 
         return fastapi_app
+
+    def _add_jwt_middleware(self, fastapi_app: FastAPI) -> None:
+        from agno.os.middleware.jwt import JWTMiddleware, JWTValidator
+
+        verify_audience = False
+        jwks_file = None
+        verification_keys = None
+        algorithm = "RS256"
+
+        if self.authorization_config:
+            algorithm = self.authorization_config.algorithm or "RS256"
+            verification_keys = self.authorization_config.verification_keys
+            jwks_file = self.authorization_config.jwks_file
+            verify_audience = self.authorization_config.verify_audience or False
+
+        log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
+
+        # Create validator and store on app.state for WebSocket access
+        jwt_validator = JWTValidator(
+            verification_keys=verification_keys,
+            jwks_file=jwks_file,
+            algorithm=algorithm,
+        )
+        fastapi_app.state.jwt_validator = jwt_validator
+
+        # Add middleware to stack
+        fastapi_app.add_middleware(
+            JWTMiddleware,
+            verification_keys=verification_keys,
+            jwks_file=jwks_file,
+            algorithm=algorithm,
+            authorization=self.authorization,
+            verify_audience=verify_audience,
+        )
 
     def get_routes(self) -> List[Any]:
         """Retrieve all routes from the FastAPI app.
@@ -985,4 +1082,13 @@ class AgentOS:
             )
         )
 
-        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, access_log=access_log, **kwargs)
+        uvicorn.run(
+            app=app,
+            host=host,
+            port=port,
+            reload=reload,
+            workers=workers,
+            access_log=access_log,
+            lifespan="on",
+            **kwargs,
+        )

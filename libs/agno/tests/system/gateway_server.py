@@ -8,21 +8,33 @@ defined in a separate remote server container.
 import os
 
 from agno.agent import Agent, RemoteAgent
-from agno.db.postgres import PostgresDb
+from agno.db.postgres import AsyncPostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.os.config import AuthorizationConfig
+from agno.os.interfaces.a2a import A2A
+from agno.os.interfaces.agui import AGUI
+from agno.os.interfaces.slack import Slack
 from agno.team import RemoteTeam
 from agno.vectordb.pgvector.pgvector import PgVector
 from agno.workflow import RemoteWorkflow, Workflow
 from agno.workflow.step import Step
 
 # =============================================================================
+# JWT Authorization Configuration
+# =============================================================================
+
+# Shared secret key for JWT verification (in production, use proper key management)
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "test-secret-key-for-system-tests-do-not-use-in-production")
+ENABLE_AUTHORIZATION = os.getenv("ENABLE_AUTHORIZATION", "true").lower() == "true"
+
+# =============================================================================
 # Database Configuration
 # =============================================================================
 
-db = PostgresDb(
+db = AsyncPostgresDb(
     id="gateway-db",
     db_url=os.getenv("DATABASE_URL", "postgresql+psycopg://ai:ai@postgres:5432/ai"),
 )
@@ -77,33 +89,89 @@ local_workflow = Workflow(
 REMOTE_SERVER_URL = os.getenv("REMOTE_SERVER_URL", "http://remote-server:7002")
 ADK_SERVER_URL = os.getenv("ADK_SERVER_URL", "http://adk-server:8001")
 
+# Remote agent for interface testing
+remote_assistant = RemoteAgent(base_url=REMOTE_SERVER_URL, agent_id="assistant-agent")
+remote_researcher = RemoteAgent(base_url=REMOTE_SERVER_URL, agent_id="researcher-agent")
+
+# Remote team for interface testing
+remote_team = RemoteTeam(base_url=REMOTE_SERVER_URL, team_id="research-team")
+
+# Remote workflow for interface testing
+remote_workflow = RemoteWorkflow(base_url=REMOTE_SERVER_URL, workflow_id="qa-workflow")
+
+# =============================================================================
+# Interface Configuration
+# =============================================================================
+
+# AG-UI Interfaces (for local agent, remote agent, and team)
+agui_local = AGUI(agent=local_agent, prefix="/agui/local", tags=["AGUI-Local"])
+agui_remote = AGUI(agent=remote_assistant, prefix="/agui/remote", tags=["AGUI-Remote"])
+agui_team = AGUI(team=remote_team, prefix="/agui/team", tags=["AGUI-Team"])
+
+# Slack Interfaces (for local agent, remote agent, team, and workflow)
+slack_local = Slack(agent=local_agent, prefix="/slack/local", tags=["Slack-Local"])
+slack_remote = Slack(agent=remote_assistant, prefix="/slack/remote", tags=["Slack-Remote"])
+slack_team = Slack(team=remote_team, prefix="/slack/team", tags=["Slack-Team"])
+slack_workflow = Slack(workflow=local_workflow, prefix="/slack/workflow", tags=["Slack-Workflow"])
+
+# A2A Interface (exposes all agents, teams, and workflows)
+a2a_interface = A2A(
+    agents=[local_agent, remote_assistant, remote_researcher],
+    teams=[remote_team],
+    workflows=[local_workflow, remote_workflow],
+    prefix="/a2a",
+    tags=["A2A"],
+)
+
 # =============================================================================
 # AgentOS Configuration
 # =============================================================================
+
+# ADK Remote agent (A2A protocol)
+adk_facts_agent = RemoteAgent(
+    base_url=ADK_SERVER_URL,
+    agent_id="facts_agent",
+    protocol="a2a",
+    json_rpc_endpoint="/",
+)
 
 agent_os = AgentOS(
     id="gateway-os",
     description="Gateway AgentOS for system testing - consumes remote agents, teams, and workflows",
     agents=[
         local_agent,
-        RemoteAgent(base_url=REMOTE_SERVER_URL, agent_id="assistant-agent"),
-        RemoteAgent(base_url=REMOTE_SERVER_URL, agent_id="researcher-agent"),
-        RemoteAgent(
-            base_url=ADK_SERVER_URL,
-            agent_id="facts_agent",
-            protocol="a2a",
-            json_rpc_endpoint="/",
-        ),
+        remote_assistant,
+        remote_researcher,
+        adk_facts_agent,
     ],
     teams=[
-        RemoteTeam(base_url=REMOTE_SERVER_URL, team_id="research-team"),
+        remote_team,
     ],
     workflows=[
         local_workflow,
-        RemoteWorkflow(base_url=REMOTE_SERVER_URL, workflow_id="qa-workflow"),
+        remote_workflow,
+    ],
+    interfaces=[
+        agui_local,
+        agui_remote,
+        agui_team,
+        slack_local,
+        slack_remote,
+        slack_team,
+        slack_workflow,
+        a2a_interface,
     ],
     tracing=True,
     tracing_db=db,
+    enable_mcp_server=True,
+    authorization=ENABLE_AUTHORIZATION,
+    authorization_config=AuthorizationConfig(
+        verification_keys=[JWT_SECRET_KEY],
+        algorithm="HS256",
+        verify_audience=False,
+    )
+    if ENABLE_AUTHORIZATION
+    else None,
 )
 
 # FastAPI app instance (for uvicorn)

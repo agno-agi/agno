@@ -72,8 +72,8 @@ class RemoteDb:
 
     async def create_session(
         self,
-        session_id: str,
-        session_name: str,
+        session_id: Optional[str] = None,
+        session_name: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
@@ -128,7 +128,7 @@ class RemoteDb:
     async def get_memory(self, memory_id: str, **kwargs: Any) -> "UserMemorySchema":
         return await self.client.get_memory(memory_id, **kwargs)
 
-    async def get_memories(self, user_id: str, **kwargs: Any) -> "PaginatedResponse[UserMemorySchema]":
+    async def get_memories(self, user_id: Optional[str] = None, **kwargs: Any) -> "PaginatedResponse[UserMemorySchema]":
         return await self.client.list_memories(user_id, **kwargs)
 
     async def update_memory(self, memory_id: str, **kwargs: Any) -> "UserMemorySchema":
@@ -139,6 +139,9 @@ class RemoteDb:
 
     async def optimize_memories(self, **kwargs: Any) -> "OptimizeMemoriesResponse":
         return await self.client.optimize_memories(**kwargs)
+
+    async def get_memory_topics(self, **kwargs: Any) -> List[str]:
+        return await self.client.get_memory_topics(**kwargs)
 
     # TRACES
     async def get_traces(self, **kwargs: Any) -> "PaginatedResponse[TraceSummary]":
@@ -163,7 +166,7 @@ class RemoteDb:
     async def update_eval_run(self, eval_run_id: str, **kwargs: Any) -> "EvalSchema":
         return await self.client.update_eval_run(eval_run_id, **kwargs)
 
-    async def create_eval_run(self, **kwargs: Any) -> "EvalSchema":
+    async def create_eval_run(self, **kwargs: Any) -> Optional["EvalSchema"]:
         return await self.client.run_eval(**kwargs)
 
     # METRICS
@@ -191,8 +194,10 @@ class RemoteKnowledge:
     client: "AgentOSClient"
     contents_db: Optional[RemoteDb] = None
 
-    async def get_config(self) -> "ConfigResponseSchema":
-        return await self.client.get_knowledge_config(db_id=self.contents_db.id)
+    async def get_config(self, headers: Optional[Dict[str, str]] = None) -> "ConfigResponseSchema":
+        return await self.client.get_knowledge_config(
+            db_id=self.contents_db.id if self.contents_db else None, headers=headers
+        )
 
     async def search_knowledge(self, query: str, **kwargs: Any) -> "PaginatedResponse[VectorSearchResult]":
         return await self.client.search_knowledge(query, **kwargs)
@@ -266,10 +271,10 @@ class RemoteKnowledge:
         return await self.client.get_knowledge_content(content_id=content_id, db_id=db_id, **kwargs)
 
     async def delete_content_by_id(self, content_id: str, db_id: Optional[str] = None, **kwargs: Any) -> None:
-        return await self.client.delete_knowledge_content(content_id=content_id, db_id=db_id, **kwargs)
+        await self.client.delete_knowledge_content(content_id=content_id, db_id=db_id, **kwargs)
 
     async def delete_all_content(self, db_id: Optional[str] = None, **kwargs: Any) -> None:
-        return await self.client.delete_all_knowledge_content(db_id=db_id, **kwargs)
+        await self.client.delete_all_knowledge_content(db_id=db_id, **kwargs)
 
     async def get_content_status(
         self, content_id: str, db_id: Optional[str] = None, **kwargs: Any
@@ -322,13 +327,32 @@ class BaseRemote:
         config: ConfigResponse = self.client.get_config()
         return config
 
-    def _get_headers(self) -> Dict[str, str]:
-        """Get default headers for HTTP requests.
+    def _get_headers(self, auth_token: Optional[str] = None) -> Dict[str, str]:
+        """Get headers for HTTP requests.
+
+        Args:
+            auth_token: Optional JWT token for authentication
 
         Returns:
-            Dict[str, str]: Default headers including Content-Type
+            Dict[str, str]: Headers including Content-Type and optional Authorization
         """
-        return {"Content-Type": "application/x-www-form-urlencoded"}
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+        return headers
+
+    def _get_auth_headers(self, auth_token: Optional[str] = None) -> Optional[Dict[str, str]]:
+        """Get Authorization headers for HTTP requests.
+
+        Args:
+            auth_token: Optional JWT token for authentication
+
+        Returns:
+            Dict[str, str] with Authorization header if auth_token is provided, None otherwise
+        """
+        if auth_token:
+            return {"Authorization": f"Bearer {auth_token}"}
+        return None
 
     @abstractmethod
     def arun(  # type: ignore
@@ -351,6 +375,7 @@ class BaseRemote:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        auth_token: Optional[str] = None,
         **kwargs: Any,
     ) -> Union[
         RunOutput,

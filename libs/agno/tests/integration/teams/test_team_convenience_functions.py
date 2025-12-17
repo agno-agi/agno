@@ -3,7 +3,6 @@ from typing import Any, Dict
 
 import pytest
 
-import agno.utils.os
 from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.team.team import Team
@@ -156,7 +155,7 @@ def test_set_session_name(test_team):
     assert updated_session.session_data["session_name"] == "Test Session"
 
     # Verify it's persisted
-    name = agno.utils.os.get_session_name(session_id=session_id)
+    name = test_team.get_session_name(session_id=session_id)
     assert name == "Test Session"
 
 
@@ -177,7 +176,7 @@ def test_get_session_name(test_team):
     test_team.run("Hello", session_id=session_id)
     test_team.set_session_name(session_id=session_id, session_name="My Session")
 
-    name = agno.utils.os.get_session_name(session_id=session_id)
+    name = test_team.get_session_name(session_id=session_id)
     assert name == "My Session"
 
 

@@ -14,7 +14,7 @@ async def remote_agent_example():
     # Create a runner that points to a remote agent
     agent = RemoteAgent(
         base_url="http://localhost:7778",
-        agent_id="basic-agent",
+        agent_id="assistant-agent",
     )
 
     response = await agent.arun(
@@ -29,7 +29,7 @@ async def remote_streaming_example():
     """Stream responses from a remote agent."""
     runner = RemoteAgent(
         base_url="http://localhost:7778",
-        agent_id="basic-agent",
+        agent_id="researcher-agent",
     )
 
     async for chunk in runner.arun(

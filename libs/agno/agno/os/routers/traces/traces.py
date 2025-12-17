@@ -1,11 +1,11 @@
 import logging
 from typing import Optional, Union
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import Depends, HTTPException, Query, Request
 from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.os.auth import get_authentication_dependency
+from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.routers.traces.schemas import (
     TraceDetail,
     TraceNode,
@@ -110,6 +110,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def get_traces(
+        request: Request,
         run_id: Optional[str] = Query(default=None, description="Filter by run ID"),
         session_id: Optional[str] = Query(default=None, description="Filter by session ID"),
         user_id: Optional[str] = Query(default=None, description="Filter by user ID"),
@@ -136,6 +137,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db = await get_db(dbs, db_id)
 
         if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.get_traces(
                 run_id=run_id,
                 session_id=session_id,
@@ -149,6 +152,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 limit=limit,
                 page=page,
                 db_id=db_id,
+                headers=headers,
             )
 
         try:
@@ -320,6 +324,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def get_trace(
+        request: Request,
         trace_id: str,
         span_id: Optional[str] = Query(default=None, description="Optional: Span ID to retrieve specific span"),
         run_id: Optional[str] = Query(default=None, description="Optional: Run ID to retrieve trace for"),
@@ -330,11 +335,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db = await get_db(dbs, db_id)
 
         if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.get_trace(
                 trace_id=trace_id,
                 span_id=span_id,
                 run_id=run_id,
                 db_id=db_id,
+                headers=headers,
             )
 
         try:
@@ -433,6 +441,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def get_trace_stats(
+        request: Request,
         user_id: Optional[str] = Query(default=None, description="Filter by user ID"),
         agent_id: Optional[str] = Query(default=None, description="Filter by agent ID"),
         team_id: Optional[str] = Query(default=None, description="Filter by team ID"),
@@ -456,6 +465,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db = await get_db(dbs, db_id)
 
         if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.get_trace_session_stats(
                 user_id=user_id,
                 agent_id=agent_id,
@@ -466,6 +477,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 limit=limit,
                 page=page,
                 db_id=db_id,
+                headers=headers,
             )
 
         try:

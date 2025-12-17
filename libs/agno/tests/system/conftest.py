@@ -3,14 +3,22 @@ Pytest configuration and shared fixtures for system tests.
 """
 
 import os
+from typing import Dict
 
 import pytest
+
+from .test_utils import generate_jwt_token
 
 
 def pytest_configure(config):
     """Configure pytest with custom markers."""
     config.addinivalue_line("markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')")
     config.addinivalue_line("markers", "integration: marks tests as integration tests")
+
+
+# =============================================================================
+# Fixtures
+# =============================================================================
 
 
 @pytest.fixture(scope="session")
@@ -29,3 +37,21 @@ def remote_url() -> str:
 def adk_url() -> str:
     """Get the Google ADK server URL from environment or use default."""
     return os.getenv("ADK_SERVER_URL", "http://localhost:8001")
+
+
+@pytest.fixture(scope="session")
+def jwt_token() -> str:
+    """Generate a JWT token for the gateway server."""
+    return generate_jwt_token(audience="gateway-os")
+
+
+@pytest.fixture(scope="session")
+def remote_jwt_token() -> str:
+    """Generate a JWT token for the remote server."""
+    return generate_jwt_token(audience="remote-os")
+
+
+@pytest.fixture(scope="session")
+def auth_headers(jwt_token: str) -> Dict[str, str]:
+    """Get authorization headers for the gateway server."""
+    return {"Authorization": f"Bearer {jwt_token}"}

@@ -8,11 +8,12 @@ consumes via RemoteAgent, RemoteTeam, and RemoteWorkflow.
 import os
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
+from agno.db.postgres import AsyncPostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.os.middleware.jwt import JWTMiddleware
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -21,10 +22,18 @@ from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
 # =============================================================================
+# JWT Authorization Configuration
+# =============================================================================
+
+# Shared secret key for JWT verification (in production, use proper key management)
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "test-secret-key-for-system-tests-do-not-use-in-production")
+ENABLE_AUTHORIZATION = os.getenv("ENABLE_AUTHORIZATION", "true").lower() == "true"
+
+# =============================================================================
 # Database Configuration
 # =============================================================================
 
-db = PostgresDb(
+db = AsyncPostgresDb(
     id="remote-db",
     db_url=os.getenv("DATABASE_URL", "postgresql+psycopg://ai:ai@postgres:5432/ai"),
 )
@@ -139,6 +148,25 @@ agent_os = AgentOS(
 
 # FastAPI app instance (for uvicorn)
 app = agent_os.get_app()
+
+app.add_middleware(
+    JWTMiddleware,
+    verification_keys=[JWT_SECRET_KEY],
+    algorithm="HS256",
+    authorization=ENABLE_AUTHORIZATION,
+    verify_audience=False,
+    # We have to exclude for the config endpoint to work correctly.
+    excluded_route_paths=[
+        "/health",
+        "/config",
+        "/agents",
+        "/agents/*",
+        "/teams",
+        "/teams/*",
+        "/workflows",
+        "/workflows/*",
+    ],
+)
 
 # =============================================================================
 # Main Entry Point

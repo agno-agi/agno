@@ -3467,7 +3467,10 @@ class Workflow:
         run_id = run_id or str(uuid4())
         register_run(run_id)
 
-        input = validate_input(input, self.input_schema)
+        if input is None and self.input_schema is not None:
+            raise ValueError("Input is required when input_schema is provided")
+        if input is not None and self.input_schema is not None:
+            input = validate_input(input, self.input_schema)
         if background:
             raise RuntimeError("Background execution is not supported for sync run()")
 
@@ -3640,8 +3643,11 @@ class Workflow:
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
 
-        input = validate_input(input, self.input_schema)
-
+        if input is None and self.input_schema is not None:
+            raise ValueError("Input is required when input_schema is provided")
+        if input is not None and self.input_schema is not None:
+            input = validate_input(input, self.input_schema)
+            
         websocket_handler = None
         if websocket:
             from agno.workflow.types import WebSocketHandler
