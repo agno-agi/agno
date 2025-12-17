@@ -212,9 +212,7 @@ def test_web_search_with_max_results(websearch_tools, mock_ddgs):
 
     websearch_tools.web_search("test query", max_results=10)
 
-    mock_instance.text.assert_called_once_with(
-        query="test query", max_results=10, backend="auto"
-    )
+    mock_instance.text.assert_called_once_with(query="test query", max_results=10, backend="auto")
 
 
 def test_web_search_with_fixed_max_results():
@@ -228,9 +226,7 @@ def test_web_search_with_fixed_max_results():
         tools = WebSearchTools(fixed_max_results=3)
         tools.web_search("test query", max_results=10)
 
-        mock_instance.text.assert_called_once_with(
-            query="test query", max_results=3, backend="auto"
-        )
+        mock_instance.text.assert_called_once_with(query="test query", max_results=3, backend="auto")
 
 
 def test_web_search_with_modifier():
@@ -260,9 +256,7 @@ def test_web_search_with_backend():
         tools = WebSearchTools(backend="google")
         tools.web_search("test query")
 
-        mock_instance.text.assert_called_once_with(
-            query="test query", max_results=5, backend="google"
-        )
+        mock_instance.text.assert_called_once_with(query="test query", max_results=5, backend="google")
 
 
 def test_web_search_empty_results(websearch_tools, mock_ddgs):
@@ -279,9 +273,7 @@ def test_web_search_empty_results(websearch_tools, mock_ddgs):
 def test_web_search_json_serialization(websearch_tools, mock_ddgs):
     """Test that web search returns valid JSON."""
     mock_instance, _ = mock_ddgs
-    mock_instance.text.return_value = [
-        {"title": "Test", "href": "https://test.com", "body": "Test body"}
-    ]
+    mock_instance.text.return_value = [{"title": "Test", "href": "https://test.com", "body": "Test body"}]
 
     result = websearch_tools.web_search("test")
 
@@ -322,9 +314,7 @@ def test_search_news_with_max_results(websearch_tools, mock_ddgs):
 
     websearch_tools.search_news("test news", max_results=10)
 
-    mock_instance.news.assert_called_once_with(
-        query="test news", max_results=10, backend="auto"
-    )
+    mock_instance.news.assert_called_once_with(query="test news", max_results=10, backend="auto")
 
 
 def test_search_news_with_fixed_max_results():
@@ -338,9 +328,7 @@ def test_search_news_with_fixed_max_results():
         tools = WebSearchTools(fixed_max_results=3)
         tools.search_news("test news", max_results=10)
 
-        mock_instance.news.assert_called_once_with(
-            query="test news", max_results=3, backend="auto"
-        )
+        mock_instance.news.assert_called_once_with(query="test news", max_results=3, backend="auto")
 
 
 def test_search_news_with_backend():
@@ -354,9 +342,7 @@ def test_search_news_with_backend():
         tools = WebSearchTools(backend="bing")
         tools.search_news("test news")
 
-        mock_instance.news.assert_called_once_with(
-            query="test news", max_results=5, backend="bing"
-        )
+        mock_instance.news.assert_called_once_with(query="test news", max_results=5, backend="bing")
 
 
 def test_search_news_empty_results(websearch_tools, mock_ddgs):
@@ -373,9 +359,7 @@ def test_search_news_empty_results(websearch_tools, mock_ddgs):
 def test_search_news_json_serialization(websearch_tools, mock_ddgs):
     """Test that news search returns valid JSON."""
     mock_instance, _ = mock_ddgs
-    mock_instance.news.return_value = [
-        {"title": "Test News", "url": "https://test.com", "body": "Test body"}
-    ]
+    mock_instance.news.return_value = [{"title": "Test News", "url": "https://test.com", "body": "Test body"}]
 
     result = websearch_tools.search_news("test")
 
@@ -403,9 +387,7 @@ def test_ddgs_client_with_proxy():
         tools = WebSearchTools(proxy="socks5://localhost:9050")
         tools.web_search("test")
 
-        mock_ddgs_cls.assert_called_with(
-            proxy="socks5://localhost:9050", timeout=10, verify=True
-        )
+        mock_ddgs_cls.assert_called_with(proxy="socks5://localhost:9050", timeout=10, verify=True)
 
 
 def test_ddgs_client_with_timeout():
@@ -451,9 +433,7 @@ def test_ddgs_client_with_all_params():
         )
         tools.web_search("test")
 
-        mock_ddgs_cls.assert_called_with(
-            proxy="http://proxy:8080", timeout=30, verify=False
-        )
+        mock_ddgs_cls.assert_called_with(proxy="http://proxy:8080", timeout=30, verify=False)
 
 
 # ============================================================================
@@ -554,6 +534,4 @@ def test_modifier_with_empty_query():
         tools = WebSearchTools(modifier="site:github.com")
         tools.web_search("")
 
-        mock_instance.text.assert_called_once_with(
-            query="site:github.com ", max_results=5, backend="auto"
-        )
+        mock_instance.text.assert_called_once_with(query="site:github.com ", max_results=5, backend="auto")
