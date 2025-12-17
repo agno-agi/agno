@@ -71,11 +71,11 @@ class RemoteAgent(BaseRemote):
         if self._agent_config is not None:
             return self._agent_config.role
         return None
-    
+
     @cached_property
     def tools(self) -> Optional[List[Dict[str, Any]]]:
         if self._agent_config is not None:
-            return self._agent_config.tools
+            return json.loads(self._agent_config.tools["tools"]) if self._agent_config.tools else None
         return None
 
     @cached_property

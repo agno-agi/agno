@@ -62,19 +62,18 @@ class RemoteTeam(BaseRemote):
         if self._team_config is not None:
             return self._team_config.description
         return ""
-    
+
     @cached_property
     def role(self) -> Optional[str]:
         if self._team_config is not None:
             return self._team_config.role
         return None
-    
+
     @cached_property
     def tools(self) -> Optional[List[Dict[str, Any]]]:
         if self._team_config is not None:
             return self._team_config.tools
         return None
-
 
     @cached_property
     def db(self) -> Optional[RemoteDb]:

@@ -5607,7 +5607,7 @@ class Team:
                             system_message_content += f"{indent * ' '}    - {_tool.name}\n"
                         elif callable(_tool):
                             system_message_content += f"{indent * ' '}    - {_tool.__name__}\n"
-                        elif "name" in _tool and _tool["name"] is not None:
+                        elif isinstance(_tool, dict) and "name" in _tool and _tool.get("name") is not None:
                             system_message_content += f"{indent * ' '}    - {_tool['name']}\n"
                         else:
                             system_message_content += f"{indent * ' '}    - {str(_tool)}\n"

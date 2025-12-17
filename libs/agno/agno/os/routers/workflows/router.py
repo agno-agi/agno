@@ -159,13 +159,19 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
             return
 
-        # # Generate session_id if not provided
-        # # Use workflow's default session_id if not provided in message
-        # if not session_id:
-        #     if workflow.session_id:
-        #         session_id = workflow.session_id
-        #     else:
-        #         session_id = str(uuid4())
+        if isinstance(workflow, RemoteWorkflow):
+            await websocket.send_text(
+                json.dumps({"event": "error", "error": "Remote workflows are not supported via WebSocket"})
+            )
+            return
+
+        # Generate session_id if not provided
+        # Use workflow's default session_id if not provided in message
+        if not session_id:
+            if workflow.session_id:
+                session_id = workflow.session_id
+            else:
+                session_id = str(uuid4())
 
         # Execute workflow in background with streaming
         workflow_result = await workflow.arun(  # type: ignore
