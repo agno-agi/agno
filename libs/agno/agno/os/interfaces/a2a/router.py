@@ -19,8 +19,19 @@ try:
         TaskState,
         TaskStatus,
     )
+    from a2a.types import (
+        AgentCapabilities,
+        AgentCard,
+        AgentSkill,
+        SendMessageSuccessResponse,
+        Task,
+        TaskState,
+        TaskStatus,
+    )
 except ImportError as e:
     raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a-sdk`") from e
+
+import warnings
 
 import warnings
 
@@ -922,6 +933,7 @@ def attach_routes(
         operation_id="send_message",
         name="send_message",
         description="[DEPRECATED] Send a message to an Agno Agent, Team, or Workflow. "
+        description="[DEPRECATED] Send a message to an Agno Agent, Team, or Workflow. "
         "The Agent, Team or Workflow is identified via the 'agentId' field in params.message or X-Agent-ID header. "
         "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata.",
         response_model_exclude_none=True,
@@ -963,6 +975,12 @@ def attach_routes(
         )
 
         # Load the request body. Unknown args are passed down as kwargs.
+        warnings.warn(
+            "This endpoint will be deprecated soon. Use /agents/{agents_id}/v1/message:send, /teams/{teams_id}/v1/message:send, or /workflows/{workflows_id}/v1/message:send instead.",
+            DeprecationWarning,
+        )
+
+        # Load the request body. Unknown args are passed down as kwargs.
         request_body = await request.json()
         kwargs = await get_request_kwargs(request, a2a_send_message)
 
@@ -994,6 +1012,7 @@ def attach_routes(
         try:
             if isinstance(entity, Workflow):
                 response = entity.arun(
+                response = entity.arun(
                     input=run_input.input_content,
                     images=list(run_input.images) if run_input.images else None,
                     videos=list(run_input.videos) if run_input.videos else None,
@@ -1004,6 +1023,7 @@ def attach_routes(
                     **kwargs,
                 )
             else:
+                response = entity.arun(
                 response = entity.arun(
                     input=run_input.input_content,
                     images=run_input.images,
@@ -1050,6 +1070,7 @@ def attach_routes(
         operation_id="stream_message",
         name="stream_message",
         description="[DEPRECATED] Stream a message to an Agno Agent, Team, or Workflow. "
+        description="[DEPRECATED] Stream a message to an Agno Agent, Team, or Workflow. "
         "The Agent, Team or Workflow is identified via the 'agentId' field in params.message or X-Agent-ID header. "
         "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata. "
         "Returns real-time updates as newline-delimited JSON (NDJSON).",
@@ -1061,6 +1082,9 @@ def attach_routes(
                     "text/event-stream": {
                         "example": 'event: TaskStatusUpdateEvent\ndata: {"jsonrpc":"2.0","id":"request-123","result":{"taskId":"task-456","status":"working"}}\n\n'
                         'event: Message\ndata: {"jsonrpc":"2.0","id":"request-123","result":{"messageId":"msg-1","role":"agent","parts":[{"kind":"text","text":"Response"}]}}\n\n'
+                    "text/event-stream": {
+                        "example": 'event: TaskStatusUpdateEvent\ndata: {"jsonrpc":"2.0","id":"request-123","result":{"taskId":"task-456","status":"working"}}\n\n'
+                        'event: Message\ndata: {"jsonrpc":"2.0","id":"request-123","result":{"messageId":"msg-1","role":"agent","parts":[{"kind":"text","text":"Response"}]}}\n\n'
                     }
                 },
             },
@@ -1069,6 +1093,12 @@ def attach_routes(
         },
     )
     async def a2a_stream_message(request: Request):
+        warnings.warn(
+            "This endpoint will be deprecated soon. Use /agents/{agents_id}/v1/message:stream, /teams/{teams_id}/v1/message:stream, or /workflows/{workflows_id}/v1/message:stream instead.",
+            DeprecationWarning,
+        )
+
+        # Load the request body. Unknown args are passed down as kwargs.
         warnings.warn(
             "This endpoint will be deprecated soon. Use /agents/{agents_id}/v1/message:stream, /teams/{teams_id}/v1/message:stream, or /workflows/{workflows_id}/v1/message:stream instead.",
             DeprecationWarning,
@@ -1136,6 +1166,7 @@ def attach_routes(
             # 4. Stream the response
             return StreamingResponse(
                 stream_a2a_response_with_error_handling(event_stream=event_stream, request_id=request_body["id"]),  # type: ignore[arg-type]
+                media_type="text/event-stream",
                 media_type="text/event-stream",
             )
 
