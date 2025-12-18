@@ -13,7 +13,6 @@ reasoning_agent = Agent(
     db=db,
     description="An advanced AI assistant with deep reasoning and analytical capabilities, enhanced with real-time web search to deliver thorough, well-thought-out responses with contextual awareness",
     instructions="You are a helpful AI assistant with reasoning capabilities.",
-    debug_mode=True,
     add_datetime_to_context=True,
     add_history_to_context=True,
     add_location_to_context=True,
