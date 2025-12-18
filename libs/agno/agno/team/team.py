@@ -1575,7 +1575,7 @@ class Team:
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
         # 5. Reason about the task if reasoning is enabled
-        self._handle_reasoning(run_response=run_response, run_messages=run_messages)
+        self._handle_reasoning(run_response=run_response, run_messages=run_messages, run_context=run_context)
 
         # Check for cancellation before model call
         raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1789,6 +1789,7 @@ class Team:
         yield from self._handle_reasoning_stream(
             run_response=run_response,
             run_messages=run_messages,
+            run_context=run_context,
             stream_events=stream_events,
         )
 
@@ -2461,7 +2462,9 @@ class Team:
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
                 # 7. Reason about the task if reasoning is enabled
-                await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
+                await self._ahandle_reasoning(
+                    run_response=run_response, run_messages=run_messages, run_context=run_context
+                )
 
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2780,6 +2783,7 @@ class Team:
                 async for item in self._ahandle_reasoning_stream(
                     run_response=run_response,
                     run_messages=run_messages,
+                    run_context=run_context,
                     stream_events=stream_events,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -4782,40 +4786,56 @@ class Team:
     # Helpers
     ###########################################################################
 
-    def _handle_reasoning(self, run_response: TeamRunOutput, run_messages: RunMessages):
+    def _handle_reasoning(
+        self, run_response: TeamRunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    ) -> None:
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self._reason(
-                run_response=run_response, run_messages=run_messages, stream_events=False
+                run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
             )
 
             # Consume the generator without yielding
             deque(reasoning_generator, maxlen=0)
 
     def _handle_reasoning_stream(
-        self, run_response: TeamRunOutput, run_messages: RunMessages, stream_events: bool
+        self,
+        run_response: TeamRunOutput,
+        run_messages: RunMessages,
+        run_context: Optional[RunContext] = None,
+        stream_events: bool = False,
     ) -> Iterator[TeamRunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self._reason(
                 run_response=run_response,
                 run_messages=run_messages,
+                run_context=run_context,
                 stream_events=stream_events,
             )
             yield from reasoning_generator
 
-    async def _ahandle_reasoning(self, run_response: TeamRunOutput, run_messages: RunMessages) -> None:
+    async def _ahandle_reasoning(
+        self, run_response: TeamRunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    ) -> None:
         if self.reasoning or self.reasoning_model is not None:
-            reason_generator = self._areason(run_response=run_response, run_messages=run_messages, stream_events=False)
+            reason_generator = self._areason(
+                run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
+            )
             # Consume the generator without yielding
             async for _ in reason_generator:
                 pass
 
     async def _ahandle_reasoning_stream(
-        self, run_response: TeamRunOutput, run_messages: RunMessages, stream_events: bool
+        self,
+        run_response: TeamRunOutput,
+        run_messages: RunMessages,
+        run_context: Optional[RunContext] = None,
+        stream_events: bool = False,
     ) -> AsyncIterator[TeamRunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
             reason_generator = self._areason(
                 run_response=run_response,
                 run_messages=run_messages,
+                run_context=run_context,
                 stream_events=stream_events,
             )
             async for item in reason_generator:
@@ -4858,14 +4878,6 @@ class Team:
         session_metrics.time_to_first_token = None
         if session.session_data is not None:
             session.session_data["session_metrics"] = session_metrics
-
-    def _get_reasoning_agent(self, reasoning_model: Model) -> Optional[Agent]:
-        return Agent(
-            model=reasoning_model,
-            telemetry=self.telemetry,
-            debug_mode=self.debug_mode,
-            debug_level=self.debug_level,
-        )
 
     def _format_reasoning_step_content(self, run_response: TeamRunOutput, reasoning_step: ReasoningStep) -> str:
         """Format content for a reasoning step without changing any existing logic."""
@@ -4975,7 +4987,8 @@ class Team:
         self,
         run_response: TeamRunOutput,
         run_messages: RunMessages,
-        stream_events: bool,
+        run_context: Optional[RunContext] = None,
+        stream_events: bool = False,
     ) -> Iterator[TeamRunOutputEvent]:
         """
         Run reasoning using the ReasoningManager.
@@ -5005,9 +5018,7 @@ class Team:
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
-                session_state=self.session_state,
-                dependencies=self.dependencies,
-                metadata=self.metadata,
+                run_context=run_context,
             )
         )
 
@@ -5019,7 +5030,8 @@ class Team:
         self,
         run_response: TeamRunOutput,
         run_messages: RunMessages,
-        stream_events: bool,
+        run_context: Optional[RunContext] = None,
+        stream_events: bool = False,
     ) -> AsyncIterator[TeamRunOutputEvent]:
         """
         Run reasoning asynchronously using the ReasoningManager.
@@ -5049,9 +5061,7 @@ class Team:
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
-                session_state=self.session_state,
-                dependencies=self.dependencies,
-                metadata=self.metadata,
+                run_context=run_context,
             )
         )
 
