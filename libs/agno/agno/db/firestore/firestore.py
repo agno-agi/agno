@@ -1,18 +1,27 @@
+import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.firestore.utils import (
     apply_pagination,
+    apply_pagination_to_records,
     apply_sorting,
+    apply_sorting_to_records,
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_collection_indexes,
+    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    serialize_cultural_knowledge_for_db,
 )
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -39,6 +48,9 @@ class FirestoreDb(BaseDb):
         metrics_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
         knowledge_collection: Optional[str] = None,
+        culture_collection: Optional[str] = None,
+        traces_collection: Optional[str] = None,
+        spans_collection: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -52,6 +64,9 @@ class FirestoreDb(BaseDb):
             metrics_collection (Optional[str]): Name of the collection to store metrics.
             eval_collection (Optional[str]): Name of the collection to store evaluation runs.
             knowledge_collection (Optional[str]): Name of the collection to store knowledge documents.
+            culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
+            traces_collection (Optional[str]): Name of the collection to store traces.
+            spans_collection (Optional[str]): Name of the collection to store spans.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -68,6 +83,9 @@ class FirestoreDb(BaseDb):
             metrics_table=metrics_collection,
             eval_table=eval_collection,
             knowledge_table=knowledge_collection,
+            culture_table=culture_collection,
+            traces_table=traces_collection,
+            spans_table=spans_collection,
         )
 
         _client: Optional[Client] = db_client
@@ -80,6 +98,17 @@ class FirestoreDb(BaseDb):
         self.db_client: Client = _client
 
     # -- DB methods --
+
+    def table_exists(self, table_name: str) -> bool:
+        """Check if a collection with the given name exists in the Firestore database.
+
+        Args:
+            table_name: Name of the collection to check
+
+        Returns:
+            bool: True if the collection exists in the database, False otherwise
+        """
+        return table_name in self.db_client.list_collections()
 
     def _get_collection(self, table_type: str, create_collection_if_not_found: Optional[bool] = True):
         """Get or create a collection based on table type.
@@ -146,6 +175,41 @@ class FirestoreDb(BaseDb):
                 )
             return self.knowledge_collection
 
+        if table_type == "culture":
+            if not hasattr(self, "culture_collection"):
+                if self.culture_table_name is None:
+                    raise ValueError("Culture collection was not provided on initialization")
+                self.culture_collection = self._get_or_create_collection(
+                    collection_name=self.culture_table_name,
+                    collection_type="culture",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.culture_collection
+
+        if table_type == "traces":
+            if not hasattr(self, "traces_collection"):
+                if self.trace_table_name is None:
+                    raise ValueError("Traces collection was not provided on initialization")
+                self.traces_collection = self._get_or_create_collection(
+                    collection_name=self.trace_table_name,
+                    collection_type="traces",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.traces_collection
+
+        if table_type == "spans":
+            # Ensure traces collection exists first (spans reference traces)
+            self._get_collection("traces", create_collection_if_not_found=create_collection_if_not_found)
+            if not hasattr(self, "spans_collection"):
+                if self.span_table_name is None:
+                    raise ValueError("Spans collection was not provided on initialization")
+                self.spans_collection = self._get_or_create_collection(
+                    collection_name=self.span_table_name,
+                    collection_type="spans",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.spans_collection
+
         raise ValueError(f"Unknown table type: {table_type}")
 
     def _get_or_create_collection(
@@ -207,6 +271,14 @@ class FirestoreDb(BaseDb):
             log_error(f"Error deleting session: {e}")
             raise e
 
+    def get_latest_schema_version(self):
+        """Get the latest version of the database schema."""
+        pass
+
+    def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        pass
+
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete multiple sessions from the database.
 
@@ -261,8 +333,6 @@ class FirestoreDb(BaseDb):
 
             if user_id is not None:
                 query = query.where(filter=FieldFilter("user_id", "==", user_id))
-            if session_type is not None:
-                query = query.where(filter=FieldFilter("session_type", "==", session_type.value))
 
             docs = query.stream()
             result = None
@@ -558,7 +628,7 @@ class FirestoreDb(BaseDb):
             raise e
 
     def upsert_sessions(
-        self, sessions: List[Session], deserialize: Optional[bool] = True
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[Session, Dict[str, Any]]]:
         """
         Bulk upsert multiple sessions for improved performance on large datasets.
@@ -682,9 +752,7 @@ class FirestoreDb(BaseDb):
             log_error(f"Error deleting memories: {e}")
             raise e
 
-    def get_all_memory_topics(
-        self, create_collection_if_not_found: Optional[bool] = True
-    ) -> List[str]:
+    def get_all_memory_topics(self, create_collection_if_not_found: Optional[bool] = True) -> List[str]:
         """Get all memory topics from the database.
 
         Returns:
@@ -839,6 +907,7 @@ class FirestoreDb(BaseDb):
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
@@ -855,7 +924,10 @@ class FirestoreDb(BaseDb):
         try:
             collection_ref = self._get_collection(table_type="memories")
 
-            query = collection_ref.where(filter=FieldFilter("user_id", "!=", None))
+            if user_id:
+                query = collection_ref.where(filter=FieldFilter("user_id", "==", user_id))
+            else:
+                query = collection_ref.where(filter=FieldFilter("user_id", "!=", None))
 
             docs = query.stream()
 
@@ -941,7 +1013,7 @@ class FirestoreDb(BaseDb):
             raise e
 
     def upsert_memories(
-        self, memories: List[UserMemory], deserialize: Optional[bool] = True
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """
         Bulk upsert multiple user memories for improved performance on large datasets.
@@ -1008,6 +1080,213 @@ class FirestoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception deleting all memories: {e}")
+            raise e
+
+    # -- Cultural Knowledge methods --
+    def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="culture")
+
+            # Get all documents in the collection
+            docs = collection_ref.stream()
+
+            # Delete all documents in batches
+            batch = self.db_client.batch()
+            batch_count = 0
+
+            for doc in docs:
+                batch.delete(doc.reference)
+                batch_count += 1
+
+                # Firestore batch has a limit of 500 operations
+                if batch_count >= 500:
+                    batch.commit()
+                    batch = self.db_client.batch()
+                    batch_count = 0
+
+            # Commit remaining operations
+            if batch_count > 0:
+                batch.commit()
+
+        except Exception as e:
+            log_error(f"Exception deleting all cultural knowledge: {e}")
+            raise e
+
+    def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="culture")
+            docs = collection_ref.where(filter=FieldFilter("id", "==", id)).stream()
+
+            for doc in docs:
+                doc.reference.delete()
+                log_debug(f"Deleted cultural knowledge with ID: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting cultural knowledge: {e}")
+            raise e
+
+    def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get cultural knowledge by ID.
+
+        Args:
+            id (str): The ID of the cultural knowledge to retrieve.
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="culture")
+            docs = collection_ref.where(filter=FieldFilter("id", "==", id)).limit(1).stream()
+
+            for doc in docs:
+                result = doc.to_dict()
+                if not deserialize:
+                    return result
+                return deserialize_cultural_knowledge_from_db(result)
+
+            return None
+
+        except Exception as e:
+            log_error(f"Error getting cultural knowledge: {e}")
+            raise e
+
+    def get_all_cultural_knowledge(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge with filtering and pagination.
+
+        Args:
+            agent_id (Optional[str]): Filter by agent ID.
+            team_id (Optional[str]): Filter by team ID.
+            name (Optional[str]): Filter by name (case-insensitive partial match).
+            limit (Optional[int]): Maximum number of results to return.
+            page (Optional[int]): Page number for pagination.
+            sort_by (Optional[str]): Field to sort by.
+            sort_order (Optional[str]): Sort order ('asc' or 'desc').
+            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
+
+        Returns:
+            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of CulturalKnowledge objects
+                - When deserialize=False: Tuple with list of dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="culture")
+
+            # Build query with filters
+            query = collection_ref
+            if agent_id is not None:
+                query = query.where(filter=FieldFilter("agent_id", "==", agent_id))
+            if team_id is not None:
+                query = query.where(filter=FieldFilter("team_id", "==", team_id))
+
+            # Get all matching documents
+            docs = query.stream()
+            results = [doc.to_dict() for doc in docs]
+
+            # Apply name filter (Firestore doesn't support regex in queries)
+            if name is not None:
+                results = [r for r in results if name.lower() in r.get("name", "").lower()]
+
+            total_count = len(results)
+
+            # Apply sorting and pagination to in-memory results
+            sorted_results = apply_sorting_to_records(records=results, sort_by=sort_by, sort_order=sort_order)
+            paginated_results = apply_pagination_to_records(records=sorted_results, limit=limit, page=page)
+
+            if not deserialize:
+                return paginated_results, total_count
+
+            return [deserialize_cultural_knowledge_from_db(item) for item in paginated_results]
+
+        except Exception as e:
+            log_error(f"Error getting all cultural knowledge: {e}")
+            raise e
+
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert cultural knowledge in Firestore.
+
+        Args:
+            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="culture", create_collection_if_not_found=True)
+
+            # Serialize content, categories, and notes into a dict for DB storage
+            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
+
+            # Create the update document with serialized content
+            update_doc = {
+                "id": cultural_knowledge.id,
+                "name": cultural_knowledge.name,
+                "summary": cultural_knowledge.summary,
+                "content": content_dict if content_dict else None,
+                "metadata": cultural_knowledge.metadata,
+                "input": cultural_knowledge.input,
+                "created_at": cultural_knowledge.created_at,
+                "updated_at": int(time.time()),
+                "agent_id": cultural_knowledge.agent_id,
+                "team_id": cultural_knowledge.team_id,
+            }
+
+            # Find and update or create new document
+            docs = collection_ref.where(filter=FieldFilter("id", "==", cultural_knowledge.id)).limit(1).stream()
+
+            doc_found = False
+            for doc in docs:
+                doc.reference.set(update_doc)
+                doc_found = True
+                break
+
+            if not doc_found:
+                collection_ref.add(update_doc)
+
+            if not deserialize:
+                return update_doc
+
+            return deserialize_cultural_knowledge_from_db(update_doc)
+
+        except Exception as e:
+            log_error(f"Error upserting cultural knowledge: {e}")
             raise e
 
     # -- Metrics methods --
@@ -1390,6 +1669,9 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="evals")
+            if not collection_ref:
+                return None
+
             docs = collection_ref.where(filter=FieldFilter("run_id", "==", eval_run_id)).stream()
 
             eval_run_raw = None
@@ -1530,6 +1812,8 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="evals")
+            if not collection_ref:
+                return None
 
             docs = collection_ref.where(filter=FieldFilter("run_id", "==", eval_run_id)).stream()
             doc_ref = next((doc.reference for doc in docs), None)
@@ -1555,3 +1839,541 @@ class FirestoreDb(BaseDb):
         except Exception as e:
             log_error(f"Error updating eval run name {eval_run_id}: {e}")
             raise e
+
+    # --- Traces ---
+    def upsert_trace(self, trace: "Trace") -> None:
+        """Create or update a single trace record in the database.
+
+        Args:
+            trace: The Trace object to store (one per trace_id).
+        """
+        try:
+            collection_ref = self._get_collection(table_type="traces", create_collection_if_not_found=True)
+            if collection_ref is None:
+                return
+
+            # Check if trace already exists
+            docs = collection_ref.where(filter=FieldFilter("trace_id", "==", trace.trace_id)).limit(1).stream()
+            existing_doc = None
+            existing_data = None
+            for doc in docs:
+                existing_doc = doc
+                existing_data = doc.to_dict()
+                break
+
+            if existing_data and existing_doc is not None:
+                # Update existing trace
+                def get_component_level(workflow_id, team_id, agent_id, name):
+                    is_root_name = ".run" in name or ".arun" in name
+                    if not is_root_name:
+                        return 0
+                    elif workflow_id:
+                        return 3
+                    elif team_id:
+                        return 2
+                    elif agent_id:
+                        return 1
+                    else:
+                        return 0
+
+                existing_level = get_component_level(
+                    existing_data.get("workflow_id"),
+                    existing_data.get("team_id"),
+                    existing_data.get("agent_id"),
+                    existing_data.get("name", ""),
+                )
+                new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
+                should_update_name = new_level > existing_level
+
+                # Parse existing start_time to calculate correct duration
+                existing_start_time_str = existing_data.get("start_time")
+                if isinstance(existing_start_time_str, str):
+                    existing_start_time = datetime.fromisoformat(existing_start_time_str.replace("Z", "+00:00"))
+                else:
+                    existing_start_time = trace.start_time
+
+                recalculated_duration_ms = int((trace.end_time - existing_start_time).total_seconds() * 1000)
+
+                update_values: Dict[str, Any] = {
+                    "end_time": trace.end_time.isoformat(),
+                    "duration_ms": recalculated_duration_ms,
+                    "status": trace.status,
+                }
+
+                if should_update_name:
+                    update_values["name"] = trace.name
+
+                # Update context fields only if new value is not None
+                if trace.run_id is not None:
+                    update_values["run_id"] = trace.run_id
+                if trace.session_id is not None:
+                    update_values["session_id"] = trace.session_id
+                if trace.user_id is not None:
+                    update_values["user_id"] = trace.user_id
+                if trace.agent_id is not None:
+                    update_values["agent_id"] = trace.agent_id
+                if trace.team_id is not None:
+                    update_values["team_id"] = trace.team_id
+                if trace.workflow_id is not None:
+                    update_values["workflow_id"] = trace.workflow_id
+
+                existing_doc.reference.update(update_values)
+            else:
+                # Create new trace with initialized counters
+                trace_dict = trace.to_dict()
+                trace_dict["total_spans"] = 0
+                trace_dict["error_count"] = 0
+                collection_ref.add(trace_dict)
+
+        except Exception as e:
+            log_error(f"Error creating trace: {e}")
+
+    def get_trace(
+        self,
+        trace_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ):
+        """Get a single trace by trace_id or other filters.
+
+        Args:
+            trace_id: The unique trace identifier.
+            run_id: Filter by run ID (returns first match).
+
+        Returns:
+            Optional[Trace]: The trace if found, None otherwise.
+
+        Note:
+            If multiple filters are provided, trace_id takes precedence.
+            For other filters, the most recent trace is returned.
+        """
+        try:
+            from agno.tracing.schemas import Trace
+
+            collection_ref = self._get_collection(table_type="traces")
+            if collection_ref is None:
+                return None
+
+            if trace_id:
+                docs = collection_ref.where(filter=FieldFilter("trace_id", "==", trace_id)).limit(1).stream()
+            elif run_id:
+                from google.cloud.firestore import Query
+
+                docs = (
+                    collection_ref.where(filter=FieldFilter("run_id", "==", run_id))
+                    .order_by("start_time", direction=Query.DESCENDING)
+                    .limit(1)
+                    .stream()
+                )
+            else:
+                log_debug("get_trace called without any filter parameters")
+                return None
+
+            for doc in docs:
+                trace_data = doc.to_dict()
+                # Use stored values (default to 0 if not present)
+                trace_data.setdefault("total_spans", 0)
+                trace_data.setdefault("error_count", 0)
+                return Trace.from_dict(trace_data)
+
+            return None
+
+        except Exception as e:
+            log_error(f"Error getting trace: {e}")
+            return None
+
+    def get_traces(
+        self,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List, int]:
+        """Get traces matching the provided filters.
+
+        Args:
+            run_id: Filter by run ID.
+            session_id: Filter by session ID.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            status: Filter by status (OK, ERROR, UNSET).
+            start_time: Filter traces starting after this datetime.
+            end_time: Filter traces ending before this datetime.
+            limit: Maximum number of traces to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
+        """
+        try:
+            from agno.tracing.schemas import Trace
+
+            collection_ref = self._get_collection(table_type="traces")
+            if collection_ref is None:
+                return [], 0
+
+            query = collection_ref
+
+            # Apply filters
+            if run_id:
+                query = query.where(filter=FieldFilter("run_id", "==", run_id))
+            if session_id:
+                query = query.where(filter=FieldFilter("session_id", "==", session_id))
+            if user_id:
+                query = query.where(filter=FieldFilter("user_id", "==", user_id))
+            if agent_id:
+                query = query.where(filter=FieldFilter("agent_id", "==", agent_id))
+            if team_id:
+                query = query.where(filter=FieldFilter("team_id", "==", team_id))
+            if workflow_id:
+                query = query.where(filter=FieldFilter("workflow_id", "==", workflow_id))
+            if status:
+                query = query.where(filter=FieldFilter("status", "==", status))
+            if start_time:
+                query = query.where(filter=FieldFilter("start_time", ">=", start_time.isoformat()))
+            if end_time:
+                query = query.where(filter=FieldFilter("end_time", "<=", end_time.isoformat()))
+
+            # Get all matching documents
+            docs = query.stream()
+            all_records = [doc.to_dict() for doc in docs]
+
+            # Sort by start_time descending
+            all_records.sort(key=lambda x: x.get("start_time", ""), reverse=True)
+
+            # Get total count
+            total_count = len(all_records)
+
+            # Apply pagination
+            if limit and page:
+                offset = (page - 1) * limit
+                paginated_records = all_records[offset : offset + limit]
+            elif limit:
+                paginated_records = all_records[:limit]
+            else:
+                paginated_records = all_records
+
+            # Convert to Trace objects with stored span counts
+            traces = []
+            for trace_data in paginated_records:
+                trace_data.setdefault("total_spans", 0)
+                trace_data.setdefault("error_count", 0)
+                traces.append(Trace.from_dict(trace_data))
+
+            return traces, total_count
+
+        except Exception as e:
+            log_error(f"Error getting traces: {e}")
+            return [], 0
+
+    def get_trace_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Get trace statistics grouped by session.
+
+        Args:
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            start_time: Filter sessions with traces created after this datetime.
+            end_time: Filter sessions with traces created before this datetime.
+            limit: Maximum number of sessions to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
+                Each dict contains: session_id, user_id, agent_id, team_id, workflow_id, total_traces,
+                first_trace_at, last_trace_at.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="traces")
+            if collection_ref is None:
+                return [], 0
+
+            query = collection_ref
+
+            # Apply filters
+            if user_id:
+                query = query.where(filter=FieldFilter("user_id", "==", user_id))
+            if agent_id:
+                query = query.where(filter=FieldFilter("agent_id", "==", agent_id))
+            if team_id:
+                query = query.where(filter=FieldFilter("team_id", "==", team_id))
+            if workflow_id:
+                query = query.where(filter=FieldFilter("workflow_id", "==", workflow_id))
+            if start_time:
+                query = query.where(filter=FieldFilter("created_at", ">=", start_time.isoformat()))
+            if end_time:
+                query = query.where(filter=FieldFilter("created_at", "<=", end_time.isoformat()))
+
+            # Get all matching documents
+            docs = query.stream()
+
+            # Aggregate by session_id
+            session_stats: Dict[str, Dict[str, Any]] = {}
+            for doc in docs:
+                trace_data = doc.to_dict()
+                session_id = trace_data.get("session_id")
+                if not session_id:
+                    continue
+
+                if session_id not in session_stats:
+                    session_stats[session_id] = {
+                        "session_id": session_id,
+                        "user_id": trace_data.get("user_id"),
+                        "agent_id": trace_data.get("agent_id"),
+                        "team_id": trace_data.get("team_id"),
+                        "workflow_id": trace_data.get("workflow_id"),
+                        "total_traces": 0,
+                        "first_trace_at": trace_data.get("created_at"),
+                        "last_trace_at": trace_data.get("created_at"),
+                    }
+
+                session_stats[session_id]["total_traces"] += 1
+
+                created_at = trace_data.get("created_at")
+                if (
+                    created_at
+                    and session_stats[session_id]["first_trace_at"]
+                    and session_stats[session_id]["last_trace_at"]
+                ):
+                    if created_at < session_stats[session_id]["first_trace_at"]:
+                        session_stats[session_id]["first_trace_at"] = created_at
+                    if created_at > session_stats[session_id]["last_trace_at"]:
+                        session_stats[session_id]["last_trace_at"] = created_at
+
+            # Convert to list and sort by last_trace_at descending
+            stats_list = list(session_stats.values())
+            stats_list.sort(key=lambda x: x.get("last_trace_at", ""), reverse=True)
+
+            # Convert datetime strings to datetime objects
+            for stat in stats_list:
+                first_trace_at = stat["first_trace_at"]
+                last_trace_at = stat["last_trace_at"]
+                if isinstance(first_trace_at, str):
+                    stat["first_trace_at"] = datetime.fromisoformat(first_trace_at.replace("Z", "+00:00"))
+                if isinstance(last_trace_at, str):
+                    stat["last_trace_at"] = datetime.fromisoformat(last_trace_at.replace("Z", "+00:00"))
+
+            # Get total count
+            total_count = len(stats_list)
+
+            # Apply pagination
+            if limit and page:
+                offset = (page - 1) * limit
+                paginated_stats = stats_list[offset : offset + limit]
+            elif limit:
+                paginated_stats = stats_list[:limit]
+            else:
+                paginated_stats = stats_list
+
+            return paginated_stats, total_count
+
+        except Exception as e:
+            log_error(f"Error getting trace stats: {e}")
+            return [], 0
+
+    # --- Spans ---
+    def create_span(self, span: "Span") -> None:
+        """Create a single span in the database.
+
+        Args:
+            span: The Span object to store.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="spans", create_collection_if_not_found=True)
+            if collection_ref is None:
+                return
+
+            span_dict = span.to_dict()
+            # Serialize attributes as JSON string
+            if "attributes" in span_dict and isinstance(span_dict["attributes"], dict):
+                span_dict["attributes"] = json.dumps(span_dict["attributes"])
+
+            collection_ref.add(span_dict)
+
+            # Increment total_spans and error_count on trace
+            traces_collection = self._get_collection(table_type="traces")
+            if traces_collection:
+                try:
+                    docs = (
+                        traces_collection.where(filter=FieldFilter("trace_id", "==", span.trace_id)).limit(1).stream()
+                    )
+                    for doc in docs:
+                        trace_data = doc.to_dict()
+                        current_total = trace_data.get("total_spans", 0)
+                        current_errors = trace_data.get("error_count", 0)
+
+                        update_values = {"total_spans": current_total + 1}
+                        if span.status_code == "ERROR":
+                            update_values["error_count"] = current_errors + 1
+
+                        doc.reference.update(update_values)
+                        break
+                except Exception as update_error:
+                    log_debug(f"Could not update trace span counts: {update_error}")
+
+        except Exception as e:
+            log_error(f"Error creating span: {e}")
+
+    def create_spans(self, spans: List) -> None:
+        """Create multiple spans in the database as a batch.
+
+        Args:
+            spans: List of Span objects to store.
+        """
+        if not spans:
+            return
+
+        try:
+            collection_ref = self._get_collection(table_type="spans", create_collection_if_not_found=True)
+            if collection_ref is None:
+                return
+
+            # Firestore batch has a limit of 500 operations
+            batch = self.db_client.batch()
+            batch_count = 0
+
+            for span in spans:
+                span_dict = span.to_dict()
+                # Serialize attributes as JSON string
+                if "attributes" in span_dict and isinstance(span_dict["attributes"], dict):
+                    span_dict["attributes"] = json.dumps(span_dict["attributes"])
+
+                doc_ref = collection_ref.document()
+                batch.set(doc_ref, span_dict)
+                batch_count += 1
+
+                # Commit batch if reaching limit
+                if batch_count >= 500:
+                    batch.commit()
+                    batch = self.db_client.batch()
+                    batch_count = 0
+
+            # Commit remaining operations
+            if batch_count > 0:
+                batch.commit()
+
+            # Update trace with total_spans and error_count
+            trace_id = spans[0].trace_id
+            spans_count = len(spans)
+            error_count = sum(1 for s in spans if s.status_code == "ERROR")
+
+            traces_collection = self._get_collection(table_type="traces")
+            if traces_collection:
+                try:
+                    docs = traces_collection.where(filter=FieldFilter("trace_id", "==", trace_id)).limit(1).stream()
+                    for doc in docs:
+                        trace_data = doc.to_dict()
+                        current_total = trace_data.get("total_spans", 0)
+                        current_errors = trace_data.get("error_count", 0)
+
+                        doc.reference.update(
+                            {
+                                "total_spans": current_total + spans_count,
+                                "error_count": current_errors + error_count,
+                            }
+                        )
+                        break
+                except Exception as update_error:
+                    log_debug(f"Could not update trace span counts: {update_error}")
+
+        except Exception as e:
+            log_error(f"Error creating spans batch: {e}")
+
+    def get_span(self, span_id: str):
+        """Get a single span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[Span]: The span if found, None otherwise.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            collection_ref = self._get_collection(table_type="spans")
+            if collection_ref is None:
+                return None
+
+            docs = collection_ref.where(filter=FieldFilter("span_id", "==", span_id)).limit(1).stream()
+
+            for doc in docs:
+                span_data = doc.to_dict()
+                # Deserialize attributes from JSON string
+                if "attributes" in span_data and isinstance(span_data["attributes"], str):
+                    span_data["attributes"] = json.loads(span_data["attributes"])
+                return Span.from_dict(span_data)
+
+            return None
+
+        except Exception as e:
+            log_error(f"Error getting span: {e}")
+            return None
+
+    def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        """Get spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            parent_span_id: Filter by parent span ID.
+            limit: Maximum number of spans to return.
+
+        Returns:
+            List[Span]: List of matching spans.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            collection_ref = self._get_collection(table_type="spans")
+            if collection_ref is None:
+                return []
+
+            query = collection_ref
+
+            if trace_id:
+                query = query.where(filter=FieldFilter("trace_id", "==", trace_id))
+            if parent_span_id:
+                query = query.where(filter=FieldFilter("parent_span_id", "==", parent_span_id))
+
+            if limit:
+                query = query.limit(limit)
+
+            docs = query.stream()
+
+            spans = []
+            for doc in docs:
+                span_data = doc.to_dict()
+                # Deserialize attributes from JSON string
+                if "attributes" in span_data and isinstance(span_data["attributes"], str):
+                    span_data["attributes"] = json.loads(span_data["attributes"])
+                spans.append(Span.from_dict(span_data))
+
+            return spans
+
+        except Exception as e:
+            log_error(f"Error getting spans: {e}")
+            return []

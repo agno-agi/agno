@@ -4,7 +4,10 @@ from typing import Any, Dict, Optional
 
 import httpx
 
+from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.like import OpenAILike
+from agno.utils.http import get_default_async_client, get_default_sync_client
+from agno.utils.log import log_warning
 
 try:
     from openai import AsyncAzureOpenAI as AsyncAzureOpenAIClient
@@ -61,6 +64,19 @@ class AzureOpenAI(OpenAILike):
         self.api_key = self.api_key or getenv("AZURE_OPENAI_API_KEY")
         self.azure_endpoint = self.azure_endpoint or getenv("AZURE_OPENAI_ENDPOINT")
         self.azure_deployment = self.azure_deployment or getenv("AZURE_OPENAI_DEPLOYMENT")
+
+        if not (self.api_key or self.azure_ad_token):
+            if not self.api_key:
+                raise ModelAuthenticationError(
+                    message="AZURE_OPENAI_API_KEY not set. Please set the AZURE_OPENAI_API_KEY environment variable.",
+                    model_name=self.name,
+                )
+            if not self.azure_ad_token:
+                raise ModelAuthenticationError(
+                    message="AZURE_AD_TOKEN not set. Please set the AZURE_AD_TOKEN environment variable.",
+                    model_name=self.name,
+                )
+
         params_mapping = {
             "api_key": self.api_key,
             "api_version": self.api_version,
@@ -70,7 +86,6 @@ class AzureOpenAI(OpenAILike):
             "base_url": self.base_url,
             "azure_ad_token": self.azure_ad_token,
             "azure_ad_token_provider": self.azure_ad_token_provider,
-            "http_client": self.http_client,
         }
         if self.default_headers is not None:
             _client_params["default_headers"] = self.default_headers
@@ -95,7 +110,18 @@ class AzureOpenAI(OpenAILike):
 
         _client_params: Dict[str, Any] = self._get_client_params()
 
-        # -*- Create client
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                _client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
+                # Use global sync client when user http_client is invalid
+                _client_params["http_client"] = get_default_sync_client()
+        else:
+            # Use global sync client when no custom http_client is provided
+            _client_params["http_client"] = get_default_sync_client()
+
+        # Create client
         self.client = AzureOpenAIClient(**_client_params)
         return self.client
 
@@ -106,18 +132,23 @@ class AzureOpenAI(OpenAILike):
         Returns:
             AsyncAzureOpenAIClient: An instance of the asynchronous OpenAI client.
         """
-        if self.async_client:
+        if self.async_client and not self.async_client.is_closed():
             return self.async_client
 
         _client_params: Dict[str, Any] = self._get_client_params()
 
         if self.http_client:
-            _client_params["http_client"] = self.http_client
+            if isinstance(self.http_client, httpx.AsyncClient):
+                _client_params["http_client"] = self.http_client
+            else:
+                log_warning(
+                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                )
+                # Use global async client when user http_client is invalid
+                _client_params["http_client"] = get_default_async_client()
         else:
-            # Create a new async HTTP client with custom limits
-            _client_params["http_client"] = httpx.AsyncClient(
-                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
-            )
+            # Use global async client when no custom http_client is provided
+            _client_params["http_client"] = get_default_async_client()
 
         self.async_client = AsyncAzureOpenAIClient(**_client_params)
         return self.async_client

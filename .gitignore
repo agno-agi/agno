@@ -40,6 +40,7 @@ dist
 .venv*
 .perfenv*
 .demoenv*
+.gemini-agents*
 venv*
 agnoenv*
 aienv*
@@ -76,3 +77,4 @@ agno_json_data/
 
 # ignore pyrightconfig.json
 pyrightconfig.json
+.python-version

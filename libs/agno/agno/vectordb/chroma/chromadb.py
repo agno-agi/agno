@@ -13,10 +13,11 @@ try:
 except ImportError:
     raise ImportError("The `chromadb` package is not installed. Please install it via `pip install chromadb`.")
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_error, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -25,6 +26,9 @@ class ChromaDb(VectorDb):
     def __init__(
         self,
         collection: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         embedder: Optional[Embedder] = None,
         distance: Distance = Distance.cosine,
         path: str = "tmp/chromadb",
@@ -32,9 +36,22 @@ class ChromaDb(VectorDb):
         reranker: Optional[Reranker] = None,
         **kwargs,
     ):
+        # Validate required parameters
+        if not collection:
+            raise ValueError("Collection name must be provided.")
+
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            seed = f"{path}#{collection}"
+            id = generate_id(seed)
+
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         # Collection attributes
         self.collection_name: str = collection
-
         # Embedder for embedding the document contents
         if embedder is None:
             from agno.knowledge.embedder.openai import OpenAIEmbedder
@@ -259,7 +276,9 @@ class ChromaDb(VectorDb):
 
         for document in documents:
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            # Include content_hash in ID to ensure uniqueness across different content hashes
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
             # Handle metadata and filters
             metadata = document.meta_data or {}
@@ -418,7 +437,9 @@ class ChromaDb(VectorDb):
 
         for document in documents:
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            # Include content_hash in ID to ensure uniqueness across different content hashes
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
             # Handle metadata and filters
             metadata = document.meta_data or {}
@@ -461,13 +482,15 @@ class ChromaDb(VectorDb):
             logger.error(f"Error upserting documents by content hash: {e}")
             raise
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """Search the collection for a query.
 
         Args:
             query (str): Query to search for.
             limit (int): Number of results to return.
-            filters (Optional[Dict[str, Any]]): Filters to apply while searching.
+            filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply while searching.
                 Supports ChromaDB's filtering operators:
                 - $eq, $ne: Equality/Inequality
                 - $gt, $gte, $lt, $lte: Numeric comparisons
@@ -476,6 +499,9 @@ class ChromaDb(VectorDb):
         Returns:
             List[Document]: List of search results.
         """
+        if isinstance(filters, list):
+            log_warning("Filter Expressions are not yet supported in ChromaDB. No filters will be applied.")
+            filters = None
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
@@ -497,11 +523,11 @@ class ChromaDb(VectorDb):
         # Build search results
         search_results: List[Document] = []
 
-        ids_list = result.get("ids", [[]])
-        metadata_list = result.get("metadatas", [[{}]])
-        documents_list = result.get("documents", [[]])
-        embeddings_list = result.get("embeddings")
-        distances_list = result.get("distances", [[]])
+        ids_list = result.get("ids", [[]])  # type: ignore
+        metadata_list = result.get("metadatas", [[{}]])  # type: ignore
+        documents_list = result.get("documents", [[]])  # type: ignore
+        embeddings_list = result.get("embeddings")  # type: ignore
+        distances_list = result.get("distances", [[]])  # type: ignore
 
         if not ids_list or not metadata_list or not documents_list or embeddings_list is None or not distances_list:
             return search_results
@@ -590,7 +616,7 @@ class ChromaDb(VectorDb):
         return converted
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """Search asynchronously by running in a thread."""
         return await asyncio.to_thread(self.search, query, limit, filters)
@@ -886,6 +912,7 @@ class ChromaDb(VectorDb):
 
                 # Convert to the expected type for ChromaDB
                 chroma_metadatas = cast(List[Mapping[str, Union[str, int, float, bool]]], updated_metadatas)
+                chroma_metadatas = [{k: v for k, v in m.items() if k and v} for m in chroma_metadatas]
                 collection.update(ids=ids, metadatas=chroma_metadatas)  # type: ignore
                 logger.debug(f"Updated metadata for {len(ids)} documents with content_id: {content_id}")
 
@@ -901,3 +928,7 @@ class ChromaDb(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # ChromaDb doesn't use SearchType enum

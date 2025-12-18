@@ -3,10 +3,10 @@ import time
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Union
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 
 try:
@@ -61,11 +61,13 @@ class CouchbaseSearch(VectorDb):
         couchbase_connection_string: str,
         cluster_options: ClusterOptions,
         search_index: Union[str, SearchIndex],
-        embedder: Embedder = OpenAIEmbedder(),
+        embedder: Optional[Embedder] = None,
         overwrite: bool = False,
         is_global_level_index: bool = False,
         wait_until_index_ready: float = 0,
         batch_limit: int = 500,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -75,6 +77,8 @@ class CouchbaseSearch(VectorDb):
             bucket_name (str): Name of the Couchbase bucket.
             scope_name (str): Name of the scope within the bucket.
             collection_name (str): Name of the collection within the scope.
+            name (Optional[str]): Name of the vector database.
+            description (Optional[str]): Description of the vector database.
             couchbase_connection_string (str): Couchbase connection string.
             cluster_options (ClusterOptions): Options for configuring the Couchbase cluster connection.
             search_index (Union[str, SearchIndex], optional): Search index configuration, either as index name or SearchIndex definition.
@@ -92,10 +96,18 @@ class CouchbaseSearch(VectorDb):
         self.collection_name = collection_name
         self.connection_string = couchbase_connection_string
         self.cluster_options = cluster_options
+        if embedder is None:
+            from agno.knowledge.embedder.openai import OpenAIEmbedder
+
+            embedder = OpenAIEmbedder()
+            log_info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder = embedder
         self.overwrite = overwrite
         self.is_global_level_index = is_global_level_index
         self.wait_until_index_ready = wait_until_index_ready
+        # Initialize base class with name and description
+        super().__init__(name=name, description=description)
+
         self.kwargs = kwargs
         self.batch_limit = batch_limit
         if isinstance(search_index, str):
@@ -451,7 +463,12 @@ class CouchbaseSearch(VectorDb):
         if errors_occurred:
             logger.warning("Some errors occurred during the upsert operation. Please check logs for details.")
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
+        if isinstance(filters, List):
+            log_warning("Filter Expressions are not yet supported in Couchbase. No filters will be applied.")
+            filters = None
         """Search the Couchbase bucket for documents relevant to the query."""
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
@@ -1061,8 +1078,11 @@ class CouchbaseSearch(VectorDb):
         logger.info(f"[async] Total successfully upserted: {total_upserted_count}, Total failed: {total_failed_count}.")
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
+        if isinstance(filters, List):
+            log_warning("Filter Expressions are not yet supported in Couchbase. No filters will be applied.")
+            filters = None
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"[async] Failed to generate embedding for query: {query}")
@@ -1420,3 +1440,7 @@ class CouchbaseSearch(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # CouchbaseSearch doesn't use SearchType enum

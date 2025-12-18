@@ -1,15 +1,28 @@
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
+from agno.filters import FilterExpr
 from agno.media import Audio, Image, Video
 from agno.models.message import Citations, Message, MessageReferences
 from agno.models.metrics import Metrics
-from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.utils.log import log_error
+
+
+@dataclass
+class RunContext:
+    run_id: str
+    session_id: str
+    user_id: Optional[str] = None
+
+    dependencies: Optional[Dict[str, Any]] = None
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    session_state: Optional[Dict[str, Any]] = None
+    output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 
 
 @dataclass
@@ -35,7 +48,9 @@ class BaseRunOutputEvent:
                 "reasoning_steps",
                 "references",
                 "additional_input",
+                "session_summary",
                 "metrics",
+                "run_input",
             ]
         }
 
@@ -97,6 +112,8 @@ class BaseRunOutputEvent:
             _dict["content"] = self.content.model_dump(exclude_none=True)
 
         if hasattr(self, "tools") and self.tools is not None:
+            from agno.models.response import ToolExecution
+
             _dict["tools"] = []
             for tool in self.tools:
                 if isinstance(tool, ToolExecution):
@@ -105,6 +122,8 @@ class BaseRunOutputEvent:
                     _dict["tools"].append(tool)
 
         if hasattr(self, "tool") and self.tool is not None:
+            from agno.models.response import ToolExecution
+
             if isinstance(self.tool, ToolExecution):
                 _dict["tool"] = self.tool.to_dict()
             else:
@@ -112,6 +131,12 @@ class BaseRunOutputEvent:
 
         if hasattr(self, "metrics") and self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict()
+
+        if hasattr(self, "session_summary") and self.session_summary is not None:
+            _dict["session_summary"] = self.session_summary.to_dict()
+
+        if hasattr(self, "run_input") and self.run_input is not None:
+            _dict["run_input"] = self.run_input.to_dict()
 
         return _dict
 
@@ -135,6 +160,8 @@ class BaseRunOutputEvent:
     def from_dict(cls, data: Dict[str, Any]):
         tool = data.pop("tool", None)
         if tool:
+            from agno.models.response import ToolExecution
+
             data["tool"] = ToolExecution.from_dict(tool)
 
         images = data.pop("images", None)
@@ -173,7 +200,32 @@ class BaseRunOutputEvent:
         if metrics:
             data["metrics"] = Metrics(**metrics)
 
-        return cls(**data)
+        session_summary = data.pop("session_summary", None)
+        if session_summary:
+            from agno.session.summary import SessionSummary
+
+            data["session_summary"] = SessionSummary.from_dict(session_summary)
+
+        run_input = data.pop("run_input", None)
+        if run_input:
+            from agno.run.team import BaseTeamRunEvent
+
+            if issubclass(cls, BaseTeamRunEvent):
+                from agno.run.team import TeamRunInput
+
+                data["run_input"] = TeamRunInput.from_dict(run_input)
+            else:
+                from agno.run.agent import RunInput
+
+                data["run_input"] = RunInput.from_dict(run_input)
+
+        # Filter data to only include fields that are actually defined in the target class
+        from dataclasses import fields
+
+        supported_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
+
+        return cls(**filtered_data)
 
     @property
     def is_paused(self):

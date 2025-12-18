@@ -4,8 +4,38 @@ from unittest.mock import Mock, patch
 import pytest
 
 from agno.knowledge.document import Document
+from agno.utils.log import log_debug
 from agno.vectordb.distance import Distance
-from agno.vectordb.milvus import Milvus
+
+# Ensure Milvus is available and usable in the current environment.
+# This handles some CI errors when running Milvus in GitHub Actions.
+try:
+    import pymilvus
+
+    log_debug(f"PyMilvus available. Version: {pymilvus.__version__}")
+    MILVUS_AVAILABLE = True
+    MILVUS_SKIP_REASON = ""
+except (ImportError, TypeError) as e:
+    MILVUS_AVAILABLE = False
+    MILVUS_SKIP_REASON = f"Milvus not available: {str(e)}"
+
+pytestmark = pytest.mark.skipif(not MILVUS_AVAILABLE, reason=MILVUS_SKIP_REASON)
+
+if not MILVUS_AVAILABLE:
+    pytest.skip(MILVUS_SKIP_REASON, allow_module_level=True)
+
+
+# Try to import Milvus, skip all tests if not available
+try:
+    from agno.vectordb.milvus import Milvus
+
+    MILVUS_AVAILABLE = True
+except (ImportError, TypeError) as e:
+    MILVUS_AVAILABLE = False
+    MILVUS_SKIP_REASON = f"Milvus not available: {str(e)}"
+
+# Skip test file if Milvus not available
+pytestmark = pytest.mark.skipif(not MILVUS_AVAILABLE, reason=MILVUS_SKIP_REASON if not MILVUS_AVAILABLE else "")
 
 
 @pytest.fixture
@@ -277,7 +307,7 @@ def test_build_expr(milvus_db):
 
     # Test with list value
     filters = {"tags": ["tag1", "tag2"]}
-    assert milvus_db._build_expr(filters) == 'json_contains_any(meta_data, ["tag1", "tag2"], "tags")'
+    assert milvus_db._build_expr(filters) == 'json_contains_any(meta_data["tags"], ["tag1", "tag2"])'
 
     # Test with None value
     filters = {"field": None}
@@ -289,6 +319,52 @@ def test_build_expr(milvus_db):
     assert 'meta_data["name"] == "test_name"' in expr
     assert 'meta_data["count"] == 42' in expr
     assert " and " in expr
+
+
+def test_search_with_radius_and_range_filter(milvus_db, mock_milvus_client):
+    """Test search functionality with radius and range_filter parameters"""
+    # Set up mock embedding
+    with patch.object(milvus_db.embedder, "get_embedding", return_value=[0.1] * 768):
+        # Set up mock search results
+        mock_result = {
+            "id": "id1",
+            "entity": {
+                "name": "tom_kha",
+                "meta_data": {"cuisine": "Thai", "type": "soup"},
+                "content": "Tom Kha Gai is a Thai coconut soup with chicken",
+                "vector": [0.1] * 768,
+                "usage": {"prompt_tokens": 10, "total_tokens": 10},
+            },
+        }
+
+        mock_milvus_client.search.return_value = [[mock_result]]
+
+        # Test search with radius parameter
+        results = milvus_db.search("Thai food", limit=5, search_params={"radius": 0.8})
+        assert len(results) == 1
+        assert results[0].name == "tom_kha"
+
+        # Verify search was called with search_params
+        _, kwargs = mock_milvus_client.search.call_args
+        assert kwargs["collection_name"] == "test_collection"
+        assert kwargs["data"] == [[0.1] * 768]
+        assert kwargs["limit"] == 5
+        assert kwargs["search_params"] == {"radius": 0.8}
+
+        # Test search with both radius and range_filter
+        mock_milvus_client.search.reset_mock()
+        mock_milvus_client.search.return_value = [[mock_result]]
+
+        results = milvus_db.search(
+            "Thai food",
+            limit=10,
+            search_params={"radius": 0.8, "range_filter": 0.2},
+        )
+        assert len(results) == 1
+
+        # Verify search was called with both parameters
+        _, kwargs = mock_milvus_client.search.call_args
+        assert kwargs["search_params"] == {"radius": 0.8, "range_filter": 0.2}
 
 
 @pytest.mark.asyncio
@@ -321,6 +397,45 @@ async def test_async_search(mock_embedder):
         results = await db.async_search("test query", limit=1)
         assert len(results) == 1
         assert results[0].name == "test_doc"
+
+
+@pytest.mark.asyncio
+async def test_async_search_with_search_params(mock_embedder, mock_milvus_async_client):
+    """Test async search with radius and range_filter parameters"""
+    db = Milvus(embedder=mock_embedder, collection="test_collection")
+    db._async_client = mock_milvus_async_client
+
+    # Set up mock search results
+    mock_result = {
+        "id": "id1",
+        "entity": {
+            "name": "tom_kha",
+            "meta_data": {"cuisine": "Thai", "type": "soup"},
+            "content": "Tom Kha Gai is a Thai coconut soup with chicken",
+            "vector": [0.1] * 768,
+            "usage": {"prompt_tokens": 10, "total_tokens": 10},
+        },
+    }
+
+    # Make the mock return an awaitable
+    async def mock_search_return(*args, **kwargs):
+        return [[mock_result]]
+
+    mock_milvus_async_client.search = mock_search_return
+
+    with patch.object(db.embedder, "get_embedding", return_value=[0.1] * 768):
+        # Test with radius parameter
+        results = await db.async_search("Thai food", limit=5, search_params={"radius": 0.8})
+        assert len(results) == 1
+        assert results[0].name == "tom_kha"
+
+        # Test with both radius and range_filter
+        results = await db.async_search(
+            "Thai food",
+            limit=10,
+            search_params={"radius": 0.8, "range_filter": 0.2},
+        )
+        assert len(results) == 1
 
 
 async def async_return(result):
@@ -449,3 +564,25 @@ def test_delete_methods_error_handling(milvus_db, mock_milvus_client):
     assert milvus_db.delete_by_name("test_name") is False
     assert milvus_db.delete_by_metadata({"type": "test"}) is False
     assert milvus_db.delete_by_content_id("test_content_id") is False
+
+
+def test_search_with_reranker(milvus_db, mock_milvus_client):
+    """Test Milvus search with reranker applied"""
+    with patch.object(milvus_db.embedder, "get_embedding", return_value=[0.1] * 768):
+        # Mock search results from Milvus
+        mock_result1 = {"id": "id1", "entity": {"name": "doc_a", "content": "Content A", "vector": [0.1] * 768}}
+        mock_result2 = {"id": "id2", "entity": {"name": "doc_b", "content": "Content B", "vector": [0.2] * 768}}
+        mock_milvus_client.search.return_value = [[mock_result1, mock_result2]]
+
+        # Mock reranker that reverses results
+        mock_reranker = Mock()
+        mock_reranker.rerank.side_effect = lambda query, documents: list(reversed(documents))
+        milvus_db.reranker = mock_reranker
+
+        results = milvus_db.search("query", limit=2)
+
+        # Verify reranker called
+        mock_reranker.rerank.assert_called_once()
+        # Verify results are reranked (reversed)
+        assert results[0].name == "doc_b"
+        assert results[1].name == "doc_a"

@@ -22,6 +22,7 @@ except ImportError:
     raise ImportError("The `pinecone` package is not installed, please install using `pip install pinecone`.")
 
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
@@ -66,9 +67,11 @@ class PineconeDb(VectorDb):
 
     def __init__(
         self,
-        name: str,
         dimension: int,
         spec: Union[Dict, ServerlessSpec, PodSpec],
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         embedder: Optional[Embedder] = None,
         metric: Optional[str] = "cosine",
         additional_headers: Optional[Dict[str, str]] = None,
@@ -84,6 +87,23 @@ class PineconeDb(VectorDb):
         reranker: Optional[Reranker] = None,
         **kwargs,
     ):
+        # Validate required parameters
+        if dimension is None or dimension <= 0:
+            raise ValueError("Dimension must be provided and greater than 0.")
+        if spec is None:
+            raise ValueError("Spec must be provided for Pinecone index.")
+
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            index_name = name or "default_index"
+            seed = f"{host or 'pinecone'}#{index_name}#{dimension}"
+            id = generate_id(seed)
+
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         self._client = None
         self._index = None
         self.api_key: Optional[str] = api_key
@@ -93,7 +113,6 @@ class PineconeDb(VectorDb):
         self.pool_threads: Optional[int] = pool_threads
         self.namespace: Optional[str] = namespace
         self.index_api: Optional[Any] = index_api
-        self.name: str = name
         self.dimension: Optional[int] = dimension
         self.spec: Union[Dict, ServerlessSpec, PodSpec] = spec
         self.metric: Optional[str] = metric
@@ -198,23 +217,6 @@ class PineconeDb(VectorDb):
             log_debug(f"Deleting index: {self.name}")
             self.client.delete_index(name=self.name, timeout=self.timeout)
 
-    def doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the index.
-
-        Args:
-            document (Document): The document to check.
-
-        Returns:
-            bool: True if the document exists, False otherwise.
-
-        """
-        response = self.index.fetch(ids=[document.id], namespace=self.namespace)
-        return len(response.vectors) > 0
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the index asynchronously."""
-        return await asyncio.to_thread(self.doc_exists, document)
-
     def name_exists(self, name: str) -> bool:
         """Check if an index with the given name exists.
 
@@ -307,6 +309,8 @@ class PineconeDb(VectorDb):
         show_progress: bool = False,
     ) -> None:
         """Upsert documents into the index asynchronously with batching."""
+        if self.content_hash_exists(content_hash):
+            await asyncio.to_thread(self._delete_by_content_hash, content_hash)
         if not documents:
             return
 
@@ -320,7 +324,7 @@ class PineconeDb(VectorDb):
 
         # Process each batch in parallel
         async def process_batch(batch_docs):
-            return await self._prepare_vectors(batch_docs)
+            return await self._prepare_vectors(batch_docs, content_hash, filters)
 
         # Run all batches in parallel
         batch_vectors = await asyncio.gather(*[process_batch(batch) for batch in batches])
@@ -335,7 +339,9 @@ class PineconeDb(VectorDb):
 
         log_debug(f"Finished async upsert of {len(documents)} documents")
 
-    async def _prepare_vectors(self, documents: List[Document]) -> List[Dict[str, Any]]:
+    async def _prepare_vectors(
+        self, documents: List[Document], content_hash: str, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
         """Prepare vectors for upsert."""
         vectors = []
 
@@ -382,10 +388,15 @@ class PineconeDb(VectorDb):
             doc.meta_data["text"] = doc.content
             # Include name and content_id in metadata
             metadata = doc.meta_data.copy()
+            if filters:
+                metadata.update(filters)
+
             if doc.name:
                 metadata["name"] = doc.name
             if doc.content_id:
                 metadata["content_id"] = doc.content_id
+
+            metadata["content_hash"] = content_hash
 
             data_to_upsert = {
                 "id": doc.id,
@@ -447,7 +458,7 @@ class PineconeDb(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Union[str, float, int, bool, List, dict]]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         namespace: Optional[str] = None,
         include_values: Optional[bool] = None,
     ) -> List[Document]:
@@ -465,6 +476,9 @@ class PineconeDb(VectorDb):
             List[Document]: The list of matching documents.
 
         """
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in PineconeDB. No filters will be applied.")
+            filters = None
         dense_embedding = self.embedder.get_embedding(query)
 
         if self.use_hybrid_search:
@@ -513,7 +527,7 @@ class PineconeDb(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Union[str, float, int, bool, List, dict]]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         namespace: Optional[str] = None,
         include_values: Optional[bool] = None,
     ) -> List[Document]:
@@ -710,3 +724,7 @@ class PineconeDb(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # PineconeDb doesn't use SearchType enum

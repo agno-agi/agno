@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
@@ -77,6 +78,17 @@ class AgnoError(Exception):
         return str(self.message)
 
 
+class ModelAuthenticationError(AgnoError):
+    """Raised when model authentication fails."""
+
+    def __init__(self, message: str, status_code: int = 401, model_name: Optional[str] = None):
+        super().__init__(message, status_code)
+        self.model_name = model_name
+
+        self.type = "model_authentication_error"
+        self.error_id = "model_authentication_error"
+
+
 class ModelProviderError(AgnoError):
     """Exception raised when a model provider returns an error."""
 
@@ -130,7 +142,10 @@ class InputCheckError(Exception):
     ):
         super().__init__(message)
         self.type = "input_check_error"
-        self.error_id = check_trigger.value
+        if isinstance(check_trigger, CheckTrigger):
+            self.error_id = check_trigger.value
+        else:
+            self.error_id = str(check_trigger)
 
         self.message = message
         self.check_trigger = check_trigger
@@ -148,8 +163,18 @@ class OutputCheckError(Exception):
     ):
         super().__init__(message)
         self.type = "output_check_error"
-        self.error_id = check_trigger.value
+        if isinstance(check_trigger, CheckTrigger):
+            self.error_id = check_trigger.value
+        else:
+            self.error_id = str(check_trigger)
 
         self.message = message
         self.check_trigger = check_trigger
         self.additional_data = additional_data
+
+
+@dataclass
+class RetryableModelProviderError(Exception):
+    original_error: Optional[str] = None
+    # Guidance message to retry a model invocation after an error
+    retry_guidance_message: Optional[str] = None
