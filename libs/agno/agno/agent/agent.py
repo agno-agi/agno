@@ -1130,7 +1130,7 @@ class Agent:
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # 5. Reason about the task
-            self._handle_reasoning(run_response=run_response, run_messages=run_messages)
+            self._handle_reasoning(run_response=run_response, run_messages=run_messages, run_context=run_context)
 
             # Check for cancellation before model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1353,6 +1353,7 @@ class Agent:
             yield from self._handle_reasoning_stream(
                 run_response=run_response,
                 run_messages=run_messages,
+                run_context=run_context,
                 stream_events=stream_events,
             )
 
@@ -2064,7 +2065,9 @@ class Agent:
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 8. Reason about the task if reasoning is enabled
-                await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
+                await self._ahandle_reasoning(
+                    run_response=run_response, run_messages=run_messages, run_context=run_context
+                )
 
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2423,6 +2426,7 @@ class Agent:
                 async for item in self._ahandle_reasoning_stream(
                     run_response=run_response,
                     run_messages=run_messages,
+                    run_context=run_context,
                     stream_events=stream_events,
                 ):
                     raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -4369,9 +4373,6 @@ class Agent:
             "run_context": run_context,
             "agent": self,
             "session": session,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
-            "metadata": run_context.metadata,
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
@@ -4464,9 +4465,6 @@ class Agent:
             "agent": self,
             "session": session,
             "run_context": run_context,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
-            "metadata": run_context.metadata,
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
@@ -4562,9 +4560,6 @@ class Agent:
             "run_output": run_output,
             "agent": self,
             "session": session,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
-            "metadata": run_context.metadata,
             "user_id": user_id,
             "run_context": run_context,
             "debug_mode": debug_mode or self.debug_mode,
@@ -4651,9 +4646,6 @@ class Agent:
             "agent": self,
             "session": session,
             "run_context": run_context,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
-            "metadata": run_context.metadata,
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
@@ -6239,8 +6231,6 @@ class Agent:
             for func in _functions:  # type: ignore
                 if isinstance(func, Function):
                     func._run_context = run_context
-                    func._session_state = run_context.session_state
-                    func._dependencies = run_context.dependencies
                     func._images = joint_images
                     func._files = joint_files
                     func._audios = joint_audios
@@ -7335,18 +7325,21 @@ class Agent:
     def _format_message_with_state_variables(
         self,
         message: Any,
-        session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
     ) -> Any:
-        """Format a message with the session state variables."""
+        """Format a message with the session state variables from run_context."""
         import re
         import string
         from copy import deepcopy
 
         if not isinstance(message, str):
             return message
+
+        # Extract values from run_context
+        session_state = run_context.session_state if run_context else None
+        dependencies = run_context.dependencies if run_context else None
+        metadata = run_context.metadata if run_context else None
+        user_id = run_context.user_id if run_context else None
 
         # Should already be resolved and passed from run() method
         format_variables = ChainMap(
@@ -7376,12 +7369,8 @@ class Agent:
         self,
         session: AgentSession,
         run_context: Optional[RunContext] = None,
-        user_id: Optional[str] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
-        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
-        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
-        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
     ) -> Optional[Message]:
         """Return the system message for the Agent.
 
@@ -7390,11 +7379,9 @@ class Agent:
         3. Build and return the default system message for the Agent.
         """
 
-        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
-        if run_context is not None:
-            session_state = run_context.session_state or session_state
-            dependencies = run_context.dependencies or dependencies
-            metadata = run_context.metadata or metadata
+        # Extract values from run_context
+        session_state = run_context.session_state if run_context else None
+        user_id = run_context.user_id if run_context else None
 
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
@@ -7417,10 +7404,7 @@ class Agent:
             if self.resolve_in_context:
                 sys_message_content = self._format_message_with_state_variables(
                     sys_message_content,
-                    user_id=user_id,
-                    session_state=session_state,
-                    dependencies=dependencies,
-                    metadata=metadata,
+                    run_context=run_context,
                 )
 
             # type: ignore
@@ -7558,10 +7542,7 @@ class Agent:
         if self.resolve_in_context:
             system_message_content = self._format_message_with_state_variables(
                 system_message_content,
-                user_id=user_id,
-                session_state=session_state,
-                dependencies=dependencies,
-                metadata=metadata,
+                run_context=run_context,
             )
 
         # 3.3.7 Then add the expected output
@@ -7719,12 +7700,8 @@ class Agent:
         self,
         session: AgentSession,
         run_context: Optional[RunContext] = None,
-        user_id: Optional[str] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
-        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
-        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
-        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
     ) -> Optional[Message]:
         """Return the system message for the Agent.
 
@@ -7733,11 +7710,9 @@ class Agent:
         3. Build and return the default system message for the Agent.
         """
 
-        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
-        if run_context is not None:
-            session_state = run_context.session_state or session_state
-            dependencies = run_context.dependencies or dependencies
-            metadata = run_context.metadata or metadata
+        # Extract values from run_context
+        session_state = run_context.session_state if run_context else None
+        user_id = run_context.user_id if run_context else None
 
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
@@ -7761,10 +7736,7 @@ class Agent:
             if self.resolve_in_context:
                 sys_message_content = self._format_message_with_state_variables(
                     sys_message_content,
-                    user_id=user_id,
-                    dependencies=dependencies,
-                    metadata=metadata,
-                    session_state=session_state,
+                    run_context=run_context,
                 )
 
             # type: ignore
@@ -7902,10 +7874,7 @@ class Agent:
         if self.resolve_in_context:
             system_message_content = self._format_message_with_state_variables(
                 system_message_content,
-                user_id=user_id,
-                session_state=session_state,
-                dependencies=dependencies,
-                metadata=metadata,
+                run_context=run_context,
             )
 
         # 3.3.7 Then add the expected output
@@ -8070,17 +8039,12 @@ class Agent:
         *,
         run_response: RunOutput,
         run_context: Optional[RunContext] = None,
-        session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
         input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         add_dependencies_to_context: Optional[bool] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
         """Return the user message for the Agent.
@@ -8089,12 +8053,9 @@ class Agent:
         2. If build_user_context is False or if the message is a list, return the message as is.
         3. Build the default user message for the Agent
         """
-        # Consider both run_context and session_state, dependencies, metadata, knowledge_filters (deprecated fields)
-        if run_context is not None:
-            session_state = run_context.session_state or session_state
-            dependencies = run_context.dependencies or dependencies
-            metadata = run_context.metadata or metadata
-            knowledge_filters = run_context.knowledge_filters or knowledge_filters
+        # Extract values from run_context
+        dependencies = run_context.dependencies if run_context else None
+        knowledge_filters = run_context.knowledge_filters if run_context else None
         # Get references from the knowledge base to use in the user message
         references = None
 
@@ -8199,10 +8160,7 @@ class Agent:
                 if self.resolve_in_context:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
-                        user_id=user_id,
-                        session_state=session_state,
-                        dependencies=dependencies,
-                        metadata=metadata,
+                        run_context=run_context,
                     )
 
                 # Convert to string for concatenation operations
@@ -8244,17 +8202,12 @@ class Agent:
         *,
         run_response: RunOutput,
         run_context: Optional[RunContext] = None,
-        session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
         input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         add_dependencies_to_context: Optional[bool] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
         """Return the user message for the Agent (async version).
@@ -8263,12 +8216,9 @@ class Agent:
         2. If build_user_context is False or if the message is a list, return the message as is.
         3. Build the default user message for the Agent
         """
-        # Consider both run_context and session_state, dependencies, metadata, knowledge_filters (deprecated fields)
-        if run_context is not None:
-            session_state = run_context.session_state or session_state
-            dependencies = run_context.dependencies or dependencies
-            metadata = run_context.metadata or metadata
-            knowledge_filters = run_context.knowledge_filters or knowledge_filters
+        # Extract values from run_context
+        dependencies = run_context.dependencies if run_context else None
+        knowledge_filters = run_context.knowledge_filters if run_context else None
         # Get references from the knowledge base to use in the user message
         references = None
 
@@ -8373,10 +8323,7 @@ class Agent:
                 if self.resolve_in_context:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
-                        user_id=user_id,
-                        session_state=session_state,
-                        dependencies=dependencies,
-                        metadata=metadata,
+                        run_context=run_context,
                     )
 
                 # Convert to string for concatenation operations
@@ -8462,10 +8409,6 @@ class Agent:
         system_message = self.get_system_message(
             session=session,
             run_context=run_context,
-            session_state=run_context.session_state,
-            dependencies=run_context.dependencies,
-            metadata=run_context.metadata,
-            user_id=user_id,
             tools=tools,
             add_session_state_to_context=add_session_state_to_context,
         )
@@ -8662,12 +8605,6 @@ class Agent:
         )
         """
 
-        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
-        if run_context is not None:
-            session_state = run_context.session_state or session_state
-            dependencies = run_context.dependencies or dependencies
-            metadata = run_context.metadata or metadata
-
         # Initialize the RunMessages object (no media here - that's in RunInput now)
         run_messages = RunMessages()
 
@@ -8675,11 +8612,7 @@ class Agent:
         system_message = await self.aget_system_message(
             session=session,
             run_context=run_context,
-            session_state=session_state,
-            user_id=user_id,
             tools=tools,
-            dependencies=dependencies,
-            metadata=metadata,
             add_session_state_to_context=add_session_state_to_context,
         )
         if system_message is not None:
@@ -8765,15 +8698,11 @@ class Agent:
             user_message = await self._aget_user_message(
                 run_response=run_response,
                 run_context=run_context,
-                session_state=session_state,
-                dependencies=dependencies,
-                metadata=metadata,
                 input=input,
                 audio=audio,
                 images=images,
                 videos=videos,
                 files=files,
-                knowledge_filters=knowledge_filters,
                 add_dependencies_to_context=add_dependencies_to_context,
                 **kwargs,
             )
@@ -9293,40 +9222,56 @@ class Agent:
     # Reasoning
     ###########################################################################
 
-    def _handle_reasoning(self, run_response: RunOutput, run_messages: RunMessages) -> None:
+    def _handle_reasoning(
+        self, run_response: RunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    ) -> None:
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self._reason(
-                run_response=run_response, run_messages=run_messages, stream_events=False
+                run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
             )
 
             # Consume the generator without yielding
             deque(reasoning_generator, maxlen=0)
 
     def _handle_reasoning_stream(
-        self, run_response: RunOutput, run_messages: RunMessages, stream_events: Optional[bool] = None
+        self,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        run_context: Optional[RunContext] = None,
+        stream_events: Optional[bool] = None,
     ) -> Iterator[RunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self._reason(
                 run_response=run_response,
                 run_messages=run_messages,
+                run_context=run_context,
                 stream_events=stream_events,
             )
             yield from reasoning_generator
 
-    async def _ahandle_reasoning(self, run_response: RunOutput, run_messages: RunMessages) -> None:
+    async def _ahandle_reasoning(
+        self, run_response: RunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    ) -> None:
         if self.reasoning or self.reasoning_model is not None:
-            reason_generator = self._areason(run_response=run_response, run_messages=run_messages, stream_events=False)
+            reason_generator = self._areason(
+                run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
+            )
             # Consume the generator without yielding
             async for _ in reason_generator:
                 pass
 
     async def _ahandle_reasoning_stream(
-        self, run_response: RunOutput, run_messages: RunMessages, stream_events: Optional[bool] = None
+        self,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        run_context: Optional[RunContext] = None,
+        stream_events: Optional[bool] = None,
     ) -> AsyncIterator[RunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
             reason_generator = self._areason(
                 run_response=run_response,
                 run_messages=run_messages,
+                run_context=run_context,
                 stream_events=stream_events,
             )
             async for item in reason_generator:
@@ -9438,7 +9383,11 @@ class Agent:
             log_warning(f"Reasoning error. {event.error}, continuing regular session...")
 
     def _reason(
-        self, run_response: RunOutput, run_messages: RunMessages, stream_events: Optional[bool] = None
+        self,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        run_context: Optional[RunContext] = None,
+        stream_events: Optional[bool] = None,
     ) -> Iterator[RunOutputEvent]:
         """
         Run reasoning using the ReasoningManager.
@@ -9468,9 +9417,7 @@ class Agent:
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
-                session_state=self.session_state,
-                dependencies=self.dependencies,
-                metadata=self.metadata,
+                run_context=run_context,
             )
         )
 
@@ -9479,7 +9426,11 @@ class Agent:
             yield from self._handle_reasoning_event(event, run_response, stream_events)
 
     async def _areason(
-        self, run_response: RunOutput, run_messages: RunMessages, stream_events: Optional[bool] = None
+        self,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        run_context: Optional[RunContext] = None,
+        stream_events: Optional[bool] = None,
     ) -> Any:
         """
         Run reasoning asynchronously using the ReasoningManager.
@@ -9509,9 +9460,7 @@ class Agent:
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
-                session_state=self.session_state,
-                dependencies=self.dependencies,
-                metadata=self.metadata,
+                run_context=run_context,
             )
         )
 
