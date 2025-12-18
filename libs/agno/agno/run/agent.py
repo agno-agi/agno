@@ -428,6 +428,8 @@ class OutputModelResponseCompletedEvent(BaseAgentRunEvent):
 @dataclass
 class CustomEvent(BaseAgentRunEvent):
     event: str = RunEvent.custom_event.value
+    # if yield from function, add it automatically
+    call_id: Optional[str] = None
 
     def __init__(self, **kwargs):
         # Store arbitrary attributes directly on the instance
