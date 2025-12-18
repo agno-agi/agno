@@ -607,3 +607,348 @@ def test_team_preconfigured_vs_dynamic_schema(test_os_client: TestClient, test_t
     assert isinstance(data2["content"], dict)
     assert set(data1["content"].keys()) == set(data2["content"].keys())
     assert data1["content_type"] == data2["content_type"] == "MovieScript"
+
+
+def test_agent_use_json_schema_true_keeps_dict(test_os_client: TestClient, test_agent: Agent):
+    """Test use_json_schema=true keeps output_schema as dict for direct pass-through."""
+    schema = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "Person",
+            "schema": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "age": {"type": "integer"}},
+                "required": ["name", "age"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+    response = test_os_client.post(
+        f"/agents/{test_agent.id}/runs",
+        data={
+            "message": "Person named Alice age 30",
+            "output_schema": json.dumps(schema),
+            "use_json_schema": "true",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data.get("content"), dict)
+    assert "name" in data["content"]
+    assert "age" in data["content"]
+
+
+def test_agent_use_json_schema_false_converts_to_pydantic(test_os_client: TestClient, test_agent: Agent):
+    """Test use_json_schema=false converts to Pydantic model."""
+    schema = {
+        "type": "object",
+        "properties": {"city": {"type": "string"}, "country": {"type": "string"}},
+        "required": ["city", "country"],
+    }
+
+    response = test_os_client.post(
+        f"/agents/{test_agent.id}/runs",
+        data={
+            "message": "City: Paris, Country: France",
+            "output_schema": json.dumps(schema),
+            "use_json_schema": "false",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data.get("content"), dict)
+    assert "city" in data["content"]
+
+
+def test_agent_json_object_format_passthrough(test_os_client: TestClient, test_agent: Agent):
+    """Test json_object format passes through with use_json_schema=true."""
+    schema = {"type": "json_object"}
+
+    response = test_os_client.post(
+        f"/agents/{test_agent.id}/runs",
+        data={
+            "message": "Return JSON with name=Charlie and age=35",
+            "output_schema": json.dumps(schema),
+            "use_json_schema": "true",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data.get("content"), dict)
+
+
+def test_team_use_json_schema_true_keeps_dict(test_os_client: TestClient, test_team: Team):
+    """Test team with use_json_schema=true keeps output_schema as dict."""
+    schema = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "Report",
+            "schema": {
+                "type": "object",
+                "properties": {"summary": {"type": "string"}, "score": {"type": "integer"}},
+                "required": ["summary", "score"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+    response = test_os_client.post(
+        f"/teams/{test_team.id}/runs",
+        data={
+            "message": "Write a report summary with score 85",
+            "output_schema": json.dumps(schema),
+            "use_json_schema": "true",
+            "stream": "false",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data.get("content"), dict)
+    assert "summary" in data["content"]
+    assert "score" in data["content"]
+
+
+def test_team_use_json_schema_false_converts_to_pydantic(test_os_client: TestClient, test_team: Team):
+    """Test team with use_json_schema=false converts to Pydantic model."""
+    schema = {
+        "type": "object",
+        "properties": {"city": {"type": "string"}, "country": {"type": "string"}},
+        "required": ["city", "country"],
+    }
+
+    response = test_os_client.post(
+        f"/teams/{test_team.id}/runs",
+        data={
+            "message": "City: Tokyo, Country: Japan",
+            "output_schema": json.dumps(schema),
+            "use_json_schema": "false",
+            "stream": "false",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data.get("content"), dict)
+    assert "city" in data["content"]
+
+
+def test_team_json_object_format_passthrough(test_os_client: TestClient, test_team: Team):
+    """Test team with json_object format passes through with use_json_schema=true."""
+    schema = {"type": "json_object"}
+
+    response = test_os_client.post(
+        f"/teams/{test_team.id}/runs",
+        data={
+            "message": "Return JSON with product=phone and price=999",
+            "output_schema": json.dumps(schema),
+            "use_json_schema": "true",
+            "stream": "false",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data.get("content"), dict)
+
+
+def test_agent_streaming_use_json_schema_true(test_os_client: TestClient, test_agent: Agent):
+    """Test agent streaming with use_json_schema=true passes through dict schema."""
+    schema = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "Answer",
+            "schema": {
+                "type": "object",
+                "properties": {"answer": {"type": "string"}},
+                "required": ["answer"],
+            },
+        },
+    }
+
+    with test_os_client.stream(
+        "POST",
+        f"/agents/{test_agent.id}/runs",
+        data={
+            "message": "What is 2+2? Answer in JSON.",
+            "output_schema": json.dumps(schema),
+            "use_json_schema": "true",
+            "stream": "true",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    ) as response:
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers.get("content-type", "")
+
+        # Collect streaming chunks
+        chunks = []
+        for line in response.iter_lines():
+            if line.startswith("data: "):
+                data = line[6:]
+                if data != "[DONE]":
+                    chunks.append(json.loads(data))
+
+        # Verify we received data
+        assert len(chunks) > 0
+
+        # Check first chunk has expected fields
+        first_chunk = chunks[0]
+        assert first_chunk.get("run_id") is not None
+        assert first_chunk.get("agent_id") == test_agent.id
+
+        # Verify content across chunks
+        content_chunks = [chunk.get("content") for chunk in chunks if chunk.get("content")]
+        assert len(content_chunks) > 0
+
+        # Verify final content is dict with expected keys
+        last_chunk = chunks[-1]
+        if last_chunk.get("content"):
+            assert isinstance(last_chunk["content"], dict)
+            assert "answer" in last_chunk["content"]
+
+
+def test_agent_streaming_json_object_passthrough(test_os_client: TestClient, test_agent: Agent):
+    """Test agent streaming with json_object format passes through."""
+    schema = {"type": "json_object"}
+
+    with test_os_client.stream(
+        "POST",
+        f"/agents/{test_agent.id}/runs",
+        data={
+            "message": "Return JSON with x=1 and y=2",
+            "output_schema": json.dumps(schema),
+            "use_json_schema": "true",
+            "stream": "true",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    ) as response:
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers.get("content-type", "")
+
+        # Collect streaming chunks
+        chunks = []
+        for line in response.iter_lines():
+            if line.startswith("data: "):
+                data = line[6:]
+                if data != "[DONE]":
+                    chunks.append(json.loads(data))
+
+        # Verify we received data
+        assert len(chunks) > 0
+
+        # Check first chunk has expected fields
+        first_chunk = chunks[0]
+        assert first_chunk.get("run_id") is not None
+        assert first_chunk.get("agent_id") == test_agent.id
+
+        # Verify content across chunks
+        content_chunks = [chunk.get("content") for chunk in chunks if chunk.get("content")]
+        assert len(content_chunks) > 0
+
+        # Verify final content is dict
+        last_chunk = chunks[-1]
+        if last_chunk.get("content"):
+            assert isinstance(last_chunk["content"], dict)
+
+
+def test_team_streaming_use_json_schema_true(test_os_client: TestClient, test_team: Team):
+    """Test team streaming with use_json_schema=true passes through dict schema."""
+    schema = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "Result",
+            "schema": {
+                "type": "object",
+                "properties": {"result": {"type": "string"}},
+                "required": ["result"],
+            },
+        },
+    }
+
+    with test_os_client.stream(
+        "POST",
+        f"/teams/{test_team.id}/runs",
+        data={
+            "message": "Give me a result in JSON format.",
+            "output_schema": json.dumps(schema),
+            "use_json_schema": "true",
+            "stream": "true",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    ) as response:
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers.get("content-type", "")
+
+        # Collect streaming chunks
+        chunks = []
+        for line in response.iter_lines():
+            if line.startswith("data: "):
+                data = line[6:]
+                if data != "[DONE]":
+                    chunks.append(json.loads(data))
+
+        # Verify we received data
+        assert len(chunks) > 0
+
+        # Check first chunk has expected fields
+        first_chunk = chunks[0]
+        assert first_chunk.get("run_id") is not None
+        assert first_chunk.get("team_id") == test_team.id
+
+        # Verify content across chunks
+        content_chunks = [chunk.get("content") for chunk in chunks if chunk.get("content")]
+        assert len(content_chunks) > 0
+
+        # Verify final content is dict with expected keys
+        last_chunk = chunks[-1]
+        if last_chunk.get("content"):
+            assert isinstance(last_chunk["content"], dict)
+            assert "result" in last_chunk["content"]
+
+
+def test_team_streaming_json_object_passthrough(test_os_client: TestClient, test_team: Team):
+    """Test team streaming with json_object format passes through."""
+    schema = {"type": "json_object"}
+
+    with test_os_client.stream(
+        "POST",
+        f"/teams/{test_team.id}/runs",
+        data={
+            "message": "Return JSON with a=1 and b=2",
+            "output_schema": json.dumps(schema),
+            "use_json_schema": "true",
+            "stream": "true",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    ) as response:
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers.get("content-type", "")
+
+        # Collect streaming chunks
+        chunks = []
+        for line in response.iter_lines():
+            if line.startswith("data: "):
+                data = line[6:]
+                if data != "[DONE]":
+                    chunks.append(json.loads(data))
+
+        # Verify we received data
+        assert len(chunks) > 0
+
+        # Check first chunk has expected fields
+        first_chunk = chunks[0]
+        assert first_chunk.get("run_id") is not None
+        assert first_chunk.get("team_id") == test_team.id
+
+        # Verify content across chunks
+        content_chunks = [chunk.get("content") for chunk in chunks if chunk.get("content")]
+        assert len(content_chunks) > 0
+
+        # Verify final content is dict
+        last_chunk = chunks[-1]
+        if last_chunk.get("content"):
+            assert isinstance(last_chunk["content"], dict)
