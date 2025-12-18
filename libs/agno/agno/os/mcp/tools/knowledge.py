@@ -116,7 +116,9 @@ def register_knowledge_tools(mcp: FastMCP, os: "AgentOS") -> None:
             "name": name,
             "description": description,
             "metadata": metadata,
-            "status": content.status.value if hasattr(content.status, "value") else str(content.status),
+            "status": content.status.value
+            if content.status and hasattr(content.status, "value")
+            else str(content.status),
             "status_message": content.status_message,
         }
 
@@ -194,7 +196,9 @@ def register_knowledge_tools(mcp: FastMCP, os: "AgentOS") -> None:
                     "description": content.description,
                     "file_type": content.file_type,
                     "size": content.size,
-                    "status": content.status.value if hasattr(content.status, "value") else content.status,
+                    "status": content.status.value
+                    if content.status and hasattr(content.status, "value")
+                    else content.status,
                     "created_at": str(content.created_at) if content.created_at else None,
                     "updated_at": str(content.updated_at) if content.updated_at else None,
                 }
@@ -222,7 +226,7 @@ def register_knowledge_tools(mcp: FastMCP, os: "AgentOS") -> None:
             "description": content.description,
             "file_type": content.file_type,
             "size": len(content.file_data.content) if content.file_data and content.file_data.content else 0,
-            "status": content.status.value if hasattr(content.status, "value") else content.status,
+            "status": content.status.value if content.status and hasattr(content.status, "value") else content.status,
             "status_message": content.status_message,
             "created_at": str(content.created_at) if content.created_at else None,
             "updated_at": str(content.updated_at) if content.updated_at else None,
