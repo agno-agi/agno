@@ -225,6 +225,9 @@ class AgentOS:
         self._initialize_teams()
         self._initialize_workflows()
 
+        # Check for duplicate IDs
+        self._raise_if_duplicate_ids()
+
         if self.tracing:
             self._setup_tracing()
 
@@ -266,6 +269,9 @@ class AgentOS:
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
+
+        # Check for duplicate IDs
+        self._raise_if_duplicate_ids()
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
 
@@ -333,6 +339,31 @@ class AgentOS:
             a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
             self.interfaces.append(a2a_interface)
             self._add_router(app, a2a_interface.get_router())
+
+    def _raise_if_duplicate_ids(self) -> None:
+        """Check for duplicate IDs within each entity type.
+
+        Raises:
+            ValueError: If duplicate IDs are found within the same entity type
+        """
+        duplicate_ids: List[str] = []
+
+        for entities in [self.agents, self.teams, self.workflows]:
+            if not entities:
+                continue
+            seen_ids: set[str] = set()
+            for entity in entities:
+                entity_id = entity.id
+                if entity_id is None:
+                    continue
+                if entity_id in seen_ids:
+                    if entity_id not in duplicate_ids:
+                        duplicate_ids.append(entity_id)
+                else:
+                    seen_ids.add(entity_id)
+
+        if duplicate_ids:
+            raise ValueError(f"Duplicate IDs found in AgentOS: {', '.join(repr(id_) for id_ in duplicate_ids)}")
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         # Adjust the FastAPI app lifespan to handle MCP connections if relevant
@@ -583,6 +614,18 @@ class AgentOS:
 
         # Add JWT middleware if authorization is enabled
         if self.authorization:
+            # Set authorization_enabled flag on settings so security key validation is skipped
+            self.settings.authorization_enabled = True
+
+            jwt_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+            security_key_set = bool(self.settings.os_security_key)
+            if jwt_configured and security_key_set:
+                log_warning(
+                    "Both JWT configuration (JWT_VERIFICATION_KEY or JWT_JWKS_FILE) and OS_SECURITY_KEY are set. "
+                    "With authorization=True, only JWT authorization will be used. "
+                    "Consider removing OS_SECURITY_KEY from your environment."
+                )
+
             self._add_jwt_middleware(fastapi_app)
 
         return fastapi_app
@@ -981,6 +1024,8 @@ class AgentOS:
         host: str = "localhost",
         port: int = 7777,
         reload: bool = False,
+        reload_includes: Optional[List[str]] = None,
+        reload_excludes: Optional[List[str]] = None,
         workers: Optional[int] = None,
         access_log: bool = False,
         **kwargs,
@@ -1000,8 +1045,12 @@ class AgentOS:
             Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]"),
             Align.center(f"\n\n[bold dark_orange]OS running on:[/bold dark_orange] http://{host}:{port}"),
         ]
-        if bool(self.settings.os_security_key):
-            panel_group.append(Align.center("\n\n[bold chartreuse3]:lock: Security Enabled[/bold chartreuse3]"))
+        if self.authorization:
+            panel_group.append(
+                Align.center("\n\n[bold chartreuse3]:lock: JWT Authorization Enabled[/bold chartreuse3]")
+            )
+        elif bool(self.settings.os_security_key):
+            panel_group.append(Align.center("\n\n[bold chartreuse3]:lock: Security Key Enabled[/bold chartreuse3]"))
 
         console = Console()
         console.print(
@@ -1015,11 +1064,17 @@ class AgentOS:
             )
         )
 
+        # Adding *.yaml to reload_includes to reload the app when the yaml config file changes.
+        if reload and reload_includes is not None:
+            reload_includes = ["*.yaml", "*.yml"]
+
         uvicorn.run(
             app=app,
             host=host,
             port=port,
             reload=reload,
+            reload_includes=reload_includes,
+            reload_excludes=reload_excludes,
             workers=workers,
             access_log=access_log,
             lifespan="on",

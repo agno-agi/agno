@@ -201,6 +201,52 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
     return structured_output
 
 
+def parse_response_dict_str(content: str) -> Optional[dict]:
+    """Parse dict from string content, extracting JSON if needed"""
+    from agno.utils.reasoning import extract_thinking_content
+
+    # Handle thinking content b/w <think> tags
+    if "</think>" in content:
+        reasoning_content, output_content = extract_thinking_content(content)
+        if reasoning_content:
+            content = output_content
+
+    # Clean content first to simplify all parsing attempts
+    cleaned_content = _clean_json_content(content)
+
+    try:
+        # First attempt: direct JSON parsing on cleaned content
+        return json.loads(cleaned_content)
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse cleaned JSON: {e}")
+
+        # Second attempt: Extract individual JSON objects
+        candidate_jsons = _extract_json_objects(cleaned_content)
+
+        if len(candidate_jsons) == 1:
+            # Single JSON object - try to parse it directly
+            try:
+                return json.loads(candidate_jsons[0])
+            except json.JSONDecodeError:
+                pass
+
+        if len(candidate_jsons) > 1:
+            # Final attempt: Merge multiple JSON objects
+            merged_data: dict = {}
+            for candidate in candidate_jsons:
+                try:
+                    obj = json.loads(candidate)
+                    if isinstance(obj, dict):
+                        merged_data.update(obj)
+                except json.JSONDecodeError:
+                    continue
+            if merged_data:
+                return merged_data
+
+        logger.warning("All parsing attempts failed.")
+        return None
+
+
 def generate_id(seed: Optional[str] = None) -> str:
     """
     Generate a deterministic UUID5 based on a seed string.
