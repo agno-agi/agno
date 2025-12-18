@@ -5409,16 +5409,12 @@ class Team:
         self,
         session: TeamSession,
         run_context: Optional[RunContext] = None,
-        user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
-        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
-        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
-        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
     ) -> Optional[Message]:
         """Get the system message for the team.
 
@@ -5427,11 +5423,9 @@ class Team:
         3. Build and return the default system message for the Team.
         """
 
-        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
-        if run_context is not None:
-            session_state = run_context.session_state or session_state
-            dependencies = run_context.dependencies or dependencies
-            metadata = run_context.metadata or metadata
+        # Extract values from run_context
+        session_state = run_context.session_state if run_context else None
+        user_id = run_context.user_id if run_context else None
 
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
@@ -5459,10 +5453,7 @@ class Team:
             if self.resolve_in_context:
                 sys_message_content = self._format_message_with_state_variables(
                     sys_message_content,
-                    user_id=user_id,
-                    session_state=session_state,
-                    dependencies=dependencies,
-                    metadata=metadata,
+                    run_context=run_context,
                 )
 
             # type: ignore
@@ -5686,10 +5677,7 @@ class Team:
         if self.resolve_in_context:
             system_message_content = self._format_message_with_state_variables(
                 system_message_content,
-                user_id=user_id,
-                session_state=session_state,
-                dependencies=dependencies,
-                metadata=metadata,
+                run_context=run_context,
             )
 
         system_message_from_model = self.model.get_system_message_for_model(tools)
@@ -5726,24 +5714,18 @@ class Team:
         self,
         session: TeamSession,
         run_context: Optional[RunContext] = None,
-        user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
-        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
-        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
-        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
     ) -> Optional[Message]:
         """Get the system message for the team."""
 
-        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
-        if run_context is not None:
-            session_state = run_context.session_state or session_state
-            dependencies = run_context.dependencies or dependencies
-            metadata = run_context.metadata or metadata
+        # Extract values from run_context
+        session_state = run_context.session_state if run_context else None
+        user_id = run_context.user_id if run_context else None
 
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
@@ -5771,10 +5753,7 @@ class Team:
             if self.resolve_in_context:
                 sys_message_content = self._format_message_with_state_variables(
                     sys_message_content,
-                    user_id=user_id,
-                    session_state=session_state,
-                    dependencies=dependencies,
-                    metadata=metadata,
+                    run_context=run_context,
                 )
 
             # type: ignore
@@ -6003,10 +5982,7 @@ class Team:
         if self.resolve_in_context:
             system_message_content = self._format_message_with_state_variables(
                 system_message_content,
-                user_id=user_id,
-                session_state=session_state,
-                dependencies=dependencies,
-                metadata=metadata,
+                run_context=run_context,
             )
 
         system_message_from_model = self.model.get_system_message_for_model(tools)
@@ -6080,7 +6056,6 @@ class Team:
         system_message = self.get_system_message(
             session=session,
             run_context=run_context,
-            user_id=user_id,
             images=images,
             audio=audio,
             videos=videos,
@@ -6213,7 +6188,6 @@ class Team:
         system_message = await self.aget_system_message(
             session=session,
             run_context=run_context,
-            user_id=user_id,
             images=images,
             audio=audio,
             videos=videos,
@@ -6425,10 +6399,7 @@ class Team:
                 if self.resolve_in_context:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
-                        user_id=user_id,
-                        session_state=run_context.session_state,
-                        dependencies=run_context.dependencies,
-                        metadata=run_context.metadata,
+                        run_context=run_context,
                     )
 
                 # Convert to string for concatenation operations
@@ -6583,10 +6554,7 @@ class Team:
                 if self.resolve_in_context:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
-                        user_id=user_id,
-                        session_state=run_context.session_state,
-                        dependencies=run_context.dependencies,
-                        metadata=run_context.metadata,
+                        run_context=run_context,
                     )
 
                 # Convert to string for concatenation operations
@@ -6696,17 +6664,21 @@ class Team:
     def _format_message_with_state_variables(
         self,
         message: Any,
-        session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
     ) -> Any:
-        """Format a message with the session state variables."""
+        """Format a message with the session state variables from run_context."""
         import re
         import string
 
         if not isinstance(message, str):
             return message
+
+        # Extract values from run_context
+        session_state = run_context.session_state if run_context else None
+        dependencies = run_context.dependencies if run_context else None
+        metadata = run_context.metadata if run_context else None
+        user_id = run_context.user_id if run_context else None
+
         # Should already be resolved and passed from run() method
         format_variables = ChainMap(
             session_state if session_state is not None else {},
