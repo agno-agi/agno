@@ -14,14 +14,23 @@ def get_authentication_dependency(settings: AgnoAPISettings):
     """
     Create an authentication dependency function for FastAPI routes.
 
+    This handles security key authentication (OS_SECURITY_KEY).
+    When JWT authorization is enabled (authorization=True), this dependency
+    is skipped as JWT middleware handles authentication.
+
     Args:
-        settings: The API settings containing the security key
+        settings: The API settings containing the security key and authorization flag
 
     Returns:
         A dependency function that can be used with FastAPI's Depends()
     """
 
     async def auth_dependency(credentials: HTTPAuthorizationCredentials = Depends(security)) -> bool:
+        # If JWT authorization is enabled, skip security key validation
+        # (JWT middleware handles authentication)
+        if settings and settings.authorization_enabled:
+            return True
+
         # If no security key is set, skip authentication entirely
         if not settings or not settings.os_security_key:
             return True
@@ -45,13 +54,20 @@ def validate_websocket_token(token: str, settings: AgnoAPISettings) -> bool:
     """
     Validate a bearer token for WebSocket authentication (legacy os_security_key method).
 
+    When JWT authorization is enabled (authorization=True), this validation
+    is skipped as JWT middleware handles authentication.
+
     Args:
         token: The bearer token to validate
-        settings: The API settings containing the security key
+        settings: The API settings containing the security key and authorization flag
 
     Returns:
         True if the token is valid or authentication is disabled, False otherwise
     """
+    # If JWT authorization is enabled, skip security key validation
+    if settings and settings.authorization_enabled:
+        return True
+
     # If no security key is set, skip authentication entirely
     if not settings or not settings.os_security_key:
         return True
