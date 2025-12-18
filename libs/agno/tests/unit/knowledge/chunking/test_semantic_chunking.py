@@ -1,11 +1,17 @@
+"""Tests for SemanticChunking wrapper that adapts Agno embedders to chonkie."""
+
 import sys
 from types import ModuleType, SimpleNamespace
+
+import pytest
 
 from agno.knowledge.chunking.semantic import SemanticChunking
 from agno.knowledge.document.base import Document
 
 
 class DummyEmbedder:
+    """Minimal embedder stub for testing."""
+
     def __init__(self, id: str = "azure-embedding-deployment", dimensions: int = 1024):
         self.id = id
         self.dimensions = dimensions
@@ -14,98 +20,138 @@ class DummyEmbedder:
         return [0.0] * self.dimensions
 
 
-def install_fake_chonkie(klass):
-    mod = ModuleType("chonkie")
-    setattr(mod, "SemanticChunker", klass)
-    sys.modules["chonkie"] = mod
-    return mod
+class FakeBaseEmbeddings:
+    """Fake BaseEmbeddings for testing."""
+
+    pass
 
 
-def remove_fake_chonkie():
+def _install_fake_chonkie(chunker_class):
+    """Install fake chonkie module with embeddings submodule."""
+    chonkie_mod = ModuleType("chonkie")
+    setattr(chonkie_mod, "SemanticChunker", chunker_class)
+
+    embeddings_mod = ModuleType("chonkie.embeddings")
+    base_mod = ModuleType("chonkie.embeddings.base")
+    setattr(base_mod, "BaseEmbeddings", FakeBaseEmbeddings)
+
+    setattr(embeddings_mod, "base", base_mod)
+    setattr(chonkie_mod, "embeddings", embeddings_mod)
+
+    sys.modules["chonkie"] = chonkie_mod
+    sys.modules["chonkie.embeddings"] = embeddings_mod
+    sys.modules["chonkie.embeddings.base"] = base_mod
+
+
+def _remove_fake_chonkie():
+    """Remove fake chonkie modules."""
     sys.modules.pop("chonkie", None)
+    sys.modules.pop("chonkie.embeddings", None)
+    sys.modules.pop("chonkie.embeddings.base", None)
 
 
-def test_semantic_chunking_uses_embedding_fn_when_supported():
+@pytest.fixture
+def fake_chonkie_capturing():
+    """Fixture that installs fake chonkie and captures init kwargs."""
+    captured = {}
+
     class FakeSemanticChunker:
-        def __init__(self, *, embedding_fn, chunk_size, threshold, embedding_dimensions=None):
-            self.embedding_fn = embedding_fn
-            self.chunk_size = chunk_size
-            self.threshold = threshold
-            self.embedding_dimensions = embedding_dimensions
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
 
         def chunk(self, text: str):
             return [SimpleNamespace(text=text)]
 
-    try:
-        install_fake_chonkie(FakeSemanticChunker)
-
-        embedder = DummyEmbedder(id="azure-deploy", dimensions=1536)
-        sc = SemanticChunking(embedder=embedder, chunk_size=123, similarity_threshold=0.7)
-
-        # Trigger initialization
-        _ = sc.chunk(Document(content="Hello world"))
-
-        fake = sc.chunker
-        assert fake is not None
-        # Compare bound method components rather than identity of bound method objects
-        assert getattr(fake.embedding_fn, "__self__", None) is embedder
-        assert getattr(fake.embedding_fn, "__func__", None) is getattr(embedder.get_embedding, "__func__", None)
-        assert fake.embedding_dimensions == 1536
-        assert fake.chunk_size == 123
-        assert abs(fake.threshold - 0.7) < 1e-9
-    finally:
-        remove_fake_chonkie()
+    _install_fake_chonkie(FakeSemanticChunker)
+    yield captured
+    _remove_fake_chonkie()
 
 
-def test_semantic_chunking_uses_embedder_object_when_supported():
-    class FakeSemanticChunker:
-        def __init__(self, *, embedder, chunk_size, threshold):
-            self.embedder = embedder
-            self.chunk_size = chunk_size
-            self.threshold = threshold
+def test_semantic_chunking_wraps_embedder(fake_chonkie_capturing):
+    """Test that SemanticChunking wraps embedder and passes to chonkie."""
+    embedder = DummyEmbedder(id="azure-deploy", dimensions=1536)
+    sc = SemanticChunking(embedder=embedder, chunk_size=123, similarity_threshold=0.7)
 
-        def chunk(self, text: str):
-            return [SimpleNamespace(text=text)]
+    _ = sc.chunk(Document(content="Hello world"))
 
-    try:
-        install_fake_chonkie(FakeSemanticChunker)
-
-        embedder = DummyEmbedder(id="azure-deploy", dimensions=1536)
-        sc = SemanticChunking(embedder=embedder, chunk_size=256, similarity_threshold=0.4)
-
-        _ = sc.chunk(Document(content="Hello world"))
-
-        fake = sc.chunker
-        assert fake is not None
-        assert fake.embedder is embedder
-        assert fake.chunk_size == 256
-        assert abs(fake.threshold - 0.4) < 1e-9
-    finally:
-        remove_fake_chonkie()
+    wrapper = fake_chonkie_capturing["embedding_model"]
+    assert wrapper is not None
+    assert hasattr(wrapper, "_embedder")
+    assert wrapper._embedder is embedder
+    assert fake_chonkie_capturing["chunk_size"] == 123
+    assert abs(fake_chonkie_capturing["threshold"] - 0.7) < 1e-9
 
 
-def test_semantic_chunking_falls_back_to_embedding_model_for_older_versions():
-    class FakeSemanticChunker:
-        def __init__(self, *, embedding_model, chunk_size, threshold):
-            self.embedding_model = embedding_model
-            self.chunk_size = chunk_size
-            self.threshold = threshold
+def test_semantic_chunking_wrapper_calls_embedder(fake_chonkie_capturing):
+    """Test that wrapper's embed method calls the Agno embedder."""
+    call_log = []
 
-        def chunk(self, text: str):
-            return [SimpleNamespace(text=text)]
+    class TrackingEmbedder:
+        def __init__(self):
+            self.dimensions = 1536
 
-    try:
-        install_fake_chonkie(FakeSemanticChunker)
+        def get_embedding(self, text: str):
+            call_log.append(text)
+            return [0.1] * self.dimensions
 
-        embedder = DummyEmbedder(id="azure-deploy", dimensions=1536)
-        sc = SemanticChunking(embedder=embedder, chunk_size=512, similarity_threshold=0.8)
+    embedder = TrackingEmbedder()
+    sc = SemanticChunking(embedder=embedder, chunk_size=500)
 
-        _ = sc.chunk(Document(content="Hello world"))
+    _ = sc.chunk(Document(content="Test content"))
 
-        fake = sc.chunker
-        assert fake is not None
-        assert fake.embedding_model == "azure-deploy"
-        assert fake.chunk_size == 512
-        assert abs(fake.threshold - 0.8) < 1e-9
-    finally:
-        remove_fake_chonkie()
+    wrapper = fake_chonkie_capturing["embedding_model"]
+    result = wrapper.embed("test text")
+
+    assert "test text" in call_log
+    assert len(result) == 1536
+
+
+def test_semantic_chunking_wrapper_dimension(fake_chonkie_capturing):
+    """Test that wrapper exposes correct dimension from embedder."""
+    embedder = DummyEmbedder(id="test", dimensions=768)
+    sc = SemanticChunking(embedder=embedder)
+
+    _ = sc.chunk(Document(content="Test"))
+
+    wrapper = fake_chonkie_capturing["embedding_model"]
+    assert wrapper.dimension == 768
+
+
+def test_semantic_chunking_passes_all_parameters(fake_chonkie_capturing):
+    """Test that all SemanticChunking params are passed to chonkie."""
+    embedder = DummyEmbedder()
+    sc = SemanticChunking(
+        embedder=embedder,
+        chunk_size=500,
+        similarity_threshold=0.6,
+        similarity_window=5,
+        min_sentences_per_chunk=2,
+        min_characters_per_sentence=30,
+        delimiters=[". ", "! "],
+        include_delimiters="next",
+        skip_window=1,
+        filter_window=7,
+        filter_polyorder=2,
+        filter_tolerance=0.3,
+    )
+
+    _ = sc.chunk(Document(content="Test"))
+
+    assert fake_chonkie_capturing["chunk_size"] == 500
+    assert abs(fake_chonkie_capturing["threshold"] - 0.6) < 1e-9
+    assert fake_chonkie_capturing["similarity_window"] == 5
+    assert fake_chonkie_capturing["min_sentences_per_chunk"] == 2
+    assert fake_chonkie_capturing["min_characters_per_sentence"] == 30
+    assert fake_chonkie_capturing["delim"] == [". ", "! "]
+    assert fake_chonkie_capturing["include_delim"] == "next"
+    assert fake_chonkie_capturing["skip_window"] == 1
+    assert fake_chonkie_capturing["filter_window"] == 7
+    assert fake_chonkie_capturing["filter_polyorder"] == 2
+    assert abs(fake_chonkie_capturing["filter_tolerance"] - 0.3) < 1e-9
+
+
+def test_semantic_chunking_default_embedder():
+    """Test that OpenAIEmbedder is used when no embedder provided."""
+    sc = SemanticChunking(chunk_size=100)
+    assert sc.embedder is not None
+    assert "OpenAIEmbedder" in type(sc.embedder).__name__
