@@ -9,7 +9,6 @@ from agno.media import Audio, Image, Video
 from agno.models.message import Citations, Message, MessageReferences
 from agno.models.metrics import Metrics
 from agno.reasoning.step import ReasoningStep
-from agno.run.requirement import RunRequirement
 from agno.utils.log import log_error
 
 
@@ -229,6 +228,8 @@ class BaseRunOutputEvent:
         # Handle requirements
         requirements_data = data.pop("requirements", None)
         if requirements_data is not None:
+            from agno.run.requirement import RunRequirement
+
             requirements_list: List[RunRequirement] = []
             for item in requirements_data:
                 if isinstance(item, RunRequirement):
