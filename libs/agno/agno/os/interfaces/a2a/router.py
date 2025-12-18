@@ -943,7 +943,7 @@ def attach_routes(
 
         if isinstance(db, AsyncBaseDb):
             db = (AsyncBaseDb, db)
-            session = await db.get_session(session_id=session_id, session_type=session_type, user_id=user_id, deserialize=Fals) #type: ignore
+            session = await db.get_session(session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False) #type: ignore
         else:
             session = db.get_session(
                 session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
