@@ -41,7 +41,9 @@ class DualInheritanceToolkit(Toolkit, BaseConfig):
         Returns:
             Message indicating filter changed
         """
-        return f"Filter changed! Render type: {self._render_type}. Agent should stop here!"
+        return (
+            f"Filter changed! Render type: {self._render_type}. Agent should stop here!"
+        )
 
     def get_render_type(self) -> str:
         """
@@ -72,4 +74,3 @@ if __name__ == "__main__":
     )
 
     agent.print_response("Call the filter_changed tool.")
-

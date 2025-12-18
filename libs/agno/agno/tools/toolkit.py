@@ -171,7 +171,7 @@ class Toolkit:
             self.functions[f.name] = f
             log_debug(f"Function: {f.name} registered with {self.name}")
         except Exception as e:
-            func_name = function.name if isinstance(function, Function) else function.__name__
+            func_name = self._get_tool_name(function)
             logger.warning(f"Failed to create Function for: {func_name}")
             raise e
 
@@ -189,9 +189,9 @@ class Toolkit:
         import inspect
 
         tool_name = name or function.name
-        if self.include_tools is not None and tool_name not in self.include_tools:
+        if self.include_tools is not None and len(self.include_tools) > 0 and tool_name not in self.include_tools:
             return
-        if self.exclude_tools is not None and tool_name in self.exclude_tools:
+        if self.exclude_tools is not None and len(self.exclude_tools) > 0 and tool_name in self.exclude_tools:
             return
 
         # Get the original entrypoint from the Function

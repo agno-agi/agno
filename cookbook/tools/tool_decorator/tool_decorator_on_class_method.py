@@ -1,10 +1,3 @@
-"""
-Example showing how to use the @tool decorator on class methods within a Toolkit.
-
-The @tool decorator can now be used on class methods, and the Toolkit will automatically
-bind the method to the instance when registering.
-"""
-
 from typing import Generator
 
 from agno.agent import Agent
@@ -30,23 +23,19 @@ class MyToolkit(Toolkit):
     def multiply_number(self, number: int) -> int:
         """
         Multiply a number by the toolkit's multiplier.
-
         Args:
             number: The number to multiply
-
         Returns:
             The multiplied result
         """
         return number * self.multiplier
 
-    @tool(show_result=True)
+    @tool()
     def get_greeting(self, name: str) -> str:
         """
         Get a greeting message.
-
         Args:
             name: The name to greet
-
         Returns:
             A greeting message
         """
@@ -66,10 +55,8 @@ class ToolkitWithGenerator(Toolkit):
     def stream_numbers(self, count: int) -> Generator[str, None, None]:
         """
         Stream numbers from 1 to count.
-
         Args:
             count: How many numbers to stream
-
         Returns:
             A generator yielding numbers
         """

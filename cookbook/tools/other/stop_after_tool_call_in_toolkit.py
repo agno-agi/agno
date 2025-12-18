@@ -78,4 +78,3 @@ if __name__ == "__main__":
     agent.print_response(
         "Call the increment_and_stop tool once. Do not call any other tools."
     )
-
