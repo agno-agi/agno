@@ -2810,7 +2810,6 @@ class Agent:
         """Async Run the Agent and return the response."""
 
         # Set the id for the run and register it immediately for cancellation tracking
-        # Note: Using sync version here because arun is a dispatcher function (not async def)
         run_id = run_id or str(uuid4())
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
