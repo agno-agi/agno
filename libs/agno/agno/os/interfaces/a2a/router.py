@@ -630,9 +630,7 @@ def attach_routes(
                 session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
             )
         else:
-            session = db.get_session(
-                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
-            ) #type: ignore
+            session = db.get_session(session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False) #type: ignore
 
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
@@ -945,9 +943,7 @@ def attach_routes(
 
         if isinstance(db, AsyncBaseDb):
             db = (AsyncBaseDb, db)
-            session = await db.get_session(
-                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
-            ) #type: ignore
+            session = await db.get_session(session_id=session_id, session_type=session_type, user_id=user_id, deserialize=Fals) #type: ignore
         else:
             session = db.get_session(
                 session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
