@@ -3,7 +3,7 @@ from datetime import date
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence, Union
 
 from fastapi import UploadFile
-from httpx import AsyncClient, ConnectError, ConnectTimeout, TimeoutException
+from httpx import ConnectError, ConnectTimeout, TimeoutException
 
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalFilterType, EvalType
@@ -177,10 +177,9 @@ class AgentOSClient:
             kwargs["params"] = params
 
         async_client = get_default_async_client()
-        async_client.timeout = self.timeout
 
         try:
-            response = await async_client.request(method, url, **kwargs)
+            response = await async_client.request(method, url, timeout=self.timeout, **kwargs)
             response.raise_for_status()
 
             # Return None for empty responses (204 No Content, etc.)
@@ -330,13 +329,15 @@ class AgentOSClient:
             RemoteServerUnavailableError: When the remote server is unavailable
         """
         url = f"{self.base_url}{endpoint}"
+        async_client = get_default_async_client()
 
         try:
-            async with AsyncClient(timeout=self.timeout) as client:
-                async with client.stream("POST", url, data=data, headers=headers or {}) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        yield line
+            async with async_client.stream(
+                "POST", url, data=data, headers=headers or {}, timeout=self.timeout
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    yield line
         except (ConnectError, ConnectTimeout) as e:
             raise RemoteServerUnavailableError(
                 message=f"Failed to connect to remote server at {self.base_url}",
@@ -2061,15 +2062,16 @@ class AgentOSClient:
         url = f"{self.base_url}{endpoint}"
 
         async_client = get_default_async_client()
-        async_client.timeout = self.timeout
 
         try:
             if files:
                 response = await async_client.post(
-                    url, data=form_data, files=files, params=params, headers=headers or {}
+                    url, data=form_data, files=files, params=params, headers=headers or {}, timeout=self.timeout
                 )
             else:
-                response = await async_client.post(url, data=form_data, params=params, headers=headers or {})
+                response = await async_client.post(
+                    url, data=form_data, params=params, headers=headers or {}, timeout=self.timeout
+                )
             response.raise_for_status()
             return response.json()
         except (ConnectError, ConnectTimeout) as e:
