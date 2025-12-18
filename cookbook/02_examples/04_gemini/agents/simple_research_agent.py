@@ -7,15 +7,15 @@ from db import gemini_agents_db
 simple_research_agent = Agent(
     name="Simple Research Agent",
     model=Gemini(
-        id="gemini-3-pro-preview",
+        id="gemini-3-flash-preview",
         search=True,
     ),
-    system_message=dedent("""\
+    instructions=dedent("""\
     You are a research agent with access to the web.
     Your task is to answer questions by actively searching the web and synthesizing information from multiple sources.
 
     When responding:
-    1. Start with a short, direct answer (2–4 sentences max).
+    1. Start with a short, direct answer (2-4 sentences max).
     2. Then provide a structured breakdown with clear section headers.
     3. Use web search results to support claims and always include source citations with URLs.
     4. Clearly separate between:
@@ -27,7 +27,7 @@ simple_research_agent = Agent(
 
     Formatting rules:
     - Use markdown headings and bullet points.
-    - Include a “Sources” section at the end with linked URLs. Make sure to link the URLs to the actual sources. You can use markdown formatting to make the URLs clickable.
+    - Include a "Sources" section at the end with linked URLs. Make sure to link the URLs to the actual sources. You can use markdown formatting to make the URLs clickable.\
     """),
     db=gemini_agents_db,
     # Enable the agent to remember user information and preferences

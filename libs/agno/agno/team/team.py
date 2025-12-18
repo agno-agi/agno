@@ -64,7 +64,12 @@ from agno.run.cancel import (
     register_run,
 )
 from agno.run.messages import RunMessages
-from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
+from agno.run.team import (
+    TeamRunEvent,
+    TeamRunInput,
+    TeamRunOutput,
+    TeamRunOutputEvent,
+)
 from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
@@ -104,6 +109,7 @@ from agno.utils.agent import (
 )
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
+    add_team_error_event,
     create_team_parser_model_response_completed_event,
     create_team_parser_model_response_started_event,
     create_team_post_hook_completed_event,
@@ -117,6 +123,7 @@ from agno.utils.events import (
     create_team_run_cancelled_event,
     create_team_run_completed_event,
     create_team_run_content_completed_event,
+    create_team_run_error_event,
     create_team_run_output_content_event,
     create_team_run_started_event,
     create_team_session_summary_completed_event,
@@ -159,12 +166,11 @@ from agno.utils.reasoning import (
     update_run_output_with_reasoning,
 )
 from agno.utils.response import (
-    async_generator_wrapper,
     check_if_run_cancelled,
     generator_wrapper,
 )
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import generate_id_from_name, parse_response_model_str
+from agno.utils.string import generate_id_from_name, parse_response_dict_str, parse_response_model_str
 from agno.utils.team import (
     add_interaction_to_team_run_context,
     format_member_agent_task,
@@ -361,8 +367,9 @@ class Team:
     # --- Structured output ---
     # Input schema for validating input
     input_schema: Optional[Type[BaseModel]] = None
-    # Output schema for the team response
-    output_schema: Optional[Type[BaseModel]] = None
+    # Provide a response model to get the response in the implied format.
+    # You can use a Pydantic model or a JSON fitting the provider's expected schema.
+    output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
     # Provide a secondary model to parse the response from the primary model
     parser_model: Optional[Model] = None
     # Provide a prompt for the parser model
@@ -526,7 +533,7 @@ class Team:
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         input_schema: Optional[Type[BaseModel]] = None,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         parser_model: Optional[Union[Model, str]] = None,
         parser_model_prompt: Optional[str] = None,
         output_model: Optional[Union[Model, str]] = None,
@@ -726,7 +733,7 @@ class Team:
         self._tool_instructions: Optional[List[str]] = None
 
         # True if we should parse a member response model
-        self._member_response_model: Optional[Type[BaseModel]] = None
+        self._member_response_model: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 
         self._formatter: Optional[SafeFormatter] = None
 
@@ -1482,7 +1489,6 @@ class Team:
         **kwargs: Any,
     ) -> TeamRunOutput:
         """Run the Team and return the response.
-
         Steps:
         1. Execute pre-hooks
         2. Determine tools for model
@@ -1498,7 +1504,6 @@ class Team:
         12. Create session summary
         13. Cleanup and store (scrub, stop timer, add to session, calculate metrics, save session)
         """
-
         # 1. Execute pre-hooks
         run_input = cast(TeamRunInput, run_response.input)
         self.model = cast(Model, self.model)
@@ -1578,108 +1583,97 @@ class Team:
                 self._make_memories, run_messages=run_messages, user_id=user_id
             )
 
-        try:
-            raise_if_cancelled(run_response.run_id)  # type: ignore
+        raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # 5. Reason about the task if reasoning is enabled
-            self._handle_reasoning(run_response=run_response, run_messages=run_messages)
+        # 5. Reason about the task if reasoning is enabled
+        self._handle_reasoning(run_response=run_response, run_messages=run_messages)
 
-            # Check for cancellation before model call
-            raise_if_cancelled(run_response.run_id)  # type: ignore
+        # Check for cancellation before model call
+        raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # 6. Get the model response for the team leader
-            self.model = cast(Model, self.model)
-            model_response: ModelResponse = self.model.response(
-                messages=run_messages.messages,
-                response_format=response_format,
-                tools=_tools,
-                tool_choice=self.tool_choice,
-                tool_call_limit=self.tool_call_limit,
-                send_media_to_model=self.send_media_to_model,
-                compression_manager=self.compression_manager if self.compress_tool_results else None,
-            )
+        # 6. Get the model response for the team leader
+        self.model = cast(Model, self.model)
+        model_response: ModelResponse = self.model.response(
+            messages=run_messages.messages,
+            response_format=response_format,
+            tools=_tools,
+            tool_choice=self.tool_choice,
+            tool_call_limit=self.tool_call_limit,
+            send_media_to_model=self.send_media_to_model,
+            compression_manager=self.compression_manager if self.compress_tool_results else None,
+        )
 
-            # Check for cancellation after model call
-            raise_if_cancelled(run_response.run_id)  # type: ignore
+        # Check for cancellation after model call
+        raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # If an output model is provided, generate output using the output model
-            self._parse_response_with_output_model(model_response, run_messages)
+        # If an output model is provided, generate output using the output model
+        self._parse_response_with_output_model(model_response, run_messages)
 
-            # If a parser model is provided, structure the response separately
-            self._parse_response_with_parser_model(model_response, run_messages, run_context=run_context)
+        # If a parser model is provided, structure the response separately
+        self._parse_response_with_parser_model(model_response, run_messages, run_context=run_context)
 
-            # 7. Update TeamRunOutput with the model response
-            self._update_run_response(
-                model_response=model_response,
-                run_response=run_response,
-                run_messages=run_messages,
+        # 7. Update TeamRunOutput with the model response
+        self._update_run_response(
+            model_response=model_response,
+            run_response=run_response,
+            run_messages=run_messages,
+            run_context=run_context,
+        )
+
+        # 8. Store media if enabled
+        if self.store_media:
+            store_media_util(run_response, model_response)
+
+        # 9. Convert response to structured format
+        self._convert_response_to_structured_format(run_response=run_response, run_context=run_context)
+
+        # 10. Execute post-hooks after output is generated but before response is returned
+        if self.post_hooks is not None:
+            iterator = self._execute_post_hooks(
+                hooks=self.post_hooks,  # type: ignore
+                run_output=run_response,
                 run_context=run_context,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
             )
+            deque(iterator, maxlen=0)
+        raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # 8. Store media if enabled
-            if self.store_media:
-                store_media_util(run_response, model_response)
+        # 11. Wait for background memory creation
+        wait_for_open_threads(memory_future=memory_future)
 
-            # 9. Convert response to structured format
-            self._convert_response_to_structured_format(run_response=run_response, run_context=run_context)
+        raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # 10. Execute post-hooks after output is generated but before response is returned
-            if self.post_hooks is not None:
-                iterator = self._execute_post_hooks(
-                    hooks=self.post_hooks,  # type: ignore
-                    run_output=run_response,
-                    run_context=run_context,
-                    session=session,
-                    user_id=user_id,
-                    debug_mode=debug_mode,
-                    background_tasks=background_tasks,
-                    **kwargs,
-                )
-                deque(iterator, maxlen=0)
-            raise_if_cancelled(run_response.run_id)  # type: ignore
+        # 12. Create session summary
+        if self.session_summary_manager is not None:
+            # Upsert the RunOutput to Team Session before creating the session summary
+            session.upsert_run(run_response=run_response)
+            try:
+                self.session_summary_manager.create_session_summary(session=session)
+            except Exception as e:
+                log_warning(f"Error in session summary creation: {str(e)}")
 
-            # 11. Wait for background memory creation
-            wait_for_open_threads(memory_future=memory_future)
+        raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            raise_if_cancelled(run_response.run_id)  # type: ignore
+        # Set the run status to completed
+        run_response.status = RunStatus.completed
 
-            # 12. Create session summary
-            if self.session_summary_manager is not None:
-                # Upsert the RunOutput to Team Session before creating the session summary
-                session.upsert_run(run_response=run_response)
-                try:
-                    self.session_summary_manager.create_session_summary(session=session)
-                except Exception as e:
-                    log_warning(f"Error in session summary creation: {str(e)}")
+        # 13. Cleanup and store the run response
+        self._cleanup_and_store(run_response=run_response, session=session)
 
-            raise_if_cancelled(run_response.run_id)  # type: ignore
+        # Log Team Telemetry
+        self._log_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
-            # Set the run status to completed
-            run_response.status = RunStatus.completed
+        log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
-            # 13. Cleanup and store the run response
-            self._cleanup_and_store(run_response=run_response, session=session)
+        # Disconnect tools and clean up run tracking
+        self._disconnect_connectable_tools()
+        cleanup_run(run_response.run_id)  # type: ignore
 
-            # Log Team Telemetry
-            self._log_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
-
-            log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
-
-            return run_response
-
-        except RunCancelledException as e:
-            # Handle run cancellation during streaming
-            log_info(f"Team run {run_response.run_id} was cancelled")
-            run_response.status = RunStatus.cancelled
-            run_response.content = str(e)
-
-            # Add the RunOutput to Team Session even when cancelled
-            self._cleanup_and_store(run_response=run_response, session=session)
-            return run_response
-        finally:
-            # Always disconnect connectable tools
-            self._disconnect_connectable_tools()
-            cleanup_run(run_response.run_id)  # type: ignore
+        return run_response
 
     def _run_stream(
         self,
@@ -1698,7 +1692,6 @@ class Team:
         **kwargs: Any,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
         """Run the Team and return the response iterator.
-
         Steps:
         1. Execute pre-hooks
         2. Determine tools for model
@@ -1792,190 +1785,171 @@ class Team:
                 self._make_memories, run_messages=run_messages, user_id=user_id
             )
 
-        try:
-            # Start the Run by yielding a RunStarted event
-            if stream_events:
-                yield handle_event(  # type: ignore
-                    create_team_run_started_event(run_response),
-                    run_response,
-                    events_to_skip=self.events_to_skip,
-                    store_events=self.store_events,
-                )
+        # Start the Run by yielding a RunStarted event
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_team_run_started_event(run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
+            )
 
-            raise_if_cancelled(run_response.run_id)  # type: ignore
+        raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # 5. Reason about the task if reasoning is enabled
-            yield from self._handle_reasoning_stream(
+        # 5. Reason about the task if reasoning is enabled
+        yield from self._handle_reasoning_stream(
+            run_response=run_response,
+            run_messages=run_messages,
+            stream_events=stream_events,
+        )
+
+        # Check for cancellation before model processing
+        raise_if_cancelled(run_response.run_id)  # type: ignore
+
+        # 6. Get a response from the model
+        if self.output_model is None:
+            for event in self._handle_model_response_stream(
+                session=session,
+                run_response=run_response,
+                run_messages=run_messages,
+                tools=_tools,
+                response_format=response_format,
+                stream_events=stream_events,
+                session_state=run_context.session_state,
+                run_context=run_context,
+            ):
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+                yield event
+        else:
+            for event in self._handle_model_response_stream(
+                session=session,
+                run_response=run_response,
+                run_messages=run_messages,
+                tools=_tools,
+                response_format=response_format,
+                stream_events=stream_events,
+                session_state=run_context.session_state,
+                run_context=run_context,
+            ):
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+                from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+
+                if isinstance(event, RunContentEvent):
+                    if stream_events:
+                        yield IntermediateRunContentEvent(
+                            content=event.content,
+                            content_type=event.content_type,
+                        )
+                else:
+                    yield event
+
+            for event in self._generate_response_with_output_model_stream(
+                session=session,
                 run_response=run_response,
                 run_messages=run_messages,
                 stream_events=stream_events,
+            ):
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+                yield event
+
+        # Check for cancellation after model processing
+        raise_if_cancelled(run_response.run_id)  # type: ignore
+
+        # 7. Parse response with parser model if provided
+        yield from self._parse_response_with_parser_model_stream(
+            session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
+        )
+
+        # Yield RunContentCompletedEvent
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_team_run_content_completed_event(from_run_response=run_response),
+                run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
             )
-
-            # Check for cancellation before model processing
-            raise_if_cancelled(run_response.run_id)  # type: ignore
-
-            # 6. Get a response from the model
-            if self.output_model is None:
-                for event in self._handle_model_response_stream(
-                    session=session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    tools=_tools,
-                    response_format=response_format,
-                    stream_events=stream_events,
-                    session_state=run_context.session_state,
-                    run_context=run_context,
-                ):
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
-            else:
-                for event in self._handle_model_response_stream(
-                    session=session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    tools=_tools,
-                    response_format=response_format,
-                    stream_events=stream_events,
-                    session_state=run_context.session_state,
-                    run_context=run_context,
-                ):
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
-                    from agno.run.team import IntermediateRunContentEvent, RunContentEvent
-
-                    if isinstance(event, RunContentEvent):
-                        if stream_events:
-                            yield IntermediateRunContentEvent(
-                                content=event.content,
-                                content_type=event.content_type,
-                            )
-                    else:
-                        yield event
-
-                for event in self._generate_response_with_output_model_stream(
-                    session=session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    stream_events=stream_events,
-                ):
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
-
-            # Check for cancellation after model processing
-            raise_if_cancelled(run_response.run_id)  # type: ignore
-
-            # 7. Parse response with parser model if provided
-            yield from self._parse_response_with_parser_model_stream(
-                session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
+        # Execute post-hooks after output is generated but before response is returned
+        if self.post_hooks is not None:
+            yield from self._execute_post_hooks(
+                hooks=self.post_hooks,  # type: ignore
+                run_output=run_response,
+                run_context=run_context,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                stream_events=stream_events,
+                background_tasks=background_tasks,
+                **kwargs,
             )
+        raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # Yield RunContentCompletedEvent
+        # 8. Wait for background memory creation
+        yield from wait_for_thread_tasks_stream(
+            run_response=run_response,
+            memory_future=memory_future,
+            stream_events=stream_events,
+            events_to_skip=self.events_to_skip,  # type: ignore
+            store_events=self.store_events,
+        )
+
+        raise_if_cancelled(run_response.run_id)  # type: ignore
+        # 9. Create session summary
+        if self.session_summary_manager is not None:
+            # Upsert the RunOutput to Team Session before creating the session summary
+            session.upsert_run(run_response=run_response)
+
             if stream_events:
                 yield handle_event(  # type: ignore
-                    create_team_run_content_completed_event(from_run_response=run_response),
+                    create_team_session_summary_started_event(from_run_response=run_response),
                     run_response,
                     events_to_skip=self.events_to_skip,
                     store_events=self.store_events,
                 )
-            # Execute post-hooks after output is generated but before response is returned
-            if self.post_hooks is not None:
-                yield from self._execute_post_hooks(
-                    hooks=self.post_hooks,  # type: ignore
-                    run_output=run_response,
-                    run_context=run_context,
-                    session=session,
-                    user_id=user_id,
-                    debug_mode=debug_mode,
-                    stream_events=stream_events,
-                    background_tasks=background_tasks,
-                    **kwargs,
-                )
-            raise_if_cancelled(run_response.run_id)  # type: ignore
-
-            # 8. Wait for background memory creation
-            yield from wait_for_thread_tasks_stream(
-                run_response=run_response,
-                memory_future=memory_future,
-                stream_events=stream_events,
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            )
-
-            raise_if_cancelled(run_response.run_id)  # type: ignore
-            # 9. Create session summary
-            if self.session_summary_manager is not None:
-                # Upsert the RunOutput to Team Session before creating the session summary
-                session.upsert_run(run_response=run_response)
-
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_team_session_summary_started_event(from_run_response=run_response),
-                        run_response,
-                        events_to_skip=self.events_to_skip,
-                        store_events=self.store_events,
-                    )
-                try:
-                    self.session_summary_manager.create_session_summary(session=session)
-                except Exception as e:
-                    log_warning(f"Error in session summary creation: {str(e)}")
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_team_session_summary_completed_event(
-                            from_run_response=run_response, session_summary=session.summary
-                        ),
-                        run_response,
-                        events_to_skip=self.events_to_skip,
-                        store_events=self.store_events,
-                    )
-
-            raise_if_cancelled(run_response.run_id)  # type: ignore
-            # Create the run completed event
-            completed_event = handle_event(
-                create_team_run_completed_event(
-                    from_run_response=run_response,
-                ),
-                run_response,
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events,
-            )
-
-            # Set the run status to completed
-            run_response.status = RunStatus.completed
-
-            # 10. Cleanup and store the run response
-            self._cleanup_and_store(run_response=run_response, session=session)
-
+            try:
+                self.session_summary_manager.create_session_summary(session=session)
+            except Exception as e:
+                log_warning(f"Error in session summary creation: {str(e)}")
             if stream_events:
-                yield completed_event
+                yield handle_event(  # type: ignore
+                    create_team_session_summary_completed_event(
+                        from_run_response=run_response, session_summary=session.summary
+                    ),
+                    run_response,
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
+                )
 
-            if yield_run_output:
-                yield run_response
+        raise_if_cancelled(run_response.run_id)  # type: ignore
+        # Create the run completed event
+        completed_event = handle_event(
+            create_team_run_completed_event(
+                from_run_response=run_response,
+            ),
+            run_response,
+            events_to_skip=self.events_to_skip,
+            store_events=self.store_events,
+        )
 
-            # Log Team Telemetry
-            self._log_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
+        # Set the run status to completed
+        run_response.status = RunStatus.completed
 
-            log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
+        # 10. Cleanup and store the run response
+        self._cleanup_and_store(run_response=run_response, session=session)
 
-        except RunCancelledException as e:
-            # Handle run cancellation during streaming
-            log_info(f"Team run {run_response.run_id} was cancelled during streaming")
-            run_response.status = RunStatus.cancelled
-            run_response.content = str(e)
+        if stream_events:
+            yield completed_event
 
-            # Yield the cancellation event
-            yield handle_event(  # type: ignore
-                create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
-                run_response,
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events,
-            )
+        if yield_run_output:
+            yield run_response
 
-            # Add the RunOutput to Team Session even when cancelled
-            self._cleanup_and_store(run_response=run_response, session=session)
-        finally:
-            # Always disconnect connectable tools
-            self._disconnect_connectable_tools()
-            # Always clean up the run tracking
-            cleanup_run(run_response.run_id)  # type: ignore
+        # Log Team Telemetry
+        self._log_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
+
+        log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
+
+        # Disconnect tools and clean up run tracking
+        self._disconnect_connectable_tools()
+        cleanup_run(run_response.run_id)  # type: ignore
 
     @overload
     def run(
@@ -2000,7 +1974,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
 
@@ -2030,7 +2004,7 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
 
@@ -2059,16 +2033,15 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team and return the response."""
         if self._has_async_db():
             raise Exception("run() is not supported with an async DB. Please use arun() instead.")
 
-        # Set the id for the run and register it immediately for cancellation tracking
+        # Set the id for the run
         run_id = run_id or str(uuid4())
-        register_run(run_id)
 
         # Initialize Team
         self.initialize_team(debug_mode=debug_mode)
@@ -2086,148 +2059,155 @@ class Team:
             )
             yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
-        background_tasks = kwargs.pop("background_tasks", None)
-        if background_tasks is not None:
-            from fastapi import BackgroundTasks
-
-            background_tasks: BackgroundTasks = background_tasks  # type: ignore
-
-        # Validate input against input_schema if provided
-        validated_input = self._validate_input(input)
-
-        # Normalise hook & guardails
-        if not self._hooks_normalised:
-            if self.pre_hooks:
-                self.pre_hooks = normalize_pre_hooks(self.pre_hooks)  # type: ignore
-            if self.post_hooks:
-                self.post_hooks = normalize_post_hooks(self.post_hooks)  # type: ignore
-            self._hooks_normalised = True
-
-        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
-
-        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
-            images=images, videos=videos, audios=audio, files=files
-        )
-
-        # Create RunInput to capture the original user input
-        run_input = TeamRunInput(
-            input_content=validated_input,
-            images=image_artifacts,
-            videos=video_artifacts,
-            audios=audio_artifacts,
-            files=file_artifacts,
-        )
-
-        # Read existing session from database
-        team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
-        self._update_metadata(session=team_session)
-
-        # Initialize session state
-        session_state = self._initialize_session_state(
-            session_state=session_state if session_state is not None else {},
-            user_id=user_id,
-            session_id=session_id,
-            run_id=run_id,
-        )
-        # Update session state from DB
-        session_state = self._load_session_state(session=team_session, session_state=session_state)
-
-        # Determine runtime dependencies
-        dependencies = dependencies if dependencies is not None else self.dependencies
-
-        # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
-        if output_schema is None:
-            output_schema = self.output_schema
-
-        # Initialize run context
-        run_context = run_context or RunContext(
-            run_id=run_id,
-            session_id=session_id,
-            user_id=user_id,
-            session_state=session_state,
-            dependencies=dependencies,
-            output_schema=output_schema,
-        )
-        # output_schema parameter takes priority, even if run_context was provided
-        run_context.output_schema = output_schema
-
-        # Resolve callable dependencies if present
-        if run_context.dependencies is not None:
-            self._resolve_run_dependencies(run_context=run_context)
-
-        # Determine runtime context parameters
-        add_dependencies = (
-            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
-        )
-        add_session_state = (
-            add_session_state_to_context
-            if add_session_state_to_context is not None
-            else self.add_session_state_to_context
-        )
-        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-
-        # When filters are passed manually
-        if self.knowledge_filters or knowledge_filters:
-            run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
-
-        # Use stream override value when necessary
-        if stream is None:
-            stream = False if self.stream is None else self.stream
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
-
-        if stream_events is None:
-            stream_events = False if self.stream_events is None else self.stream_events
-
-        self.model = cast(Model, self.model)
-
-        if self.metadata is not None:
-            if metadata is None:
-                metadata = self.metadata
-            else:
-                merge_dictionaries(metadata, self.metadata)
-
-        if metadata:
-            run_context.metadata = metadata
-
-        # Configure the model for runs
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = (
-            self._get_response_format(run_context=run_context) if self.parser_model is None else None
-        )
-
-        # Create a new run_response for this attempt
-        run_response = TeamRunOutput(
-            run_id=run_id,
-            session_id=session_id,
-            user_id=user_id,
-            team_id=self.id,
-            team_name=self.name,
-            metadata=run_context.metadata,
-            session_state=run_context.session_state,
-            input=run_input,
-        )
-
-        run_response.model = self.model.id if self.model is not None else None
-        run_response.model_provider = self.model.provider if self.model is not None else None
-
-        # Start the run metrics timer, to calculate the run duration
-        run_response.metrics = Metrics()
-        run_response.metrics.start_timer()
-
         # Set up retry logic
         num_attempts = self.retries + 1
-
         for attempt in range(num_attempts):
-            log_debug(f"Retrying Team run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
-            # Run the team
+            if num_attempts > 1:
+                log_debug(f"Retrying Team run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+
             try:
+                # Register run for cancellation tracking
+                register_run(run_id)  # type: ignore
+
+                background_tasks = kwargs.pop("background_tasks", None)
+                if background_tasks is not None:
+                    from fastapi import BackgroundTasks
+
+                    background_tasks: BackgroundTasks = background_tasks  # type: ignore
+
+                # Validate input against input_schema if provided
+                validated_input = self._validate_input(input)
+
+                # Normalise hook & guardails
+                if not self._hooks_normalised:
+                    if self.pre_hooks:
+                        self.pre_hooks = normalize_pre_hooks(self.pre_hooks)  # type: ignore
+                    if self.post_hooks:
+                        self.post_hooks = normalize_post_hooks(self.post_hooks)  # type: ignore
+                    self._hooks_normalised = True
+
+                session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
+
+                image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
+                    images=images, videos=videos, audios=audio, files=files
+                )
+
+                # Create RunInput to capture the original user input
+                run_input = TeamRunInput(
+                    input_content=validated_input,
+                    images=image_artifacts,
+                    videos=video_artifacts,
+                    audios=audio_artifacts,
+                    files=file_artifacts,
+                )
+
+                # Read existing session from database
+                team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+                self._update_metadata(session=team_session)
+
+                # Initialize session state
+                session_state = self._initialize_session_state(
+                    session_state=session_state if session_state is not None else {},
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_id,
+                )
+                # Update session state from DB
+                session_state = self._load_session_state(session=team_session, session_state=session_state)
+
+                # Determine runtime dependencies
+                dependencies = dependencies if dependencies is not None else self.dependencies
+
+                # Resolve output_schema parameter takes precedence, then fall back to self.output_schema
+                if output_schema is None:
+                    output_schema = self.output_schema
+
+                # Initialize run context
+                run_context = run_context or RunContext(
+                    run_id=run_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    session_state=session_state,
+                    dependencies=dependencies,
+                    output_schema=output_schema,
+                )
+                # output_schema parameter takes priority, even if run_context was provided
+                run_context.output_schema = output_schema
+
+                # Resolve callable dependencies if present
+                if run_context.dependencies is not None:
+                    self._resolve_run_dependencies(run_context=run_context)
+
+                # Determine runtime context parameters
+                add_dependencies = (
+                    add_dependencies_to_context
+                    if add_dependencies_to_context is not None
+                    else self.add_dependencies_to_context
+                )
+                add_session_state = (
+                    add_session_state_to_context
+                    if add_session_state_to_context is not None
+                    else self.add_session_state_to_context
+                )
+                add_history = (
+                    add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+                )
+
+                # When filters are passed manually
+                if self.knowledge_filters or knowledge_filters:
+                    run_context.knowledge_filters = self._get_effective_filters(knowledge_filters)
+
+                # Use stream override value when necessary
+                if stream is None:
+                    stream = False if self.stream is None else self.stream
+
+                # Considering both stream_events and stream_intermediate_steps (deprecated)
+                stream_events = stream_events or stream_intermediate_steps
+
+                # Can't stream events if streaming is disabled
+                if stream is False:
+                    stream_events = False
+
+                if stream_events is None:
+                    stream_events = False if self.stream_events is None else self.stream_events
+
+                self.model = cast(Model, self.model)
+
+                if self.metadata is not None:
+                    if metadata is None:
+                        metadata = self.metadata
+                    else:
+                        merge_dictionaries(metadata, self.metadata)
+
+                if metadata:
+                    run_context.metadata = metadata
+
+                # Configure the model for runs
+                response_format: Optional[Union[Dict, Type[BaseModel]]] = (
+                    self._get_response_format(run_context=run_context) if self.parser_model is None else None
+                )
+
+                # Create a new run_response for this attempt
+                run_response = TeamRunOutput(
+                    run_id=run_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    team_id=self.id,
+                    team_name=self.name,
+                    metadata=run_context.metadata,
+                    session_state=run_context.session_state,
+                    input=run_input,
+                )
+
+                run_response.model = self.model.id if self.model is not None else None
+                run_response.model_provider = self.model.provider if self.model is not None else None
+
+                # Start the run metrics timer, to calculate the run duration
+                run_response.metrics = Metrics()
+                run_response.metrics.start_timer()
+
                 if stream:
-                    response_iterator = self._run_stream(
+                    return self._run_stream(
                         run_response=run_response,
                         run_context=run_context,
                         session=team_session,
@@ -2241,9 +2221,8 @@ class Team:
                         debug_mode=debug_mode,
                         background_tasks=background_tasks,
                         **kwargs,
-                    )
+                    )  # type: ignore
 
-                    return response_iterator  # type: ignore
                 else:
                     return self._run(
                         run_response=run_response,
@@ -2258,24 +2237,67 @@ class Team:
                         background_tasks=background_tasks,
                         **kwargs,
                     )
+            except InputCheckError as e:
+                run_response.status = RunStatus.error
+                if stream:
+                    run_error = create_team_run_error_event(
+                        run_response,
+                        error=str(e),
+                        error_id=e.error_id,
+                        error_type=e.type,
+                        additional_data=e.additional_data,
+                    )
+                    run_response.events = add_team_error_event(error=run_error, events=run_response.events)
+                if run_response.content is None:
+                    run_response.content = str(e)
 
-            except (InputCheckError, OutputCheckError) as e:
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
-                raise e
-            except KeyboardInterrupt:
-                run_response.content = "Operation cancelled by user"
-                run_response.status = RunStatus.cancelled
 
                 if stream:
-                    return generator_wrapper(  # type: ignore
-                        create_team_run_cancelled_event(
-                            from_run_response=run_response, reason="Operation cancelled by user"
-                        )
+                    return generator_wrapper(run_error)  # type: ignore
+                else:
+                    return run_response
+            except RunCancelledException as e:
+                # Handle run cancellation during streaming
+                log_info(f"Team run {run_response.run_id} was cancelled during streaming")
+                run_response.status = RunStatus.cancelled
+                run_response.content = str(e)
+
+                # Yield the cancellation event
+                if stream:
+                    cancelled_run_error = handle_event(
+                        create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                        run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
                     )
+                    return generator_wrapper(cancelled_run_error)  # type: ignore
+                else:
+                    return run_response
+            except (InputCheckError, OutputCheckError) as e:
+                run_response.status = RunStatus.error
+
+                if stream:
+                    # Add error event to list of events
+                    run_error = create_team_run_error_event(
+                        run_response,
+                        error=str(e),
+                        error_id=e.error_id,
+                        error_type=e.type,
+                        additional_data=e.additional_data,
+                    )
+                    run_response.events = add_team_error_event(error=run_error, events=run_response.events)
+
+                if run_response.content is None:
+                    run_response.content = str(e)
+
+                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+
+                if stream:
+                    return generator_wrapper(run_error)  # type: ignore
                 else:
                     return run_response
             except Exception as e:
-                # Check if this is the last attempt
                 if attempt < num_attempts - 1:
                     # Calculate delay with exponential backoff if enabled
                     if self.exponential_backoff:
@@ -2285,12 +2307,23 @@ class Team:
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
                     time.sleep(delay)
-                else:
-                    # Final attempt failed - re-raise the exception
-                    log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
-                    raise e
+                    continue
 
-        # If we get here, all retries failed
+                run_response.status = RunStatus.error
+                if stream:
+                    run_error = create_team_run_error_event(run_response, error=str(e))
+                    run_response.events = add_team_error_event(error=run_error, events=run_response.events)
+                if run_response.content is None:
+                    run_response.content = str(e)
+
+                log_error(f"Error in Team run: {str(e)}")
+
+                if stream:
+                    return generator_wrapper(run_error)  # type: ignore
+                else:
+                    return run_response
+
+        # If we get here, all retries failed (shouldn't happen with current logic)
         raise Exception(f"Failed after {num_attempts} attempts.")
 
     async def _arun(
@@ -2327,219 +2360,276 @@ class Team:
         15. Cleanup and store (scrub, add to session, calculate metrics, save session)
         """
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
-
-        if run_context.dependencies is not None:
-            await self._aresolve_run_dependencies(run_context=run_context)
-
-        # 1. Read or create session. Reads from the database if provided.
-        if self._has_async_db():
-            team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
-        else:
-            team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
-
-        # 2. Update metadata and session state
-        self._update_metadata(session=team_session)
-        # Initialize session state
-        run_context.session_state = self._initialize_session_state(
-            session_state=run_context.session_state if run_context.session_state is not None else {},
-            user_id=user_id,
-            session_id=session_id,
-            run_id=run_response.run_id,
-        )
-        # Update session state from DB
-        if run_context.session_state is not None:
-            run_context.session_state = self._load_session_state(
-                session=team_session, session_state=run_context.session_state
-            )
-
-        run_input = cast(TeamRunInput, run_response.input)
-
-        # 3. Execute pre-hooks after session is loaded but before processing starts
-        if self.pre_hooks is not None:
-            pre_hook_iterator = self._aexecute_pre_hooks(
-                hooks=self.pre_hooks,  # type: ignore
-                run_response=run_response,
-                run_context=run_context,
-                run_input=run_input,
-                session=team_session,
-                user_id=user_id,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
-            )
-
-            # Consume the async iterator without yielding
-            async for _ in pre_hook_iterator:
-                pass
-
-        # 4. Determine tools for model
-        team_run_context: Dict[str, Any] = {}
-        self.model = cast(Model, self.model)
-        await self._check_and_refresh_mcp_tools()
-        _tools = self._determine_tools_for_model(
-            model=self.model,
-            run_response=run_response,
-            run_context=run_context,
-            team_run_context=team_run_context,
-            session=team_session,
-            user_id=user_id,
-            async_mode=True,
-            input_message=run_input.input_content,
-            images=run_input.images,
-            videos=run_input.videos,
-            audio=run_input.audios,
-            files=run_input.files,
-            debug_mode=debug_mode,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            stream=False,
-            stream_events=False,
-        )
-
-        # 5. Prepare run messages
-        run_messages = await self._aget_run_messages(
-            run_response=run_response,
-            run_context=run_context,
-            session=team_session,  # type: ignore
-            user_id=user_id,
-            input_message=run_input.input_content,
-            audio=run_input.audios,
-            images=run_input.images,
-            videos=run_input.videos,
-            files=run_input.files,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            tools=_tools,
-            **kwargs,
-        )
-
-        self.model = cast(Model, self.model)
-        log_debug(f"Team Run Start: {run_response.run_id}", center=True)
-
-        # 6. Start memory creation in background task
         memory_task = None
-        if (
-            run_messages.user_message is not None
-            and self.memory_manager is not None
-            and self.enable_user_memories
-            and not self.enable_agentic_memory
-        ):
-            log_debug("Starting memory creation in background task.")
-            memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
-        try:
-            raise_if_cancelled(run_response.run_id)  # type: ignore
-            # 7. Reason about the task if reasoning is enabled
-            await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
+        # Set up retry logic
+        num_attempts = self.retries + 1
+        for attempt in range(num_attempts):
+            if num_attempts > 1:
+                log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
-            # Check for cancellation before model call
-            raise_if_cancelled(run_response.run_id)  # type: ignore
+            try:
+                if run_context.dependencies is not None:
+                    await self._aresolve_run_dependencies(run_context=run_context)
 
-            # 8. Get the model response for the team leader
-            model_response = await self.model.aresponse(
-                messages=run_messages.messages,
-                tools=_tools,
-                tool_choice=self.tool_choice,
-                tool_call_limit=self.tool_call_limit,
-                response_format=response_format,
-                send_media_to_model=self.send_media_to_model,
-                run_response=run_response,
-                compression_manager=self.compression_manager if self.compress_tool_results else None,
-            )  # type: ignore
+                # 1. Read or create session. Reads from the database if provided.
+                if self._has_async_db():
+                    team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
+                else:
+                    team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
 
-            # Check for cancellation after model call
-            raise_if_cancelled(run_response.run_id)  # type: ignore
+                # 2. Update metadata and session state
+                self._update_metadata(session=team_session)
+                # Initialize session state
+                run_context.session_state = self._initialize_session_state(
+                    session_state=run_context.session_state if run_context.session_state is not None else {},
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_response.run_id,
+                )
+                # Update session state from DB
+                if run_context.session_state is not None:
+                    run_context.session_state = self._load_session_state(
+                        session=team_session, session_state=run_context.session_state
+                    )
 
-            # If an output model is provided, generate output using the output model
-            await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
+                run_input = cast(TeamRunInput, run_response.input)
 
-            # If a parser model is provided, structure the response separately
-            await self._aparse_response_with_parser_model(
-                model_response=model_response, run_messages=run_messages, run_context=run_context
-            )
+                # 3. Execute pre-hooks after session is loaded but before processing starts
+                if self.pre_hooks is not None:
+                    pre_hook_iterator = self._aexecute_pre_hooks(
+                        hooks=self.pre_hooks,  # type: ignore
+                        run_response=run_response,
+                        run_context=run_context,
+                        run_input=run_input,
+                        session=team_session,
+                        user_id=user_id,
+                        debug_mode=debug_mode,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
 
-            # 9. Update TeamRunOutput with the model response
-            self._update_run_response(
-                model_response=model_response,
-                run_response=run_response,
-                run_messages=run_messages,
-                run_context=run_context,
-            )
+                    # Consume the async iterator without yielding
+                    async for _ in pre_hook_iterator:
+                        pass
 
-            # 10. Store media if enabled
-            if self.store_media:
-                store_media_util(run_response, model_response)
-
-            # 11. Convert response to structured format
-            self._convert_response_to_structured_format(run_response=run_response, run_context=run_context)
-
-            # 12. Execute post-hooks after output is generated but before response is returned
-            if self.post_hooks is not None:
-                async for _ in self._aexecute_post_hooks(
-                    hooks=self.post_hooks,  # type: ignore
-                    run_output=run_response,
+                # 4. Determine tools for model
+                team_run_context: Dict[str, Any] = {}
+                self.model = cast(Model, self.model)
+                await self._check_and_refresh_mcp_tools()
+                _tools = self._determine_tools_for_model(
+                    model=self.model,
+                    run_response=run_response,
                     run_context=run_context,
+                    team_run_context=team_run_context,
                     session=team_session,
                     user_id=user_id,
+                    async_mode=True,
+                    input_message=run_input.input_content,
+                    images=run_input.images,
+                    videos=run_input.videos,
+                    audio=run_input.audios,
+                    files=run_input.files,
                     debug_mode=debug_mode,
-                    background_tasks=background_tasks,
+                    add_history_to_context=add_history_to_context,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    stream=False,
+                    stream_events=False,
+                )
+
+                # 5. Prepare run messages
+                run_messages = await self._aget_run_messages(
+                    run_response=run_response,
+                    run_context=run_context,
+                    session=team_session,  # type: ignore
+                    user_id=user_id,
+                    input_message=run_input.input_content,
+                    audio=run_input.audios,
+                    images=run_input.images,
+                    videos=run_input.videos,
+                    files=run_input.files,
+                    add_history_to_context=add_history_to_context,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    tools=_tools,
                     **kwargs,
+                )
+
+                self.model = cast(Model, self.model)
+                log_debug(f"Team Run Start: {run_response.run_id}", center=True)
+
+                # 6. Start memory creation in background task
+                memory_task = None
+                if (
+                    run_messages.user_message is not None
+                    and self.memory_manager is not None
+                    and self.enable_user_memories
+                    and not self.enable_agentic_memory
                 ):
-                    pass
+                    log_debug("Starting memory creation in background task.")
+                    memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
-            raise_if_cancelled(run_response.run_id)  # type: ignore
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+                # 7. Reason about the task if reasoning is enabled
+                await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
 
-            # 13. Wait for background memory creation
-            await await_for_open_threads(memory_task=memory_task)
+                # Check for cancellation before model call
+                raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            raise_if_cancelled(run_response.run_id)  # type: ignore
-            # 14. Create session summary
-            if self.session_summary_manager is not None:
-                # Upsert the RunOutput to Team Session before creating the session summary
-                team_session.upsert_run(run_response=run_response)
-                try:
-                    await self.session_summary_manager.acreate_session_summary(session=team_session)
-                except Exception as e:
-                    log_warning(f"Error in session summary creation: {str(e)}")
+                # 8. Get the model response for the team leader
+                model_response = await self.model.aresponse(
+                    messages=run_messages.messages,
+                    tools=_tools,
+                    tool_choice=self.tool_choice,
+                    tool_call_limit=self.tool_call_limit,
+                    response_format=response_format,
+                    send_media_to_model=self.send_media_to_model,
+                    run_response=run_response,
+                    compression_manager=self.compression_manager if self.compress_tool_results else None,
+                )  # type: ignore
 
-            raise_if_cancelled(run_response.run_id)  # type: ignore
-            run_response.status = RunStatus.completed
+                # Check for cancellation after model call
+                raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            # 15. Cleanup and store the run response and session
-            await self._acleanup_and_store(run_response=run_response, session=team_session)
+                # If an output model is provided, generate output using the output model
+                await self._agenerate_response_with_output_model(
+                    model_response=model_response, run_messages=run_messages
+                )
 
-            # Log Team Telemetry
-            await self._alog_team_telemetry(session_id=team_session.session_id, run_id=run_response.run_id)
+                # If a parser model is provided, structure the response separately
+                await self._aparse_response_with_parser_model(
+                    model_response=model_response, run_messages=run_messages, run_context=run_context
+                )
 
-            log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
+                # 9. Update TeamRunOutput with the model response
+                self._update_run_response(
+                    model_response=model_response,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
+                )
 
-            return run_response
-        except RunCancelledException as e:
-            # Handle run cancellation
-            log_info(f"Run {run_response.run_id} was cancelled")
-            run_response.content = str(e)
-            run_response.status = RunStatus.cancelled
+                # 10. Store media if enabled
+                if self.store_media:
+                    store_media_util(run_response, model_response)
 
-            # Cleanup and store the run response and session
-            await self._acleanup_and_store(run_response=run_response, session=team_session)
+                # 11. Convert response to structured format
+                self._convert_response_to_structured_format(run_response=run_response, run_context=run_context)
 
-            return run_response
-        finally:
-            # Always disconnect connectable tools
-            self._disconnect_connectable_tools()
-            await self._disconnect_mcp_tools()
-            # Cancel the memory task if it's still running
-            if memory_task is not None and not memory_task.done():
-                memory_task.cancel()
-                try:
-                    await memory_task
-                except asyncio.CancelledError:
-                    pass
+                # 12. Execute post-hooks after output is generated but before response is returned
+                if self.post_hooks is not None:
+                    async for _ in self._aexecute_post_hooks(
+                        hooks=self.post_hooks,  # type: ignore
+                        run_output=run_response,
+                        run_context=run_context,
+                        session=team_session,
+                        user_id=user_id,
+                        debug_mode=debug_mode,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    ):
+                        pass
 
-            # Always clean up the run tracking
-            cleanup_run(run_response.run_id)  # type: ignore
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # 13. Wait for background memory creation
+                await await_for_open_threads(memory_task=memory_task)
+
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+                # 14. Create session summary
+                if self.session_summary_manager is not None:
+                    # Upsert the RunOutput to Team Session before creating the session summary
+                    team_session.upsert_run(run_response=run_response)
+                    try:
+                        await self.session_summary_manager.acreate_session_summary(session=team_session)
+                    except Exception as e:
+                        log_warning(f"Error in session summary creation: {str(e)}")
+
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+                run_response.status = RunStatus.completed
+
+                # 15. Cleanup and store the run response and session
+                await self._acleanup_and_store(run_response=run_response, session=team_session)
+
+                # Log Team Telemetry
+                await self._alog_team_telemetry(session_id=team_session.session_id, run_id=run_response.run_id)
+
+                log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
+
+                return run_response
+
+            except RunCancelledException as e:
+                # Handle run cancellation
+                log_info(f"Run {run_response.run_id} was cancelled")
+                run_response.content = str(e)
+                run_response.status = RunStatus.cancelled
+
+                # Cleanup and store the run response and session
+                await self._acleanup_and_store(run_response=run_response, session=team_session)
+
+                return run_response
+
+            except (InputCheckError, OutputCheckError) as e:
+                run_response.status = RunStatus.error
+                run_error = create_team_run_error_event(
+                    run_response,
+                    error=str(e),
+                    error_id=e.error_id,
+                    error_type=e.type,
+                    additional_data=e.additional_data,
+                )
+                run_response.events = add_team_error_event(error=run_error, events=run_response.events)
+                if run_response.content is None:
+                    run_response.content = str(e)
+
+                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+
+                await self._acleanup_and_store(run_response=run_response, session=team_session)
+
+                return run_response
+
+            except Exception as e:
+                if attempt < num_attempts - 1:
+                    # Calculate delay with exponential backoff if enabled
+                    if self.exponential_backoff:
+                        delay = self.delay_between_retries * (2**attempt)
+                    else:
+                        delay = self.delay_between_retries
+
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    continue
+
+                run_error = create_team_run_error_event(run_response, error=str(e))
+                run_response.events = add_team_error_event(error=run_error, events=run_response.events)
+
+                if run_response.content is None:
+                    run_response.content = str(e)
+
+                log_error(f"Error in Team run: {str(e)}")
+
+                # Cleanup and store the run response and session
+                await self._acleanup_and_store(run_response=run_response, session=team_session)
+
+                return run_response
+
+            finally:
+                # Always disconnect connectable tools
+                self._disconnect_connectable_tools()
+                await self._disconnect_mcp_tools()
+                # Cancel the memory task if it's still running
+                if memory_task is not None and not memory_task.done():
+                    memory_task.cancel()
+                    try:
+                        await memory_task
+                    except asyncio.CancelledError:
+                        pass
+
+                # Always clean up the run tracking
+                cleanup_run(run_response.run_id)  # type: ignore
+
+        return run_response
 
     async def _arun_stream(
         self,
@@ -2576,307 +2666,364 @@ class Team:
         13. Cleanup and store (scrub, add to session, calculate metrics, save session)
         """
 
-        # 1. Resolve dependencies
-        if run_context.dependencies is not None:
-            await self._aresolve_run_dependencies(run_context=run_context)
-
-        # 2. Read or create session. Reads from the database if provided.
-        if self._has_async_db():
-            team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
-        else:
-            team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
-
-        # 3. Update metadata and session state
-        self._update_metadata(session=team_session)
-        # Initialize session state
-        run_context.session_state = self._initialize_session_state(
-            session_state=run_context.session_state if run_context.session_state is not None else {},
-            user_id=user_id,
-            session_id=session_id,
-            run_id=run_response.run_id,
-        )
-        # Update session state from DB
-        if run_context.session_state is not None:
-            run_context.session_state = self._load_session_state(
-                session=team_session, session_state=run_context.session_state
-            )  # type: ignore
-
-        # 4. Execute pre-hooks
-        run_input = cast(TeamRunInput, run_response.input)
-        self.model = cast(Model, self.model)
-        if self.pre_hooks is not None:
-            pre_hook_iterator = self._aexecute_pre_hooks(
-                hooks=self.pre_hooks,  # type: ignore
-                run_response=run_response,
-                run_context=run_context,
-                run_input=run_input,
-                session=team_session,
-                user_id=user_id,
-                debug_mode=debug_mode,
-                stream_events=stream_events,
-                background_tasks=background_tasks,
-                **kwargs,
-            )
-            async for pre_hook_event in pre_hook_iterator:
-                yield pre_hook_event
-
-        # 5. Determine tools for model
-        team_run_context: Dict[str, Any] = {}
-        self.model = cast(Model, self.model)
-        await self._check_and_refresh_mcp_tools()
-        _tools = self._determine_tools_for_model(
-            model=self.model,
-            run_response=run_response,
-            run_context=run_context,
-            team_run_context=team_run_context,
-            session=team_session,  # type: ignore
-            user_id=user_id,
-            async_mode=True,
-            input_message=run_input.input_content,
-            images=run_input.images,
-            videos=run_input.videos,
-            audio=run_input.audios,
-            files=run_input.files,
-            debug_mode=debug_mode,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            stream=True,
-            stream_events=stream_events,
-        )
-
-        # 6. Prepare run messages
-        run_messages = await self._aget_run_messages(
-            run_response=run_response,
-            run_context=run_context,
-            session=team_session,  # type: ignore
-            user_id=user_id,
-            input_message=run_input.input_content,
-            audio=run_input.audios,
-            images=run_input.images,
-            videos=run_input.videos,
-            files=run_input.files,
-            add_history_to_context=add_history_to_context,
-            add_dependencies_to_context=add_dependencies_to_context,
-            add_session_state_to_context=add_session_state_to_context,
-            tools=_tools,
-            **kwargs,
-        )
-
-        log_debug(f"Team Run Start: {run_response.run_id}", center=True)
-
-        # 7. Start memory creation in background task
         memory_task = None
-        if (
-            run_messages.user_message is not None
-            and self.memory_manager is not None
-            and self.enable_user_memories
-            and not self.enable_agentic_memory
-        ):
-            log_debug("Starting memory creation in background task.")
-            memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
-        try:
-            # Considering both stream_events and stream_intermediate_steps (deprecated)
-            stream_events = stream_events or stream_intermediate_steps
+        # Set up retry logic
+        num_attempts = self.retries + 1
+        for attempt in range(num_attempts):
+            if num_attempts > 1:
+                log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
-            # Yield the run started event
-            if stream_events:
-                yield handle_event(  # type: ignore
-                    create_team_run_started_event(from_run_response=run_response),
-                    run_response,
-                    events_to_skip=self.events_to_skip,
-                    store_events=self.store_events,
+            try:
+                # 1. Resolve dependencies
+                if run_context.dependencies is not None:
+                    await self._aresolve_run_dependencies(run_context=run_context)
+
+                # 2. Read or create session. Reads from the database if provided.
+                if self._has_async_db():
+                    team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
+                else:
+                    team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+
+                # 3. Update metadata and session state
+                self._update_metadata(session=team_session)
+                # Initialize session state
+                run_context.session_state = self._initialize_session_state(
+                    session_state=run_context.session_state if run_context.session_state is not None else {},
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_response.run_id,
+                )
+                # Update session state from DB
+                if run_context.session_state is not None:
+                    run_context.session_state = self._load_session_state(
+                        session=team_session, session_state=run_context.session_state
+                    )  # type: ignore
+
+                # 4. Execute pre-hooks
+                run_input = cast(TeamRunInput, run_response.input)
+                self.model = cast(Model, self.model)
+                if self.pre_hooks is not None:
+                    pre_hook_iterator = self._aexecute_pre_hooks(
+                        hooks=self.pre_hooks,  # type: ignore
+                        run_response=run_response,
+                        run_context=run_context,
+                        run_input=run_input,
+                        session=team_session,
+                        user_id=user_id,
+                        debug_mode=debug_mode,
+                        stream_events=stream_events,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
+                    async for pre_hook_event in pre_hook_iterator:
+                        yield pre_hook_event
+
+                # 5. Determine tools for model
+                team_run_context: Dict[str, Any] = {}
+                self.model = cast(Model, self.model)
+                await self._check_and_refresh_mcp_tools()
+                _tools = self._determine_tools_for_model(
+                    model=self.model,
+                    run_response=run_response,
+                    run_context=run_context,
+                    team_run_context=team_run_context,
+                    session=team_session,  # type: ignore
+                    user_id=user_id,
+                    async_mode=True,
+                    input_message=run_input.input_content,
+                    images=run_input.images,
+                    videos=run_input.videos,
+                    audio=run_input.audios,
+                    files=run_input.files,
+                    debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    stream=True,
+                    stream_events=stream_events,
                 )
 
-            # 8. Reason about the task if reasoning is enabled
-            async for item in self._ahandle_reasoning_stream(
-                run_response=run_response,
-                run_messages=run_messages,
-                stream_events=stream_events,
-            ):
+                # 6. Prepare run messages
+                run_messages = await self._aget_run_messages(
+                    run_response=run_response,
+                    run_context=run_context,
+                    session=team_session,  # type: ignore
+                    user_id=user_id,
+                    input_message=run_input.input_content,
+                    audio=run_input.audios,
+                    images=run_input.images,
+                    videos=run_input.videos,
+                    files=run_input.files,
+                    add_history_to_context=add_history_to_context,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    tools=_tools,
+                    **kwargs,
+                )
+
+                log_debug(f"Team Run Start: {run_response.run_id}", center=True)
+
+                # 7. Start memory creation in background task
+                memory_task = None
+                if (
+                    run_messages.user_message is not None
+                    and self.memory_manager is not None
+                    and self.enable_user_memories
+                    and not self.enable_agentic_memory
+                ):
+                    log_debug("Starting memory creation in background task.")
+                    memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
+
+                # Considering both stream_events and stream_intermediate_steps (deprecated)
+                stream_events = stream_events or stream_intermediate_steps
+
+                # Yield the run started event
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_team_run_started_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                    )
+
+                # 8. Reason about the task if reasoning is enabled
+                async for item in self._ahandle_reasoning_stream(
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    stream_events=stream_events,
+                ):
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield item
+
+                # Check for cancellation before model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
-                yield item
 
-            # Check for cancellation before model processing
-            raise_if_cancelled(run_response.run_id)  # type: ignore
+                # 9. Get a response from the model
+                if self.output_model is None:
+                    async for event in self._ahandle_model_response_stream(
+                        session=team_session,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        tools=_tools,
+                        response_format=response_format,
+                        stream_events=stream_events,
+                        session_state=run_context.session_state,
+                        run_context=run_context,
+                    ):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        yield event
+                else:
+                    async for event in self._ahandle_model_response_stream(
+                        session=team_session,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        tools=_tools,
+                        response_format=response_format,
+                        stream_events=stream_events,
+                        session_state=run_context.session_state,
+                        run_context=run_context,
+                    ):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
-            # 9. Get a response from the model
-            if self.output_model is None:
-                async for event in self._ahandle_model_response_stream(
-                    session=team_session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    tools=_tools,
-                    response_format=response_format,
-                    stream_events=stream_events,
-                    session_state=run_context.session_state,
-                    run_context=run_context,
-                ):
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
-            else:
-                async for event in self._ahandle_model_response_stream(
-                    session=team_session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    tools=_tools,
-                    response_format=response_format,
-                    stream_events=stream_events,
-                    session_state=run_context.session_state,
-                    run_context=run_context,
-                ):
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
-                    from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+                        if isinstance(event, RunContentEvent):
+                            if stream_events:
+                                yield IntermediateRunContentEvent(
+                                    content=event.content,
+                                    content_type=event.content_type,
+                                )
+                        else:
+                            yield event
 
-                    if isinstance(event, RunContentEvent):
-                        if stream_events:
-                            yield IntermediateRunContentEvent(
-                                content=event.content,
-                                content_type=event.content_type,
-                            )
-                    else:
+                    async for event in self._agenerate_response_with_output_model_stream(
+                        session=team_session,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        stream_events=stream_events,
+                    ):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
 
-                async for event in self._agenerate_response_with_output_model_stream(
+                # Check for cancellation after model processing
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # 10. Parse response with parser model if provided
+                async for event in self._aparse_response_with_parser_model_stream(
                     session=team_session,
                     run_response=run_response,
-                    run_messages=run_messages,
                     stream_events=stream_events,
+                    run_context=run_context,
                 ):
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
-            # Check for cancellation after model processing
-            raise_if_cancelled(run_response.run_id)  # type: ignore
+                # Yield RunContentCompletedEvent
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_team_run_content_completed_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                    )
 
-            # 10. Parse response with parser model if provided
-            async for event in self._aparse_response_with_parser_model_stream(
-                session=team_session, run_response=run_response, stream_events=stream_events, run_context=run_context
-            ):
-                yield event
+                # Execute post-hooks after output is generated but before response is returned
+                if self.post_hooks is not None:
+                    async for event in self._aexecute_post_hooks(
+                        hooks=self.post_hooks,  # type: ignore
+                        run_output=run_response,
+                        run_context=run_context,
+                        session=team_session,
+                        user_id=user_id,
+                        debug_mode=debug_mode,
+                        stream_events=stream_events,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    ):
+                        yield event
 
-            # Yield RunContentCompletedEvent
-            if stream_events:
-                yield handle_event(  # type: ignore
-                    create_team_run_content_completed_event(from_run_response=run_response),
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+                # 11. Wait for background memory creation
+                async for event in await_for_thread_tasks_stream(
+                    run_response=run_response,
+                    memory_task=memory_task,
+                    stream_events=stream_events,
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                ):
+                    yield event
+
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # 12. Create session summary
+                if self.session_summary_manager is not None:
+                    # Upsert the RunOutput to Team Session before creating the session summary
+                    team_session.upsert_run(run_response=run_response)
+
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_session_summary_started_event(from_run_response=run_response),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    try:
+                        await self.session_summary_manager.acreate_session_summary(session=team_session)
+                    except Exception as e:
+                        log_warning(f"Error in session summary creation: {str(e)}")
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_session_summary_completed_event(
+                                from_run_response=run_response, session_summary=team_session.summary
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # Create the run completed event
+                completed_event = handle_event(
+                    create_team_run_completed_event(from_run_response=run_response),
                     run_response,
                     events_to_skip=self.events_to_skip,
                     store_events=self.store_events,
                 )
 
-            # Execute post-hooks after output is generated but before response is returned
-            if self.post_hooks is not None:
-                async for event in self._aexecute_post_hooks(
-                    hooks=self.post_hooks,  # type: ignore
-                    run_output=run_response,
-                    run_context=run_context,
-                    session=team_session,
-                    user_id=user_id,
-                    debug_mode=debug_mode,
-                    stream_events=stream_events,
-                    background_tasks=background_tasks,
-                    **kwargs,
-                ):
-                    yield event
+                # Set the run status to completed
+                run_response.status = RunStatus.completed
 
-            raise_if_cancelled(run_response.run_id)  # type: ignore
-            # 11. Wait for background memory creation
-            async for event in await_for_thread_tasks_stream(
-                run_response=run_response,
-                memory_task=memory_task,
-                stream_events=stream_events,
-                events_to_skip=self.events_to_skip,  # type: ignore
-                store_events=self.store_events,
-            ):
-                yield event
-
-            raise_if_cancelled(run_response.run_id)  # type: ignore
-
-            # 12. Create session summary
-            if self.session_summary_manager is not None:
-                # Upsert the RunOutput to Team Session before creating the session summary
-                team_session.upsert_run(run_response=run_response)
+                # 13. Cleanup and store the run response and session
+                await self._acleanup_and_store(run_response=run_response, session=team_session)
 
                 if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_team_session_summary_started_event(from_run_response=run_response),
-                        run_response,
-                        events_to_skip=self.events_to_skip,
-                        store_events=self.store_events,
-                    )
-                try:
-                    await self.session_summary_manager.acreate_session_summary(session=team_session)
-                except Exception as e:
-                    log_warning(f"Error in session summary creation: {str(e)}")
-                if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_team_session_summary_completed_event(
-                            from_run_response=run_response, session_summary=team_session.summary
-                        ),
-                        run_response,
-                        events_to_skip=self.events_to_skip,
-                        store_events=self.store_events,
-                    )
+                    yield completed_event
 
-            raise_if_cancelled(run_response.run_id)  # type: ignore
+                if yield_run_output:
+                    yield run_response
 
-            # Create the run completed event
-            completed_event = handle_event(
-                create_team_run_completed_event(from_run_response=run_response),
-                run_response,
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events,
-            )
+                # Log Team Telemetry
+                await self._alog_team_telemetry(session_id=team_session.session_id, run_id=run_response.run_id)
 
-            # Set the run status to completed
-            run_response.status = RunStatus.completed
+                log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
-            # 13. Cleanup and store the run response and session
-            await self._acleanup_and_store(run_response=run_response, session=team_session)
+            except RunCancelledException as e:
+                # Handle run cancellation during async streaming
+                log_info(f"Team run {run_response.run_id} was cancelled during async streaming")
+                run_response.status = RunStatus.cancelled
+                run_response.content = str(e)
 
-            if stream_events:
-                yield completed_event
+                # Yield the cancellation event
+                yield handle_event(  # type: ignore
+                    create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                    run_response,
+                    events_to_skip=self.events_to_skip,
+                    store_events=self.store_events,
+                )
 
-            if yield_run_output:
-                yield run_response
+                # Cleanup and store the run response and session
+                await self._acleanup_and_store(run_response=run_response, session=team_session)
 
-            # Log Team Telemetry
-            await self._alog_team_telemetry(session_id=team_session.session_id, run_id=run_response.run_id)
+            except (InputCheckError, OutputCheckError) as e:
+                run_response.status = RunStatus.error
+                run_error = create_team_run_error_event(
+                    run_response,
+                    error=str(e),
+                    error_id=e.error_id,
+                    error_type=e.type,
+                    additional_data=e.additional_data,
+                )
+                run_response.events = add_team_error_event(error=run_error, events=run_response.events)
+                if run_response.content is None:
+                    run_response.content = str(e)
 
-            log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
+                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
 
-        except RunCancelledException as e:
-            # Handle run cancellation during async streaming
-            log_info(f"Team run {run_response.run_id} was cancelled during async streaming")
-            run_response.status = RunStatus.cancelled
-            run_response.content = str(e)
+                await self._acleanup_and_store(run_response=run_response, session=team_session)
 
-            # Yield the cancellation event
-            yield handle_event(  # type: ignore
-                create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
-                run_response,
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events,
-            )
+                yield run_error
 
-            # Cleanup and store the run response and session
-            await self._acleanup_and_store(run_response=run_response, session=team_session)
+                break
 
-        finally:
-            # Always disconnect connectable tools
-            self._disconnect_connectable_tools()
-            await self._disconnect_mcp_tools()
-            # Cancel the memory task if it's still running
-            if memory_task is not None and not memory_task.done():
-                memory_task.cancel()
-                try:
-                    await memory_task
-                except asyncio.CancelledError:
-                    pass
+            except Exception as e:
+                if attempt < num_attempts - 1:
+                    # Calculate delay with exponential backoff if enabled
+                    if self.exponential_backoff:
+                        delay = self.delay_between_retries * (2**attempt)
+                    else:
+                        delay = self.delay_between_retries
 
-            # Always clean up the run tracking
-            cleanup_run(run_response.run_id)  # type: ignore
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    continue
+
+                run_response.status = RunStatus.error
+                run_error = create_team_run_error_event(run_response, error=str(e))
+                run_response.events = add_team_error_event(error=run_error, events=run_response.events)
+                if run_response.content is None:
+                    run_response.content = str(e)
+
+                log_error(f"Error in Team run: {str(e)}")
+
+                # Cleanup and store the run response and session
+                await self._acleanup_and_store(run_response=run_response, session=team_session)
+
+                yield run_error
+
+            finally:
+                # Always disconnect connectable tools
+                self._disconnect_connectable_tools()
+                await self._disconnect_mcp_tools()
+                # Cancel the memory task if it's still running
+                if memory_task is not None and not memory_task.done():
+                    memory_task.cancel()
+                    try:
+                        await memory_task
+                    except asyncio.CancelledError:
+                        pass
+
+                # Always clean up the run tracking
+                cleanup_run(run_response.run_id)  # type: ignore
 
     @overload
     async def arun(
@@ -2902,7 +3049,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
 
@@ -2932,7 +3079,7 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
 
@@ -2961,7 +3108,7 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
-        output_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team asynchronously and return the response."""
@@ -3108,79 +3255,38 @@ class Team:
 
         yield_run_output = bool(yield_run_output or yield_run_response)  # For backwards compatibility
 
-        # Resolve retry parameters
-        num_attempts = self.retries + 1
-
-        for attempt in range(num_attempts):
-            # Run the team
-            try:
-                if stream:
-                    return self._arun_stream(  # type: ignore
-                        input=validated_input,
-                        run_response=run_response,
-                        run_context=run_context,
-                        session_id=session_id,
-                        user_id=user_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        yield_run_output=yield_run_output,
-                        debug_mode=debug_mode,
-                        background_tasks=background_tasks,
-                        **kwargs,
-                    )
-                else:
-                    return self._arun(  # type: ignore
-                        input=validated_input,
-                        run_response=run_response,
-                        run_context=run_context,
-                        session_id=session_id,
-                        user_id=user_id,
-                        add_history_to_context=add_history,
-                        add_dependencies_to_context=add_dependencies,
-                        add_session_state_to_context=add_session_state,
-                        response_format=response_format,
-                        debug_mode=debug_mode,
-                        background_tasks=background_tasks,
-                        **kwargs,
-                    )
-
-            except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
-                raise e
-            except KeyboardInterrupt:
-                run_response.content = "Operation cancelled by user"
-                run_response.status = RunStatus.cancelled
-
-                if stream:
-                    return async_generator_wrapper(
-                        create_team_run_cancelled_event(
-                            from_run_response=run_response, reason="Operation cancelled by user"
-                        )
-                    )
-                else:
-                    return run_response
-            except Exception as e:
-                # Check if this is the last attempt
-                if attempt < num_attempts - 1:
-                    # Calculate delay with exponential backoff if enabled
-                    if self.exponential_backoff:
-                        delay = self.delay_between_retries * (2**attempt)
-                    else:
-                        delay = self.delay_between_retries
-
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
-                    time.sleep(delay)
-                    continue
-                else:
-                    # Final attempt failed - re-raise the exception
-                    log_error(f"All {num_attempts} attempts failed. Final error: {str(e)}")
-                    raise e
-
-        # If we get here, all retries failed
-        raise Exception(f"Failed after {num_attempts} attempts.")
+        if stream:
+            return self._arun_stream(  # type: ignore
+                input=validated_input,
+                run_response=run_response,
+                run_context=run_context,
+                session_id=session_id,
+                user_id=user_id,
+                add_history_to_context=add_history,
+                add_dependencies_to_context=add_dependencies,
+                add_session_state_to_context=add_session_state,
+                response_format=response_format,
+                stream_events=stream_events,
+                yield_run_output=yield_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+        else:
+            return self._arun(  # type: ignore
+                input=validated_input,
+                run_response=run_response,
+                run_context=run_context,
+                session_id=session_id,
+                user_id=user_id,
+                add_history_to_context=add_history,
+                add_dependencies_to_context=add_dependencies,
+                add_session_state_to_context=add_session_state,
+                response_format=response_format,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
 
     def _update_run_response(
         self,
@@ -3197,7 +3303,7 @@ class Team:
             # Update the run_response content with the structured output
             run_response.content = model_response.parsed
             # Update the run_response content_type with the structured output class name
-            run_response.content_type = output_schema.__name__
+            run_response.content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__
         else:
             # Update the run_response content with the model response content
             if not run_response.content:
@@ -3496,12 +3602,16 @@ class Team:
                         self._convert_response_to_structured_format(full_model_response, run_context=run_context)
                         # Get output_schema from run_context
                         output_schema = run_context.output_schema if run_context else None
-                        content_type = output_schema.__name__  # type: ignore
+                        content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
                         run_response.content_type = content_type
                     elif self._member_response_model is not None:
                         full_model_response.content = model_response_event.content
                         self._convert_response_to_structured_format(full_model_response, run_context=run_context)
-                        content_type = self._member_response_model.__name__  # type: ignore
+                        content_type = (
+                            "dict"
+                            if isinstance(self._member_response_model, dict)
+                            else self._member_response_model.__name__
+                        )  # type: ignore
                         run_response.content_type = content_type
                     elif isinstance(model_response_event.content, str):
                         full_model_response.content = (full_model_response.content or "") + model_response_event.content
@@ -3753,41 +3863,71 @@ class Team:
         output_schema = run_context.output_schema if run_context else None
 
         # Convert the response to the structured format if needed
-        if output_schema is not None and not isinstance(run_response.content, output_schema):
-            if isinstance(run_response.content, str) and self.parse_response:
-                try:
-                    parsed_response_content = parse_response_model_str(run_response.content, output_schema)
+        if output_schema is not None:
+            # If the output schema is a dict, do not convert it into a BaseModel
+            if isinstance(output_schema, dict):
+                if isinstance(run_response.content, dict):
+                    # Content is already a dict - just set content_type
+                    if hasattr(run_response, "content_type"):
+                        run_response.content_type = "dict"
+                elif isinstance(run_response.content, str):
+                    parsed_dict = parse_response_dict_str(run_response.content)
+                    if parsed_dict is not None:
+                        run_response.content = parsed_dict
+                        if hasattr(run_response, "content_type"):
+                            run_response.content_type = "dict"
+                    else:
+                        log_warning("Failed to parse JSON response")
+            # If the output schema is a Pydantic model and parse_response is True, parse it into a BaseModel
+            elif not isinstance(run_response.content, output_schema):
+                if isinstance(run_response.content, str) and self.parse_response:
+                    try:
+                        parsed_response_content = parse_response_model_str(run_response.content, output_schema)
 
-                    # Update TeamRunOutput
-                    if parsed_response_content is not None:
-                        run_response.content = parsed_response_content
+                        # Update TeamRunOutput
+                        if parsed_response_content is not None:
+                            run_response.content = parsed_response_content
+                            if hasattr(run_response, "content_type"):
+                                run_response.content_type = output_schema.__name__
+                        else:
+                            log_warning("Failed to convert response to output_schema")
+                    except Exception as e:
+                        log_warning(f"Failed to convert response to output model: {e}")
+                else:
+                    log_warning("Something went wrong. Team run response content is not a string")
+        elif self._member_response_model is not None:
+            # Handle dict schema from member
+            if isinstance(self._member_response_model, dict):
+                if isinstance(run_response.content, dict):
+                    # Content is already a dict - just set content_type
+                    if hasattr(run_response, "content_type"):
+                        run_response.content_type = "dict"
+                elif isinstance(run_response.content, str):
+                    parsed_dict = parse_response_dict_str(run_response.content)
+                    if parsed_dict is not None:
+                        run_response.content = parsed_dict
                         if hasattr(run_response, "content_type"):
-                            run_response.content_type = output_schema.__name__
+                            run_response.content_type = "dict"
                     else:
-                        log_warning("Failed to convert response to output_schema")
-                except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
-            else:
-                log_warning("Something went wrong. Team run response content is not a string")
-        elif self._member_response_model is not None and not isinstance(
-            run_response.content, self._member_response_model
-        ):
-            if isinstance(run_response.content, str):
-                try:
-                    parsed_response_content = parse_response_model_str(
-                        run_response.content, self._member_response_model
-                    )
-                    # Update TeamRunOutput
-                    if parsed_response_content is not None:
-                        run_response.content = parsed_response_content
-                        if hasattr(run_response, "content_type"):
-                            run_response.content_type = self._member_response_model.__name__
-                    else:
-                        log_warning("Failed to convert response to output_schema")
-                except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
-            else:
-                log_warning("Something went wrong. Member run response content is not a string")
+                        log_warning("Failed to parse JSON response")
+            # Handle Pydantic schema from member
+            elif not isinstance(run_response.content, self._member_response_model):
+                if isinstance(run_response.content, str):
+                    try:
+                        parsed_response_content = parse_response_model_str(
+                            run_response.content, self._member_response_model
+                        )
+                        # Update TeamRunOutput
+                        if parsed_response_content is not None:
+                            run_response.content = parsed_response_content
+                            if hasattr(run_response, "content_type"):
+                                run_response.content_type = self._member_response_model.__name__
+                        else:
+                            log_warning("Failed to convert response to output_schema")
+                    except Exception as e:
+                        log_warning(f"Failed to convert response to output model: {e}")
+                else:
+                    log_warning("Something went wrong. Member run response content is not a string")
 
     def _cleanup_and_store(self, run_response: TeamRunOutput, session: TeamSession) -> None:
         #  Scrub the stored run based on storage flags
@@ -3890,6 +4030,10 @@ class Team:
             elif model.supports_json_schema_outputs:
                 if self.use_json_mode:
                     log_debug("Setting Model.response_format to JSON response mode")
+                    # Handle JSON schema - pass through directly (user provides full provider format)
+                    if isinstance(output_schema, dict):
+                        return output_schema
+                    # Handle Pydantic schema
                     return {
                         "type": "json_schema",
                         "json_schema": {
@@ -6627,7 +6771,7 @@ class Team:
                 log_error(f"Failed to convert sanitized context to JSON: {e}")
                 return str(context)
 
-    def _get_json_output_prompt(self, output_schema: Optional[Type[BaseModel]] = None) -> str:
+    def _get_json_output_prompt(self, output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None) -> str:
         """Return the JSON output prompt for the Agent.
 
         This is added to the system prompt when the output_schema is set and structured_outputs is False.
@@ -6644,7 +6788,11 @@ class Team:
                 json_output_prompt += "\n<json_fields>"
                 json_output_prompt += f"\n{json.dumps(output_schema)}"
                 json_output_prompt += "\n</json_fields>"
-            elif issubclass(output_schema, BaseModel):
+            elif isinstance(output_schema, dict):
+                json_output_prompt += "\n<json_fields>"
+                json_output_prompt += f"\n{json.dumps(output_schema)}"
+                json_output_prompt += "\n</json_fields>"
+            elif isinstance(output_schema, type) and issubclass(output_schema, BaseModel):
                 json_schema = output_schema.model_json_schema()
                 if json_schema is not None:
                     response_model_properties = {}
@@ -7158,7 +7306,7 @@ class Team:
                 member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
 
             # Update the top-level team run_response tool call to have the run_id of the member run
-            if run_response.tools is not None:
+            if run_response.tools is not None and member_agent_run_response is not None:
                 for tool in run_response.tools:
                     if tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member":
                         tool.child_run_id = member_agent_run_response.run_id  # type: ignore
@@ -7388,9 +7536,9 @@ class Team:
                     check_if_run_cancelled(member_agent_run_response_event)
 
                     # Yield the member event directly
-                    member_agent_run_response_event.parent_run_id = (
-                        getattr(member_agent_run_response_event, "parent_run_id", None) or run_response.run_id
-                    )
+                    member_agent_run_response_event.parent_run_id = getattr(
+                        member_agent_run_response_event, "parent_run_id", None
+                    ) or (run_response.run_id if run_response is not None else None)
                     yield member_agent_run_response_event  # type: ignore
             else:
                 member_agent_run_response = await member_agent.arun(  # type: ignore
@@ -7501,7 +7649,8 @@ class Team:
 
                         # Yield the member event directly
                         member_agent_run_response_chunk.parent_run_id = (
-                            member_agent_run_response_chunk.parent_run_id or run_response.run_id
+                            member_agent_run_response_chunk.parent_run_id
+                            or (run_response.run_id if run_response is not None else None)
                         )
                         yield member_agent_run_response_chunk  # type: ignore
 
@@ -7611,7 +7760,8 @@ class Team:
 
                             check_if_run_cancelled(member_agent_run_output_event)
                             member_agent_run_output_event.parent_run_id = (
-                                member_agent_run_output_event.parent_run_id or run_response.run_id
+                                member_agent_run_output_event.parent_run_id
+                                or (run_response.run_id if run_response is not None else None)
                             )
                             await queue.put(member_agent_run_output_event)
                     finally:
