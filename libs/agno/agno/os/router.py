@@ -208,6 +208,71 @@ def get_base_router(
         return list(unique_models.values())
 
     # -- Database Migration routes ---
+    async def _migrate_single_db(db, target_version: Optional[str] = None) -> None:
+        """Helper function to migrate a single database."""
+        if target_version:
+            # Use the session table as proxy for the database schema version
+            if isinstance(db, AsyncBaseDb):
+                current_version = await db.get_latest_schema_version(db.session_table_name)
+            else:
+                current_version = db.get_latest_schema_version(db.session_table_name)
+
+            if version.parse(target_version) > version.parse(current_version):  # type: ignore
+                await MigrationManager(db).up(target_version)  # type: ignore
+            else:
+                await MigrationManager(db).down(target_version)  # type: ignore
+        else:
+            # If the target version is not provided, migrate to the latest version
+            await MigrationManager(db).up()  # type: ignore
+
+    @router.post(
+        "/databases/all/migrate",
+        tags=["Database"],
+        operation_id="migrate_all_databases",
+        summary="Migrate All Databases",
+        description=(
+            "Migrate all database schemas to the given target version. "
+            "If a target version is not provided, all databases will be migrated to the latest version."
+        ),
+        responses={
+            200: {
+                "description": "All databases migrated successfully",
+                "content": {
+                    "application/json": {
+                        "example": {"message": "All databases migrated successfully to version 3.0.0"},
+                    }
+                },
+            },
+            500: {"description": "Failed to migrate databases", "model": InternalServerErrorResponse},
+        },
+    )
+    async def migrate_all_databases(target_version: Optional[str] = None):
+        # Get all unique databases
+        all_dbs = {db.id: db for db_id, dbs in os.dbs.items() for db in dbs}
+        failed_dbs: dict[str, str] = {}
+
+        for db_id, db in all_dbs.items():
+            try:
+                await _migrate_single_db(db, target_version)
+            except Exception as e:
+                failed_dbs[db_id] = str(e)
+
+        version_msg = f"version {target_version}" if target_version else "latest version"
+        migrated_count = len(all_dbs) - len(failed_dbs)
+
+        if failed_dbs:
+            return JSONResponse(
+                content={
+                    "message": f"Migrated {migrated_count}/{len(all_dbs)} databases to {version_msg}",
+                    "failed": failed_dbs,
+                },
+                status_code=207,  # Multi-Status
+            )
+
+        return JSONResponse(
+            content={"message": f"All databases migrated successfully to {version_msg}"}, status_code=200
+        )
+
     @router.post(
         "/databases/{db_id}/migrate",
         tags=["Database"],
@@ -215,7 +280,7 @@ def get_base_router(
         summary="Migrate Database",
         description=(
             "Migrate the given database schema to the given target version. "
-            "If a target version is not provided, the database will be migrated to the latest version. "
+            "If a target version is not provided, the database will be migrated to the latest version."
         ),
         responses={
             200: {
@@ -235,24 +300,16 @@ def get_base_router(
         if not db:
             raise HTTPException(status_code=404, detail="Database not found")
 
-        if target_version:
-            # Use the session table as proxy for the database schema version
-            if isinstance(db, AsyncBaseDb):
-                current_version = await db.get_latest_schema_version(db.session_table_name)
-            else:
-                current_version = db.get_latest_schema_version(db.session_table_name)
+        try:
+            await _migrate_single_db(db, target_version)
 
-            if version.parse(target_version) > version.parse(current_version):  # type: ignore
-                MigrationManager(db).up(target_version)  # type: ignore
-            else:
-                MigrationManager(db).down(target_version)  # type: ignore
-
-        # If the target version is not provided, migrate to the latest version
-        else:
-            MigrationManager(db).up()  # type: ignore
-
-        return JSONResponse(
-            content={"message": f"Database migrated successfully to version {target_version}"}, status_code=200
-        )
+            version_msg = f"version {target_version}" if target_version else "latest version"
+            return JSONResponse(
+                content={"message": f"Database migrated successfully to {version_msg}"}, status_code=200
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to migrate database: {str(e)}")
 
     return router
