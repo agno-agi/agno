@@ -41,8 +41,6 @@ def get_authentication_dependency(settings: AgnoAPISettings):
             return True
 
         # Check if JWT middleware has already handled authentication
-        # This covers manually added JWT middleware (e.g., app.add_middleware(JWTMiddleware, ...))
-        # request.state.authenticated is set to True by JWTMiddleware after successful validation
         if getattr(request.state, "authenticated", False):
             return True
 

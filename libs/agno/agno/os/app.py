@@ -617,7 +617,6 @@ class AgentOS:
             # Set authorization_enabled flag on settings so security key validation is skipped
             self.settings.authorization_enabled = True
 
-            # Warn if both JWT keys and OS_SECURITY_KEY are set
             jwt_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
             security_key_set = bool(self.settings.os_security_key)
             if jwt_configured and security_key_set:
