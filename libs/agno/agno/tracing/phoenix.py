@@ -75,10 +75,13 @@ class _ProjectRoutingSpanProcessor(SpanProcessor):
         """Called when a span starts. Capture the current project from context."""
         # Get the target project from the current context
         ctx = parent_context or get_current()
-        project = get_value(_PHOENIX_PROJECT_KEY, ctx)
+        project_value = get_value(_PHOENIX_PROJECT_KEY, ctx)
 
-        if project is None:
+        # Ensure project is a string
+        if project_value is None or not isinstance(project_value, str):
             project = self._default_project
+        else:
+            project = project_value
 
         # Store the project in a span attribute so we can read it later
         # This is safe because each span has its own attributes
