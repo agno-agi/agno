@@ -278,7 +278,7 @@ class AgentOS:
         if self.enable_mcp_server:
             from agno.os.mcp import get_mcp_server
 
-            self._mcp_app = get_mcp_server(self)
+            self._mcp_app = get_mcp_server(self, settings=self.settings)
 
         self._reprovision_routers(app=app)
 
@@ -508,7 +508,7 @@ class AgentOS:
             if self.enable_mcp_server:
                 from agno.os.mcp import get_mcp_server
 
-                self._mcp_app = get_mcp_server(self)
+                self._mcp_app = get_mcp_server(self, settings=self.settings)
 
             # Collect all lifespans that need to be combined
             lifespans = []
@@ -553,7 +553,7 @@ class AgentOS:
             if self.enable_mcp_server:
                 from agno.os.mcp import get_mcp_server
 
-                self._mcp_app = get_mcp_server(self)
+                self._mcp_app = get_mcp_server(self, settings=self.settings)
                 lifespans.append(self._mcp_app.lifespan)
 
             # Async database initialization lifespan
