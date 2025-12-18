@@ -56,15 +56,15 @@ from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from agno.run.cancel import (
-    cancel_run as cancel_run_global,
-)
-from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
     aregister_run,
     cleanup_run,
     raise_if_cancelled,
     register_run,
+)
+from agno.run.cancel import (
+    cancel_run as cancel_run_global,
 )
 from agno.run.messages import RunMessages
 from agno.run.team import (

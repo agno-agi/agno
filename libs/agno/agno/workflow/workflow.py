@@ -33,15 +33,15 @@ from agno.models.metrics import Metrics
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunContentEvent, RunEvent, RunOutput
 from agno.run.cancel import (
-    cancel_run as cancel_run_global,
-)
-from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
     aregister_run,
     cleanup_run,
     raise_if_cancelled,
     register_run,
+)
+from agno.run.cancel import (
+    cancel_run as cancel_run_global,
 )
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
