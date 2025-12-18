@@ -40,10 +40,6 @@ PROJECT_NAME_ATTR = "openinference.project.name"
 # Context key for storing the target project
 _PHOENIX_PROJECT_KEY = "phoenix.project.name"
 
-# Global state
-_tracer_provider: Optional["TracerProvider"] = None
-_default_project: str = "default"
-
 
 class _ProjectRoutingSpanProcessor(SpanProcessor):
     """
@@ -185,8 +181,6 @@ def setup_phoenix(
             api_key="your-api-key",
         )
     """
-    global _tracer_provider, _default_project
-
     if not PHOENIX_AVAILABLE:
         logger.warning(
             "Phoenix tracing not available. Install with: "
@@ -209,8 +203,6 @@ def setup_phoenix(
         if not endpoint.endswith("/v1/traces"):
             endpoint = endpoint.rstrip("/") + "/v1/traces"
 
-    _default_project = default_project
-
     headers = {"authorization": f"Bearer {api_key}"}
 
     # Create tracer provider with default resource
@@ -232,8 +224,6 @@ def setup_phoenix(
 
     # Instrument Agno
     AgnoInstrumentor().instrument(tracer_provider=tracer_provider)
-
-    _tracer_provider = tracer_provider
 
     logger.info(f"Phoenix tracing enabled with project routing. Default project: {default_project}")
 
