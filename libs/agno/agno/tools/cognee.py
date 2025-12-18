@@ -1,11 +1,12 @@
 import json
 import asyncio
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
+from asyncio import Queue
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
 
 try:
-    import cognee
+    import cognee  # type: ignore[import-not-found]
 except ImportError:
     raise ImportError("`cognee` package not found. Please install it with `pip install cognee`")
 
@@ -16,7 +17,7 @@ class CogneeTools(Toolkit):
         super().__init__(name="cognee_tools", tools=tools, **kwargs)
 
         self._add_lock = asyncio.Lock()
-        self._add_queue = asyncio.Queue()
+        self._add_queue: Queue[str] = Queue()
         log_debug("Initialized Cognee tools.")
 
     async def _enqueue_add(self, data: str):
@@ -101,11 +102,11 @@ class CogneeTools(Toolkit):
                 results = loop.run_until_complete(_search())
 
             # Convert results to JSON-serializable format
-            serializable_results = []
+            serializable_results: List[Union[Dict[str, Any], str]] = []
             for item in results:
                 if isinstance(item, dict):
                     # Convert any UUID objects to strings
-                    serializable_item = {}
+                    serializable_item: Dict[str, Any] = {}
                     for key, value in item.items():
                         if hasattr(value, '__str__'):
                             serializable_item[key] = str(value)
