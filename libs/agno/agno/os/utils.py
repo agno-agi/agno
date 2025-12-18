@@ -26,12 +26,21 @@ from agno.workflow.workflow import Workflow
 
 async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
     """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
+
     Args:
         request: The FastAPI Request object
         endpoint_func: The function exposing the endpoint that received the request
 
+    Supported form parameters:
+        - session_state: JSON string of session state dict
+        - dependencies: JSON string of dependencies dict
+        - metadata: JSON string of metadata dict
+        - knowledge_filters: JSON string of knowledge filters
+        - output_schema: JSON schema string (converted to Pydantic model by default)
+        - use_json_schema: If "true", keeps output_schema as dict instead of converting to Pydantic model
+
     Returns:
-        A dictionary of kwargs
+        A dictionary of kwargs to pass to Agent/Team run methods
     """
     import inspect
 
@@ -101,15 +110,25 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
             kwargs.pop("knowledge_filters")
             log_warning(f"Invalid FilterExpr in knowledge_filters: {e}")
 
-    # Handle output_schema - convert JSON schema to dynamic Pydantic model
+    # Handle output_schema - convert JSON schema to Pydantic model or keep as dict
+    # use_json_schema is a control flag consumed here (not passed to Agent/Team)
+    # When true, output_schema stays as dict for direct JSON output
+    use_json_schema = kwargs.pop("use_json_schema", False)
+    if isinstance(use_json_schema, str):
+        use_json_schema = use_json_schema.lower() == "true"
+
     if output_schema := kwargs.get("output_schema"):
         try:
             if isinstance(output_schema, str):
-                from agno.os.utils import json_schema_to_pydantic_model
-
                 schema_dict = json.loads(output_schema)
-                dynamic_model = json_schema_to_pydantic_model(schema_dict)
-                kwargs["output_schema"] = dynamic_model
+
+                if use_json_schema:
+                    # Keep as dict schema for direct JSON output
+                    kwargs["output_schema"] = schema_dict
+                else:
+                    # Convert to Pydantic model (default behavior)
+                    dynamic_model = json_schema_to_pydantic_model(schema_dict)
+                    kwargs["output_schema"] = dynamic_model
         except json.JSONDecodeError:
             kwargs.pop("output_schema")
             log_warning(f"Invalid output_schema JSON: {output_schema}")
@@ -315,6 +334,10 @@ def get_session_name(session: Dict[str, Any]) -> str:
         for message in run_dict.get("messages") or []:
             if message.get("role") == "user" and message.get("content"):
                 return message["content"]
+
+        run_input = r.get("input")
+        if run_input is not None:
+            return run_input.get("input_content")
 
     return ""
 

@@ -150,6 +150,11 @@ def print_response_stream(
                                 )
                             except Exception as e:
                                 log_warning(f"Failed to convert response to JSON: {e}")
+                        elif agent.output_schema is not None and isinstance(response_event.content, dict):
+                            try:
+                                response_content_batch = JSON(json.dumps(response_event.content), indent=2)  # type: ignore
+                            except Exception as e:
+                                log_warning(f"Failed to convert response to JSON: {e}")
                         else:
                             try:
                                 response_content_batch = JSON(json.dumps(response_event.content), indent=4)
@@ -361,6 +366,11 @@ async def aprint_response_stream(
                     elif agent.output_schema is not None and isinstance(resp.content, BaseModel):
                         try:
                             response_content_batch = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
+                        except Exception as e:
+                            log_warning(f"Failed to convert response to JSON: {e}")
+                    elif agent.output_schema is not None and isinstance(resp.content, dict):
+                        try:
+                            response_content_batch = JSON(json.dumps(resp.content), indent=2)  # type: ignore
                         except Exception as e:
                             log_warning(f"Failed to convert response to JSON: {e}")
                     else:
@@ -963,6 +973,11 @@ def build_panels(
         elif output_schema is not None and isinstance(run_response.content, BaseModel):
             try:
                 response_content_batch = JSON(run_response.content.model_dump_json(exclude_none=True), indent=2)
+            except Exception as e:
+                log_warning(f"Failed to convert response to JSON: {e}")
+        elif output_schema is not None and isinstance(run_response.content, dict):
+            try:
+                response_content_batch = JSON(json.dumps(run_response.content), indent=2)
             except Exception as e:
                 log_warning(f"Failed to convert response to JSON: {e}")
         else:

@@ -7,8 +7,8 @@ You will see its chain of thought live as it is generated.
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from agno.run.agent import RunEvent  # noqa
 from agno.os import AgentOS
+from agno.run.agent import RunEvent  # noqa
 
 # Create an agent with reasoning enabled
 agent = Agent(
@@ -35,4 +35,4 @@ if __name__ == "__main__":
     http://localhost:7777/config
 
     """
-    agent_os.serve(app="reasoning_model:app", reload=True) 
+    agent_os.serve(app="reasoning_model:app", reload=True)

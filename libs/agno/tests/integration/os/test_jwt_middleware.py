@@ -1457,8 +1457,6 @@ def test_wildcard_scope_grants_resource_access(jwt_test_agent):
         assert response.status_code == 200
 
 
-
-
 def test_validate_false_extracts_scopes(jwt_test_agent):
     """Test that validate=False still extracts scopes from token."""
 
