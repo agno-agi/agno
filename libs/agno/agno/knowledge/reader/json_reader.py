@@ -1,6 +1,5 @@
 import asyncio
 import json
-from io import BytesIO
 from pathlib import Path
 from typing import IO, Any, List, Optional, Union
 from uuid import uuid4
@@ -42,17 +41,13 @@ class JSONReader(Reader):
                 if not path.exists():
                     raise FileNotFoundError(f"Could not find file: {path}")
                 log_debug(f"Reading: {path}")
-                json_name = name or path.name.split(".")[0]
-                json_contents = json.loads(path.read_text(self.encoding or "utf-8"))
-
-            elif isinstance(path, BytesIO):
-                json_name = name or path.name.split(".")[0]
-                log_debug(f"Reading uploaded file: {json_name}")
+                json_name = name or path.stem
+                json_contents = json.loads(path.read_text(encoding=self.encoding or "utf-8"))
+            else:
+                log_debug(f"Reading uploaded file: {getattr(path, 'name', 'BytesIO')}")
+                json_name = name or getattr(path, "name", "json_file").split(".")[0]
                 path.seek(0)
                 json_contents = json.load(path)
-
-            else:
-                raise ValueError("Unsupported file type. Must be Path or BytesIO.")
 
             if isinstance(json_contents, dict):
                 json_contents = [json_contents]
@@ -72,6 +67,8 @@ class JSONReader(Reader):
                     chunked_documents.extend(self.chunk_document(document))
                 return chunked_documents
             return documents
+        except (FileNotFoundError, ValueError, json.JSONDecodeError):
+            raise
         except Exception as e:
             log_error(f"Error reading: {path}: {e}")
             raise

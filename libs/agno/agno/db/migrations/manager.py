@@ -66,13 +66,13 @@ class MigrationManager:
                 current_version = packaging_version.parse(self.db.get_latest_schema_version(table_name))
 
             if current_version is None:
-                log_warning(f"Skipping up migration: No version found for table {table_name}.")
+                log_info(f"Skipping migration: No version found for table {table_name}.")
                 continue
 
             # If the target version is less or equal to the current version, no migrations needed
             if _target_version <= current_version and not force:
-                log_warning(
-                    f"Skipping up migration: the version of table '{table_name}' ({current_version}) is less or equal to the target version ({_target_version})."
+                log_info(
+                    f"Skipping migration: the version of table '{table_name}' ({current_version}) is less or equal to the target version ({_target_version})."
                 )
                 continue
 
