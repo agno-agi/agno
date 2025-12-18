@@ -1,6 +1,20 @@
+"""
+Self-Learning Agent
+====================
+GPU Poor Continuous Learning: System-level learning without fine-tuning.
+
+The loop:
+1. Search knowledge base for relevant learnings
+2. Gather fresh information (search, APIs)
+3. Synthesize answer using both
+4. Identify reusable insight
+5. Save with user approval
+
+Built with Agno + Gemini 3 Flash
+"""
+
 import json
 from datetime import datetime, timezone
-from typing import Optional
 
 from agno.agent import Agent
 from agno.knowledge.embedder.google import GeminiEmbedder
@@ -11,10 +25,12 @@ from agno.tools.parallel import ParallelTools
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.log import logger
 from agno.vectordb.pgvector import PgVector, SearchType
+
 from db import db_url, gemini_agents_db
 
+
 # ============================================================================
-# Knowledge base: stores successful learnings
+# Knowledge Base: stores successful learnings
 # ============================================================================
 agent_knowledge = Knowledge(
     name="Agent Learnings",
@@ -30,118 +46,137 @@ agent_knowledge = Knowledge(
 
 
 # ============================================================================
-# Tool: save a learning snapshot
+# Tool: Save Learning
 # ============================================================================
 def save_learning(
     title: str,
     context: str,
     learning: str,
-    confidence: Optional[str] = "medium",
-    type: Optional[str] = "rule",
+    confidence: str = "medium",
+    type: str = "rule",
 ) -> str:
     """
     Save a reusable learning from a successful run.
 
     Args:
-        title: Short descriptive title
-        context: When / why this learning applies
-        learning: The actual reusable insight
+        title: Short descriptive title (e.g., "API rate limit handling")
+        context: When/why this learning applies (e.g., "When calling external APIs...")
+        learning: The actual reusable insight (be specific and actionable)
         confidence: low | medium | high
         type: rule | heuristic | source | process | constraint
-    """
 
+    Returns:
+        Status message indicating what happened
+    """
+    # Validate inputs
+    if not title or not title.strip():
+        return "Cannot save: title is required"
+    if not learning or not learning.strip():
+        return "Cannot save: learning content is required"
+    if len(learning.strip()) < 20:
+        return "Cannot save: learning is too short to be useful. Be more specific."
+    if confidence not in ("low", "medium", "high"):
+        return f"Cannot save: confidence must be low|medium|high, got '{confidence}'"
+    if type not in ("rule", "heuristic", "source", "process", "constraint"):
+        return f"Cannot save: type must be rule|heuristic|source|process|constraint, got '{type}'"
+
+    # Build the learning payload
     payload = {
         "title": title.strip(),
-        "context": context.strip(),
+        "context": context.strip() if context else "",
         "learning": learning.strip(),
         "confidence": confidence,
         "type": type,
         "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
 
-    logger.info(f"Saving learning: {payload['title']}")
+    # Save to knowledge base
+    try:
+        agent_knowledge.add_content(
+            name=payload["title"],
+            text_content=json.dumps(payload, ensure_ascii=False),
+            reader=TextReader(),
+            skip_if_exists=True,
+        )
+    except Exception as e:
+        logger.error(f"[Learning] Failed to save: {e}")
+        return f"Failed to save learning: {e}"
 
-    agent_knowledge.add_content(
-        name=payload["title"],
-        text_content=json.dumps(payload, ensure_ascii=False),
-        reader=TextReader(),
-        skip_if_exists=True,
-    )
-
-    return "Learning saved"
+    logger.info(f"[Learning] Saved: {payload['title']}")
+    return f"Learning saved: '{payload['title']}'"
 
 
 # ============================================================================
 # Instructions
 # ============================================================================
 instructions = """\
-You are a self-learning agent.
+You are a Self-Learning Agent that improves over time by capturing and reusing successful patterns.
 
-You have access to:
-- Parallel web search tools for broad, up-to-date information
-- YFinance tools for structured market and company data
-- A knowledge base of prior successful learnings
-- A tool to save new reusable learnings
+You build institutional memory: successful insights get saved to a knowledge base and retrieved on future runs. The model stays fixed, but the system gets smarter.
 
-Your objective:
-Produce the best possible answer by combining fresh external data with prior learnings, and continuously improve future runs by capturing what worked.
+## Tools
 
-Primary loop:
-1) Retrieve relevant learnings from the knowledge base.
-2) Gather new information when needed:
-   - Use parallel web search for open-ended or current topics.
-   - Use YFinance for market data, financials, and time series.
-3) Synthesize a high-quality answer using both sources.
-4) Identify any reusable insight that clearly improved the outcome.
-5) Ask the user whether that insight should be saved.
-6) Only save learnings with explicit user approval.
+| Tool | Use For |
+|------|---------|
+| search_knowledge | Retrieve relevant prior learnings |
+| parallel_search | Web search, current information |
+| yfinance | Market data, financials, company info |
+| save_learning | Store a reusable insight (requires user approval) |
 
-What counts as a “learning”:
-- A rule of thumb
-- A decision heuristic
-- A reliable data source pattern
-- A repeatable analysis step
-- A constraint or guardrail that improved accuracy
+## Workflow
 
-Guidelines:
-- Prefer small, concrete, reusable learnings.
-- Write learnings so they can be applied in a different but related context.
-- Do not save raw outputs, long summaries, or one-off facts.
-- Do not save speculative, weakly supported, or low-confidence insights.
+For every request:
 
-Tool usage:
-- Use parallel search when answers depend on current information or multiple perspectives.
-- Use YFinance when financial data, pricing, performance, or comparisons are needed.
-- Cite or reference sources implicitly through better synthesis rather than long quotations.
+1. SEARCH KNOWLEDGE FIRST — Always call `search_knowledge` before anything else. Extract key concepts from the user's query and search for relevant learnings. If nothing relevant is found, proceed without prior context.
+2. RESEARCH — Use `parallel_search` or `yfinance` to gather fresh information as needed.
+3. SYNTHESIZE — Combine prior learnings (if any) with new information. When applying a prior learning, reference it naturally: "Based on a previous pattern..." or "A prior learning suggests..."
+4. REFLECT — After answering, consider: did this task reveal a reusable insight? Most queries will not produce a learning. Only flag genuine discoveries.
+5. PROPOSE (if applicable) — If you identified something worth saving, propose it at the end of your response. Never call save_learning without explicit user approval.
 
-Output:
-- Deliver a clear, well-structured answer.
-- If a reusable learning emerges, explicitly propose it at the end and ask for permission to save it.
+## What Makes a Good Learning
 
-+--------------------
-LEARNING
-+--------------------
-When you identify a reusable learning, as the user:
+A learning is worth saving if it is:
+- Specific: "When comparing ETFs, check expense ratio AND tracking error" not "Look at ETF metrics"
+- Actionable: Can be directly applied in future similar queries
+- Generalizable: Useful beyond this specific question
 
-## Proposed reusable learning to save (needs your approval)
+Do not save: raw facts, one-off answers, summaries, speculation, or anything unlikely to recur.
 
-I'd like to save the following learning:
+Most tasks will not produce a learning. That's expected.
 
-{proposed_learning}
+## Proposing a Learning
 
-Would you like me to save this as a {type}?\
+When you have a genuine insight worth saving, end your response with:
+
+---
+Proposed Learning
+
+Title: [concise title]
+Type: rule | heuristic | source | process | constraint
+Context: [when to apply this]
+Learning: [the insight — specific and actionable]
+
+Save this? (yes/no)
+---
+
+If the user declines, acknowledge and move on. Do not re-propose the same learning.
 """
 
+
 # ============================================================================
-# Create the agent
+# Create the Agent
 # ============================================================================
 self_learning_agent = Agent(
-    name="Self Learning Agent",
+    name="Self-Learning Agent",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     db=gemini_agents_db,
     knowledge=agent_knowledge,
-    tools=[ParallelTools(), YFinanceTools(), save_learning],
+    tools=[
+        ParallelTools(),
+        YFinanceTools(),
+        save_learning,
+    ],
     # Enable the agent to remember user information and preferences
     enable_agentic_memory=True,
     # Enable the agent to search the knowledge base (i.e previous research snapshots)
@@ -156,3 +191,37 @@ self_learning_agent = Agent(
     read_chat_history=True,
     markdown=True,
 )
+
+
+# ============================================================================
+# CLI
+# ============================================================================
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) > 1:
+        query = " ".join(sys.argv[1:])
+        self_learning_agent.print_response(query, stream=True)
+    else:
+        print("=" * 60)
+        print("🧠 Self-Learning Agent")
+        print("   GPU Poor Continuous Learning with Gemini 3 Flash")
+        print("=" * 60)
+        print("\nType 'quit' to exit.\n")
+
+        while True:
+            try:
+                user_input = input("You: ").strip()
+                if user_input.lower() in ("quit", "exit", "q"):
+                    print("\n👋 Goodbye!")
+                    break
+                if not user_input:
+                    continue
+
+                print()
+                self_learning_agent.print_response(user_input, stream=True)
+                print()
+
+            except KeyboardInterrupt:
+                print("\n\n👋 Goodbye!")
+                break
