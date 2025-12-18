@@ -2305,7 +2305,7 @@ class Agent:
         cultural_knowledge_task = None
 
         # 1. Read or create session. Reads from the database if provided.
-        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+        agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
 
         # Set up retry logic
         num_attempts = self.retries + 1
