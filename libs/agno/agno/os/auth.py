@@ -1,3 +1,4 @@
+from os import getenv
 from typing import List, Set
 
 from fastapi import Depends, HTTPException, Request
@@ -10,18 +11,43 @@ from agno.os.settings import AgnoAPISettings
 security = HTTPBearer(auto_error=False)
 
 
+def _is_jwt_configured() -> bool:
+    """Check if JWT authentication is configured via environment variables.
+
+    This covers cases where JWT middleware is set up manually (not via authorization=True).
+    """
+    return bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+
+
 def get_authentication_dependency(settings: AgnoAPISettings):
     """
     Create an authentication dependency function for FastAPI routes.
 
+    This handles security key authentication (OS_SECURITY_KEY).
+    When JWT authorization is enabled (via authorization=True, JWT environment variables,
+    or manually added JWT middleware), this dependency is skipped as JWT middleware
+    handles authentication.
+
     Args:
-        settings: The API settings containing the security key
+        settings: The API settings containing the security key and authorization flag
 
     Returns:
         A dependency function that can be used with FastAPI's Depends()
     """
 
-    async def auth_dependency(credentials: HTTPAuthorizationCredentials = Depends(security)) -> bool:
+    async def auth_dependency(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)) -> bool:
+        # If JWT authorization is enabled via settings (authorization=True on AgentOS)
+        if settings and settings.authorization_enabled:
+            return True
+
+        # Check if JWT middleware has already handled authentication
+        if getattr(request.state, "authenticated", False):
+            return True
+
+        # Also skip if JWT is configured via environment variables
+        if _is_jwt_configured():
+            return True
+
         # If no security key is set, skip authentication entirely
         if not settings or not settings.os_security_key:
             return True
@@ -45,13 +71,24 @@ def validate_websocket_token(token: str, settings: AgnoAPISettings) -> bool:
     """
     Validate a bearer token for WebSocket authentication (legacy os_security_key method).
 
+    When JWT authorization is enabled (via authorization=True or JWT environment variables),
+    this validation is skipped as JWT middleware handles authentication.
+
     Args:
         token: The bearer token to validate
-        settings: The API settings containing the security key
+        settings: The API settings containing the security key and authorization flag
 
     Returns:
         True if the token is valid or authentication is disabled, False otherwise
     """
+    # If JWT authorization is enabled, skip security key validation
+    if settings and settings.authorization_enabled:
+        return True
+
+    # Also skip if JWT is configured via environment variables (manual JWT middleware setup)
+    if _is_jwt_configured():
+        return True
+
     # If no security key is set, skip authentication entirely
     if not settings or not settings.os_security_key:
         return True
