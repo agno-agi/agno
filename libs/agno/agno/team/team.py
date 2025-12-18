@@ -129,6 +129,7 @@ from agno.utils.events import (
     create_team_session_summary_completed_event,
     create_team_session_summary_started_event,
     create_team_tool_call_completed_event,
+    create_team_tool_call_error_event,
     create_team_tool_call_started_event,
     handle_event,
 )
@@ -3831,6 +3832,15 @@ class Team:
                                 events_to_skip=self.events_to_skip,
                                 store_events=self.store_events,
                             )
+                            if tool_call.tool_call_error:
+                                yield handle_event(  # type: ignore
+                                    create_team_tool_call_error_event(
+                                        from_run_response=run_response, tool=tool_call, error=str(tool_call.result)
+                                    ),
+                                    run_response,
+                                    events_to_skip=self.events_to_skip,
+                                    store_events=self.store_events,
+                                )
 
                 if stream_events:
                     if reasoning_step is not None:
