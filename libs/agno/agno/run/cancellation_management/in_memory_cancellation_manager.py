@@ -5,8 +5,8 @@ import threading
 from typing import Dict
 
 from agno.exceptions import RunCancelledException
-from agno.utils.log import logger
 from agno.run.cancellation_management.base import BaseRunCancellationManager
+from agno.utils.log import logger
 
 
 class InMemoryRunCancellationManager(BaseRunCancellationManager):
