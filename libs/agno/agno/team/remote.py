@@ -13,6 +13,7 @@ from agno.utils.agent import validate_input
 from agno.utils.remote import serialize_input
 
 if TYPE_CHECKING:
+    from agno.a2a import A2AClient
     from agno.os.routers.teams.schema import TeamResponse
 
 
@@ -22,30 +23,66 @@ class RemoteTeam(BaseRemote):
         base_url: str,
         team_id: str,
         timeout: float = 300.0,
+        protocol: Literal["agentos", "a2a"] = "agentos",
     ):
-        """Initialize AgentOSRunner for local or remote execution.
+        """Initialize RemoteTeam for remote execution.
 
-        For remote execution, provide base_url and team_id.
+        Supports two protocols:
+        - "agentos": Agno's proprietary AgentOS REST API (default)
+        - "a2a": A2A (Agent-to-Agent) protocol for cross-framework communication
 
         Args:
-            base_url: Base URL for remote AgentOS instance (e.g., "http://localhost:7777")
-            team_id: ID of remote team
+            base_url: Base URL for remote instance (e.g., "http://localhost:7777")
+            team_id: ID of remote team on the remote server
             timeout: Request timeout in seconds (default: 300)
+            protocol: Communication protocol - "agentos" (default) or "a2a"
         """
         super().__init__(base_url, timeout)
         self.team_id = team_id
+        self.protocol = protocol
+
+        # Initialize A2A client if using A2A protocol
+        self._a2a_client: Optional["A2AClient"] = None
+        if protocol == "a2a":
+            from agno.a2a import A2AClient
+
+            self._a2a_client = A2AClient(
+                base_url=base_url,
+                timeout=int(timeout),
+            )
 
     @property
     def id(self) -> str:
         return self.team_id
 
     async def get_team_config(self) -> "TeamResponse":
-        """Get the agent config from remote, cached after first access."""
+        """Get the team config from remote, cached after first access.
+
+        For A2A protocol, returns a minimal TeamResponse since A2A servers
+        don't expose the same config endpoints as AgentOS.
+        """
+        from agno.os.routers.teams.schema import TeamResponse
+
+        # A2A protocol doesn't have team config endpoint - return minimal response
+        if self.protocol == "a2a":
+            return TeamResponse(
+                id=self.team_id,
+                name=self.team_id,
+                description=f"A2A team: {self.team_id}",
+            )
+
         return await self.client.aget_team(self.team_id)
 
     @cached_property
     def _team_config(self) -> Optional[Any]:
-        """Get the agent config from remote, cached after first access."""
+        """Get the team config from remote, cached after first access.
+
+        Returns None for A2A protocol since A2A servers don't expose team config endpoints.
+        """
+        # A2A protocol doesn't have team config endpoint
+        if self.protocol == "a2a":
+            return None
+
         from agno.os.routers.teams.schema import TeamResponse
 
         config: TeamResponse = self.client.get_team(self.team_id)
@@ -225,6 +262,18 @@ class RemoteTeam(BaseRemote):
         serialized_input = serialize_input(validated_input)
         headers = self._get_auth_headers(auth_token)
 
+        # A2A protocol path
+        if self.protocol == "a2a":
+            return self._arun_a2a(
+                message=serialized_input,
+                stream=stream or False,
+                user_id=user_id,
+                context_id=session_id,  # Map session_id → context_id for A2A
+                images=images,
+                files=files,
+            )
+
+        # AgentOS protocol path (default)
         if stream:
             # Handle streaming response
             return self.get_client().run_team_stream(  # type: ignore
@@ -270,6 +319,79 @@ class RemoteTeam(BaseRemote):
                 headers=headers,
                 **kwargs,
             )
+
+    def _arun_a2a(
+        self,
+        message: str,
+        stream: bool,
+        user_id: Optional[str],
+        context_id: Optional[str],
+        images: Optional[Sequence[Image]],
+        files: Optional[Sequence[File]],
+    ) -> Union[TeamRunOutput, AsyncIterator[TeamRunOutputEvent]]:
+        """Execute via A2A protocol.
+
+        Args:
+            message: Serialized message string
+            stream: Whether to stream the response
+            user_id: User identifier
+            context_id: Session/context ID (maps to session_id)
+            images: Images to include
+            files: Files to include
+
+        Returns:
+            TeamRunOutput for non-streaming, AsyncIterator[TeamRunOutputEvent] for streaming
+        """
+        from agno.a2a.utils import map_stream_events_to_team_run_events, map_task_result_to_team_run_output
+
+        if self._a2a_client is None:
+            raise RuntimeError("A2A client not initialized. Use protocol='a2a' to enable A2A support.")
+
+        if stream:
+            # Return async generator for streaming
+            event_stream = self._a2a_client.stream_message(
+                agent_id=self.team_id,
+                message=message,
+                context_id=context_id,
+                user_id=user_id,
+                images=list(images) if images else None,
+                files=list(files) if files else None,
+            )
+            return map_stream_events_to_team_run_events(event_stream, team_id=self.team_id)
+        else:
+            # Return coroutine for non-streaming
+            return self._arun_a2a_send(
+                message=message,
+                user_id=user_id,
+                context_id=context_id,
+                images=images,
+                files=files,
+            )
+
+    async def _arun_a2a_send(
+        self,
+        message: str,
+        user_id: Optional[str],
+        context_id: Optional[str],
+        images: Optional[Sequence[Image]],
+        files: Optional[Sequence[File]],
+    ) -> TeamRunOutput:
+        """Send a non-streaming A2A message and convert response to TeamRunOutput."""
+        from agno.a2a.utils import map_task_result_to_team_run_output
+
+        if self._a2a_client is None:
+            raise RuntimeError("A2A client not initialized.")
+
+        async with self._a2a_client:
+            task_result = await self._a2a_client.send_message(
+                agent_id=self.team_id,
+                message=message,
+                context_id=context_id,
+                user_id=user_id,
+                images=list(images) if images else None,
+                files=list(files) if files else None,
+            )
+        return map_task_result_to_team_run_output(task_result, team_id=self.team_id)
 
     async def cancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
         """Cancel a running team execution.
