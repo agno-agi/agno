@@ -84,8 +84,6 @@ async def run_agent_as_judge_eval(
 
     agent_as_judge_eval = AgentAsJudgeEval(
         db=db,
-        agent=agent,
-        team=team,
         criteria=eval_run_input.criteria,
         scoring_strategy=eval_run_input.scoring_strategy or "binary",
         threshold=eval_run_input.threshold or 7,
