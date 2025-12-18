@@ -19,13 +19,21 @@ Phoenix Integration:
 """
 
 from agno.tracing.exporter import DatabaseSpanExporter
-from agno.tracing.phoenix import setup_phoenix, using_project
 from agno.tracing.setup import setup_tracing
 
 __all__ = [
     "DatabaseSpanExporter",
     "setup_tracing",
-    # Phoenix integration
-    "setup_phoenix",
-    "using_project",
 ]
+
+
+# imported lazily to avoid requiring opentelemetry dependencies
+def __getattr__(name: str):
+    """Lazy import for optional Phoenix integration."""
+    if name in ("setup_phoenix", "using_project"):
+        from agno.tracing.phoenix import setup_phoenix, using_project
+
+        if name == "setup_phoenix":
+            return setup_phoenix
+        return using_project
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
