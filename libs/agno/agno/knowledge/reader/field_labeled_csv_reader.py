@@ -107,16 +107,12 @@ class FieldLabeledCSVReader(Reader):
                     raise FileNotFoundError(f"Could not find file: {file}")
                 log_debug(f"Reading: {file}")
                 file_content = file.open(newline="", mode="r", encoding=self.encoding or "utf-8")
+                csv_name = name or file.stem
             else:
-                log_debug(f"Reading retrieved file: {name or file.name}")
+                log_debug(f"Reading retrieved file: {getattr(file, 'name', 'BytesIO')}")
                 file.seek(0)
-                file_content = io.StringIO(file.read().decode("utf-8"))  # type: ignore
-
-            csv_name = name or (
-                Path(file.name).stem
-                if isinstance(file, Path)
-                else (getattr(file, "name", "csv_file").split(".")[0] if hasattr(file, "name") else "csv_file")
-            )
+                file_content = io.StringIO(file.read().decode("utf-8"))
+                csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
 
             documents = []
 
@@ -189,16 +185,12 @@ class FieldLabeledCSVReader(Reader):
                 async with aiofiles.open(file, mode="r", encoding=self.encoding or "utf-8", newline="") as file_content:
                     content = await file_content.read()
                     file_content_io = io.StringIO(content)
+                csv_name = name or file.stem
             else:
-                log_debug(f"Reading retrieved file async: {name or file.name}")
+                log_debug(f"Reading retrieved file async: {getattr(file, 'name', 'BytesIO')}")
                 file.seek(0)
-                file_content_io = io.StringIO(file.read().decode("utf-8"))  # type: ignore
-
-            csv_name = name or (
-                Path(file.name).stem
-                if isinstance(file, Path)
-                else (getattr(file, "name", "csv_file").split(".")[0] if hasattr(file, "name") else "csv_file")
-            )
+                file_content_io = io.StringIO(file.read().decode("utf-8"))
+                csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
 
             file_content_io.seek(0)
             csv_reader = csv.reader(file_content_io, delimiter=delimiter, quotechar=quotechar)
