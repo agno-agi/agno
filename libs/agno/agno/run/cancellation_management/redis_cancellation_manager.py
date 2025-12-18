@@ -39,16 +39,19 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         redis_client: Sync Redis client for sync methods. Can be Redis or RedisCluster.
         async_redis_client: Async Redis client for async methods. Can be AsyncRedis or AsyncRedisCluster.
         key_prefix: Prefix for Redis keys. Defaults to "agno:run:cancellation:".
-        ttl_seconds: Optional TTL for keys in seconds. If set, keys will auto-expire.
-            Useful for cleanup if runs are abandoned without proper cleanup.
+        ttl_seconds: TTL for keys in seconds. Defaults to 86400 (1 day).
+            Keys auto-expire to prevent orphaned keys if runs aren't cleaned up.
+            Set to None to disable expiration.
     """
+
+    DEFAULT_TTL_SECONDS = 60 * 60 * 24  # 1 day
 
     def __init__(
         self,
         redis_client: Optional[Union[Redis, RedisCluster]] = None,
         async_redis_client: Optional[Union[AsyncRedis, AsyncRedisCluster]] = None,
         key_prefix: str = "agno:run:cancellation:",
-        ttl_seconds: Optional[int] = None,
+        ttl_seconds: Optional[int] = DEFAULT_TTL_SECONDS,
     ):
         if not _redis_available:
             raise ImportError(_redis_import_error)
