@@ -250,7 +250,7 @@ def attach_routes(
         "/agents/{id}/v1/tasks",
         operation_id="get_agent_task",
         name="get_agent_task",
-        description="Retrieve an A2A Task by its ID.",
+        description="Retrieve the list of A2A Tasks for the contextual Agent",
         response_model_exclude_none=True,
         responses={
             200: {
