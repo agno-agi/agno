@@ -320,8 +320,11 @@ class Claude(Model):
 
             return {"type": "json_schema", "schema": schema}
 
-        # Handle dict format (already in correct structure)
+        # Handle dict format
         elif isinstance(response_format, dict):
+            # Claude only supports json_schema, not json_object
+            if response_format.get("type") == "json_object":
+                return None
             return response_format
 
         return None
