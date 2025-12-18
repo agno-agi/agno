@@ -533,14 +533,18 @@ def build_panels_stream(
         if stats.get("tool_results_compressed", 0) > 0:
             tool_saved = stats.get("original_tool_tokens", 0) - stats.get("compressed_tool_tokens", 0)
             tool_orig = stats.get("original_tool_tokens", 1)
-            stats_text.append(f"Compressions: {stats['tool_results_compressed']}\n")
+            stats_text.append(f"Tool Results Compressed: {stats['tool_results_compressed']}\n")
+            if stats.get("tool_compressions", 0) > 1:
+                stats_text.append(f"Compression Batches: {stats['tool_compressions']}\n")
             stats_text.append(f"Saved: {tool_saved:,} tokens ({tool_saved / tool_orig * 100:.0f}%)\n")
 
         # Context compression stats
         if stats.get("context_compressions", 0) > 0:
             tokens_saved = stats.get("original_context_tokens", 0) - stats.get("compression_context_tokens", 0)
             original_tokens = stats.get("original_context_tokens", 1)
-            stats_text.append(f"Compressions: {stats['context_compressions']}\n")
+            stats_text.append(f"Messages Compressed: {stats.get('messages_compressed', 0)}\n")
+            if stats.get("context_compressions", 0) > 1:
+                stats_text.append(f"Compressions: {stats['context_compressions']}\n")
             stats_text.append(f"Saved: {tokens_saved:,} tokens ({tokens_saved / original_tokens * 100:.0f}%)\n")
 
         if stats_text.plain.strip():
@@ -942,14 +946,18 @@ def build_panels(
         if stats.get("tool_results_compressed", 0) > 0:
             tool_saved = stats.get("original_tool_tokens", 0) - stats.get("compressed_tool_tokens", 0)
             tool_orig = stats.get("original_tool_tokens", 1)
-            stats_text.append(f"Compressions: {stats['tool_results_compressed']}\n")
+            stats_text.append(f"Tool Results Compressed: {stats['tool_results_compressed']}\n")
+            if stats.get("tool_compressions", 0) > 1:
+                stats_text.append(f"Compression Batches: {stats['tool_compressions']}\n")
             stats_text.append(f"Saved: {tool_saved:,} tokens ({tool_saved / tool_orig * 100:.0f}%)\n")
 
         # Context compression stats
         if stats.get("context_compressions", 0) > 0:
             tokens_saved = stats.get("original_context_tokens", 0) - stats.get("compression_context_tokens", 0)
             original_tokens = stats.get("original_context_tokens", 1)
-            stats_text.append(f"Compressions: {stats['context_compressions']}\n")
+            stats_text.append(f"Messages Compressed: {stats.get('messages_compressed', 0)}\n")
+            if stats.get("context_compressions", 0) > 1:
+                stats_text.append(f"Compressions: {stats['context_compressions']}\n")
             stats_text.append(f"Saved: {tokens_saved:,} tokens ({tokens_saved / original_tokens * 100:.0f}%)\n")
 
         if stats_text.plain.strip():

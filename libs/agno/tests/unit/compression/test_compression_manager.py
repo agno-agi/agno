@@ -2,15 +2,20 @@ from agno.compression.manager import CompressionManager
 from agno.models.message import Message
 
 
-def test_default_count_limits():
+def test_default_tool_call_compression_count_limits():
     """Test default count-based limits when no token limit is set."""
-    cm = CompressionManager()
+    cm = CompressionManager(compress_tool_results=True)
     assert cm.compress_tool_results_limit == 3
+
+
+def test_default_context_compression_count_limits():
+    """Test default count-based limits when no token limit is set."""
+    cm = CompressionManager(compress_context=True)
     assert cm.compress_context_messages_limit == 10
 
 
-def test_count_limits_none_with_token_limit():
-    """Test that count limits are None when token limit is set."""
+def test_token_limit_none_with_token_limit():
+    """Test that token limit is None when token limit is set."""
     cm = CompressionManager(compress_token_limit=1000)
     assert cm.compress_tool_results_limit is None
     assert cm.compress_context_messages_limit is None

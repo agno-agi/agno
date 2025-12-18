@@ -35,15 +35,16 @@ class CompressionManager:
 
     def __post_init__(self):
         if self.compress_token_limit is None:
-            if self.compress_tool_results_limit is None:
+            # Set default limit to 3 if only compress_tool_results = True
+            if self.compress_tool_results and self.compress_tool_results_limit is None:
                 self.compress_tool_results_limit = 3
-            if self.compress_context_messages_limit is None:
+            # Set default limit to 10 if only compress_context = True
+            if self.compress_context and self.compress_context_messages_limit is None:
                 self.compress_context_messages_limit = 10
 
-        if self.compress_token_limit is not None and not self.compress_tool_results and not self.compress_context:
+        if not (self.compress_tool_results or self.compress_context):
             log_warning(
-                "compress_token_limit is set but no compression strategy is enabled. "
-                "Set compress_tool_results=True or compress_context=True."
+                "No compression strategy is enabled. Please set compress_tool_results=True or compress_context=True."
             )
 
         if self.compress_tool_results and self.compress_context:
@@ -130,14 +131,6 @@ class CompressionManager:
         messages: List[Message],
         compression_context: Optional[CompressedContext] = None,
     ) -> Optional[CompressedContext]:
-        """Compress conversation context while keeping current user + last tool batch.
-
-        Algorithm:
-        1. Find current user: role="user" AND from_history=False
-        2. Find last tool batch: scan from end for assistant with tool_calls (after current user)
-        3. Keep: system messages + current user + last tool batch
-        4. Compress: everything else (history + earlier tool batches)
-        """
         if len(messages) < 3:
             return None
 
@@ -224,6 +217,7 @@ class CompressionManager:
             compressed_tokens = count_text_tokens(response.content, self.model.id)
 
             self.stats["context_compressions"] = self.stats.get("context_compressions", 0) + 1
+            self.stats["messages_compressed"] = self.stats.get("messages_compressed", 0) + len(msgs_to_compress)
             self.stats["original_context_tokens"] = self.stats.get("original_context_tokens", 0) + original_tokens
             self.stats["compression_context_tokens"] = (
                 self.stats.get("compression_context_tokens", 0) + compressed_tokens
@@ -274,14 +268,6 @@ class CompressionManager:
         messages: List[Message],
         compression_context: Optional[CompressedContext] = None,
     ) -> Optional[CompressedContext]:
-        """Async: Compress conversation context while keeping current user + last tool batch.
-
-        Algorithm:
-        1. Find current user: role="user" AND from_history=False
-        2. Find last tool batch: scan from end for assistant with tool_calls (after current user)
-        3. Keep: system messages + current user + last tool batch
-        4. Compress: everything else (history + earlier tool batches)
-        """
         if len(messages) < 3:
             return None
 
@@ -368,6 +354,7 @@ class CompressionManager:
             compressed_tokens = count_text_tokens(response.content, self.model.id)
 
             self.stats["context_compressions"] = self.stats.get("context_compressions", 0) + 1
+            self.stats["messages_compressed"] = self.stats.get("messages_compressed", 0) + len(msgs_to_compress)
             self.stats["original_context_tokens"] = self.stats.get("original_context_tokens", 0) + original_tokens
             self.stats["compression_context_tokens"] = (
                 self.stats.get("compression_context_tokens", 0) + compressed_tokens
@@ -421,6 +408,7 @@ class CompressionManager:
             return
 
         log_info(f"Compressing {len(uncompressed_tools)} tool results")
+        self.stats["tool_compressions"] = self.stats.get("tool_compressions", 0) + 1
 
         for tool_msg in uncompressed_tools:
             original_content = str(tool_msg.content) if tool_msg.content else ""
@@ -474,6 +462,7 @@ class CompressionManager:
             return
 
         log_info(f"Compressing {len(uncompressed_tools)} tool results")
+        self.stats["tool_compressions"] = self.stats.get("tool_compressions", 0) + 1
 
         # Track original content before compression
         original_contents = [str(msg.content) if msg.content else "" for msg in uncompressed_tools]
