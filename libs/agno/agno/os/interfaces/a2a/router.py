@@ -3,7 +3,6 @@
 from typing import Optional, Union
 from uuid import uuid4
 
-
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRouter
@@ -25,14 +24,14 @@ except ImportError as e:
 import warnings
 
 from agno.agent import Agent
+from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.os.interfaces.a2a.utils import (
     map_a2a_request_to_run_input,
     map_run_output_to_a2a_task,
     map_run_schema_to_a2a_task,
     stream_a2a_response_with_error_handling,
 )
-from agno.db.base import AsyncBaseDb, BaseDb, SessionType
-from agno.os.utils import get_db, get_agent_by_id, get_request_kwargs, get_team_by_id, get_workflow_by_id
+from agno.os.utils import get_agent_by_id, get_db, get_request_kwargs, get_team_by_id, get_workflow_by_id
 from agno.team import Team
 from agno.workflow import Workflow
 
@@ -47,7 +46,6 @@ def attach_routes(
     if agents is None and teams is None and workflows is None:
         raise ValueError("Agents, Teams, or Workflows are required to setup the A2A interface.")
 
-    
     # ============= AGENTS =============
     @router.get("/agents/{id}/.well-known/agent-card.json")
     async def get_agent_card(request: Request, id: str):
@@ -247,6 +245,7 @@ def attach_routes(
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
+
     @router.get(
         "/agents/{id}/v1/tasks",
         operation_id="get_agent_task",
@@ -272,7 +271,7 @@ def attach_routes(
                                         "parts": [{"kind": "text", "text": "Response from agent"}],
                                     }
                                 ],
-                            }
+                            },
                         }
                     }
                 },
@@ -291,10 +290,10 @@ def attach_routes(
         request_id = request_body.get("id", "unknown")
         task_id = request_body.get("params", {}).get("task_id")
         session_id = request_body.get("params", {}).get("session_id")
-        
+
         if not task_id or not session_id:
             raise HTTPException(status_code=400, detail="task_id and session_id are required in params")
-        
+
         agent = get_agent_by_id(id, agents)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -348,7 +347,6 @@ def attach_routes(
         description="Cancel a running task for an Agent.",
     )
     async def cancel_task_agent(request: Request, id: str):
-        
         request_body = await request.json()
         task_id = request_body.get("id")
         if not agents:
@@ -564,6 +562,7 @@ def attach_routes(
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
+
     @router.get(
         "/teams/{id}/v1/tasks",
         operation_id="get_team_task",
@@ -589,7 +588,7 @@ def attach_routes(
                                         "parts": [{"kind": "text", "text": "Response from team"}],
                                     }
                                 ],
-                            }
+                            },
                         }
                     }
                 },
@@ -608,10 +607,10 @@ def attach_routes(
         request_id = request_body.get("id", "unknown")
         task_id = request_body.get("params", {}).get("task_id")
         session_id = request_body.get("params", {}).get("session_id")
-        
+
         if not task_id or not session_id:
             raise HTTPException(status_code=400, detail="task_id and session_id are required in params")
-        
+
         team = get_team_by_id(id, teams)
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -664,7 +663,10 @@ def attach_routes(
         name="cancel_team_task",
         description="Cancel a running task for a Team.",
     )
-    async def cancel_task_team(request: Request, id: str,):
+    async def cancel_task_team(
+        request: Request,
+        id: str,
+    ):
         request_body = await request.json()
         task_id = request_body.get("id")
         if not teams:
@@ -905,7 +907,7 @@ def attach_routes(
                                         "parts": [{"kind": "text", "text": "Response from workflow"}],
                                     }
                                 ],
-                            }
+                            },
                         }
                     }
                 },
@@ -924,10 +926,10 @@ def attach_routes(
         request_id = request_body.get("id", "unknown")
         task_id = request_body.get("params", {}).get("task_id")
         session_id = request_body.get("params", {}).get("session_id")
-        
+
         if not task_id or not session_id:
             raise HTTPException(status_code=400, detail="task_id and session_id are required in params")
-        
+
         workflow = get_workflow_by_id(id, workflows)
         if not workflow:
             raise HTTPException(status_code=404, detail="Workflow not found")
@@ -982,7 +984,7 @@ def attach_routes(
     )
     async def cancel_task_workflow(request: Request, id: str):
         request_body = await request.json()
-        task_id=request_body.get("id")
+        task_id = request_body.get("id")
         if not workflows:
             raise HTTPException(status_code=404, detail="Workflow not found")
         workflow = get_workflow_by_id(id, workflows)

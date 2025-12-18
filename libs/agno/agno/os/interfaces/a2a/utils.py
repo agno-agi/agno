@@ -5,6 +5,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from typing_extensions import AsyncIterator, List, Union
 
+from agno.os.schema import RunSchema, TeamRunSchema, WorkflowRunSchema
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
@@ -39,7 +40,7 @@ from agno.run.workflow import (
 from agno.run.workflow import StepCompletedEvent as WorkflowStepCompletedEvent
 from agno.run.workflow import StepErrorEvent as WorkflowStepErrorEvent
 from agno.run.workflow import StepStartedEvent as WorkflowStepStartedEvent
-from agno.os.schema import RunSchema, TeamRunSchema, WorkflowRunSchema
+
 try:
     from a2a.types import (
         Artifact,
@@ -283,9 +284,7 @@ def map_run_output_to_a2a_task(run_output: Union[RunOutput, WorkflowRunOutput]) 
     )
 
 
-def map_run_schema_to_a2a_task(
-    run_schema: Union[RunSchema, TeamRunSchema, WorkflowRunSchema]
-) -> Task:
+def map_run_schema_to_a2a_task(run_schema: Union[RunSchema, TeamRunSchema, WorkflowRunSchema]) -> Task:
     """Map a RunSchema, TeamRunSchema, or WorkflowRunSchema to an A2A Task.
 
     This function converts run data from the API layer schema format into an A2A Task
@@ -323,16 +322,16 @@ def map_run_schema_to_a2a_task(
         response_audio = getattr(run_schema, "response_audio", None)
         status = getattr(run_schema, "status", None)
         metrics = getattr(run_schema, "metrics", None)
-    
+
     # Build message history from run messages
     message_history: List[A2AMessage] = []
-    
+
     if messages:
         for msg in messages:
             if isinstance(msg, dict):
                 role = Role.agent if msg.get("role") == "assistant" else Role.user
                 parts: List[Part] = []
-                
+
                 if msg.get("content"):
                     parts.append(Part(root=TextPart(text=str(msg["content"]))))
 
@@ -342,7 +341,7 @@ def map_run_schema_to_a2a_task(
                     msg_metadata["metrics"] = msg["metrics"]
                 if msg.get("provider_data"):
                     msg_metadata["provider_data"] = msg["provider_data"]
-                
+
                 message_history.append(
                     A2AMessage(
                         message_id=msg.get("id") or str(uuid4()),
@@ -353,7 +352,7 @@ def map_run_schema_to_a2a_task(
                         metadata=msg_metadata if msg_metadata else None,
                     )
                 )
-    
+
     # If no messages but we have content, create a single agent message
     if not message_history and content:
         message_history.append(
@@ -365,19 +364,17 @@ def map_run_schema_to_a2a_task(
                 task_id=run_id,
             )
         )
-    
+
     # Handle artifacts (images, videos, audio, files)
     artifacts: List[Artifact] = []
-    
+
     if images:
         for idx, img in enumerate(images):
             artifact_parts = []
             img_url = img.get("url") if isinstance(img, dict) else getattr(img, "url", None)
             img_name = img.get("name") if isinstance(img, dict) else getattr(img, "name", None)
             if img_url:
-                artifact_parts.append(
-                    Part(root=FilePart(file=FileWithUri(uri=img_url, mime_type="image/*")))
-                )
+                artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=img_url, mime_type="image/*"))))
             artifacts.append(
                 Artifact(
                     artifact_id=f"image-{idx}",
@@ -386,16 +383,14 @@ def map_run_schema_to_a2a_task(
                     parts=artifact_parts,
                 )
             )
-    
+
     if videos:
         for idx, vid in enumerate(videos):
             artifact_parts = []
             vid_url = vid.get("url") if isinstance(vid, dict) else getattr(vid, "url", None)
             vid_name = vid.get("name") if isinstance(vid, dict) else getattr(vid, "name", None)
             if vid_url:
-                artifact_parts.append(
-                    Part(root=FilePart(file=FileWithUri(uri=vid_url, mime_type="video/*")))
-                )
+                artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=vid_url, mime_type="video/*"))))
             artifacts.append(
                 Artifact(
                     artifact_id=f"video-{idx}",
@@ -404,16 +399,14 @@ def map_run_schema_to_a2a_task(
                     parts=artifact_parts,
                 )
             )
-    
+
     if audio:
         for idx, aud in enumerate(audio):
             artifact_parts = []
             aud_url = aud.get("url") if isinstance(aud, dict) else getattr(aud, "url", None)
             aud_name = aud.get("name") if isinstance(aud, dict) else getattr(aud, "name", None)
             if aud_url:
-                artifact_parts.append(
-                    Part(root=FilePart(file=FileWithUri(uri=aud_url, mime_type="audio/*")))
-                )
+                artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=aud_url, mime_type="audio/*"))))
             artifacts.append(
                 Artifact(
                     artifact_id=f"audio-{idx}",
@@ -422,7 +415,7 @@ def map_run_schema_to_a2a_task(
                     parts=artifact_parts,
                 )
             )
-    
+
     if files:
         for idx, file in enumerate(files):
             artifact_parts = []
@@ -448,16 +441,18 @@ def map_run_schema_to_a2a_task(
                     parts=artifact_parts,
                 )
             )
-    
+
     # Handle response_audio for agent runs
     if response_audio:
-        aud_url = response_audio.get("url") if isinstance(response_audio, dict) else getattr(response_audio, "url", None)
-        aud_name = response_audio.get("name") if isinstance(response_audio, dict) else getattr(response_audio, "name", None)
+        aud_url = (
+            response_audio.get("url") if isinstance(response_audio, dict) else getattr(response_audio, "url", None)
+        )
+        aud_name = (
+            response_audio.get("name") if isinstance(response_audio, dict) else getattr(response_audio, "name", None)
+        )
         if aud_url:
             artifact_parts = []
-            artifact_parts.append(
-                Part(root=FilePart(file=FileWithUri(uri=aud_url, mime_type="audio/*")))
-            )
+            artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=aud_url, mime_type="audio/*"))))
             artifacts.append(
                 Artifact(
                     artifact_id="response-audio",
@@ -466,7 +461,7 @@ def map_run_schema_to_a2a_task(
                     parts=artifact_parts,
                 )
             )
-    
+
     # Determine task state based on run status
     task_state = TaskState.completed
     if status:
@@ -477,12 +472,12 @@ def map_run_schema_to_a2a_task(
             task_state = TaskState.canceled
         elif status_str in ["WORKING", "RUNNING", "IN_PROGRESS"]:
             task_state = TaskState.working
-    
+
     # Build task metadata from metrics if available
     task_metadata: Dict[str, Any] = {}
     if metrics:
         task_metadata["metrics"] = metrics if isinstance(metrics, dict) else metrics.to_dict()
-    
+
     # Build the task
     return Task(
         id=run_id,
