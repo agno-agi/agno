@@ -248,9 +248,121 @@ def attach_routes(
 
     @router.get(
         "/agents/{id}/v1/tasks",
+        operation_id="list_agent_tasks",
+        name="list_agent_tasks",
+        description="List all A2A Tasks for an Agent. If session_id is provided, returns tasks from that session only. Otherwise, returns tasks from all sessions for this agent.",
+        response_model_exclude_none=True,
+        responses={
+            200: {
+                "description": "Tasks retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "jsonrpc": "2.0",
+                            "id": "request-123",
+                            "result": [
+                                {
+                                    "id": "task-456",
+                                    "context_id": "context-789",
+                                    "status": {"state": "completed"},
+                                    "history": [
+                                        {
+                                            "message_id": "msg-1",
+                                            "role": "agent",
+                                            "parts": [{"kind": "text", "text": "Response from agent"}],
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    }
+                },
+            },
+            404: {"description": "Agent not found or no tasks found"},
+        },
+    )
+    async def list_agent_tasks(
+        request: Request,
+        id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+    ):
+        """List all tasks for an Agent. If session_id is provided in params, returns tasks from that session only."""
+        request_body = await request.json()
+        request_id = request_body.get("id", "unknown")
+        session_id = request_body.get("params", {}).get("session_id")
+
+        agent = get_agent_by_id(id, agents)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        db = agent.db
+        if not db:
+            raise HTTPException(status_code=404, detail="Database not configured")
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
+        if session_type is None:
+            session_type = SessionType.AGENT
+
+        all_runs = []
+
+        if session_id:
+            # Load specific session
+            if isinstance(db, AsyncBaseDb):
+                session = await db.get_session(
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+            else:
+                session = db.get_session(
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+
+            if not session:
+                raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+
+            runs = session.get("runs", [])
+            all_runs.extend(runs)
+        else:
+            # Load all sessions for this agent
+            if isinstance(db, AsyncBaseDb):
+                sessions, _ = await db.get_sessions(
+                    session_type=session_type,
+                    component_id=id,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+            else:
+                sessions, _ = db.get_sessions(  # type: ignore
+                    session_type=session_type,
+                    component_id=id,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+
+            for session in sessions:
+                runs = session.get("runs", [])
+                all_runs.extend(runs)
+
+        # Convert runs to A2A tasks
+        a2a_tasks = [map_run_schema_to_a2a_task(run) for run in all_runs]
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": a2a_tasks,
+        }
+
+    @router.get(
+        "/agents/{id}/v1/tasks/{task_id}",
         operation_id="get_agent_task",
         name="get_agent_task",
-        description="Retrieve the list of A2A Tasks for the contextual Agent",
+        description="Retrieve a specific A2A Task by ID for an Agent. Requires session_id in request body.",
         response_model_exclude_none=True,
         responses={
             200: {
@@ -279,20 +391,20 @@ def attach_routes(
             404: {"description": "Task not found"},
         },
     )
-    async def get_task_agent(
+    async def get_agent_task(
         request: Request,
         id: str,
+        task_id: str,
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
     ):
-        """Retrieve list of tasks. This endpoint returns an A2A Task object."""
+        """Retrieve a specific task by ID for an Agent. Requires session_id in request body."""
         request_body = await request.json()
         request_id = request_body.get("id", "unknown")
-        task_id = request_body.get("params", {}).get("task_id")
         session_id = request_body.get("params", {}).get("session_id")
 
-        if not task_id or not session_id:
-            raise HTTPException(status_code=400, detail="task_id and session_id are required in params")
+        if not session_id:
+            raise HTTPException(status_code=400, detail="session_id is required in params")
 
         agent = get_agent_by_id(id, agents)
         if not agent:
@@ -309,23 +421,23 @@ def attach_routes(
 
         if isinstance(db, AsyncBaseDb):
             session = await db.get_session(
-                session_id=session_id, 
-                session_type=session_type, 
-                user_id=user_id, 
+                session_id=session_id,
+                session_type=session_type,
+                user_id=user_id,
                 deserialize=False,
             )
         else:
             session = db.get_session(
-                session_id=session_id, 
-                session_type=session_type, 
-                user_id=user_id, 
+                session_id=session_id,
+                session_type=session_type,
+                user_id=user_id,
                 deserialize=False,
             )
 
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
-        runs = session.get("runs")  
+        runs = session.get("runs", [])
         if not runs:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
 
@@ -570,9 +682,121 @@ def attach_routes(
 
     @router.get(
         "/teams/{id}/v1/tasks",
+        operation_id="list_team_tasks",
+        name="list_team_tasks",
+        description="List all A2A Tasks for a Team. If session_id is provided, returns tasks from that session only. Otherwise, returns tasks from all sessions for this team.",
+        response_model_exclude_none=True,
+        responses={
+            200: {
+                "description": "Tasks retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "jsonrpc": "2.0",
+                            "id": "request-123",
+                            "result": [
+                                {
+                                    "id": "task-456",
+                                    "context_id": "context-789",
+                                    "status": {"state": "completed"},
+                                    "history": [
+                                        {
+                                            "message_id": "msg-1",
+                                            "role": "agent",
+                                            "parts": [{"kind": "text", "text": "Response from team"}],
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    }
+                },
+            },
+            404: {"description": "Team not found or no tasks found"},
+        },
+    )
+    async def list_team_tasks(
+        request: Request,
+        id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+    ):
+        """List all tasks for a Team. If session_id is provided in params, returns tasks from that session only."""
+        request_body = await request.json()
+        request_id = request_body.get("id", "unknown")
+        session_id = request_body.get("params", {}).get("session_id")
+
+        team = get_team_by_id(id, teams)
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+        db = team.db
+        if not db:
+            raise HTTPException(status_code=404, detail="Database not configured")
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
+        if session_type is None:
+            session_type = SessionType.TEAM
+
+        all_runs = []
+
+        if session_id:
+            # Load specific session
+            if isinstance(db, AsyncBaseDb):
+                session = await db.get_session(
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+            else:
+                session = db.get_session(
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+
+            if not session:
+                raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+
+            runs = session.get("runs", [])
+            all_runs.extend(runs)
+        else:
+            # Load all sessions for this team
+            if isinstance(db, AsyncBaseDb):
+                sessions, _ = await db.get_sessions(
+                    session_type=session_type,
+                    component_id=id,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+            else:
+                sessions, _ = db.get_sessions(  # type: ignore
+                    session_type=session_type,
+                    component_id=id,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+
+            for session in sessions:
+                runs = session.get("runs", [])
+                all_runs.extend(runs)
+
+        # Convert runs to A2A tasks
+        a2a_tasks = [map_run_output_to_a2a_task(run) for run in all_runs]
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": a2a_tasks,
+        }
+
+    @router.get(
+        "/teams/{id}/v1/tasks/{task_id}",
         operation_id="get_team_task",
         name="get_team_task",
-        description="Retrieve an A2A Task by its ID for a Team.",
+        description="Retrieve a specific A2A Task by ID for a Team. Requires session_id in request body.",
         response_model_exclude_none=True,
         responses={
             200: {
@@ -601,46 +825,53 @@ def attach_routes(
             404: {"description": "Task not found"},
         },
     )
-    async def get_task_team(
+    async def get_team_task(
         request: Request,
         id: str,
+        task_id: str,
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
     ):
-        """Retrieve a task by ID for a Team. This endpoint returns an A2A Task object."""
+        """Retrieve a specific task by ID for a Team. Requires session_id in request body."""
         request_body = await request.json()
         request_id = request_body.get("id", "unknown")
-        task_id = request_body.get("params", {}).get("task_id")
         session_id = request_body.get("params", {}).get("session_id")
 
-        if not task_id or not session_id:
-            raise HTTPException(status_code=400, detail="task_id and session_id are required in params")
+        if not session_id:
+            raise HTTPException(status_code=400, detail="session_id is required in params")
 
         team = get_team_by_id(id, teams)
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
         db = team.db
-        if not dbs:
+        if not db:
             raise HTTPException(status_code=404, detail="Database not configured")
 
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
 
         if session_type is None:
-            session_type = SessionType.AGENT
+            session_type = SessionType.TEAM
 
         if isinstance(db, AsyncBaseDb):
-            db = (AsyncBaseDb, db) # type: ignore
             session = await db.get_session(
-                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
+                session_id=session_id,
+                session_type=session_type,
+                user_id=user_id,
+                deserialize=False,
             )
         else:
-            session = db.get_session(session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False) #type: ignore
+            session = db.get_session(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=user_id,
+                deserialize=False,
+            )
 
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
-        runs = session.get("runs")  # type: ignore
+        runs = session.get("runs", [])
         if not runs:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
 
@@ -887,9 +1118,121 @@ def attach_routes(
 
     @router.get(
         "/workflows/{id}/v1/tasks",
+        operation_id="list_workflow_tasks",
+        name="list_workflow_tasks",
+        description="List all A2A Tasks for a Workflow. If session_id is provided, returns tasks from that session only. Otherwise, returns tasks from all sessions for this workflow.",
+        response_model_exclude_none=True,
+        responses={
+            200: {
+                "description": "Tasks retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "jsonrpc": "2.0",
+                            "id": "request-123",
+                            "result": [
+                                {
+                                    "id": "task-456",
+                                    "context_id": "context-789",
+                                    "status": {"state": "completed"},
+                                    "history": [
+                                        {
+                                            "message_id": "msg-1",
+                                            "role": "agent",
+                                            "parts": [{"kind": "text", "text": "Response from workflow"}],
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    }
+                },
+            },
+            404: {"description": "Workflow not found or no tasks found"},
+        },
+    )
+    async def list_workflow_tasks(
+        request: Request,
+        id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+    ):
+        """List all tasks for a Workflow. If session_id is provided in params, returns tasks from that session only."""
+        request_body = await request.json()
+        request_id = request_body.get("id", "unknown")
+        session_id = request_body.get("params", {}).get("session_id")
+
+        workflow = get_workflow_by_id(id, workflows)
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        db = workflow.db
+        if not db:
+            raise HTTPException(status_code=404, detail="Database not configured")
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
+        if session_type is None:
+            session_type = SessionType.WORKFLOW
+
+        all_runs = []
+
+        if session_id:
+            # Load specific session
+            if isinstance(db, AsyncBaseDb):
+                session = await db.get_session(
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+            else:
+                session = db.get_session(
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+
+            if not session:
+                raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+
+            runs = session.get("runs", [])
+            all_runs.extend(runs)
+        else:
+            # Load all sessions for this workflow
+            if isinstance(db, AsyncBaseDb):
+                sessions, _ = await db.get_sessions(
+                    session_type=session_type,
+                    component_id=id,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+            else:
+                sessions, _ = db.get_sessions(  # type: ignore
+                    session_type=session_type,
+                    component_id=id,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+
+            for session in sessions:
+                runs = session.get("runs", [])
+                all_runs.extend(runs)
+
+        # Convert runs to A2A tasks
+        a2a_tasks = [map_run_output_to_a2a_task(run) for run in all_runs]
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": a2a_tasks,
+        }
+
+    @router.get(
+        "/workflows/{id}/v1/tasks/{task_id}",
         operation_id="get_workflow_task",
         name="get_workflow_task",
-        description="Retrieve an A2A Task by its ID for a Workflow.",
+        description="Retrieve a specific A2A Task by ID for a Workflow. Requires session_id in request body.",
         response_model_exclude_none=True,
         responses={
             200: {
@@ -918,44 +1261,53 @@ def attach_routes(
             404: {"description": "Task not found"},
         },
     )
-    async def get_task_workflow(
+    async def get_workflow_task(
         request: Request,
         id: str,
+        task_id: str,
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
     ):
-        """Retrieve a task by ID for a Workflow. This endpoint returns an A2A Task object."""
+        """Retrieve a specific task by ID for a Workflow. Requires session_id in request body."""
         request_body = await request.json()
         request_id = request_body.get("id", "unknown")
-        task_id = request_body.get("params", {}).get("task_id")
         session_id = request_body.get("params", {}).get("session_id")
 
-        if not task_id or not session_id:
-            raise HTTPException(status_code=400, detail="task_id and session_id are required in params")
+        if not session_id:
+            raise HTTPException(status_code=400, detail="session_id is required in params")
 
         workflow = get_workflow_by_id(id, workflows)
         if not workflow:
             raise HTTPException(status_code=404, detail="Workflow not found")
         db = workflow.db
-        if not dbs:
+        if not db:
             raise HTTPException(status_code=404, detail="Database not configured")
 
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
 
         if session_type is None:
-            session_type = SessionType.AGENT
+            session_type = SessionType.WORKFLOW
 
         if isinstance(db, AsyncBaseDb):
-            db = (AsyncBaseDb, db) #type: ignore
-            session = await db.get_session(session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False) #type: ignore
+            session = await db.get_session(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=user_id,
+                deserialize=False,
+            )
         else:
-            session = db.get_session(session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False) # type: ignore
+            session = db.get_session(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=user_id,
+                deserialize=False,
+            )
 
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
-        runs = session.get("runs")  # type: ignore
+        runs = session.get("runs", [])
         if not runs:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
 
