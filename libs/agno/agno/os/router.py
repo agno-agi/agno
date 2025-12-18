@@ -243,13 +243,13 @@ def get_base_router(
                 current_version = db.get_latest_schema_version(db.session_table_name)
 
             if version.parse(target_version) > version.parse(current_version):  # type: ignore
-                MigrationManager(db).up(target_version)  # type: ignore
+                await MigrationManager(db).up(target_version)  # type: ignore
             else:
-                MigrationManager(db).down(target_version)  # type: ignore
+                await MigrationManager(db).down(target_version)  # type: ignore
 
         # If the target version is not provided, migrate to the latest version
         else:
-            MigrationManager(db).up()  # type: ignore
+            await MigrationManager(db).up()  # type: ignore
 
         return JSONResponse(
             content={"message": f"Database migrated successfully to version {target_version}"}, status_code=200
