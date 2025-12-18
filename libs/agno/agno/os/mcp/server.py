@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class MCPAuthMiddleware(BaseHTTPMiddleware):
-    """Authentication middleware for MCP server endpoints."""
+    """Simple Bearer token authentication middleware for MCP server endpoints."""
 
     def __init__(self, app, settings: Optional[AgnoAPISettings] = None):
         super().__init__(app)
@@ -67,7 +67,10 @@ class MCPAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-def get_mcp_server(os: "AgentOS", settings: Optional[AgnoAPISettings] = None) -> StarletteWithLifespan:
+def get_mcp_server(
+    os: "AgentOS",
+    settings: Optional[AgnoAPISettings] = None,
+) -> StarletteWithLifespan:
     """Create and configure the MCP server with all registered tools.
 
     Args:
@@ -95,8 +98,54 @@ def get_mcp_server(os: "AgentOS", settings: Optional[AgnoAPISettings] = None) ->
     # Create the HTTP app
     mcp_app = mcp.http_app(path="/mcp")
 
-    # Add authentication middleware if settings are provided
-    if settings:
+    # Store AgentOS reference and settings on app state for tools to access
+    mcp_app.state.agent_os = os
+    mcp_app.state.agent_os_id = os.id
+
+    # Add authentication middleware based on configuration
+    if os.authorization and os.authorization_config:
+        _add_jwt_middleware(mcp_app, os)
+    elif settings and settings.os_security_key:
         mcp_app.add_middleware(MCPAuthMiddleware, settings=settings)
 
     return mcp_app
+
+
+def _add_jwt_middleware(mcp_app: StarletteWithLifespan, os: "AgentOS") -> None:
+    """Add JWT middleware to the MCP app for full authorization support."""
+    from agno.os.middleware.jwt import JWTMiddleware, JWTValidator
+    from agno.utils.log import log_info
+
+    verify_audience = False
+    jwks_file = None
+    verification_keys = None
+    algorithm = "RS256"
+
+    if os.authorization_config:
+        algorithm = os.authorization_config.algorithm or "RS256"
+        verification_keys = os.authorization_config.verification_keys
+        jwks_file = os.authorization_config.jwks_file
+        verify_audience = os.authorization_config.verify_audience or False
+
+    log_info(f"Adding JWT middleware to MCP server (algorithm: {algorithm})")
+
+    # Create validator and store on app.state
+    jwt_validator = JWTValidator(
+        verification_keys=verification_keys,
+        jwks_file=jwks_file,
+        algorithm=algorithm,
+    )
+    mcp_app.state.jwt_validator = jwt_validator
+
+    # Store CORS allowed origins for error responses
+    mcp_app.state.cors_allowed_origins = os.cors_allowed_origins
+
+    # Add middleware to stack
+    mcp_app.add_middleware(
+        JWTMiddleware,
+        verification_keys=verification_keys,
+        jwks_file=jwks_file,
+        algorithm=algorithm,
+        authorization=os.authorization,
+        verify_audience=verify_audience,
+    )

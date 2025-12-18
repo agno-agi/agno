@@ -2,12 +2,13 @@
 
 from typing import TYPE_CHECKING, List, Optional, Union, cast
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from packaging import version
 
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb
 from agno.db.migrations.manager import MigrationManager
+from agno.os.mcp.auth import get_user_id_from_context, require_resource_access
 from agno.os.schema import (
     AgentSummaryResponse,
     ConfigResponse,
@@ -33,7 +34,6 @@ def register_core_tools(mcp: FastMCP, os: "AgentOS") -> None:
         name="get_agentos_config",
         description="Get the configuration of the AgentOS",
         tags={"core"},
-        output_schema=ConfigResponse.model_json_schema(),
     )  # type: ignore
     async def get_agentos_config() -> ConfigResponse:
         return ConfigResponse(
@@ -110,30 +110,72 @@ def register_core_tools(mcp: FastMCP, os: "AgentOS") -> None:
         description="Run an agent with a message and get the response",
         tags={"core"},
     )  # type: ignore
-    async def run_agent(agent_id: str, message: str) -> RunOutput:
+    async def run_agent(
+        ctx: Context,
+        agent_id: str,
+        message: str,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> RunOutput:
+        # Check access permission
+        require_resource_access(ctx, agent_id, "agents")
+
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise Exception(f"Agent {agent_id} not found")
-        return await agent.arun(message)
+
+        # Use user_id from context if not provided
+        if user_id is None:
+            user_id = get_user_id_from_context(ctx)
+
+        return await agent.arun(message, session_id=session_id, user_id=user_id)
 
     @mcp.tool(
         name="run_team",
         description="Run a team with a message and get the response",
         tags={"core"},
     )  # type: ignore
-    async def run_team(team_id: str, message: str) -> TeamRunOutput:
+    async def run_team(
+        ctx: Context,
+        team_id: str,
+        message: str,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> TeamRunOutput:
+        # Check access permission
+        require_resource_access(ctx, team_id, "teams")
+
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise Exception(f"Team {team_id} not found")
-        return await team.arun(message)
+
+        # Use user_id from context if not provided
+        if user_id is None:
+            user_id = get_user_id_from_context(ctx)
+
+        return await team.arun(message, session_id=session_id, user_id=user_id)
 
     @mcp.tool(
         name="run_workflow",
         description="Run a workflow with a message and get the response",
         tags={"core"},
     )  # type: ignore
-    async def run_workflow(workflow_id: str, message: str) -> WorkflowRunOutput:
+    async def run_workflow(
+        ctx: Context,
+        workflow_id: str,
+        message: str,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> WorkflowRunOutput:
+        # Check access permission
+        require_resource_access(ctx, workflow_id, "workflows")
+
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise Exception(f"Workflow {workflow_id} not found")
-        return await workflow.arun(message)
+
+        # Use user_id from context if not provided
+        if user_id is None:
+            user_id = get_user_id_from_context(ctx)
+
+        return await workflow.arun(message, session_id=session_id, user_id=user_id)

@@ -2,8 +2,9 @@
 
 from typing import TYPE_CHECKING, List
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
+from agno.os.mcp.auth import filter_workflows_by_access, is_authorization_enabled, require_resource_access
 from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import WorkflowSummaryResponse
 from agno.os.utils import get_workflow_by_id
@@ -20,13 +21,20 @@ def register_workflow_tools(mcp: FastMCP, os: "AgentOS") -> None:
         description="Get a list of all workflows configured in this OS instance",
         tags={"workflows"},
     )  # type: ignore
-    async def list_workflows() -> List[dict]:
+    async def list_workflows(ctx: Context) -> List[dict]:
         if os.workflows is None:
             return []
 
+        # Filter workflows based on user's scopes
+        accessible_workflows = filter_workflows_by_access(ctx, os.workflows)
+
+        # Check if user has any access at all
+        if is_authorization_enabled(ctx) and not accessible_workflows:
+            raise Exception("Insufficient permissions to access workflows")
+
         return [
             WorkflowSummaryResponse.from_workflow(workflow).model_dump(exclude_none=True)
-            for workflow in os.workflows
+            for workflow in accessible_workflows
         ]
 
     @mcp.tool(
@@ -34,7 +42,10 @@ def register_workflow_tools(mcp: FastMCP, os: "AgentOS") -> None:
         description="Get detailed configuration and step information for a specific workflow by ID",
         tags={"workflows"},
     )  # type: ignore
-    async def get_workflow(workflow_id: str) -> dict:
+    async def get_workflow(ctx: Context, workflow_id: str) -> dict:
+        # Check access permission
+        require_resource_access(ctx, workflow_id, "workflows")
+
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise Exception(f"Workflow {workflow_id} not found")
@@ -47,7 +58,10 @@ def register_workflow_tools(mcp: FastMCP, os: "AgentOS") -> None:
         description="Cancel a currently executing workflow run",
         tags={"workflows"},
     )  # type: ignore
-    async def cancel_workflow_run(workflow_id: str, run_id: str) -> dict:
+    async def cancel_workflow_run(ctx: Context, workflow_id: str, run_id: str) -> dict:
+        # Check access permission
+        require_resource_access(ctx, workflow_id, "workflows")
+
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise Exception(f"Workflow {workflow_id} not found")
@@ -56,4 +70,3 @@ def register_workflow_tools(mcp: FastMCP, os: "AgentOS") -> None:
             raise Exception("Failed to cancel workflow run")
 
         return {"message": f"Workflow run {run_id} cancelled successfully"}
-

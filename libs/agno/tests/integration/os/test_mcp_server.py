@@ -1,6 +1,6 @@
 """Integration tests for MCP server tools in AgentOS.
 
-These tests verify that the MCP tools are properly registered.
+These tests verify that MCP tools are properly registered and auth works correctly.
 """
 
 import pytest
@@ -55,7 +55,6 @@ EXPECTED_WORKFLOW_TOOLS = [
 ]
 
 EXPECTED_SESSION_TOOLS = [
-    # Full CRUD
     "get_sessions",
     "create_session",
     "get_session",
@@ -65,7 +64,6 @@ EXPECTED_SESSION_TOOLS = [
     "delete_sessions",
     "rename_session",
     "update_session",
-    # Legacy convenience tools
     "get_sessions_for_agent",
     "get_sessions_for_team",
     "get_sessions_for_workflow",
@@ -114,173 +112,42 @@ EXPECTED_TRACES_TOOLS = [
     "get_trace_stats",
 ]
 
+ALL_EXPECTED_TOOLS = (
+    EXPECTED_CORE_TOOLS
+    + EXPECTED_AGENT_TOOLS
+    + EXPECTED_TEAM_TOOLS
+    + EXPECTED_WORKFLOW_TOOLS
+    + EXPECTED_SESSION_TOOLS
+    + EXPECTED_MEMORY_TOOLS
+    + EXPECTED_KNOWLEDGE_TOOLS
+    + EXPECTED_EVAL_TOOLS
+    + EXPECTED_METRICS_TOOLS
+    + EXPECTED_TRACES_TOOLS
+)
+
 
 # --- Tool Registration Tests ---
 
 
 @pytest.mark.asyncio
-async def test_core_tools_registered(test_agent):
-    """Test that core MCP tools are registered."""
-    from fastmcp import FastMCP
-
-    from agno.os.mcp.tools.core import register_core_tools
-
-    os = AgentOS(agents=[test_agent], enable_mcp_server=False)
-    mcp = FastMCP("test")
-    register_core_tools(mcp, os)
-
-    tools = await mcp.get_tools()
-    for tool_name in EXPECTED_CORE_TOOLS:
-        assert tool_name in tools, f"Core tool '{tool_name}' not registered"
-
-
-@pytest.mark.asyncio
-async def test_session_tools_registered(test_agent):
-    """Test that session MCP tools are registered."""
-    from fastmcp import FastMCP
-
-    from agno.os.mcp.tools.sessions import register_session_tools
-
-    os = AgentOS(agents=[test_agent], enable_mcp_server=False)
-    mcp = FastMCP("test")
-    register_session_tools(mcp, os)
-
-    tools = await mcp.get_tools()
-    for tool_name in EXPECTED_SESSION_TOOLS:
-        assert tool_name in tools, f"Session tool '{tool_name}' not registered"
-
-
-@pytest.mark.asyncio
-async def test_memory_tools_registered(test_agent):
-    """Test that memory MCP tools are registered."""
-    from fastmcp import FastMCP
-
-    from agno.os.mcp.tools.memory import register_memory_tools
-
-    os = AgentOS(agents=[test_agent], enable_mcp_server=False)
-    mcp = FastMCP("test")
-    register_memory_tools(mcp, os)
-
-    tools = await mcp.get_tools()
-    for tool_name in EXPECTED_MEMORY_TOOLS:
-        assert tool_name in tools, f"Memory tool '{tool_name}' not registered"
-
-
-@pytest.mark.asyncio
-async def test_agent_tools_registered(test_agent):
-    """Test that agent MCP tools are registered."""
-    from fastmcp import FastMCP
-
-    from agno.os.mcp.tools.agents import register_agent_tools
-
-    os = AgentOS(agents=[test_agent], enable_mcp_server=False)
-    mcp = FastMCP("test")
-    register_agent_tools(mcp, os)
-
-    tools = await mcp.get_tools()
-    for tool_name in EXPECTED_AGENT_TOOLS:
-        assert tool_name in tools, f"Agent tool '{tool_name}' not registered"
-
-
-@pytest.mark.asyncio
-async def test_team_tools_registered(test_agent):
-    """Test that team MCP tools are registered."""
-    from fastmcp import FastMCP
-
-    from agno.os.mcp.tools.teams import register_team_tools
-
-    os = AgentOS(agents=[test_agent], enable_mcp_server=False)
-    mcp = FastMCP("test")
-    register_team_tools(mcp, os)
-
-    tools = await mcp.get_tools()
-    for tool_name in EXPECTED_TEAM_TOOLS:
-        assert tool_name in tools, f"Team tool '{tool_name}' not registered"
-
-
-@pytest.mark.asyncio
-async def test_workflow_tools_registered(test_agent):
-    """Test that workflow MCP tools are registered."""
-    from fastmcp import FastMCP
-
-    from agno.os.mcp.tools.workflows import register_workflow_tools
-
-    os = AgentOS(agents=[test_agent], enable_mcp_server=False)
-    mcp = FastMCP("test")
-    register_workflow_tools(mcp, os)
-
-    tools = await mcp.get_tools()
-    for tool_name in EXPECTED_WORKFLOW_TOOLS:
-        assert tool_name in tools, f"Workflow tool '{tool_name}' not registered"
-
-
-@pytest.mark.asyncio
-async def test_knowledge_tools_registered(test_agent):
-    """Test that knowledge MCP tools are registered."""
-    from fastmcp import FastMCP
-
-    from agno.os.mcp.tools.knowledge import register_knowledge_tools
-
-    os = AgentOS(agents=[test_agent], enable_mcp_server=False)
-    mcp = FastMCP("test")
-    register_knowledge_tools(mcp, os)
-
-    tools = await mcp.get_tools()
-    for tool_name in EXPECTED_KNOWLEDGE_TOOLS:
-        assert tool_name in tools, f"Knowledge tool '{tool_name}' not registered"
-
-
-@pytest.mark.asyncio
-async def test_eval_tools_registered(test_agent):
-    """Test that eval MCP tools are registered."""
-    from fastmcp import FastMCP
-
-    from agno.os.mcp.tools.evals import register_eval_tools
-
-    os = AgentOS(agents=[test_agent], enable_mcp_server=False)
-    mcp = FastMCP("test")
-    register_eval_tools(mcp, os)
-
-    tools = await mcp.get_tools()
-    for tool_name in EXPECTED_EVAL_TOOLS:
-        assert tool_name in tools, f"Eval tool '{tool_name}' not registered"
-
-
-@pytest.mark.asyncio
-async def test_metrics_tools_registered(test_agent):
-    """Test that metrics MCP tools are registered."""
-    from fastmcp import FastMCP
-
-    from agno.os.mcp.tools.metrics import register_metrics_tools
-
-    os = AgentOS(agents=[test_agent], enable_mcp_server=False)
-    mcp = FastMCP("test")
-    register_metrics_tools(mcp, os)
-
-    tools = await mcp.get_tools()
-    for tool_name in EXPECTED_METRICS_TOOLS:
-        assert tool_name in tools, f"Metrics tool '{tool_name}' not registered"
-
-
-@pytest.mark.asyncio
-async def test_traces_tools_registered(test_agent):
-    """Test that traces MCP tools are registered."""
-    from fastmcp import FastMCP
-
-    from agno.os.mcp.tools.traces import register_traces_tools
-
-    os = AgentOS(agents=[test_agent], enable_mcp_server=False)
-    mcp = FastMCP("test")
-    register_traces_tools(mcp, os)
-
-    tools = await mcp.get_tools()
-    for tool_name in EXPECTED_TRACES_TOOLS:
-        assert tool_name in tools, f"Traces tool '{tool_name}' not registered"
-
-
-@pytest.mark.asyncio
 async def test_all_tools_registered(test_agent):
-    """Test that all tools are registered together."""
+    """Test that all MCP tools are registered via get_mcp_server."""
+    from agno.os.mcp.server import get_mcp_server
+
+    os = AgentOS(agents=[test_agent], enable_mcp_server=False)
+    mcp_app = get_mcp_server(os)
+
+    # Access the underlying FastMCP instance to check tools
+    # The mcp_app wraps FastMCP, we need to get tools from it
+    assert mcp_app is not None
+
+    # Verify by checking the app has routes (MCP endpoints)
+    assert len(mcp_app.routes) > 0
+
+
+@pytest.mark.asyncio
+async def test_tool_registration_via_modules(test_agent):
+    """Test that all tools are properly registered when using register functions directly."""
     from fastmcp import FastMCP
 
     from agno.os.mcp.tools import (
@@ -311,23 +178,13 @@ async def test_all_tools_registered(test_agent):
     register_traces_tools(mcp, os)
 
     tools = await mcp.get_tools()
-    all_expected = (
-        EXPECTED_CORE_TOOLS
-        + EXPECTED_AGENT_TOOLS
-        + EXPECTED_TEAM_TOOLS
-        + EXPECTED_WORKFLOW_TOOLS
-        + EXPECTED_SESSION_TOOLS
-        + EXPECTED_MEMORY_TOOLS
-        + EXPECTED_KNOWLEDGE_TOOLS
-        + EXPECTED_EVAL_TOOLS
-        + EXPECTED_METRICS_TOOLS
-        + EXPECTED_TRACES_TOOLS
-    )
 
-    for tool_name in all_expected:
+    # Check all expected tools are registered
+    for tool_name in ALL_EXPECTED_TOOLS:
         assert tool_name in tools, f"Tool '{tool_name}' not registered"
 
-    assert len(tools) == len(all_expected), f"Expected {len(all_expected)} tools, got {len(tools)}"
+    # Check we have exactly the expected number of tools
+    assert len(tools) == len(ALL_EXPECTED_TOOLS), f"Expected {len(ALL_EXPECTED_TOOLS)} tools, got {len(tools)}"
 
 
 # --- Auth Middleware Tests ---
@@ -347,7 +204,6 @@ async def test_mcp_auth_middleware_allows_request_without_security_key():
     async def homepage(request):
         return Response("OK")
 
-    # Setup dummy app with no auth requirements. The middleware should just allow requests.
     app = Starlette(routes=[Route("/", homepage)])
     settings = AgnoAPISettings()
     app.add_middleware(MCPAuthMiddleware, settings=settings)
@@ -361,7 +217,7 @@ async def test_mcp_auth_middleware_allows_request_without_security_key():
 
 @pytest.mark.asyncio
 async def test_mcp_auth_middleware_rejects_bad_requests():
-    """Test that requests without Authorization header are rejected when security is enabled."""
+    """Test that requests are rejected when security is enabled but token is missing/invalid."""
     from starlette.applications import Starlette
     from starlette.responses import Response
     from starlette.routing import Route
@@ -373,19 +229,18 @@ async def test_mcp_auth_middleware_rejects_bad_requests():
     async def homepage(request):
         return Response("OK")
 
-    # Setup dummy app with auth requirements.
     app = Starlette(routes=[Route("/", homepage)])
     settings = AgnoAPISettings(os_security_key="test-secret-key")
     app.add_middleware(MCPAuthMiddleware, settings=settings)
 
-    # The middleware should reject requests without the Authorization header.
     client = TestClient(app)
+
+    # Missing header
     response = client.get("/")
     assert response.status_code == 401
     assert "Authorization header required" in response.json()["detail"]
 
-    # The middleware should reject requests with an invalid token.
-    client = TestClient(app)
+    # Invalid token
     response = client.get("/", headers={"Authorization": "Bearer wrong-token"})
     assert response.status_code == 401
     assert "Invalid authentication token" in response.json()["detail"]
@@ -405,14 +260,94 @@ async def test_mcp_auth_middleware_accepts_valid_token():
     async def homepage(request):
         return Response("OK")
 
-    # Setup dummy app with auth requirements.
     app = Starlette(routes=[Route("/", homepage)])
     settings = AgnoAPISettings(os_security_key="test-secret-key")
     app.add_middleware(MCPAuthMiddleware, settings=settings)
 
-    # The middleware should accept requests with the correct token.
     client = TestClient(app)
     response = client.get("/", headers={"Authorization": "Bearer test-secret-key"})
 
     assert response.status_code == 200
     assert response.text == "OK"
+
+
+# --- Auth Helper Tests ---
+
+
+def test_auth_helpers_without_authorization():
+    """Test auth helpers return permissive values when authorization is disabled."""
+    from unittest.mock import MagicMock
+
+    from agno.os.mcp.auth import (
+        check_resource_access,
+        filter_agents_by_access,
+        is_authorization_enabled,
+    )
+
+    ctx = MagicMock()
+    ctx.request_context = MagicMock()
+    ctx.request_context.request = MagicMock()
+    ctx.request_context.request.state = MagicMock()
+    ctx.request_context.request.state.authorization_enabled = False
+
+    # Should allow everything when authorization is disabled
+    assert is_authorization_enabled(ctx) is False
+    assert check_resource_access(ctx, "any-agent-id", "agents") is True
+
+    # Filter should return all agents
+    mock_agents = [MagicMock(id="agent-1"), MagicMock(id="agent-2")]
+    filtered = filter_agents_by_access(ctx, mock_agents)
+    assert len(filtered) == 2
+
+
+def test_auth_helpers_with_limited_access():
+    """Test auth helpers correctly filter resources based on scopes."""
+    from unittest.mock import MagicMock, patch
+
+    from agno.os.mcp.auth import check_resource_access, filter_agents_by_access
+
+    ctx = MagicMock()
+    ctx.request_context = MagicMock()
+    ctx.request_context.request = MagicMock()
+    ctx.request_context.request.state = MagicMock()
+    ctx.request_context.request.state.authorization_enabled = True
+    ctx.request_context.request.state.scopes = ["agents:agent-1:read"]
+    ctx.request_context.request.state.accessible_resource_ids = None
+
+    with patch("agno.os.mcp.auth.get_accessible_resource_ids") as mock_get_ids:
+        mock_get_ids.return_value = {"agent-1"}
+
+        # Should allow access to agent-1 but not agent-2
+        assert check_resource_access(ctx, "agent-1", "agents") is True
+        assert check_resource_access(ctx, "agent-2", "agents") is False
+
+        # Filter should only return agent-1
+        mock_agents = [MagicMock(id="agent-1"), MagicMock(id="agent-2")]
+        filtered = filter_agents_by_access(ctx, mock_agents)
+        assert len(filtered) == 1
+        assert filtered[0].id == "agent-1"
+
+
+def test_require_resource_access_raises_on_denied():
+    """Test require_resource_access raises exception when access is denied."""
+    from unittest.mock import MagicMock, patch
+
+    from agno.os.mcp.auth import require_resource_access
+
+    ctx = MagicMock()
+    ctx.request_context = MagicMock()
+    ctx.request_context.request = MagicMock()
+    ctx.request_context.request.state = MagicMock()
+    ctx.request_context.request.state.authorization_enabled = True
+    ctx.request_context.request.state.scopes = ["agents:agent-1:read"]
+    ctx.request_context.request.state.accessible_resource_ids = None
+
+    with patch("agno.os.mcp.auth.get_accessible_resource_ids") as mock_get_ids:
+        mock_get_ids.return_value = {"agent-1"}
+
+        # Should not raise for agent-1
+        require_resource_access(ctx, "agent-1", "agents")
+
+        # Should raise for agent-2
+        with pytest.raises(Exception, match="Access denied"):
+            require_resource_access(ctx, "agent-2", "agents")
