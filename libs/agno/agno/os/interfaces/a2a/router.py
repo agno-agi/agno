@@ -131,6 +131,7 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
+        task_id = request_body.get("id")
         user_id = request.headers.get("X-User-ID")
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
@@ -145,6 +146,7 @@ def attach_routes(
                 files=run_input.files,
                 session_id=context_id,
                 user_id=user_id,
+                run_id=task_id,
                 **kwargs,
             )
 
@@ -216,6 +218,7 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
+        task_id = request_body.get("id")
         user_id = request.headers.get("X-User-ID")
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
@@ -230,6 +233,7 @@ def attach_routes(
                 files=run_input.files,
                 session_id=context_id,
                 user_id=user_id,
+                run_id=task_id,
                 stream=True,
                 stream_events=True,
                 **kwargs,
@@ -337,6 +341,31 @@ def attach_routes(
             "result": a2a_task,
         }
 
+    @router.post(
+        "/agents/{id}/v1/tasks:cancel",
+        operation_id="cancel_agent_task",
+        name="cancel_agent_task",
+        description="Cancel a running task for an Agent.",
+    )
+    async def cancel_task_agent(request: Request, id: str):
+        
+        request_body = await request.json()
+        task_id = request_body.get("id")
+        if not agents:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        agent = get_agent_by_id(id, agents)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        if not agent.cancel_run(run_id=task_id):
+            raise HTTPException(status_code=500, detail="Failed to cancel run")
+
+        return {
+            "jsonrpc": "2.0",
+            "id": request_body.get("id", "unknown"),
+            "result": {},
+        }
+
     # ============= TEAMS =============
     @router.get("/teams/{id}/.well-known/agent-card.json")
     async def get_team_card(request: Request, id: str):
@@ -419,6 +448,7 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
+        task_id = request_body.get("id")
         user_id = request.headers.get("X-User-ID")
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
@@ -433,6 +463,7 @@ def attach_routes(
                 files=run_input.files,
                 session_id=context_id,
                 user_id=user_id,
+                run_id=task_id,
                 **kwargs,
             )
 
@@ -504,6 +535,7 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
+        task_id = request_body.get("id")
         user_id = request.headers.get("X-User-ID")
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
@@ -518,6 +550,7 @@ def attach_routes(
                 files=run_input.files,
                 session_id=context_id,
                 user_id=user_id,
+                run_id=task_id,
                 stream=True,
                 stream_events=True,
                 **kwargs,
@@ -531,7 +564,6 @@ def attach_routes(
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
-
     @router.get(
         "/teams/{id}/v1/tasks",
         operation_id="get_team_task",
@@ -626,6 +658,29 @@ def attach_routes(
             "result": a2a_task,
         }
 
+    @router.post(
+        "/teams/{id}/v1/tasks:cancel",
+        operation_id="cancel_team_task",
+        name="cancel_team_task",
+        description="Cancel a running task for a Team.",
+    )
+    async def cancel_task_team(request: Request, id: str,):
+        request_body = await request.json()
+        task_id = request_body.get("id")
+        if not teams:
+            raise HTTPException(status_code=404, detail="Team not found")
+        team = get_team_by_id(id, teams)
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        if not team.cancel_run(run_id=task_id):
+            raise HTTPException(status_code=500, detail="Failed to cancel run")
+        return {
+            "jsonrpc": "2.0",
+            "id": request_body.get("id", "unknown"),
+            "result": {},
+        }
+
     # ============= WORKFLOWS =============
     @router.get("/workflows/{id}/.well-known/agent-card.json")
     async def get_workflow_card(request: Request, id: str):
@@ -708,6 +763,7 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
+        task_id = request_body.get("id")
         user_id = request.headers.get("X-User-ID")
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
@@ -721,6 +777,7 @@ def attach_routes(
                 audio=list(run_input.audios) if run_input.audios else None,
                 files=list(run_input.files) if run_input.files else None,
                 session_id=context_id,
+                run_id=task_id,
                 user_id=user_id,
                 **kwargs,
             )
@@ -793,6 +850,7 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
+        task_id = request_body.get("id")
         user_id = request.headers.get("X-User-ID")
         if not user_id:
             user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
@@ -806,6 +864,7 @@ def attach_routes(
                 audio=list(run_input.audios) if run_input.audios else None,
                 files=list(run_input.files) if run_input.files else None,
                 session_id=context_id,
+                run_id=task_id,
                 user_id=user_id,
                 stream=True,
                 stream_events=True,
@@ -913,6 +972,29 @@ def attach_routes(
             "jsonrpc": "2.0",
             "id": request_id,
             "result": a2a_task,
+        }
+
+    @router.post(
+        "/workflows/{id}/v1/tasks:cancel",
+        operation_id="cancel_workflow_task",
+        name="cancel_workflow_task",
+        description="Cancel a running task for a Workflow.",
+    )
+    async def cancel_task_workflow(request: Request, id: str):
+        request_body = await request.json()
+        task_id=request_body.get("id")
+        if not workflows:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        workflow = get_workflow_by_id(id, workflows)
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+
+        if not workflow.cancel_run(run_id=task_id):
+            raise HTTPException(status_code=500, detail="Failed to cancel run")
+        return {
+            "jsonrpc": "2.0",
+            "id": request_body.get("id", "unknown"),
+            "result": {},
         }
 
     # ============= DEPRECATED ENDPOINTS =============
