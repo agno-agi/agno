@@ -766,7 +766,7 @@ def handle_event(
     store_events: bool = False,
 ) -> Union[RunOutputEvent, TeamRunOutputEvent]:
     # We only store events that are not run_response_content events
-    _events_to_skip: List[str] = [e.value for e in events_to_skip] if events_to_skip else []
+    _events_to_skip: List[str] = [event.value for event in events_to_skip] if events_to_skip else []    
     if store_events and event.event not in _events_to_skip:
         if run_response.events is None:
             run_response.events = []
