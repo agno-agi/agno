@@ -1141,6 +1141,7 @@ class Model(ABC):
         # Add usage metrics if provided
         if provider_response.response_usage is not None:
             assistant_message.metrics += provider_response.response_usage
+            assistant_message.metrics.calculate_cost(self.id)
 
         return assistant_message
 
@@ -1596,6 +1597,7 @@ class Model(ABC):
             assistant_message.role = stream_data.response_role
         if stream_data.response_metrics is not None:
             assistant_message.metrics = stream_data.response_metrics
+            assistant_message.metrics.calculate_cost(self.id)
         if stream_data.response_content:
             assistant_message.content = stream_data.response_content
         if stream_data.response_reasoning_content:

@@ -1,6 +1,7 @@
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Optional
 
+from agno.utils.pricing import PricingConfig
 from agno.utils.timer import Timer
 
 
@@ -25,12 +26,17 @@ class Metrics:
     # Tokens employed in reasoning
     reasoning_tokens: int = 0
 
+    # -- Cost Estimates --
+    input_cost: Optional[float] = None
+    output_cost: Optional[float] = None
+    cache_read_cost: Optional[float] = None
+    cache_write_cost: Optional[float] = None
+    total_cost: Optional[float] = None
+    currency: Optional[str] = None
+
     # Time metrics
-    # Internal timer utility for tracking execution time
     timer: Optional[Timer] = None
-    # Time from run start to first token generation, in seconds
     time_to_first_token: Optional[float] = None
-    # Total run time, in seconds
     duration: Optional[float] = None
 
     # Provider-specific metrics
@@ -39,20 +45,60 @@ class Metrics:
     # Any additional metrics
     additional_metrics: Optional[dict] = None
 
+    def calculate_cost(self, model_id: str):
+        """Populate cost metrics based on the PricingConfig registry."""
+        costs = PricingConfig.calculate_cost(
+            model=model_id,
+            input_tokens=self.input_tokens,
+            output_tokens=self.output_tokens,
+            cache_read_tokens=self.cache_read_tokens,
+            cache_write_tokens=self.cache_write_tokens,
+        )
+        if costs:
+            self.input_cost = costs["input_cost"]
+            self.output_cost = costs["output_cost"]
+            self.cache_read_cost = costs["cache_read_cost"]
+            self.cache_write_cost = costs["cache_write_cost"]
+            self.total_cost = costs["total_cost"]
+            self.currency = costs["currency"]
+
     def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
-        # Remove the timer util if present
         metrics_dict.pop("timer", None)
-        metrics_dict = {
-            k: v
-            for k, v in metrics_dict.items()
-            if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0)
-        }
-        return metrics_dict
+
+        cleaned_dict = {}
+        for k, v in metrics_dict.items():
+            # Skip None, Zero values (except 0 if it's not a boolean check), or empty dicts
+            if (
+                v is not None
+                and (not isinstance(v, (int, float)) or v != 0)
+                and (not isinstance(v, dict) or len(v) > 0)
+            ):
+                # Format costs to avoid scientific notation (e.g. 2.6e-05 -> "0.000026")
+                if "cost" in k and isinstance(v, float):
+                    cleaned_dict[k] = f"{v:.10f}".rstrip("0").rstrip(".")
+                else:
+                    cleaned_dict[k] = v
+        if self.total_cost is not None and self.currency:
+            cleaned_dict["currency"] = self.currency
+        return cleaned_dict
+
+    def _sum_optional_floats(self, val1: Optional[float], val2: Optional[float]) -> Optional[float]:
+        """Helper to sum costs safely."""
+        if val1 is None and val2 is None:
+            return None
+        return (val1 or 0.0) + (val2 or 0.0)
 
     def __add__(self, other: "Metrics") -> "Metrics":
-        # Create new instance of the same type as self
         result_class = type(self)
+
+        # Calculate sums for costs
+        new_input_cost = self._sum_optional_floats(self.input_cost, other.input_cost)
+        new_output_cost = self._sum_optional_floats(self.output_cost, other.output_cost)
+        new_cache_read_cost = self._sum_optional_floats(self.cache_read_cost, other.cache_read_cost)
+        new_cache_write_cost = self._sum_optional_floats(self.cache_write_cost, other.cache_write_cost)
+        new_total_cost = self._sum_optional_floats(self.total_cost, other.total_cost)
+        new_currency = self.currency or other.currency
         result = result_class(
             input_tokens=self.input_tokens + other.input_tokens,
             output_tokens=self.output_tokens + other.output_tokens,
@@ -63,6 +109,13 @@ class Metrics:
             cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
             cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
             reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
+            # Pass calculated costs
+            input_cost=new_input_cost,
+            output_cost=new_output_cost,
+            cache_read_cost=new_cache_read_cost,
+            cache_write_cost=new_cache_write_cost,
+            total_cost=new_total_cost,
+            currency=new_currency,
         )
 
         # Handle provider_metrics
