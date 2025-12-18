@@ -1,6 +1,13 @@
+import os
+import tempfile
+import uuid
 from typing import Any, Dict, Optional
 
+import pytest
+import pytest_asyncio
+
 from agno.agent.agent import Agent
+from agno.db.sqlite import AsyncSqliteDb
 from agno.workflow import Step, StepInput, StepOutput, Workflow
 from agno.workflow.condition import Condition
 from agno.workflow.router import Router
@@ -32,6 +39,25 @@ def workflow_factory(shared_db, session_id: Optional[str] = None, session_state:
             Step(name="content", executor=content_step_function),
         ],
     )
+
+
+@pytest_asyncio.fixture
+async def async_shared_db():
+    """Create an async SQLite database with proper initialization."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as temp_file:
+        db_path = temp_file.name
+
+    table_name = f"sessions_{uuid.uuid4().hex[:8]}"
+    db = AsyncSqliteDb(session_table=table_name, db_file=db_path)
+
+    # Initialize tables before using
+    await db._create_all_tables()
+
+    yield db
+
+    # Cleanup
+    if os.path.exists(db_path):
+        os.unlink(db_path)
 
 
 def test_workflow_default_state(shared_db):
@@ -491,3 +517,194 @@ async def test_workflow_with_base_model_content(shared_db):
     assert (
         shared_db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW) is not None
     )  # This tells us that the session was stored in the database with the BaseModel content with values like datetime
+
+
+@pytest.mark.asyncio
+async def test_async_workflow_run_with_async_db(async_shared_db):
+    """Test Workflow async arun() with async database."""
+    workflow = Workflow(
+        name="Test Workflow",
+        db=async_shared_db,
+        steps=[
+            Step(name="research", executor=research_step_function),
+            Step(name="content", executor=content_step_function),
+        ],
+    )
+
+    session_id = str(uuid.uuid4())
+    response = await workflow.arun("Test", session_id=session_id)
+    assert response is not None
+    assert response.run_id is not None
+
+
+@pytest.mark.asyncio
+async def test_async_workflow_run_stream_with_async_db(async_shared_db):
+    """Test Workflow async arun() streaming with async database."""
+    workflow = Workflow(
+        name="Test Workflow",
+        db=async_shared_db,
+        steps=[
+            Step(name="research", executor=research_step_function),
+            Step(name="content", executor=content_step_function),
+        ],
+    )
+
+    session_id = str(uuid.uuid4())
+    final_response = None
+    async for response in workflow.arun("Test", session_id=session_id, stream=True):
+        final_response = response
+
+    assert final_response is not None
+    assert final_response.run_id is not None
+
+
+@pytest.mark.asyncio
+async def test_aget_session_with_async_db(async_shared_db):
+    """Test aget_session with async database."""
+    workflow = Workflow(
+        name="Test Workflow",
+        db=async_shared_db,
+        steps=[
+            Step(name="research", executor=research_step_function),
+            Step(name="content", executor=content_step_function),
+        ],
+    )
+
+    session_id = str(uuid.uuid4())
+    await workflow.arun("Test", session_id=session_id)
+
+    session = await workflow.aget_session(session_id=session_id)
+    assert session is not None
+    assert session.session_id == session_id
+    assert len(session.runs) == 1
+
+
+@pytest.mark.asyncio
+async def test_asave_session_with_async_db(async_shared_db):
+    """Test asave_session with async database."""
+    workflow = Workflow(
+        name="Test Workflow",
+        db=async_shared_db,
+        steps=[
+            Step(name="research", executor=research_step_function),
+            Step(name="content", executor=content_step_function),
+        ],
+    )
+
+    session_id = str(uuid.uuid4())
+    await workflow.arun("Test", session_id=session_id)
+
+    session = await workflow.aget_session(session_id=session_id)
+    session.session_data["custom_key"] = "custom_value"
+
+    await workflow.asave_session(session)
+
+    retrieved_session = await workflow.aget_session(session_id=session_id)
+    assert retrieved_session.session_data["custom_key"] == "custom_value"
+
+
+@pytest.mark.asyncio
+async def test_aset_session_name_with_async_db(async_shared_db):
+    """Test aset_session_name with async database."""
+    workflow = Workflow(
+        name="Test Workflow",
+        db=async_shared_db,
+        steps=[
+            Step(name="research", executor=research_step_function),
+            Step(name="content", executor=content_step_function),
+        ],
+    )
+
+    session_id = str(uuid.uuid4())
+    await workflow.arun("Test", session_id=session_id)
+
+    await workflow.aset_session_name(session_id=session_id, session_name="my_test_session")
+
+    session = await workflow.aget_session(session_id=session_id)
+    assert session.session_data["session_name"] == "my_test_session"
+
+
+@pytest.mark.asyncio
+async def test_aget_session_name_with_async_db(async_shared_db):
+    """Test aget_session_name with async database."""
+    workflow = Workflow(
+        name="Test Workflow",
+        db=async_shared_db,
+        steps=[
+            Step(name="research", executor=research_step_function),
+            Step(name="content", executor=content_step_function),
+        ],
+    )
+
+    session_id = str(uuid.uuid4())
+    await workflow.arun("Test", session_id=session_id)
+
+    await workflow.aset_session_name(session_id=session_id, session_name="my_test_session")
+
+    session_name = await workflow.aget_session_name(session_id=session_id)
+    assert session_name == "my_test_session"
+
+
+@pytest.mark.asyncio
+async def test_aget_session_state_with_async_db(async_shared_db):
+    """Test aget_session_state with async database."""
+    workflow = Workflow(
+        name="Test Workflow",
+        db=async_shared_db,
+        steps=[
+            Step(name="research", executor=research_step_function),
+            Step(name="content", executor=content_step_function),
+        ],
+    )
+
+    session_id = str(uuid.uuid4())
+    await workflow.arun("Test", session_id=session_id, session_state={"key": "value"})
+
+    session_state = await workflow.aget_session_state(session_id=session_id)
+    assert session_state is not None
+
+
+@pytest.mark.asyncio
+async def test_aupdate_session_state_with_async_db(async_shared_db):
+    """Test aupdate_session_state with async database."""
+    workflow = Workflow(
+        name="Test Workflow",
+        db=async_shared_db,
+        steps=[
+            Step(name="research", executor=research_step_function),
+            Step(name="content", executor=content_step_function),
+        ],
+    )
+
+    session_id = str(uuid.uuid4())
+    await workflow.arun("Test", session_id=session_id, session_state={"counter": 0, "items": []})
+
+    result = await workflow.aupdate_session_state({"counter": 10}, session_id=session_id)
+    assert result == {"counter": 10, "items": []}
+
+    updated_state = await workflow.aget_session_state(session_id=session_id)
+    assert updated_state["counter"] == 10
+
+
+@pytest.mark.asyncio
+async def test_adelete_session_with_async_db(async_shared_db):
+    """Test adelete_session with async database."""
+    workflow = Workflow(
+        name="Test Workflow",
+        db=async_shared_db,
+        steps=[
+            Step(name="research", executor=research_step_function),
+            Step(name="content", executor=content_step_function),
+        ],
+    )
+
+    session_id = str(uuid.uuid4())
+    await workflow.arun("Test", session_id=session_id)
+
+    session = await workflow.aget_session(session_id=session_id)
+    assert session is not None
+
+    await workflow.adelete_session(session_id=session_id)
+
+    session = await workflow.aget_session(session_id=session_id)
+    assert session is None
