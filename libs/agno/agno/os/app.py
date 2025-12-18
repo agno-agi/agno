@@ -617,12 +617,12 @@ class AgentOS:
             # Set authorization_enabled flag on settings so security key validation is skipped
             self.settings.authorization_enabled = True
 
-            # Warn if both JWT_VERIFICATION_KEY and OS_SECURITY_KEY are set
-            jwt_key_set = bool(getenv("JWT_VERIFICATION_KEY"))
+            # Warn if both JWT keys and OS_SECURITY_KEY are set
+            jwt_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
             security_key_set = bool(self.settings.os_security_key)
-            if jwt_key_set and security_key_set:
+            if jwt_configured and security_key_set:
                 log_warning(
-                    "Both JWT_VERIFICATION_KEY and OS_SECURITY_KEY are set. "
+                    "Both JWT configuration (JWT_VERIFICATION_KEY or JWT_JWKS_FILE) and OS_SECURITY_KEY are set. "
                     "With authorization=True, only JWT authorization will be used. "
                     "Consider removing OS_SECURITY_KEY from your environment."
                 )
@@ -1047,7 +1047,9 @@ class AgentOS:
             Align.center(f"\n\n[bold dark_orange]OS running on:[/bold dark_orange] http://{host}:{port}"),
         ]
         if self.authorization:
-            panel_group.append(Align.center("\n\n[bold chartreuse3]:lock: JWT Authorization Enabled[/bold chartreuse3]"))
+            panel_group.append(
+                Align.center("\n\n[bold chartreuse3]:lock: JWT Authorization Enabled[/bold chartreuse3]")
+            )
         elif bool(self.settings.os_security_key):
             panel_group.append(Align.center("\n\n[bold chartreuse3]:lock: Security Key Enabled[/bold chartreuse3]"))
 
