@@ -146,9 +146,11 @@ class TeamRunEvent(str, Enum):
 
     tool_call_started = "TeamToolCallStarted"
     tool_call_completed = "TeamToolCallCompleted"
+    tool_call_error = "TeamToolCallError"
 
     reasoning_started = "TeamReasoningStarted"
     reasoning_step = "TeamReasoningStep"
+    reasoning_content_delta = "TeamReasoningContentDelta"
     reasoning_completed = "TeamReasoningCompleted"
 
     memory_update_started = "TeamMemoryUpdateStarted"
@@ -347,6 +349,14 @@ class ReasoningStepEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class ReasoningContentDeltaEvent(BaseTeamRunEvent):
+    """Event for streaming reasoning content chunks as they arrive."""
+
+    event: str = TeamRunEvent.reasoning_content_delta.value
+    reasoning_content: str = ""  # The delta/chunk of reasoning content
+
+
+@dataclass
 class ReasoningCompletedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.reasoning_completed.value
     content: Optional[Any] = None
@@ -367,6 +377,13 @@ class ToolCallCompletedEvent(BaseTeamRunEvent):
     images: Optional[List[Image]] = None  # Images produced by the tool call
     videos: Optional[List[Video]] = None  # Videos produced by the tool call
     audio: Optional[List[Audio]] = None  # Audio produced by the tool call
+
+
+@dataclass
+class ToolCallErrorEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.tool_call_error.value
+    tool: Optional[ToolExecution] = None
+    error: Optional[str] = None
 
 
 @dataclass
@@ -411,6 +428,7 @@ TeamRunOutputEvent = Union[
     PreHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
+    ReasoningContentDeltaEvent,
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
@@ -418,6 +436,7 @@ TeamRunOutputEvent = Union[
     SessionSummaryCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
+    ToolCallErrorEvent,
     ParserModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
@@ -440,6 +459,7 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.post_hook_completed.value: PostHookCompletedEvent,
     TeamRunEvent.reasoning_started.value: ReasoningStartedEvent,
     TeamRunEvent.reasoning_step.value: ReasoningStepEvent,
+    TeamRunEvent.reasoning_content_delta.value: ReasoningContentDeltaEvent,
     TeamRunEvent.reasoning_completed.value: ReasoningCompletedEvent,
     TeamRunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
     TeamRunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
@@ -447,6 +467,7 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.session_summary_completed.value: SessionSummaryCompletedEvent,
     TeamRunEvent.tool_call_started.value: ToolCallStartedEvent,
     TeamRunEvent.tool_call_completed.value: ToolCallCompletedEvent,
+    TeamRunEvent.tool_call_error.value: ToolCallErrorEvent,
     TeamRunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
     TeamRunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     TeamRunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
