@@ -137,12 +137,7 @@ class RemoteAgent(BaseRemote):
 
     @cached_property
     def model(self) -> Optional[Model]:
-        from agno.models.utils import get_model
-
-        model_response = self._agent_config.model
-        if model_response is not None:
-            model_str = f"{model_response.provider}:{model_response.model}"
-            return get_model(model_str)
+        # We 
         return None
 
     async def aget_tools(self, **kwargs: Any) -> List[Dict]:
