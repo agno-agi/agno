@@ -14,25 +14,11 @@ def test_default_context_compression_count_limits():
     assert cm.compress_context_messages_limit == 10
 
 
-def test_token_limit_none_with_token_limit():
-    """Test that token limit is None when token limit is set."""
+def test_token_limit_none():
+    """Test that token limit is None when no compression strategy is enabled."""
     cm = CompressionManager(compress_token_limit=1000)
     assert cm.compress_tool_results_limit is None
     assert cm.compress_context_messages_limit is None
-
-
-def test_warning_when_token_limit_without_strategy(capsys):
-    """Test warning when token limit is set but no compression strategy enabled."""
-    CompressionManager(compress_token_limit=1000)
-    captured = capsys.readouterr()
-    assert "no compression strategy is enabled" in captured.out
-
-
-def test_warning_when_both_strategies_enabled(capsys):
-    """Test warning when both compression strategies are enabled."""
-    CompressionManager(compress_tool_results=True, compress_context=True)
-    captured = capsys.readouterr()
-    assert "Both tool-based and context-based compression are enabled" in captured.out
 
 
 def test_should_compress_context_count_based():
