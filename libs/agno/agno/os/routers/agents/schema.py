@@ -93,7 +93,6 @@ class AgentResponse(BaseModel):
             "use_json_mode": False,
             # Streaming defaults
             "stream_events": False,
-            "stream_intermediate_steps": False,
         }
 
         session_id = str(uuid4())
@@ -250,7 +249,6 @@ class AgentResponse(BaseModel):
         streaming_info = {
             "stream": agent.stream,
             "stream_events": agent.stream_events,
-            "stream_intermediate_steps": agent.stream_intermediate_steps,
         }
 
         return AgentResponse(

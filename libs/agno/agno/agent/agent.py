@@ -440,9 +440,6 @@ class Agent:
     # This helps us improve the Agent and provide better support
     telemetry: bool = True
 
-    # Deprecated. Use stream_events instead
-    stream_intermediate_steps: Optional[bool] = None
-
     def __init__(
         self,
         *,
@@ -532,7 +529,6 @@ class Agent:
         save_response_to_file: Optional[str] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         store_events: bool = False,
         events_to_skip: Optional[List[RunEvent]] = None,
         role: Optional[str] = None,
@@ -662,14 +658,7 @@ class Agent:
         self.save_response_to_file = save_response_to_file
 
         self.stream = stream
-
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        self.stream_events = stream_events or stream_intermediate_steps
+        self.stream_events = stream_events
 
         self.store_events = store_events
         self.role = role
@@ -1536,7 +1525,6 @@ class Agent:
         *,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -1564,7 +1552,6 @@ class Agent:
         *,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -1581,7 +1568,6 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -1593,7 +1579,6 @@ class Agent:
         *,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -1610,7 +1595,6 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -1630,14 +1614,6 @@ class Agent:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
             )
-
-        if yield_run_response is not None:
-            warnings.warn(
-                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         # Set up retry logic
         num_attempts = self.retries + 1
         for attempt in range(num_attempts):
@@ -1742,15 +1718,6 @@ class Agent:
                 if stream is None:
                     stream = False if self.stream is None else self.stream
 
-                # Considering both stream_events and stream_intermediate_steps (deprecated)
-                if stream_intermediate_steps is not None:
-                    warnings.warn(
-                        "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                        DeprecationWarning,
-                        stacklevel=2,
-                    )
-                stream_events = stream_events or stream_intermediate_steps
-
                 # Can't stream events if streaming is disabled
                 if stream is False:
                     stream_events = False
@@ -1787,7 +1754,7 @@ class Agent:
                 run_response.metrics = Metrics()
                 run_response.metrics.start_timer()
 
-                yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+                yield_run_output = yield_run_output
 
                 if stream:
                     response_iterator = self._run_stream(
@@ -2738,7 +2705,6 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -2765,7 +2731,6 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -2773,7 +2738,6 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -2794,7 +2758,6 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -2802,7 +2765,6 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -2816,13 +2778,6 @@ class Agent:
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
-            )
-
-        if yield_run_response is not None:
-            warnings.warn(
-                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
-                DeprecationWarning,
-                stacklevel=2,
             )
 
         background_tasks = kwargs.pop("background_tasks", None)
@@ -2876,15 +2831,6 @@ class Agent:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
         if stream is False:
@@ -2947,7 +2893,7 @@ class Agent:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+        yield_run_output = yield_run_output
 
         # Pass the new run_response to _arun
         if stream:
@@ -2991,7 +2937,6 @@ class Agent:
         requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
@@ -3011,7 +2956,6 @@ class Agent:
         requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = False,
-        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
@@ -3030,7 +2974,6 @@ class Agent:
         requirements: Optional[List[RunRequirement]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = False,
-        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
@@ -3056,8 +2999,6 @@ class Agent:
             dependencies: The dependencies to use for the run.
             metadata: The metadata to use for the run.
             debug_mode: Whether to enable debug mode.
-            (deprecated) stream_intermediate_steps: Whether to stream all steps.
-            (deprecated) updated_tools: Use 'requirements' instead.
         """
         if run_response is None and run_id is None:
             raise ValueError("Either run_response or run_id must be provided.")
@@ -3133,15 +3074,6 @@ class Agent:
                 # Use stream override value when necessary
                 if stream is None:
                     stream = False if self.stream is None else self.stream
-
-                # Considering both stream_events and stream_intermediate_steps (deprecated)
-                if stream_intermediate_steps is not None:
-                    warnings.warn(
-                        "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                        DeprecationWarning,
-                        stacklevel=2,
-                    )
-                stream_events = stream_events or stream_intermediate_steps
 
                 # Can't stream events if streaming is disabled
                 if stream is False:
@@ -3594,7 +3526,6 @@ class Agent:
         *,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
@@ -3614,7 +3545,6 @@ class Agent:
         *,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
@@ -3636,7 +3566,6 @@ class Agent:
         requirements: Optional[List[RunRequirement]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
@@ -3664,7 +3593,6 @@ class Agent:
             metadata: The metadata to use for continuing the run.
             debug_mode: Whether to enable debug mode.
             yield_run_output: Whether to yield the run response.
-            (deprecated) stream_intermediate_steps: Whether to stream all steps.
             (deprecated) updated_tools: Use 'requirements' instead.
         """
         if run_response is None and run_id is None:
@@ -3700,15 +3628,6 @@ class Agent:
         if stream is None:
             stream = False if self.stream is None else self.stream
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
-
         # Can't stream events if streaming is disabled
         if stream is False:
             stream_events = False
@@ -3716,7 +3635,7 @@ class Agent:
         if stream_events is None:
             stream_events = False if self.stream_events is None else self.stream_events
 
-        # Can't have stream_intermediate_steps if stream is False
+        # Can't have stream_events if stream is False
         if stream is False:
             stream_events = False
 
