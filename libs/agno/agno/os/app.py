@@ -114,6 +114,7 @@ class AgentOS:
         name: Optional[str] = None,
         description: Optional[str] = None,
         version: Optional[str] = None,
+        db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         agents: Optional[List[Agent]] = None,
         teams: Optional[List[Team]] = None,
         workflows: Optional[List[Workflow]] = None,
@@ -130,7 +131,6 @@ class AgentOS:
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         tracing: bool = False,
-        tracing_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         auto_provision_dbs: bool = True,
         run_hooks_in_background: bool = False,
         telemetry: bool = True,
@@ -142,6 +142,7 @@ class AgentOS:
             name: Name of the AgentOS instance
             description: Description of the AgentOS instance
             version: Version of the AgentOS instance
+            db: Default database for the AgentOS instance. Agents, teams and workflows with no db will use this one.
             agents: List of agents to include in the OS
             teams: List of teams to include in the OS
             workflows: List of workflows to include in the OS
@@ -159,8 +160,6 @@ class AgentOS:
             authorization_config: Configuration for the authorization middleware
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
-            tracing_db: Dedicated database for storing and reading traces. Recommended for multi-db setups.
-                       If not provided and tracing=True, the first available db from agents/teams/workflows is used.
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
             telemetry: Whether to enable telemetry
 
@@ -199,10 +198,10 @@ class AgentOS:
 
         self.version = version
         self.description = description
+        self.db = db
 
         self.telemetry = telemetry
         self.tracing = tracing
-        self.tracing_db = tracing_db
 
         self.enable_mcp_server = enable_mcp_server
         self.lifespan = lifespan
@@ -399,6 +398,9 @@ class AgentOS:
         if not self.agents:
             return
         for agent in self.agents:
+            # Set the default db to agents without their own
+            if self.db is not None and agent.db is None:
+                agent.db = self.db
             # Track all MCP tools to later handle their connection
             if agent.tools:
                 for tool in agent.tools:
@@ -423,6 +425,9 @@ class AgentOS:
             return
 
         for team in self.teams:
+            # Set the default db to teams without their own
+            if self.db is not None and team.db is None:
+                team.db = self.db
             # Track all MCP tools recursively
             collect_mcp_tools_from_team(team, self.mcp_tools)
 
@@ -446,8 +451,10 @@ class AgentOS:
         if not self.workflows:
             return
 
-        if self.workflows:
-            for workflow in self.workflows:
+        for workflow in self.workflows:
+            # Set the default db to workflows without their own
+            if self.db is not None and workflow.db is None:
+                workflow.db = self.db
                 # Track MCP tools recursively in workflow members
                 collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
 
@@ -463,12 +470,12 @@ class AgentOS:
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.
 
-        Uses tracing_db if provided, otherwise falls back to the first available
+        Uses the AgentOS db if provided, otherwise falls back to the first available
         database from agents/teams/workflows.
         """
-        # Use tracing_db if explicitly provided
-        if self.tracing_db is not None:
-            setup_tracing_for_os(db=self.tracing_db)
+        # Use AgentOS db if explicitly provided
+        if self.db is not None:
+            setup_tracing_for_os(db=self.db)
             return
 
         # Fall back to finding the first available database
@@ -494,7 +501,7 @@ class AgentOS:
         if db is None:
             log_warning(
                 "tracing=True but no database found. "
-                "Provide 'tracing_db' parameter or 'db' parameter to at least one agent/team/workflow."
+                "Provide 'db' parameter to AgentOS or to at least one agent/team/workflow."
             )
             return
 
@@ -761,9 +768,9 @@ class AgentOS:
             elif interface.team and interface.team.db:
                 self._register_db_with_validation(dbs, interface.team.db)
 
-        # Register tracing_db if provided (for traces reading)
-        if self.tracing_db is not None:
-            self._register_db_with_validation(dbs, self.tracing_db)
+        # Register AgentOS db if provided
+        if self.db is not None:
+            self._register_db_with_validation(dbs, self.db)
 
         self.dbs = dbs
         self.knowledge_dbs = knowledge_dbs
@@ -983,13 +990,13 @@ class AgentOS:
 
         dbs_with_specific_config = [db.db_id for db in traces_config.dbs]
 
-        # If tracing_db is explicitly set, only use that database for traces
-        if self.tracing_db is not None:
-            if self.tracing_db.id not in dbs_with_specific_config:
+        # If AgentOS db is explicitly set, only use that database for traces
+        if self.db is not None:
+            if self.db.id not in dbs_with_specific_config:
                 traces_config.dbs.append(
                     DatabaseConfig(
-                        db_id=self.tracing_db.id,
-                        domain_config=TracesDomainConfig(display_name=self.tracing_db.id),
+                        db_id=self.db.id,
+                        domain_config=TracesDomainConfig(display_name=self.db.id),
                     )
                 )
         else:
