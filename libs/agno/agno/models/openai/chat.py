@@ -945,9 +945,6 @@ class OpenAIChat(Model):
             metrics.audio_output_tokens = completion_tokens_details.audio_tokens or 0
             metrics.reasoning_tokens = completion_tokens_details.reasoning_tokens or 0
             
-        if hasattr(response_usage, "cost"):
-            if metrics.provider_metrics is None:
-                metrics.provider_metrics = {}
-            metrics.provider_metrics["cost"] = response_usage.cost
+        metrics.cost = getattr(response_usage, "cost", None)
 
         return metrics
