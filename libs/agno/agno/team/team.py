@@ -2362,7 +2362,7 @@ class Team:
         14. Create session summary
         15. Cleanup and store (scrub, add to session, calculate metrics, save session)
         """
-        await aregister_run(run_response.run_id)
+        await aregister_run(run_context.run_id)
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
         memory_task = None
 
@@ -2669,7 +2669,7 @@ class Team:
         12. Create session summary
         13. Cleanup and store (scrub, add to session, calculate metrics, save session)
         """
-        await aregister_run(run_response.run_id)
+        await aregister_run(run_context.run_id)
 
         memory_task = None
 
