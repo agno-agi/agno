@@ -285,7 +285,7 @@ def attach_routes(
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
     ):
-        """Retrieve a task by ID. This endpoint returns an A2A Task object."""
+        """Retrieve list of tasks. This endpoint returns an A2A Task object."""
         request_body = await request.json()
         request_id = request_body.get("id", "unknown")
         task_id = request_body.get("params", {}).get("task_id")
@@ -325,7 +325,7 @@ def attach_routes(
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
-        runs = session.get("runs")  # type: ignore
+        runs = session.get("runs")  
         if not runs:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
 
@@ -366,7 +366,7 @@ def attach_routes(
         return {
             "jsonrpc": "2.0",
             "id": request_body.get("id", "unknown"),
-            "result": {},
+            "result": {Task(status=TaskStatus(state=TaskState.canceled))},
         }
 
     # ============= TEAMS =============
