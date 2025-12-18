@@ -75,12 +75,27 @@ async def mcp_lifespan(_, mcp_tools):
 
 
 @asynccontextmanager
+async def http_client_lifespan(_):
+    """Manage httpx client lifecycle for proper connection pool cleanup."""
+    from agno.utils.http import aclose_default_clients
+
+    yield
+
+    # Shutdown logic: Close global httpx clients
+    await aclose_default_clients()
+
+
+@asynccontextmanager
 async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
-    """Initializes databases in the event loop"""
+    """Initializes databases in the event loop and closes them on shutdown."""
     if agent_os.auto_provision_dbs:
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
+
     yield
+
+    # Shutdown logic: Close all database connections
+    await agent_os._close_databases()
 
 
 def _combine_app_lifespans(lifespans: list) -> Any:
@@ -534,6 +549,9 @@ class AgentOS:
             # The async database lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))
 
+            # The httpx client cleanup lifespan (should be last to close after other lifespans)
+            lifespans.append(http_client_lifespan)
+
             # Combine lifespans and set them in the app
             if lifespans:
                 fastapi_app.router.lifespan_context = _combine_app_lifespans(lifespans)
@@ -558,6 +576,9 @@ class AgentOS:
 
             # Async database initialization lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))  # type: ignore
+
+            # The httpx client cleanup lifespan (should be last to close after other lifespans)
+            lifespans.append(http_client_lifespan)
 
             final_lifespan = _combine_app_lifespans(lifespans) if lifespans else None
             fastapi_app = self._make_app(lifespan=final_lifespan)
@@ -818,6 +839,32 @@ class AgentOS:
                     await db._create_all_tables()
             except Exception as e:
                 log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {e}")
+
+    async def _close_databases(self) -> None:
+        """Close all database connections and release connection pools."""
+        from itertools import chain
+
+        if not hasattr(self, "dbs") or not hasattr(self, "knowledge_dbs"):
+            return
+
+        unique_dbs = list(
+            {
+                id(db): db
+                for db in chain(
+                    chain.from_iterable(self.dbs.values()), chain.from_iterable(self.knowledge_dbs.values())
+                )
+            }.values()
+        )
+
+        for db in unique_dbs:
+            try:
+                if hasattr(db, "close") and callable(db.close):
+                    if isinstance(db, AsyncBaseDb):
+                        await db.close()
+                    else:
+                        db.close()
+            except Exception as e:
+                log_warning(f"Failed to close {db.__class__.__name__} (id: {db.id}): {e}")
 
     def _get_db_table_names(self, db: BaseDb) -> Dict[str, str]:
         """Get the table names for a database"""
