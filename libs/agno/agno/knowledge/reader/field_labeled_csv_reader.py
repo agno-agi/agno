@@ -190,15 +190,9 @@ class FieldLabeledCSVReader(Reader):
                 csv_name = name or file.stem
             else:
                 log_debug(f"Reading retrieved file async: {getattr(file, 'name', 'BytesIO')}")
-<<<<<<< Updated upstream
-                file.seek(0)
-                file_content_io = io.StringIO(file.read().decode("utf-8"))
-                csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
-=======
                 csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
                 file.seek(0)
                 file_content_io = io.StringIO(file.read().decode("utf-8"))
->>>>>>> Stashed changes
 
             file_content_io.seek(0)
             csv_reader = csv.reader(file_content_io, delimiter=delimiter, quotechar=quotechar)
