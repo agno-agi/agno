@@ -153,9 +153,11 @@ class RunEvent(str, Enum):
 
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
+    tool_call_error = "ToolCallError"
 
     reasoning_started = "ReasoningStarted"
     reasoning_step = "ReasoningStep"
+    reasoning_content_delta = "ReasoningContentDelta"
     reasoning_completed = "ReasoningCompleted"
 
     memory_update_started = "MemoryUpdateStarted"
@@ -374,6 +376,14 @@ class ReasoningStepEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class ReasoningContentDeltaEvent(BaseAgentRunEvent):
+    """Event for streaming reasoning content chunks as they arrive."""
+
+    event: str = RunEvent.reasoning_content_delta.value
+    reasoning_content: str = ""  # The delta/chunk of reasoning content
+
+
+@dataclass
 class ReasoningCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.reasoning_completed.value
     content: Optional[Any] = None
@@ -394,6 +404,13 @@ class ToolCallCompletedEvent(BaseAgentRunEvent):
     images: Optional[List[Image]] = None  # Images produced by the tool call
     videos: Optional[List[Video]] = None  # Videos produced by the tool call
     audio: Optional[List[Audio]] = None  # Audio produced by the tool call
+
+
+@dataclass
+class ToolCallErrorEvent(BaseAgentRunEvent):
+    event: str = RunEvent.tool_call_error.value
+    tool: Optional[ToolExecution] = None
+    error: Optional[str] = None
 
 
 @dataclass
@@ -442,6 +459,7 @@ RunOutputEvent = Union[
     PostHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
+    ReasoningContentDeltaEvent,
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
@@ -449,6 +467,7 @@ RunOutputEvent = Union[
     SessionSummaryCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
+    ToolCallErrorEvent,
     ParserModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
@@ -474,6 +493,7 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.post_hook_completed.value: PostHookCompletedEvent,
     RunEvent.reasoning_started.value: ReasoningStartedEvent,
     RunEvent.reasoning_step.value: ReasoningStepEvent,
+    RunEvent.reasoning_content_delta.value: ReasoningContentDeltaEvent,
     RunEvent.reasoning_completed.value: ReasoningCompletedEvent,
     RunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
     RunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
@@ -481,6 +501,7 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.session_summary_completed.value: SessionSummaryCompletedEvent,
     RunEvent.tool_call_started.value: ToolCallStartedEvent,
     RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
+    RunEvent.tool_call_error.value: ToolCallErrorEvent,
     RunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
     RunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     RunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
