@@ -31,7 +31,7 @@ from agno.os.interfaces.a2a.utils import (
     map_run_schema_to_a2a_task,
     stream_a2a_response_with_error_handling,
 )
-from agno.os.utils import get_agent_by_id, get_db, get_request_kwargs, get_team_by_id, get_workflow_by_id
+from agno.os.utils import get_agent_by_id, get_request_kwargs, get_team_by_id, get_workflow_by_id
 from agno.team import Team
 from agno.workflow import Workflow
 
