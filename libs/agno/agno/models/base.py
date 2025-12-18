@@ -8,6 +8,7 @@ from pathlib import Path
 from time import sleep, time
 from types import AsyncGeneratorType, GeneratorType
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Dict,
@@ -15,11 +16,15 @@ from typing import (
     List,
     Literal,
     Optional,
+    Sequence,
     Tuple,
     Type,
     Union,
     get_args,
 )
+
+if TYPE_CHECKING:
+    from agno.compression.manager import CompressionManager
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -156,6 +161,8 @@ class Model(ABC):
     # Enable retrying a model invocation once with a guidance message.
     # This is useful for known errors avoidable with extra instructions.
     retry_with_guidance: bool = True
+    # Set the number of times to retry the model invocation with guidance.
+    retry_with_guidance_limit: int = 1
 
     def __post_init__(self):
         if self.provider is None and self.name is not None:
@@ -178,6 +185,7 @@ class Model(ABC):
 
         for attempt in range(self.retries + 1):
             try:
+                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 return self.invoke(**kwargs)
             except ModelProviderError as e:
                 last_exception = e
@@ -188,10 +196,23 @@ class Model(ABC):
                     )
                     sleep(delay)
                 else:
-                    log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+                    if self.retries > 0:
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
+                current_count = retries_with_guidance_count
+                if current_count >= self.retry_with_guidance_limit:
+                    raise ModelProviderError(
+                        message=f"Max retries with guidance reached. Error: {e.original_error}",
+                        model_name=self.name,
+                        model_id=self.id,
+                    )
+                kwargs.pop("retry_with_guidance", None)
+                kwargs["retries_with_guidance_count"] = current_count + 1
+
+                # Append the guidance message to help the model avoid the error in the next invoke.
                 kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
-                return self._invoke_with_retry(**kwargs, retrying_with_guidance=True)
+
+                return self._invoke_with_retry(**kwargs, retry_with_guidance=True)
 
         # If we've exhausted all retries, raise the last exception
         raise last_exception  # type: ignore
@@ -207,6 +228,7 @@ class Model(ABC):
 
         for attempt in range(self.retries + 1):
             try:
+                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 return await self.ainvoke(**kwargs)
             except ModelProviderError as e:
                 last_exception = e
@@ -217,10 +239,24 @@ class Model(ABC):
                     )
                     await asyncio.sleep(delay)
                 else:
-                    log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+                    if self.retries > 0:
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
+                current_count = retries_with_guidance_count
+                if current_count >= self.retry_with_guidance_limit:
+                    raise ModelProviderError(
+                        message=f"Max retries with guidance reached. Error: {e.original_error}",
+                        model_name=self.name,
+                        model_id=self.id,
+                    )
+
+                kwargs.pop("retry_with_guidance", None)
+                kwargs["retries_with_guidance_count"] = current_count + 1
+
+                # Append the guidance message to help the model avoid the error in the next invoke.
                 kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
-                return await self._ainvoke_with_retry(**kwargs, retrying_with_guidance=True)
+
+                return await self._ainvoke_with_retry(**kwargs, retry_with_guidance=True)
 
         # If we've exhausted all retries, raise the last exception
         raise last_exception  # type: ignore
@@ -236,6 +272,7 @@ class Model(ABC):
 
         for attempt in range(self.retries + 1):
             try:
+                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 yield from self.invoke_stream(**kwargs)
                 return  # Success, exit the retry loop
             except ModelProviderError as e:
@@ -248,10 +285,24 @@ class Model(ABC):
                     )
                     sleep(delay)
                 else:
-                    log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+                    if self.retries > 0:
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
+                current_count = retries_with_guidance_count
+                if current_count >= self.retry_with_guidance_limit:
+                    raise ModelProviderError(
+                        message=f"Max retries with guidance reached. Error: {e.original_error}",
+                        model_name=self.name,
+                        model_id=self.id,
+                    )
+
+                kwargs.pop("retry_with_guidance", None)
+                kwargs["retries_with_guidance_count"] = current_count + 1
+
+                # Append the guidance message to help the model avoid the error in the next invoke.
                 kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
-                yield from self._invoke_stream_with_retry(**kwargs, retrying_with_guidance=True)
+
+                yield from self._invoke_stream_with_retry(**kwargs, retry_with_guidance=True)
                 return  # Success, exit after regeneration
 
         # If we've exhausted all retries, raise the last exception
@@ -268,6 +319,7 @@ class Model(ABC):
 
         for attempt in range(self.retries + 1):
             try:
+                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 async for response in self.ainvoke_stream(**kwargs):
                     yield response
                 return  # Success, exit the retry loop
@@ -281,10 +333,24 @@ class Model(ABC):
                     )
                     await asyncio.sleep(delay)
                 else:
-                    log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
+                    if self.retries > 0:
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {e}")
             except RetryableModelProviderError as e:
+                current_count = retries_with_guidance_count
+                if current_count >= self.retry_with_guidance_limit:
+                    raise ModelProviderError(
+                        message=f"Max retries with guidance reached. Error: {e.original_error}",
+                        model_name=self.name,
+                        model_id=self.id,
+                    )
+
+                kwargs.pop("retry_with_guidance", None)
+                kwargs["retries_with_guidance_count"] = current_count + 1
+
+                # Append the guidance message to help the model avoid the error in the next invoke.
                 kwargs["messages"].append(Message(role="user", content=e.retry_guidance_message, temporary=True))
-                async for response in self._ainvoke_stream_with_retry(**kwargs, retrying_with_guidance=True):
+
+                async for response in self._ainvoke_stream_with_retry(**kwargs, retry_with_guidance=True):
                     yield response
                 return  # Success, exit after regeneration
 
@@ -296,8 +362,8 @@ class Model(ABC):
         _dict = {field: getattr(self, field) for field in fields if getattr(self, field) is not None}
         return _dict
 
-    def _remove_temporarys(self, messages: List[Message]) -> None:
-        """Remove temporal messages from the given list.
+    def _remove_temporary_messages(self, messages: List[Message]) -> None:
+        """Remove temporary messages from the given list.
 
         Args:
             messages: The list of messages to filter (modified in place).
@@ -453,6 +519,29 @@ class Model(ABC):
                 _tool_dicts.append(tool)
         return _tool_dicts
 
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[Sequence[Union[Function, Dict[str, Any]]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        from agno.utils.tokens import count_tokens
+
+        return count_tokens(
+            messages,
+            tools=list(tools) if tools else None,
+            model_id=self.id,
+            output_schema=output_schema,
+        )
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[Sequence[Union[Function, Dict[str, Any]]]] = None,
+        output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        return self.count_tokens(messages, tools, output_schema=output_schema)
+
     def response(
         self,
         messages: List[Message],
@@ -462,7 +551,7 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional[Any] = None,
+        compression_manager: Optional["CompressionManager"] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -500,8 +589,15 @@ class Model(ABC):
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+            _compression_manager = compression_manager if _compress_tool_results else None
 
             while True:
+                # Compress tool results if compression is enabled and threshold is met
+                if _compression_manager is not None and _compression_manager.should_compress(
+                    messages, tools, model=self, response_format=response_format
+                ):
+                    _compression_manager.compress(messages)
+
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
                 self._process_model_response(
@@ -600,11 +696,6 @@ class Model(ABC):
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
 
-                    all_messages = messages + function_call_results
-                    # Compress tool results
-                    if compression_manager and compression_manager.should_compress(all_messages):
-                        compression_manager.compress(all_messages)
-
                     # Format and add results to messages
                     self.format_function_call_results(
                         messages=messages,
@@ -674,11 +765,12 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional[Any] = None,
+        compression_manager: Optional["CompressionManager"] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
         """
+
         try:
             # Check cache if enabled
             if self.cache_response:
@@ -700,10 +792,17 @@ class Model(ABC):
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+            _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
 
             while True:
+                # Compress existing tool results BEFORE making API call to avoid context overflow
+                if _compression_manager is not None and await _compression_manager.ashould_compress(
+                    messages, tools, model=self, response_format=response_format
+                ):
+                    await _compression_manager.acompress(messages)
+
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
                 await self._aprocess_model_response(
@@ -800,11 +899,6 @@ class Model(ABC):
 
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
-
-                    all_messages = messages + function_call_results
-                    # Compress tool results
-                    if compression_manager and compression_manager.should_compress(all_messages):
-                        await compression_manager.acompress(all_messages)
 
                     # Format and add results to messages
                     self.format_function_call_results(
@@ -1093,7 +1187,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional[Any] = None,
+        compression_manager: Optional["CompressionManager"] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -1127,10 +1221,17 @@ class Model(ABC):
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+            _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
 
             while True:
+                # Compress existing tool results BEFORE invoke
+                if _compression_manager is not None and _compression_manager.should_compress(
+                    messages, tools, model=self, response_format=response_format
+                ):
+                    _compression_manager.compress(messages)
+
                 assistant_message = Message(role=self.assistant_message_role)
                 # Create assistant message and stream data
                 stream_data = MessageData()
@@ -1191,11 +1292,6 @@ class Model(ABC):
 
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
-
-                    all_messages = messages + function_call_results
-                    # Compress tool results
-                    if compression_manager and compression_manager.should_compress(all_messages):
-                        compression_manager.compress(all_messages)
 
                     # Format and add results to messages
                     if stream_data and stream_data.extra is not None:
@@ -1311,7 +1407,7 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional[Any] = None,
+        compression_manager: Optional["CompressionManager"] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1345,10 +1441,17 @@ class Model(ABC):
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
+            _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
 
             while True:
+                # Compress existing tool results BEFORE making API call to avoid context overflow
+                if _compression_manager is not None and await _compression_manager.ashould_compress(
+                    messages, tools, model=self, response_format=response_format
+                ):
+                    await _compression_manager.acompress(messages)
+
                 # Create assistant message and stream data
                 assistant_message = Message(role=self.assistant_message_role)
                 stream_data = MessageData()
@@ -1409,11 +1512,6 @@ class Model(ABC):
 
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
-
-                    all_messages = messages + function_call_results
-                    # Compress tool results
-                    if compression_manager and compression_manager.should_compress(all_messages):
-                        await compression_manager.acompress(all_messages)
 
                     # Format and add results to messages
                     if stream_data and stream_data.extra is not None:
@@ -1801,6 +1899,17 @@ class Model(ABC):
                 log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
                 function_call.error = str(e)
                 function_call_success = False
+
+            # For generators, re-capture updated_session_state after consumption
+            # since session_state modifications were made during iteration
+            if function_execution_result.updated_session_state is None:
+                if (
+                    function_call.function._run_context is not None
+                    and function_call.function._run_context.session_state is not None
+                ):
+                    function_execution_result.updated_session_state = function_call.function._run_context.session_state
+                elif function_call.function._session_state is not None:
+                    function_execution_result.updated_session_state = function_call.function._session_state
         else:
             from agno.tools.function import ToolResult
 
@@ -2327,7 +2436,29 @@ class Model(ABC):
                     log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
                     function_call.error = str(e)
                     function_call_success = False
-            else:
+
+            # For generators (sync or async), re-capture updated_session_state after consumption
+            # since session_state modifications were made during iteration
+            if async_function_call_output is not None or isinstance(
+                function_call.result,
+                (GeneratorType, collections.abc.Iterator, AsyncGeneratorType, collections.abc.AsyncIterator),
+            ):
+                if updated_session_state is None:
+                    if (
+                        function_call.function._run_context is not None
+                        and function_call.function._run_context.session_state is not None
+                    ):
+                        updated_session_state = function_call.function._run_context.session_state
+                    elif function_call.function._session_state is not None:
+                        updated_session_state = function_call.function._session_state
+
+            if not (
+                async_function_call_output is not None
+                or isinstance(
+                    function_call.result,
+                    (GeneratorType, collections.abc.Iterator, AsyncGeneratorType, collections.abc.AsyncIterator),
+                )
+            ):
                 from agno.tools.function import ToolResult
 
                 if isinstance(function_execution_result.result, ToolResult):
