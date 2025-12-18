@@ -48,7 +48,7 @@ class CompressionManager:
             )
 
         if self.compress_tool_results and self.compress_context:
-            log_warning("Both tool-based and context-based compression are enabled. Compressing full context.")
+            log_warning("Cannot enable `compress_tool_results` and `compress_context` simultaneously. Defaulting to `compress_context`.")
 
     def compress(
         self,
