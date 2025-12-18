@@ -13,12 +13,6 @@ Usage:
     # Route traces to specific projects
     with using_project("my-project"):
         await agent.arun("query")  # Traces go to "my-project"
-
-This is FULLY THREAD-SAFE and works with:
-- Sequential execution
-- Concurrent execution (asyncio.gather, asyncio.create_task)
-- Multi-threaded applications
-- Web servers (FastAPI, Flask)
 """
 
 import os
