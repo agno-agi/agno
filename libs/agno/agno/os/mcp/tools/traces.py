@@ -1,6 +1,6 @@
 """Traces MCP tools for observability."""
 
-from typing import TYPE_CHECKING, Optional, Union, cast
+from typing import TYPE_CHECKING, Optional
 
 from fastmcp import FastMCP
 
@@ -83,8 +83,7 @@ def register_traces_tools(mcp: FastMCP, os: "AgentOS") -> None:
 
         return {
             "data": [
-                TraceSummary.from_trace(trace, input=trace_inputs.get(trace.trace_id)).model_dump()
-                for trace in traces
+                TraceSummary.from_trace(trace, input=trace_inputs.get(trace.trace_id)).model_dump() for trace in traces
             ],
             "total_count": total_count,
             "page": page,
@@ -198,4 +197,3 @@ def register_traces_tools(mcp: FastMCP, os: "AgentOS") -> None:
             "page": page,
             "limit": limit,
         }
-

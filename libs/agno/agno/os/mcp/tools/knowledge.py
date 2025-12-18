@@ -1,7 +1,7 @@
 """Knowledge MCP tools for managing content in the knowledge base."""
 
 import json
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from fastmcp import FastMCP
 
@@ -163,8 +163,12 @@ def register_knowledge_tools(mcp: FastMCP, os: "AgentOS") -> None:
             "metadata": updated_content_dict.get("metadata"),
             "status": updated_content_dict.get("status"),
             "status_message": updated_content_dict.get("status_message"),
-            "created_at": str(updated_content_dict.get("created_at")) if updated_content_dict.get("created_at") else None,
-            "updated_at": str(updated_content_dict.get("updated_at")) if updated_content_dict.get("updated_at") else None,
+            "created_at": str(updated_content_dict.get("created_at"))
+            if updated_content_dict.get("created_at")
+            else None,
+            "updated_at": str(updated_content_dict.get("updated_at"))
+            if updated_content_dict.get("updated_at")
+            else None,
         }
 
     @mcp.tool(
@@ -180,9 +184,7 @@ def register_knowledge_tools(mcp: FastMCP, os: "AgentOS") -> None:
         sort_order: str = "desc",
     ) -> dict:
         knowledge = get_knowledge_instance_by_db_id(os.knowledge_instances, db_id)
-        contents, count = await knowledge.aget_content(
-            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order
-        )
+        contents, count = await knowledge.aget_content(limit=limit, page=page, sort_by=sort_by, sort_order=sort_order)
 
         return {
             "data": [
@@ -274,9 +276,7 @@ def register_knowledge_tools(mcp: FastMCP, os: "AgentOS") -> None:
         search_type: Optional[str] = None,
     ) -> dict:
         knowledge = get_knowledge_instance_by_db_id(os.knowledge_instances, db_id)
-        results = knowledge.search(
-            query=query, max_results=max_results, filters=filters, search_type=search_type
-        )
+        results = knowledge.search(query=query, max_results=max_results, filters=filters, search_type=search_type)
 
         return {
             "data": [
@@ -297,7 +297,11 @@ def register_knowledge_tools(mcp: FastMCP, os: "AgentOS") -> None:
         tags={"knowledge"},
     )  # type: ignore
     async def get_knowledge_config(db_id: Optional[str] = None) -> dict:
-        from agno.knowledge.utils import get_all_chunkers_info, get_all_readers_info, get_content_types_to_readers_mapping
+        from agno.knowledge.utils import (
+            get_all_chunkers_info,
+            get_all_readers_info,
+            get_content_types_to_readers_mapping,
+        )
 
         knowledge = get_knowledge_instance_by_db_id(os.knowledge_instances, db_id)
 
@@ -328,12 +332,14 @@ def register_knowledge_tools(mcp: FastMCP, os: "AgentOS") -> None:
 
         vector_dbs = []
         if knowledge.vector_db:
-            vector_dbs.append({
-                "id": knowledge.vector_db.id,
-                "name": knowledge.vector_db.name,
-                "description": knowledge.vector_db.description,
-                "search_types": knowledge.vector_db.get_supported_search_types(),
-            })
+            vector_dbs.append(
+                {
+                    "id": knowledge.vector_db.id,
+                    "name": knowledge.vector_db.name,
+                    "description": knowledge.vector_db.description,
+                    "search_types": knowledge.vector_db.get_supported_search_types(),
+                }
+            )
 
         return {
             "readers": readers,
