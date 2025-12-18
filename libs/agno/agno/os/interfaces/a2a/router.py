@@ -1,6 +1,6 @@
 """Async router handling exposing an Agno Agent or Team in an A2A compatible format."""
 
-from typing import Optional, Union
+from typing import Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import HTTPException, Request
@@ -327,7 +327,8 @@ def attach_routes(
             if not session:
                 raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
-            runs = session.get("runs", [])
+            session_dict = cast(dict, session)
+            runs = session_dict.get("runs", [])
             all_runs.extend(runs)
         else:
             # Load all sessions for this agent
@@ -346,8 +347,9 @@ def attach_routes(
                     deserialize=False,
                 )
 
-            for session in sessions:
-                runs = session.get("runs", [])
+            sessions_list = cast(list, sessions)
+            for session_dict in sessions_list:
+                runs = cast(dict, session_dict).get("runs", [])
                 all_runs.extend(runs)
 
         # Convert runs to A2A tasks
@@ -437,7 +439,8 @@ def attach_routes(
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
-        runs = session.get("runs", [])
+        session_dict = cast(dict, session)
+        runs = session_dict.get("runs", [])
         if not runs:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
 
@@ -761,7 +764,8 @@ def attach_routes(
             if not session:
                 raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
-            runs = session.get("runs", [])
+            session_dict = cast(dict, session)
+            runs = session_dict.get("runs", [])
             all_runs.extend(runs)
         else:
             # Load all sessions for this team
@@ -780,8 +784,9 @@ def attach_routes(
                     deserialize=False,
                 )
 
-            for session in sessions:
-                runs = session.get("runs", [])
+            sessions_list = cast(list, sessions)
+            for session_dict in sessions_list:
+                runs = cast(dict, session_dict).get("runs", [])
                 all_runs.extend(runs)
 
         # Convert runs to A2A tasks
@@ -871,7 +876,8 @@ def attach_routes(
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
-        runs = session.get("runs", [])
+        session_dict = cast(dict, session)
+        runs = session_dict.get("runs", [])
         if not runs:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
 
@@ -1197,7 +1203,8 @@ def attach_routes(
             if not session:
                 raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
-            runs = session.get("runs", [])
+            session_dict = cast(dict, session)
+            runs = session_dict.get("runs", [])
             all_runs.extend(runs)
         else:
             # Load all sessions for this workflow
@@ -1216,8 +1223,9 @@ def attach_routes(
                     deserialize=False,
                 )
 
-            for session in sessions:
-                runs = session.get("runs", [])
+            sessions_list = cast(list, sessions)
+            for session_dict in sessions_list:
+                runs = cast(dict, session_dict).get("runs", [])
                 all_runs.extend(runs)
 
         # Convert runs to A2A tasks
@@ -1307,7 +1315,8 @@ def attach_routes(
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
-        runs = session.get("runs", [])
+        session_dict = cast(dict, session)
+        runs = session_dict.get("runs", [])
         if not runs:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
 
