@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, timezone
+from datetime import date
 from typing import List, Optional, Union, cast
 
 from fastapi import Depends, HTTPException, Query
@@ -8,7 +8,6 @@ from fastapi.routing import APIRouter
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
-from agno.os.utils import to_utc_datetime
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -17,7 +16,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db
+from agno.os.utils import get_db, to_utc_datetime
 
 logger = logging.getLogger(__name__)
 
