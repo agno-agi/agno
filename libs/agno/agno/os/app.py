@@ -63,13 +63,11 @@ from agno.workflow.workflow import Workflow
 @asynccontextmanager
 async def mcp_lifespan(_, mcp_tools):
     """Manage MCP connection lifecycle inside a FastAPI app"""
-    # Startup logic: connect to all contextual MCP servers
     for tool in mcp_tools:
         await tool.connect()
 
     yield
 
-    # Shutdown logic: Close all contextual MCP connections
     for tool in mcp_tools:
         await tool.close()
 
@@ -81,7 +79,6 @@ async def http_client_lifespan(_):
 
     yield
 
-    # Shutdown logic: Close global httpx clients
     await aclose_default_clients()
 
 
@@ -94,7 +91,6 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
 
     yield
 
-    # Shutdown logic: Close all database connections
     await agent_os._close_databases()
 
 
