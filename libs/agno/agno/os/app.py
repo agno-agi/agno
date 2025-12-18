@@ -455,17 +455,18 @@ class AgentOS:
             # Set the default db to workflows without their own
             if self.db is not None and workflow.db is None:
                 workflow.db = self.db
-                # Track MCP tools recursively in workflow members
-                collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
 
-                if not workflow.id:
-                    workflow.id = generate_id_from_name(workflow.name)
+            # Track MCP tools recursively in workflow members
+            collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
 
-                # Required for the built-in routes to work
-                workflow.store_events = True
+            if not workflow.id:
+                workflow.id = generate_id_from_name(workflow.name)
 
-                # Propagate run_hooks_in_background setting to workflow and all its step agents/teams
-                workflow.propagate_run_hooks_in_background(self.run_hooks_in_background)
+            # Required for the built-in routes to work
+            workflow.store_events = True
+
+            # Propagate run_hooks_in_background setting to workflow and all its step agents/teams
+            workflow.propagate_run_hooks_in_background(self.run_hooks_in_background)
 
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.
