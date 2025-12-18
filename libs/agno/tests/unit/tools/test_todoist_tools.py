@@ -5,19 +5,22 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+# Skip the entire module if todoist-api-python is not installed
+pytest.importorskip("todoist_api_python", reason="todoist-api-python not installed")
+
 from agno.tools.todoist import TodoistTools
 
 
-@pytest.fixture.skip(reason="todoist_api_python.api library needs to be updated to the updated")
+@pytest.fixture
 def mock_todoist_api():
     """Create a mock Todoist API client."""
     with patch("agno.tools.todoist.TodoistAPI") as mock_api:
         mock_client = Mock()
         mock_api.return_value = mock_client
-        return mock_client
+        yield mock_client
 
 
-@pytest.fixture.skip(reason="todoist_api_python.api library needs to be updated to the updated")
+@pytest.fixture
 def todoist_tools(mock_todoist_api):
     """Create TodoistTools instance with mocked API."""
     with patch.dict("os.environ", {"TODOIST_API_TOKEN": "test_token"}):
