@@ -1,13 +1,9 @@
-import os
-import tempfile
 import uuid
 from typing import Any, Dict, Optional
 
 import pytest
-import pytest_asyncio
 
 from agno.agent.agent import Agent
-from agno.db.sqlite import AsyncSqliteDb
 from agno.models.openai.chat import OpenAIChat
 from agno.run.team import TeamRunEvent
 from agno.team.team import Team
@@ -24,25 +20,6 @@ def team_factory(shared_db, session_id: Optional[str] = None, session_state: Opt
         markdown=True,
         telemetry=False,
     )
-
-
-@pytest_asyncio.fixture
-async def async_shared_db():
-    """Create an async SQLite database with proper initialization."""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as temp_file:
-        db_path = temp_file.name
-
-    table_name = f"sessions_{uuid.uuid4().hex[:8]}"
-    db = AsyncSqliteDb(session_table=table_name, db_file=db_path)
-
-    # Initialize tables before using
-    await db._create_all_tables()
-
-    yield db
-
-    # Cleanup
-    if os.path.exists(db_path):
-        os.unlink(db_path)
 
 
 def test_team_set_session_name(shared_db):

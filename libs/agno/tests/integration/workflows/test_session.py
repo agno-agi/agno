@@ -1,13 +1,9 @@
-import os
-import tempfile
 import uuid
 from typing import Any, Dict, Optional
 
 import pytest
-import pytest_asyncio
 
 from agno.agent.agent import Agent
-from agno.db.sqlite import AsyncSqliteDb
 from agno.workflow import Step, StepInput, StepOutput, Workflow
 from agno.workflow.condition import Condition
 from agno.workflow.router import Router
@@ -39,25 +35,6 @@ def workflow_factory(shared_db, session_id: Optional[str] = None, session_state:
             Step(name="content", executor=content_step_function),
         ],
     )
-
-
-@pytest_asyncio.fixture
-async def async_shared_db():
-    """Create an async SQLite database with proper initialization."""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as temp_file:
-        db_path = temp_file.name
-
-    table_name = f"sessions_{uuid.uuid4().hex[:8]}"
-    db = AsyncSqliteDb(session_table=table_name, db_file=db_path)
-
-    # Initialize tables before using
-    await db._create_all_tables()
-
-    yield db
-
-    # Cleanup
-    if os.path.exists(db_path):
-        os.unlink(db_path)
 
 
 def test_workflow_default_state(shared_db):
@@ -377,7 +354,7 @@ def test_router_without_session_state_param(shared_db):
     assert "Step A executed" in response.content
 
 
-async def test_async_condition_with_session_state(shared_db):
+async def test_async_condition_with_session_state(async_shared_db):
     """Test that async Condition evaluators can access and modify session_state."""
     session_id = "session_async_condition"
 
@@ -402,7 +379,7 @@ async def test_async_condition_with_session_state(shared_db):
 
     workflow = Workflow(
         name="Async Condition Test",
-        db=shared_db,
+        db=async_shared_db,
         session_id=session_id,
         session_state={"async_counter": 0},
         steps=[
@@ -424,13 +401,13 @@ async def test_async_condition_with_session_state(shared_db):
     assert len(condition_calls) == 1
     assert condition_calls[0]["async_counter"] == 0
 
-    # Verify state was modified (use sync method with SqliteDb)
-    session_state = workflow.get_session_state(session_id=session_id)
+    # Verify state was modified (use async method with AsyncSqliteDb)
+    session_state = await workflow.aget_session_state(session_id=session_id)
     assert session_state["async_counter"] == 1
     assert session_state["async_condition_executed"] is True
 
 
-async def test_async_router_with_session_state(shared_db):
+async def test_async_router_with_session_state(async_shared_db):
     """Test that async Router selectors can access and modify session_state."""
     session_id = "session_async_router"
 
@@ -457,7 +434,7 @@ async def test_async_router_with_session_state(shared_db):
 
     workflow = Workflow(
         name="Async Router Test",
-        db=shared_db,
+        db=async_shared_db,
         session_id=session_id,
         session_state={"async_route_count": 0},
         steps=[
@@ -478,8 +455,8 @@ async def test_async_router_with_session_state(shared_db):
     assert len(router_calls) == 1
     assert router_calls[0]["async_route_count"] == 0
 
-    # Verify state was modified (use sync method with SqliteDb)
-    session_state = workflow.get_session_state(session_id=session_id)
+    # Verify state was modified (use async method with AsyncSqliteDb)
+    session_state = await workflow.aget_session_state(session_id=session_id)
     assert session_state["async_route_count"] == 1
     assert session_state["async_router_executed"] is True
 
