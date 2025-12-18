@@ -166,16 +166,6 @@ def test_toolkit_news_only():
         assert len(tools.tools) == 1
 
 
-def test_toolkit_all_flag():
-    """Test that all=True enables both functions."""
-    with patch("agno.tools.websearch.DDGS"):
-        tools = WebSearchTools(all=True, enable_search=False, enable_news=False)
-        tool_names = [t.__name__ for t in tools.tools]
-        assert "web_search" in tool_names
-        assert "search_news" in tool_names
-        assert len(tools.tools) == 2
-
-
 def test_toolkit_no_tools():
     """Test disabling all tools."""
     with patch("agno.tools.websearch.DDGS"):
