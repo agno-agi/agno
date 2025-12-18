@@ -43,11 +43,13 @@ class JSONReader(Reader):
                 log_debug(f"Reading: {path}")
                 json_name = name or path.stem
                 json_contents = json.loads(path.read_text(encoding=self.encoding or "utf-8"))
-            else:
+            elif hasattr(path, "seek") and hasattr(path, "read"):
                 log_debug(f"Reading uploaded file: {getattr(path, 'name', 'BytesIO')}")
                 json_name = name or getattr(path, "name", "json_file").split(".")[0]
                 path.seek(0)
                 json_contents = json.load(path)
+            else:
+                raise ValueError("Unsupported file type. Must be Path or file-like object.")
 
             if isinstance(json_contents, dict):
                 json_contents = [json_contents]
@@ -74,12 +76,5 @@ class JSONReader(Reader):
             raise
 
     async def async_read(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
-        """Asynchronously read JSON files.
-
-        Args:
-            path (Union[Path, IO[Any]]): Path to a JSON file or a file-like object
-
-        Returns:
-            List[Document]: List of documents from the JSON file
-        """
+        """Asynchronously read JSON files."""
         return await asyncio.to_thread(self.read, path, name)
