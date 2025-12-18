@@ -1,5 +1,3 @@
-import pytest
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
