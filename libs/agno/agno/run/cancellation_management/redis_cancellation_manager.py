@@ -85,19 +85,13 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         """Register a new run as not cancelled."""
         client = self._ensure_sync_client()
         key = self._get_key(run_id)
-        if self.ttl_seconds:
-            client.setex(key, self.ttl_seconds, "0")
-        else:
-            client.set(key, "0")
+        client.set(key, "0", ex=self.ttl_seconds)
 
     async def aregister_run(self, run_id: str) -> None:
         """Register a new run as not cancelled (async version)."""
         client = self._ensure_async_client()
         key = self._get_key(run_id)
-        if self.ttl_seconds:
-            await client.setex(key, self.ttl_seconds, "0")
-        else:
-            await client.set(key, "0")
+        await client.set(key, "0", ex=self.ttl_seconds)
 
     def cancel_run(self, run_id: str) -> bool:
         """Cancel a run by marking it as cancelled.
@@ -109,10 +103,7 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         key = self._get_key(run_id)
 
         # Atomically set to "1" only if key exists (XX flag)
-        if self.ttl_seconds:
-            result = client.set(key, "1", ex=self.ttl_seconds, xx=True)
-        else:
-            result = client.set(key, "1", xx=True)
+        result = client.set(key, "1", ex=self.ttl_seconds, xx=True)
 
         if result:
             logger.info(f"Run {run_id} marked for cancellation")
@@ -131,10 +122,7 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         key = self._get_key(run_id)
 
         # Atomically set to "1" only if key exists (XX flag)
-        if self.ttl_seconds:
-            result = await client.set(key, "1", ex=self.ttl_seconds, xx=True)
-        else:
-            result = await client.set(key, "1", xx=True)
+        result = await client.set(key, "1", ex=self.ttl_seconds, xx=True)
 
         if result:
             logger.info(f"Run {run_id} marked for cancellation")
