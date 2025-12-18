@@ -5,6 +5,18 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
+from pydantic import BaseModel
+
+
+class InputSchema(BaseModel):
+    name: str
+    age: int
+
+
+class OutputSchema(BaseModel):
+    message: str
+
+
 agent = Agent(
     id="agno-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -12,9 +24,11 @@ agent = Agent(
     version="v1",
     db=db,
     tools=[DuckDuckGoTools()],
+    input_schema=InputSchema,
+    output_schema=OutputSchema,
 )
 
-agent.print_response("How many people live in Canada?")
+# agent.print_response("How many people live in Canada?")
 
 # Save the agent to the database
 agent.save()
@@ -30,7 +44,7 @@ agent.save()
 
 # Delete the agent from the database.
 # By default, delete will delete the current version of the agent. And set the next version as the current version.
-agent.delete()
+# agent.delete()
 
 # Delete all versions of the agent
 # This will delete all versions of the agent

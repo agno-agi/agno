@@ -52,6 +52,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
+from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
     RunEvent,
@@ -6208,8 +6209,6 @@ class Agent:
             log_debug("Processing tools for model")
             _functions = self._parse_tools(tools=processed_tools, model=model, run_context=run_context)
 
-        print(_functions)
-
         # Update the session state for the functions
         if _functions:
             from inspect import signature
@@ -6821,11 +6820,16 @@ class Agent:
             config["exponential_backoff"] = self.exponential_backoff
 
         # Response model settings
-        # TODO: Support input_schema and output_schema serialization
-        # if self.input_schema is not None:
-        #     config["input_schema"] = self.input_schema
-        # if self.output_schema is not None:
-        #     config["output_schema"] = self.output_schema
+        if self.input_schema is not None:
+            if issubclass(self.input_schema, BaseModel):
+                config["input_schema"] = self.input_schema.__name__
+            elif isinstance(self.input_schema, dict):
+                config["input_schema"] = self.input_schema
+        if self.output_schema is not None:
+            if issubclass(self.output_schema, BaseModel):
+                config["output_schema"] = self.output_schema.__name__
+            elif isinstance(self.output_schema, dict):
+                config["output_schema"] = self.output_schema
 
         # --- Parser and output settings ---
         if self.parser_model is not None:
@@ -6898,7 +6902,7 @@ class Agent:
         return config
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Agent":
+    def from_dict(cls, data: Dict[str, Any], registry: Optional[Registry] = None) -> "Agent":
         """
         Create an agent from a dictionary.
 
@@ -6954,15 +6958,13 @@ class Agent:
             config["output_model"] = get_model(config["output_model"])
 
         # --- Handle tools reconstruction ---
-        if "tools" in config:
-            tools_data = config["tools"]
-            reconstructed_tools = []
-            for tool_data in tools_data:
-                try:
-                    reconstructed_tools.append(Function.from_dict(tool_data))
-                except Exception as e:
-                    reconstructed_tools.append(tool_data)
-            config["tools"] = reconstructed_tools if reconstructed_tools else None
+        if "tools" in config and config["tools"]:
+            if registry:
+                config["tools"] = [registry.rehydrate_function(t) for t in config["tools"]]
+            else:
+                log_warning(
+                    "No registry provided, tools will not be rehydrated. Please provide a registry to rehydrate tools."
+                )
 
         # --- Handle DB reconstruction ---
         if "db" in config and isinstance(config["db"], dict):
@@ -6978,6 +6980,13 @@ class Agent:
                     log_error(f"Error reconstructing DB from dictionary: {e}")
                     config["db"] = None
             # TODO: Extend support for other DB types and create a db_from_dict method.
+
+        # --- Handle Schema reconstruction ---
+        if "input_schema" in config and config["input_schema"] and registry:
+            config["input_schema"] = registry.schemas.get(config["input_schema"])
+
+        if "output_schema" in config and config["output_schema"] and registry:
+            config["output_schema"] = registry.schemas.get(config["output_schema"])
 
         # --- Handle MemoryManager reconstruction ---
         # if "memory_manager" in config:
@@ -7023,16 +7032,16 @@ class Agent:
         return cls(**config)
 
     # Condfig Database Functions
-    def save(self, upsert: bool = True) -> None:
+    def save(self, upsert: bool = True, db: Optional[BaseDb] = None, version: Optional[str] = None) -> None:
         """
         Save an Agent to the database.
 
         Args:
             agent (Agent): The Agent to save to the database.
         """
-        if not self.db:
-            raise ValueError("Db not initialized")
-        if not self.version:
+        if not self.db and not db:
+            raise ValueError("Db not initialized or provided")
+        if not self.version and not version:
             raise ValueError("You must set a version for the Agent to be able to save it to the database")
 
         try:
@@ -7047,7 +7056,7 @@ class Agent:
             log_error(f"Error saving Agent to database: {e}")
             raise e
 
-    def load(self, version: Optional[str] = None) -> Optional[Agent]:
+    def load(self, version: Optional[str] = None, db: Optional[BaseDb] = None) -> Optional[Agent]:
         """
         Loads the current version of the Agent from the database or a specific version if provided.
 
@@ -7056,10 +7065,10 @@ class Agent:
         Returns:
             Optional[Agent]: The Agent from the database or None if not found.
         """
-        if not self.db:
-            raise ValueError("Db not initialized")
+        if not self.db and not db:
+            raise ValueError("Db not initialized or provided")
 
-        return self.db.get_config(config_id=self.id, version=version, config_type=ConfigType.AGENT)
+        return db.get_config(config_id=self.id, version=version, config_type=ConfigType.AGENT)
 
     def delete(self, version: Optional[str] = None, all_versions: bool = False) -> None:
         """
@@ -11383,7 +11392,9 @@ class Agent:
 
 
 # TODO: Look into where this function should exist
-def get_agent_by_id(db: BaseDb, id: str, version: Optional[str] = None) -> Optional[Agent]:
+def get_agent_by_id(
+    db: BaseDb, id: str, version: Optional[str] = None, registry: Optional[Registry] = None
+) -> Optional[Agent]:
     """
     Get an agent by id from the database.
     """
@@ -11391,7 +11402,7 @@ def get_agent_by_id(db: BaseDb, id: str, version: Optional[str] = None) -> Optio
     if agent_config is None or agent_config.get("config") is None:
         return None
     try:
-        return Agent.from_dict(agent_config.get("config"))
+        return Agent.from_dict(agent_config.get("config"), registry=registry)
     except Exception as e:
         log_error(f"Error reconstructing Agent from dictionary: {e}")
         return None
