@@ -59,7 +59,7 @@ def add_interaction_to_team_run_context(
     team_run_context: Dict[str, Any],
     member_name: str,
     task: str,
-    run_response: Union[RunOutput, TeamRunOutput],
+    run_response: Optional[Union[RunOutput, TeamRunOutput]],
 ) -> None:
     if "member_responses" not in team_run_context:
         team_run_context["member_responses"] = []

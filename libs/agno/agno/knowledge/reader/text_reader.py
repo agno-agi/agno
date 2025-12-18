@@ -41,7 +41,13 @@ class TextReader(Reader):
                 file_name = name or file.stem
                 file_contents = file.read_text(self.encoding or "utf-8")
             else:
-                file_name = name or file.name.split(".")[0]
+                # Handle BytesIO and other file-like objects that may not have a name attribute
+                if name:
+                    file_name = name
+                elif hasattr(file, "name") and file.name is not None:
+                    file_name = file.name.split(".")[0]
+                else:
+                    file_name = "text_file"
                 log_debug(f"Reading uploaded file: {file_name}")
                 file.seek(0)
                 file_contents = file.read().decode(self.encoding or "utf-8")
@@ -81,8 +87,14 @@ class TextReader(Reader):
                     log_warning("aiofiles not installed, using synchronous file I/O")
                     file_contents = file.read_text(self.encoding or "utf-8")
             else:
-                log_debug(f"Reading uploaded file asynchronously: {file.name}")
-                file_name = name or file.name.split(".")[0]
+                # Handle BytesIO and other file-like objects that may not have a name attribute
+                if name:
+                    file_name = name
+                elif hasattr(file, "name") and file.name is not None:
+                    file_name = file.name.split(".")[0]
+                else:
+                    file_name = "text_file"
+                log_debug(f"Reading uploaded file asynchronously: {file_name}")
                 file.seek(0)
                 file_contents = file.read().decode(self.encoding or "utf-8")
 

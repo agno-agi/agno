@@ -276,7 +276,9 @@ class ChromaDb(VectorDb):
 
         for document in documents:
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            # Include content_hash in ID to ensure uniqueness across different content hashes
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
             # Handle metadata and filters
             metadata = document.meta_data or {}
@@ -435,7 +437,9 @@ class ChromaDb(VectorDb):
 
         for document in documents:
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            # Include content_hash in ID to ensure uniqueness across different content hashes
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
             # Handle metadata and filters
             metadata = document.meta_data or {}
@@ -908,6 +912,7 @@ class ChromaDb(VectorDb):
 
                 # Convert to the expected type for ChromaDB
                 chroma_metadatas = cast(List[Mapping[str, Union[str, int, float, bool]]], updated_metadatas)
+                chroma_metadatas = [{k: v for k, v in m.items() if k and v} for m in chroma_metadatas]
                 collection.update(ids=ids, metadatas=chroma_metadatas)  # type: ignore
                 logger.debug(f"Updated metadata for {len(ids)} documents with content_id: {content_id}")
 
