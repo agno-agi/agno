@@ -31,10 +31,10 @@ except ImportError:
 
 class RedisRunCancellationManager(BaseRunCancellationManager):
     """Redis-based cancellation manager for distributed run cancellation.
-
     This manager stores run cancellation state in Redis, enabling cancellation
     across multiple processes or services.
 
+    To use: call the set_cancellation_manager function to set the cancellation manager.
     Args:
         redis_client: Sync Redis client for sync methods. Can be Redis or RedisCluster.
         async_redis_client: Async Redis client for async methods. Can be AsyncRedis or AsyncRedisCluster.
