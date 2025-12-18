@@ -5,8 +5,18 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-# Skip the entire module if todoist-api-python is not installed
-pytest.importorskip("todoist_api_python", reason="todoist-api-python not installed")
+# Check if todoist_api_python can be imported without errors
+# The library may be installed but have broken dependencies (dataclass_wizard)
+try:
+    import todoist_api_python.api  # noqa: F401
+
+    TODOIST_AVAILABLE = True
+except (ImportError, ModuleNotFoundError):
+    TODOIST_AVAILABLE = False
+
+# Skip entire module if todoist is not properly available
+if not TODOIST_AVAILABLE:
+    pytest.skip("todoist-api-python not available or has broken dependencies", allow_module_level=True)
 
 from agno.tools.todoist import TodoistTools
 
