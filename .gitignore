@@ -40,6 +40,7 @@ dist
 .venv*
 .perfenv*
 .demoenv*
+.gemini-agents*
 venv*
 agnoenv*
 aienv*
