@@ -47,13 +47,15 @@ class CSVReader(Reader):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
                 log_debug(f"Reading: {file}")
-                file_content = file.open(newline="", mode="r", encoding=self.encoding or "utf-8")
                 csv_name = name or file.stem
+                file_content: Union[io.TextIOWrapper, io.StringIO] = file.open(
+                    newline="", mode="r", encoding=self.encoding or "utf-8"
+                )
             else:
                 log_debug(f"Reading retrieved file: {getattr(file, 'name', 'BytesIO')}")
+                csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
                 file.seek(0)
                 file_content = io.StringIO(file.read().decode("utf-8"))
-                csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
 
             csv_content = ""
             with file_content as csvfile:

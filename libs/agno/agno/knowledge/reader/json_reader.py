@@ -67,6 +67,8 @@ class JSONReader(Reader):
                     chunked_documents.extend(self.chunk_document(document))
                 return chunked_documents
             return documents
+        except (FileNotFoundError, ValueError, json.JSONDecodeError):
+            raise
         except Exception as e:
             log_error(f"Error reading: {path}: {e}")
             raise
