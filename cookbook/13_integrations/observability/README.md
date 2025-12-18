@@ -72,6 +72,26 @@ pip install opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrume
 - **[Arize Phoenix via OpenInference](./arize_phoenix_via_openinference.py)** - Phoenix integration  
 - **[LangSmith via OpenInference](./langsmith_via_openinference.py)** - LangSmith integration
 
+### Arize Phoenix Multi-Project Routing
+
+Send traces from different agents to different Phoenix projects using Agno's built-in integration:
+
+```python
+from agno.tracing.phoenix import setup_phoenix, using_project
+
+# Set up Phoenix with project routing
+setup_phoenix(default_project="default")
+
+# Route traces to specific projects
+with using_project("stock-prices"):
+    await stock_agent.arun("query")  # -> stock-prices project
+
+with using_project("web-search"):
+    await search_agent.arun("query")  # -> web-search project
+```
+
+See **[Project Routing Example](./arize_phoenix_project_routing.py)** for a complete example.
+
 ### Platform-Specific Integrations
 
 Direct integrations with platform-specific SDKs:
