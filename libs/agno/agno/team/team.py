@@ -59,6 +59,9 @@ from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
 from agno.run.cancel import (
+    acleanup_run,
+    araise_if_cancelled,
+    aregister_run,
     cleanup_run,
     raise_if_cancelled,
     register_run,
@@ -2359,6 +2362,7 @@ class Team:
         14. Create session summary
         15. Cleanup and store (scrub, add to session, calculate metrics, save session)
         """
+        await aregister_run(run_response.run_id)
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
         memory_task = None
 
@@ -2470,12 +2474,12 @@ class Team:
                     log_debug("Starting memory creation in background task.")
                     memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
-                raise_if_cancelled(run_response.run_id)  # type: ignore
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
                 # 7. Reason about the task if reasoning is enabled
                 await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
 
                 # Check for cancellation before model call
-                raise_if_cancelled(run_response.run_id)  # type: ignore
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 8. Get the model response for the team leader
                 model_response = await self.model.aresponse(
@@ -2490,7 +2494,7 @@ class Team:
                 )  # type: ignore
 
                 # Check for cancellation after model call
-                raise_if_cancelled(run_response.run_id)  # type: ignore
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # If an output model is provided, generate output using the output model
                 await self._agenerate_response_with_output_model(
@@ -2531,12 +2535,12 @@ class Team:
                     ):
                         pass
 
-                raise_if_cancelled(run_response.run_id)  # type: ignore
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 13. Wait for background memory creation
                 await await_for_open_threads(memory_task=memory_task)
 
-                raise_if_cancelled(run_response.run_id)  # type: ignore
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
                 # 14. Create session summary
                 if self.session_summary_manager is not None:
                     # Upsert the RunOutput to Team Session before creating the session summary
@@ -2546,7 +2550,7 @@ class Team:
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
-                raise_if_cancelled(run_response.run_id)  # type: ignore
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
                 run_response.status = RunStatus.completed
 
                 # 15. Cleanup and store the run response and session
@@ -2627,7 +2631,7 @@ class Team:
                         pass
 
                 # Always clean up the run tracking
-                cleanup_run(run_response.run_id)  # type: ignore
+                await acleanup_run(run_response.run_id)  # type: ignore
 
         return run_response
 
@@ -2665,6 +2669,7 @@ class Team:
         12. Create session summary
         13. Cleanup and store (scrub, add to session, calculate metrics, save session)
         """
+        await aregister_run(run_response.run_id)
 
         memory_task = None
 
@@ -2793,11 +2798,11 @@ class Team:
                     run_messages=run_messages,
                     stream_events=stream_events,
                 ):
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield item
 
                 # Check for cancellation before model processing
-                raise_if_cancelled(run_response.run_id)  # type: ignore
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 9. Get a response from the model
                 if self.output_model is None:
@@ -2811,7 +2816,7 @@ class Team:
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
                 else:
                     async for event in self._ahandle_model_response_stream(
@@ -2824,7 +2829,7 @@ class Team:
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                         from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
                         if isinstance(event, RunContentEvent):
@@ -2842,11 +2847,11 @@ class Team:
                         run_messages=run_messages,
                         stream_events=stream_events,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
 
                 # Check for cancellation after model processing
-                raise_if_cancelled(run_response.run_id)  # type: ignore
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 10. Parse response with parser model if provided
                 async for event in self._aparse_response_with_parser_model_stream(
@@ -2881,7 +2886,7 @@ class Team:
                     ):
                         yield event
 
-                raise_if_cancelled(run_response.run_id)  # type: ignore
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
                 # 11. Wait for background memory creation
                 async for event in await_for_thread_tasks_stream(
                     run_response=run_response,
@@ -2892,7 +2897,7 @@ class Team:
                 ):
                     yield event
 
-                raise_if_cancelled(run_response.run_id)  # type: ignore
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 12. Create session summary
                 if self.session_summary_manager is not None:
@@ -2920,7 +2925,7 @@ class Team:
                             store_events=self.store_events,
                         )
 
-                raise_if_cancelled(run_response.run_id)  # type: ignore
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # Create the run completed event
                 completed_event = handle_event(
@@ -3023,7 +3028,7 @@ class Team:
                         pass
 
                 # Always clean up the run tracking
-                cleanup_run(run_response.run_id)  # type: ignore
+                await acleanup_run(run_response.run_id)  # type: ignore
 
     @overload
     async def arun(
@@ -3115,7 +3120,6 @@ class Team:
 
         # Set the id for the run and register it immediately for cancellation tracking
         run_id = run_id or str(uuid4())
-        register_run(run_id)
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.parent_team_id:
             log_warning(
