@@ -8,6 +8,7 @@ from fastapi.routing import APIRouter
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
+from agno.os.utils import to_utc_datetime
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -78,9 +79,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                                         "reasoning_tokens": 0,
                                     },
                                     "model_metrics": [{"model_id": "gpt-4o", "model_provider": "OpenAI", "count": 5}],
-                                    "date": "2025-07-31T00:00:00",
-                                    "created_at": 1753993132,
-                                    "updated_at": 1753993741,
+                                    "date": "2025-07-31T00:00:00Z",
+                                    "created_at": "2025-07-31T12:38:52Z",
+                                    "updated_at": "2025-07-31T12:49:01Z",
                                 }
                             ]
                         }
@@ -111,9 +112,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
             return MetricsResponse(
                 metrics=[DayAggregatedMetrics.from_dict(metric) for metric in metrics],
-                updated_at=datetime.fromtimestamp(latest_updated_at, tz=timezone.utc)
-                if latest_updated_at is not None
-                else None,
+                updated_at=to_utc_datetime(latest_updated_at),
             )
 
         except Exception as e:
@@ -157,9 +156,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                                     "reasoning_tokens": 0,
                                 },
                                 "model_metrics": [{"model_id": "gpt-4o", "model_provider": "OpenAI", "count": 2}],
-                                "date": "2025-08-12T00:00:00",
-                                "created_at": 1755016907,
-                                "updated_at": 1755016907,
+                                "date": "2025-08-12T00:00:00Z",
+                                "created_at": "2025-08-12T08:01:47Z",
+                                "updated_at": "2025-08-12T08:01:47Z",
                             }
                         ]
                     }
