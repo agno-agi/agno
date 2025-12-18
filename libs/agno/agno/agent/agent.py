@@ -133,6 +133,7 @@ from agno.utils.events import (
     create_session_summary_completed_event,
     create_session_summary_started_event,
     create_tool_call_completed_event,
+    create_tool_call_error_event,
     create_tool_call_started_event,
     handle_event,
 )
@@ -2338,7 +2339,7 @@ class Agent:
         cultural_knowledge_task = None
 
         # 1. Read or create session. Reads from the database if provided.
-        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+        agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
 
         # Set up retry logic
         num_attempts = self.retries + 1
@@ -4980,6 +4981,15 @@ class Agent:
                             events_to_skip=self.events_to_skip,  # type: ignore
                             store_events=self.store_events,
                         )
+                        if tool.tool_call_error:
+                            yield handle_event(  # type: ignore
+                                create_tool_call_error_event(
+                                    from_run_response=run_response, tool=tool, error=str(tool.result)
+                                ),
+                                run_response,
+                                events_to_skip=self.events_to_skip,  # type: ignore
+                                store_events=self.store_events,
+                            )
 
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
@@ -5037,6 +5047,15 @@ class Agent:
                             events_to_skip=self.events_to_skip,  # type: ignore
                             store_events=self.store_events,
                         )
+                        if tool.tool_call_error:
+                            yield handle_event(  # type: ignore
+                                create_tool_call_error_event(
+                                    from_run_response=run_response, tool=tool, error=str(tool.result)
+                                ),
+                                run_response,
+                                events_to_skip=self.events_to_skip,  # type: ignore
+                                store_events=self.store_events,
+                            )
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
 
@@ -5831,6 +5850,15 @@ class Agent:
                                 events_to_skip=self.events_to_skip,  # type: ignore
                                 store_events=self.store_events,
                             )
+                            if tool_call.tool_call_error:
+                                yield handle_event(  # type: ignore
+                                    create_tool_call_error_event(
+                                        from_run_response=run_response, tool=tool_call, error=str(tool_call.result)
+                                    ),
+                                    run_response,
+                                    events_to_skip=self.events_to_skip,  # type: ignore
+                                    store_events=self.store_events,
+                                )
 
             # Handle compression events
             elif model_response_event.event == ModelResponseEvent.compression_started.value:
