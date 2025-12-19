@@ -1077,7 +1077,6 @@ class Agent:
 
             # Start memory creation on a separate thread (runs concurrently with the main execution loop)
             memory_future = None
-            # 4. Start memory creation in background thread if memory manager is enabled
             should_create_memories = run_messages.user_message is not None and (
                 # V1 memory manager with automatic extraction
                 (self.memory_manager is not None and self.enable_user_memories and not self.enable_agentic_memory)
@@ -1291,7 +1290,6 @@ class Agent:
 
             # Start memory creation on a separate thread (runs concurrently with the main execution loop)
             memory_future = None
-            # 4. Start memory creation in background thread if memory manager is enabled
             should_create_memories = run_messages.user_message is not None and (
                 # V1 memory manager with automatic extraction
                 (self.memory_manager is not None and self.enable_user_memories and not self.enable_agentic_memory)
@@ -5854,7 +5852,7 @@ class Agent:
             else:
                 log_warning("Unable to add messages to memory")
 
-        # MemoryManagerV2 extraction (automatic mode)
+        # Background extraction of user memory
         if self.memory_manager_v2 is not None and user_id is not None and self.update_memory_on_run:
             # Build list of messages to extract from
             messages_to_extract: List[Message] = []
@@ -5924,29 +5922,6 @@ class Agent:
                 )
             else:
                 log_warning("Unable to add messages to memory")
-
-        # MemoryManagerV2 extraction (async, automatic mode)
-        if self.memory_manager_v2 is not None and user_id is not None and self.update_memory_on_run:
-            # Build list of messages to extract from
-            messages_to_extract: List[Message] = []
-            if run_messages.user_message is not None:
-                messages_to_extract.append(run_messages.user_message)
-            if run_messages.extra_messages is not None:
-                for msg in run_messages.extra_messages:
-                    if isinstance(msg, Message):
-                        messages_to_extract.append(msg)
-                    elif isinstance(msg, dict):
-                        try:
-                            messages_to_extract.append(Message(**msg))
-                        except Exception:
-                            pass
-
-            if messages_to_extract:
-                log_debug("Extracting user memory via MemoryManagerV2 (automatic mode)")
-                await self.memory_manager_v2.aextract_from_conversation(
-                    messages=messages_to_extract,
-                    user_id=user_id,
-                )
 
     def _raise_if_async_tools(self) -> None:
         """Raise an exception if any tools contain async functions"""
@@ -7714,7 +7689,7 @@ class Agent:
                 "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
             )
 
-        # 3.3.10b Add user memory layers from MemoryManagerV2 to the system prompt
+        # 3.3.12 Add user memory layers to the system prompt
         if self.memory_manager_v2 is not None and user_id is not None:
             user_context = self.memory_manager_v2.compile_user_memory(user_id)
             if user_context:
@@ -8077,7 +8052,7 @@ class Agent:
                 "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
             )
 
-        # 3.3.10b Add user memory layers from MemoryManagerV2 to the system prompt
+        # 3.3.12 Add user memory layers to the system message
         if self.memory_manager_v2 is not None and user_id is not None:
             user_context = self.memory_manager_v2.compile_user_memory(user_id)
             if user_context:

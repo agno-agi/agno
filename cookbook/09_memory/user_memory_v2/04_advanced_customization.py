@@ -1,10 +1,8 @@
-"""Advanced Customization - Per-layer controls and schema overrides.
+"""Advanced Customization - Schema overrides and nested categories.
 
 Demonstrates:
-1. Per-layer extraction controls (enable/disable specific layers)
-2. Custom schema for structured profile extraction
-3. Custom extraction prompts per layer
-4. Nested category organization
+1. Custom schema for structured profile extraction hints
+2. Nested category organization in memory layers
 """
 
 from dataclasses import dataclass
@@ -29,54 +27,10 @@ class EngineerProfile:
     cloud_platforms: Optional[List[str]] = None
 
 
-def example_per_layer_controls():
-    """Demonstrate enabling/disabling specific memory layers."""
-    print("=" * 60)
-    print("Example 1: Basic Memory with Automatic Extraction")
-    print("=" * 60)
-
-    db = SqliteDb(db_file="tmp/custom_memory.db")
-
-    # Basic memory setup with automatic extraction
-    memory = MemoryManagerV2(
-        db=db,
-        model=OpenAIChat(id="gpt-4o-mini"),
-    )
-
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
-        memory_manager_v2=memory,
-        update_memory_on_run=True,
-        markdown=True,
-    )
-
-    user_id = "dev_sarah"
-
-    print("\nUser introduces themselves with project context:")
-    agent.print_response(
-        "Hi, I'm Sarah, a senior Python developer at DataFlow Inc. "
-        "I'm currently working on a data pipeline project using Apache Kafka. "
-        "Please be concise in your responses.",
-        user_id=user_id,
-        stream=True,
-    )
-
-    print("\n--- Extracted Memory ---")
-    user = memory.get_user_profile(user_id)
-    print("\nProfile (extracted):")
-    pprint(user.user_profile)
-    print("\nPolicies (extracted):")
-    pprint(user.policies)
-    print("\nKnowledge (should be empty - extraction disabled):")
-    pprint(user.knowledge)
-
-    memory.delete_user_profile(user_id)
-
-
 def example_schema_override():
     """Demonstrate custom schema for structured extraction."""
-    print("\n" + "=" * 60)
-    print("Example 2: Schema Override for Structured Extraction")
+    print("=" * 60)
+    print("Example 1: Schema Override for Structured Extraction")
     print("=" * 60)
 
     db = SqliteDb(db_file="tmp/custom_memory.db")
@@ -85,7 +39,6 @@ def example_schema_override():
     memory = MemoryManagerV2(
         db=db,
         model=OpenAIChat(id="gpt-4o-mini"),
-        # Custom schema hints for profile
         profile_schema=EngineerProfile,
     )
 
@@ -113,46 +66,10 @@ def example_schema_override():
     memory.delete_user_profile(user_id)
 
 
-def example_custom_extraction_prompt():
-    """Demonstrate custom extraction prompts per layer."""
-    print("\n" + "=" * 60)
-    print("Example 3: Custom Extraction Prompts")
-    print("=" * 60)
-
-    db = SqliteDb(db_file="tmp/custom_memory.db")
-
-    memory = MemoryManagerV2(
-        db=db,
-        model=OpenAIChat(id="gpt-4o-mini"),
-    )
-
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
-        memory_manager_v2=memory,
-        update_memory_on_run=True,
-        markdown=True,
-    )
-
-    user_id = "dev_custom"
-
-    print("\nUser with implicit and explicit preferences:")
-    agent.print_response(
-        "Hey! I always prefer detailed explanations with code examples. "
-        "How do I implement a binary search?",
-        user_id=user_id,
-        stream=True,
-    )
-
-    print("\n--- Extracted Policies (using custom prompt) ---")
-    pprint(memory.get_user_profile(user_id).policies)
-
-    memory.delete_user_profile(user_id)
-
-
 def example_nested_categories():
     """Demonstrate nested category organization in context."""
     print("\n" + "=" * 60)
-    print("Example 4: Nested Category Organization")
+    print("Example 2: Nested Category Organization")
     print("=" * 60)
 
     db = SqliteDb(db_file="tmp/custom_memory.db")
@@ -163,7 +80,7 @@ def example_nested_categories():
     # Manually set up nested category structure
     from agno.db.schemas.user_profile import UserProfile
 
-    user = UserProfile(
+    user_profile = UserProfile(
         user_id=user_id,
         user_profile={
             "personal": {"name": "Jordan", "location": "Seattle", "timezone": "PST"},
@@ -189,16 +106,14 @@ def example_nested_categories():
             },
         },
     )
-    memory.upsert_user(user)
+    memory.upsert_user_profile(user_profile)
 
-    print("\n--- Compiled Context (with nested XML tags) ---")
+    print("\n--- Compiled Context (with nested structure) ---")
     print(memory.compile_user_memory(user_id))
 
     memory.delete_user_profile(user_id)
 
 
 if __name__ == "__main__":
-    example_per_layer_controls()
     example_schema_override()
-    example_custom_extraction_prompt()
     example_nested_categories()

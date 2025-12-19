@@ -24,7 +24,6 @@ agent = Agent(
     memory_manager_v2=memory,
     enable_agentic_memory_v2=True,  # Agent has tools to manage memory
     markdown=True,
-    show_tool_calls=True,
 )
 
 user_id = "jordan"
@@ -59,8 +58,16 @@ agent.print_response(
     stream=True,
 )
 
-print("\nMemory after deletion:")
+print("\nMemory after conversation 2:")
 pprint(memory.get_user_profile(user_id).to_dict() if memory.get_user_profile(user_id) else {})
 
-# Cleanup
-memory.delete_user_profile(user_id)
+# Conversation 4: Agent uses add_user_knowledge tool to add knowledge
+print("\nConversation 4: User shares knowledge")
+agent.print_response(
+    "Actually my full name is Jordan Smith. I now moved away from Computer Vision to NLP.",
+    user_id=user_id,
+    stream=True,
+)
+
+print("\nMemory after conversation 4:")
+pprint(memory.get_user_profile(user_id).to_dict() if memory.get_user_profile(user_id) else {})
