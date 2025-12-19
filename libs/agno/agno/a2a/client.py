@@ -18,7 +18,7 @@ from agno.a2a.exceptions import (
     A2ATimeoutError,
 )
 from agno.a2a.schemas import AgentCard, Artifact, StreamEvent, TaskResult
-from agno.media import File, Image
+from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_warning
 
 try:
@@ -158,6 +158,8 @@ class A2AClient:
         context_id: Optional[str] = None,
         user_id: Optional[str] = None,
         images: Optional[List[Image]] = None,
+        audio: Optional[List[Audio]] = None,
+        videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         stream: bool = False,
@@ -170,6 +172,8 @@ class A2AClient:
             context_id: Session/context ID for multi-turn conversations
             user_id: User identifier
             images: List of images to include
+            audio: List of audio files to include
+            videos: List of videos to include
             files: List of files to include
             metadata: Additional metadata
             stream: Whether this is a streaming request
@@ -190,6 +194,28 @@ class A2AClient:
                         {
                             "kind": "file",
                             "file": {"uri": img.url, "mimeType": "image/*"},
+                        }
+                    )
+
+        # Add audio as file parts
+        if audio:
+            for aud in audio:
+                if hasattr(aud, "url") and aud.url:
+                    parts.append(
+                        {
+                            "kind": "file",
+                            "file": {"uri": aud.url, "mimeType": "audio/*"},
+                        }
+                    )
+
+        # Add videos as file parts
+        if videos:
+            for vid in videos:
+                if hasattr(vid, "url") and vid.url:
+                    parts.append(
+                        {
+                            "kind": "file",
+                            "file": {"uri": vid.url, "mimeType": "video/*"},
                         }
                     )
 
@@ -391,6 +417,8 @@ class A2AClient:
         context_id: Optional[str] = None,
         user_id: Optional[str] = None,
         images: Optional[List[Image]] = None,
+        audio: Optional[List[Audio]] = None,
+        videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> TaskResult:
@@ -402,6 +430,8 @@ class A2AClient:
             context_id: Session/context ID for multi-turn conversations
             user_id: User identifier (optional)
             images: List of Image objects to include (optional)
+            audio: List of Audio objects to include (optional)
+            videos: List of Video objects to include (optional)
             files: List of File objects to include (optional)
             metadata: Additional metadata (optional)
 
@@ -423,6 +453,8 @@ class A2AClient:
             context_id=context_id,
             user_id=user_id,
             images=images,
+            audio=audio,
+            videos=videos,
             files=files,
             metadata=metadata,
             stream=False,
@@ -477,6 +509,8 @@ class A2AClient:
         context_id: Optional[str] = None,
         user_id: Optional[str] = None,
         images: Optional[List[Image]] = None,
+        audio: Optional[List[Audio]] = None,
+        videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[StreamEvent]:
@@ -488,6 +522,8 @@ class A2AClient:
             context_id: Session/context ID for multi-turn conversations
             user_id: User identifier (optional)
             images: List of Image objects to include (optional)
+            audio: List of Audio objects to include (optional)
+            videos: List of Video objects to include (optional)
             files: List of File objects to include (optional)
             metadata: Additional metadata (optional)
 
@@ -517,6 +553,8 @@ class A2AClient:
             context_id=context_id,
             user_id=user_id,
             images=images,
+            audio=audio,
+            videos=videos,
             files=files,
             metadata=metadata,
             stream=True,

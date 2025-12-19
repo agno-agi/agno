@@ -15,7 +15,6 @@ from agno.utils.agent import validate_input
 from agno.utils.remote import serialize_input
 
 if TYPE_CHECKING:
-    from agno.a2a import A2AClient
     from agno.os.routers.agents.schema import AgentResponse
 
 
@@ -43,21 +42,8 @@ class RemoteAgent(BaseRemote):
             json_rpc_endpoint: For A2A protocol only - endpoint for JSON-RPC calls.
                 Use "/" for Google ADK servers. If None, uses REST-style endpoints.
         """
-        super().__init__(base_url, timeout)
+        super().__init__(base_url, timeout, protocol, json_rpc_endpoint)
         self.agent_id = agent_id
-        self.protocol = protocol
-        self.json_rpc_endpoint = json_rpc_endpoint
-
-        # Initialize A2A client if using A2A protocol
-        self._a2a_client: Optional["A2AClient"] = None
-        if protocol == "a2a":
-            from agno.a2a import A2AClient
-
-            self._a2a_client = A2AClient(
-                base_url=base_url,
-                timeout=int(timeout),
-                json_rpc_endpoint=json_rpc_endpoint,
-            )
 
     @property
     def id(self) -> str:
@@ -100,12 +86,16 @@ class RemoteAgent(BaseRemote):
     def name(self) -> Optional[str]:
         if self._agent_config is not None:
             return self._agent_config.name
+        if self._agent_card is not None:
+            return self._agent_card.name
         return self.agent_id
 
     @cached_property
     def description(self) -> Optional[str]:
         if self._agent_config is not None:
             return self._agent_config.description
+        if self._agent_card is not None:
+            return self._agent_card.description
         return ""
 
     @cached_property
@@ -281,7 +271,9 @@ class RemoteAgent(BaseRemote):
                 stream=stream or False,
                 user_id=user_id,
                 context_id=session_id,  # Map session_id → context_id for A2A
+                audio=audio,
                 images=images,
+                videos=videos,
                 files=files,
             )
 
@@ -338,7 +330,9 @@ class RemoteAgent(BaseRemote):
         stream: bool,
         user_id: Optional[str],
         context_id: Optional[str],
+        audio: Optional[Sequence[Audio]],
         images: Optional[Sequence[Image]],
+        videos: Optional[Sequence[Video]],
         files: Optional[Sequence[File]],
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         """Execute via A2A protocol.
@@ -348,25 +342,28 @@ class RemoteAgent(BaseRemote):
             stream: Whether to stream the response
             user_id: User identifier
             context_id: Session/context ID (maps to session_id)
+            audio: Audio files to include
             images: Images to include
+            videos: Videos to include
             files: Files to include
 
         Returns:
             RunOutput for non-streaming, AsyncIterator[RunOutputEvent] for streaming
         """
-        from agno.a2a.utils import map_stream_events_to_run_events, map_task_result_to_run_output
+        from agno.a2a.utils import map_stream_events_to_run_events
 
-        if self._a2a_client is None:
-            raise RuntimeError("A2A client not initialized. Use protocol='a2a' to enable A2A support.")
+        a2a_client = self.get_a2a_client()
 
         if stream:
             # Return async generator for streaming
-            event_stream = self._a2a_client.stream_message(
+            event_stream = a2a_client.stream_message(
                 agent_id=self.agent_id,
                 message=message,
                 context_id=context_id,
                 user_id=user_id,
                 images=list(images) if images else None,
+                audio=list(audio) if audio else None,
+                videos=list(videos) if videos else None,
                 files=list(files) if files else None,
             )
             return map_stream_events_to_run_events(event_stream, agent_id=self.agent_id)
@@ -376,7 +373,9 @@ class RemoteAgent(BaseRemote):
                 message=message,
                 user_id=user_id,
                 context_id=context_id,
+                audio=audio,
                 images=images,
+                videos=videos,
                 files=files,
             )
 
@@ -385,22 +384,25 @@ class RemoteAgent(BaseRemote):
         message: str,
         user_id: Optional[str],
         context_id: Optional[str],
+        audio: Optional[Sequence[Audio]],
         images: Optional[Sequence[Image]],
+        videos: Optional[Sequence[Video]],
         files: Optional[Sequence[File]],
     ) -> RunOutput:
         """Send a non-streaming A2A message and convert response to RunOutput."""
         from agno.a2a.utils import map_task_result_to_run_output
 
-        if self._a2a_client is None:
-            raise RuntimeError("A2A client not initialized.")
+        a2a_client = self.get_a2a_client()
 
-        async with self._a2a_client:
-            task_result = await self._a2a_client.send_message(
+        async with a2a_client:
+            task_result = await a2a_client.send_message(
                 agent_id=self.agent_id,
                 message=message,
                 context_id=context_id,
                 user_id=user_id,
                 images=list(images) if images else None,
+                audio=list(audio) if audio else None,
+                videos=list(videos) if videos else None,
                 files=list(files) if files else None,
             )
         return map_task_result_to_run_output(task_result, agent_id=self.agent_id)

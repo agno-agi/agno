@@ -2,7 +2,7 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from datetime import date
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Sequence, Union
 
 from pydantic import BaseModel
 
@@ -17,6 +17,8 @@ from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent
 if TYPE_CHECKING:
     from fastapi import UploadFile
 
+    from agno.a2a import A2AClient
+    from agno.a2a.schemas import AgentCard
     from agno.client import AgentOSClient
     from agno.os.routers.evals.schemas import EvalSchema
     from agno.os.routers.knowledge.schemas import (
@@ -288,20 +290,29 @@ class BaseRemote:
         self,
         base_url: str,
         timeout: float = 60.0,
+        protocol: Literal["agentos", "a2a"] = "agentos",
+        json_rpc_endpoint: Optional[str] = None,
     ):
         """Initialize BaseRemote for remote execution.
 
-        For local execution, provide agent/team/workflow instances.
-        For remote execution, provide base_url.
+        Supports two protocols:
+        - "agentos": Agno's proprietary AgentOS REST API (default)
+        - "a2a": A2A (Agent-to-Agent) protocol for cross-framework communication
 
         Args:
             base_url: Base URL for remote instance (e.g., "http://localhost:7777")
             timeout: Request timeout in seconds (default: 60)
+            protocol: Communication protocol - "agentos" (default) or "a2a"
+            json_rpc_endpoint: For A2A protocol only - endpoint for JSON-RPC calls.
+                Use "/" for Google ADK servers. If None, uses REST-style endpoints.
         """
         self.base_url = base_url.rstrip("/")
         self.timeout: float = timeout
+        self.protocol = protocol
+        self.json_rpc_endpoint = json_rpc_endpoint
 
         self.client = self.get_client()
+        self._a2a_client: Optional["A2AClient"] = None
 
     def get_client(self) -> "AgentOSClient":
         """Get an AgentOSClient for fetching remote configuration.
@@ -318,6 +329,45 @@ class BaseRemote:
             base_url=self.base_url,
             timeout=self.timeout,
         )
+
+    def get_a2a_client(self) -> "A2AClient":
+        """Get an A2AClient for A2A protocol communication.
+
+        Returns cached client if available, otherwise creates a new one.
+        This method provides lazy initialization of the A2A client.
+
+        Returns:
+            A2AClient: Client configured for A2A protocol communication
+        """
+        if self._a2a_client is None:
+            from agno.a2a import A2AClient
+
+            self._a2a_client = A2AClient(
+                base_url=self.base_url,
+                timeout=int(self.timeout),
+                json_rpc_endpoint=self.json_rpc_endpoint,
+            )
+        return self._a2a_client
+
+    @cached_property
+    def _agent_card(self) -> Optional["AgentCard"]:
+        """Get agent card for A2A protocol agents.
+
+        Fetches the agent card from the standard /.well-known/agent.json endpoint
+        to populate agent metadata (name, description, etc.) for A2A agents.
+
+        Returns None for non-A2A protocols or if the server doesn't support agent cards.
+        """
+        if self.protocol != "a2a":
+            return None
+
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+            return loop.run_until_complete(self.get_a2a_client().get_agent_card())
+        except Exception:
+            return None
 
     @cached_property
     def _config(self) -> "ConfigResponse":
