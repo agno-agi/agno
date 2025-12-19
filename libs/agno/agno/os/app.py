@@ -301,12 +301,12 @@ class AgentOS:
         """Re-provision all routes for the AgentOS."""
         updated_routers = [
             get_session_router(dbs=self.dbs),
+            get_memory_router(dbs=self.dbs),
+            get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
-            get_memory_router(dbs=self.dbs),
-            get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
-            get_database_router(dbs=self.dbs),
+            get_database_router(self, settings=self.settings),
         ]
 
         # Clear all previously existing routes
