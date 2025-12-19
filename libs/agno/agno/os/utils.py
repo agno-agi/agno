@@ -14,6 +14,7 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
+from agno.os.schema import ToolDefinitionResponse
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
@@ -406,20 +407,23 @@ def extract_format(file: UploadFile) -> Optional[str]:
     return None
 
 
-def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):
-    formatted_tools: List[Dict] = []
+def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]) -> List[ToolDefinitionResponse]:
+    formatted_tools: List[ToolDefinitionResponse] = []
     if agent_tools is not None:
         for tool in agent_tools:
             if isinstance(tool, dict):
-                formatted_tools.append(tool)
+                if "name" in tool:
+                    formatted_tools.append(ToolDefinitionResponse(name=tool["name"], raw=tool))
+                else:
+                    formatted_tools.append(ToolDefinitionResponse(raw=tool))
             elif isinstance(tool, Toolkit):
                 for _, f in tool.functions.items():
-                    formatted_tools.append(f.to_dict())
+                    formatted_tools.append(ToolDefinitionResponse(name=f.name, description=f.description, parameters=f.parameters))
             elif isinstance(tool, Function):
-                formatted_tools.append(tool.to_dict())
+                formatted_tools.append(ToolDefinitionResponse(name=tool.name, description=tool.description, parameters=tool.parameters))
             elif callable(tool):
                 func = Function.from_callable(tool)
-                formatted_tools.append(func.to_dict())
+                formatted_tools.append(ToolDefinitionResponse(name=tool.name, description=tool.description, parameters=tool.parameters))
             else:
                 logger.warning(f"Unknown tool type: {type(tool)}")
     return formatted_tools
@@ -467,8 +471,6 @@ def get_workflow_by_id(workflow_id: str, workflows: Optional[List[Workflow]] = N
 
 
 #  INPUT SCHEMA VALIDATIONS
-
-
 def get_agent_input_schema_dict(agent: Agent) -> Optional[Dict[str, Any]]:
     """Get input schema as dictionary for API responses"""
 

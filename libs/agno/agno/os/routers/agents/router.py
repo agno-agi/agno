@@ -1,5 +1,5 @@
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import (
@@ -9,6 +9,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
 )
@@ -21,6 +22,7 @@ from agno.media import File as FileMedia
 from agno.os.auth import get_authentication_dependency, require_resource_access
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import (
+    AgentSummaryResponse,
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
@@ -488,7 +490,7 @@ def get_agent_router(
 
     @router.get(
         "/agents",
-        response_model=List[AgentResponse],
+        response_model=List[Union[AgentResponse, AgentSummaryResponse]],
         response_model_exclude_none=True,
         tags=["Agents"],
         operation_id="get_agents",
@@ -500,7 +502,8 @@ def get_agent_router(
             "- Model configuration and capabilities\n"
             "- Available tools and their configurations\n"
             "- Session, knowledge, memory, and reasoning settings\n"
-            "- Only meaningful (non-default) configurations are included"
+            "- Only meaningful (non-default) configurations are included\n\n"
+            "Use minimal=true for a lightweight response with basic agent info only."
         ),
         responses={
             200: {
@@ -524,7 +527,14 @@ def get_agent_router(
             }
         },
     )
-    async def get_agents(request: Request) -> List[AgentResponse]:
+    async def get_agents(
+        request: Request,
+        minimal: bool = Query(
+            default=False,
+            description="If true, return minimal agent info (id, name, description, db_id). "
+            "If false, return full agent details including model, tools, and configurations.",
+        ),
+    ) -> List[Union[AgentResponse, AgentSummaryResponse]]:
         """Return the list of all Agents present in the contextual OS"""
         if os.agents is None:
             return []
@@ -543,10 +553,13 @@ def get_agent_router(
         else:
             accessible_agents = os.agents
 
-        agents = []
+        agents: List[Union[AgentResponse, AgentSummaryResponse]] = []
         for agent in accessible_agents:
-            agent_response = await AgentResponse.from_agent(agent=agent)
-            agents.append(agent_response)
+            if minimal:
+                agents.append(AgentSummaryResponse.from_agent(agent=agent))
+            else:
+                agent_response = await AgentResponse.from_agent(agent=agent)
+                agents.append(agent_response)
 
         return agents
 

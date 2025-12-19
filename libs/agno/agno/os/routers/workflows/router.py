@@ -8,6 +8,7 @@ from fastapi import (
     Depends,
     Form,
     HTTPException,
+    Query,
     Request,
     WebSocket,
 )
@@ -399,7 +400,7 @@ def get_workflow_router(
 
     @router.get(
         "/workflows",
-        response_model=List[WorkflowSummaryResponse],
+        response_model=List[Union[WorkflowResponse, WorkflowSummaryResponse]],
         response_model_exclude_none=True,
         tags=["Workflows"],
         operation_id="get_workflows",
@@ -410,7 +411,8 @@ def get_workflow_router(
             "- Workflow metadata (ID, name, description)\n"
             "- Input schema requirements\n"
             "- Step sequence and execution flow\n"
-            "- Associated agents and teams"
+            "- Associated agents and teams\n\n"
+            "Use minimal=true for a lightweight response with basic workflow info only."
         ),
         responses={
             200: {
@@ -430,7 +432,14 @@ def get_workflow_router(
             }
         },
     )
-    async def get_workflows(request: Request) -> List[WorkflowSummaryResponse]:
+    async def get_workflows(
+        request: Request,
+        minimal: bool = Query(
+            default=False,
+            description="If true, return minimal workflow info (id, name, description, db_id). "
+            "If false, return full workflow details including steps, input_schema, and configurations.",
+        ),
+    ) -> List[Union[WorkflowResponse, WorkflowSummaryResponse]]:
         if os.workflows is None:
             return []
 
@@ -447,7 +456,15 @@ def get_workflow_router(
         else:
             accessible_workflows = os.workflows
 
-        return [WorkflowSummaryResponse.from_workflow(workflow) for workflow in accessible_workflows]
+        workflows: List[Union[WorkflowResponse, WorkflowSummaryResponse]] = []
+        for workflow in accessible_workflows:
+            if minimal:
+                workflows.append(WorkflowSummaryResponse.from_workflow(workflow))
+            else:
+                workflow_response = await WorkflowResponse.from_workflow(workflow)
+                workflows.append(workflow_response)
+
+        return workflows
 
     @router.get(
         "/workflows/{workflow_id}",

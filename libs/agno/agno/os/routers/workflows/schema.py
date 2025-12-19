@@ -4,21 +4,20 @@ from pydantic import BaseModel, Field
 
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.routers.teams.schema import TeamResponse
+from agno.os.schema import DatabaseConfigResponse
 from agno.os.utils import get_workflow_input_schema_dict
 from agno.workflow.agent import WorkflowAgent
 from agno.workflow.workflow import Workflow
 
 
 class WorkflowResponse(BaseModel):
-    id: Optional[str] = Field(None, description="Unique identifier for the workflow")
-    name: Optional[str] = Field(None, description="Name of the workflow")
-    db_id: Optional[str] = Field(None, description="Database identifier")
-    description: Optional[str] = Field(None, description="Description of the workflow")
-    input_schema: Optional[Dict[str, Any]] = Field(None, description="Input schema for the workflow")
-    steps: Optional[List[Dict[str, Any]]] = Field(None, description="List of workflow steps")
-    agent: Optional[AgentResponse] = Field(None, description="Agent configuration if used")
-    team: Optional[TeamResponse] = Field(None, description="Team configuration if used")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    id: str = Field(..., description="The ID of the workflow")
+    name: Optional[str] = Field(None, description="The name of the workflow")
+    description: Optional[str] = Field(None, description="The description of the workflow")
+    database: Optional[DatabaseConfigResponse] = Field(None, description="The database of the workflow")
+    input_schema: Optional[Dict[str, Any]] = Field(None, description="The input schema of the workflow")
+    steps: Optional[List[Dict[str, Any]]] = Field(None, description="The steps of the workflow")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="The metadata of the workflow")
     workflow_agent: bool = Field(False, description="Whether this workflow uses a WorkflowAgent")
 
     @classmethod
@@ -63,10 +62,19 @@ class WorkflowResponse(BaseModel):
         if steps:
             steps = await cls._resolve_agents_and_teams_recursively(steps)
 
+        database: Optional[DatabaseConfigResponse] = None
+        if workflow.db:
+            table_names, config = workflow.db.to_config()
+            database = DatabaseConfigResponse(
+                id=workflow.db.id,
+                table_names=table_names,
+                config=config,
+            )
+
         return cls(
             id=workflow.id,
             name=workflow.name,
-            db_id=workflow.db.id if workflow.db else None,
+            database=database,
             description=workflow.description,
             steps=steps,
             input_schema=get_workflow_input_schema_dict(workflow),

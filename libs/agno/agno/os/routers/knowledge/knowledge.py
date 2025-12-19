@@ -3,7 +3,7 @@ import logging
 import math
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, Path, Query, UploadFile
 
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
@@ -104,7 +104,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         chunker: Optional[str] = Form(None, description="Chunking strategy to apply during processing"),
         chunk_size: Optional[int] = Form(None, description="Chunk size to use for processing"),
         chunk_overlap: Optional[int] = Form(None, description="Chunk overlap to use for processing"),
-        db_id: Optional[str] = Query(default=None, description="Database ID to use for content storage"),
+        db_id: Optional[str] = Header(
+            default=None, alias="X-DB-ID", description="Database ID to use for content storage"
+        ),
     ):
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         log_info(f"Adding content: {name}, {description}, {url}, {metadata}")
@@ -230,7 +232,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         description: Optional[str] = Form(None, description="Content description"),
         metadata: Optional[str] = Form(None, description="Content metadata as JSON string"),
         reader_id: Optional[str] = Form(None, description="ID of the reader to use for processing"),
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="The ID of the database to use"),
     ) -> Optional[ContentResponseSchema]:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
 
@@ -313,7 +315,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         page: Optional[int] = Query(default=1, description="Page number"),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="The ID of the database to use"),
     ) -> PaginatedResponse[ContentResponseSchema]:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         contents, count = await knowledge.aget_content(limit=limit, page=page, sort_by=sort_by, sort_order=sort_order)
@@ -378,7 +380,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
     )
     async def get_content_by_id(
         content_id: str,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="The ID of the database to use"),
     ) -> ContentResponseSchema:
         log_info(f"Getting content by id: {content_id}")
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
@@ -418,7 +420,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
     )
     async def delete_content_by_id(
         content_id: str,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="The ID of the database to use"),
     ) -> ContentResponseSchema:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         await knowledge.aremove_content_by_id(content_id=content_id)
@@ -443,7 +445,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         },
     )
     def delete_all_content(
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="The ID of the database to use"),
     ):
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         log_info("Deleting all content")
@@ -482,7 +484,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
     )
     async def get_content_status(
         content_id: str,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="The ID of the database to use"),
     ) -> ContentStatusResponse:
         log_info(f"Getting content status: {content_id}")
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
@@ -870,7 +872,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         },
     )
     def get_config(
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="The ID of the database to use"),
     ) -> ConfigResponseSchema:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
 

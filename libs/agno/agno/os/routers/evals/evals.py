@@ -2,7 +2,7 @@ import logging
 from copy import deepcopy
 from typing import List, Optional, Union, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
@@ -68,6 +68,7 @@ def attach_routes(
     @router.get(
         "/eval-runs",
         response_model=PaginatedResponse[EvalSchema],
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="get_eval_runs",
         summary="List Evaluation Runs",
@@ -119,8 +120,8 @@ def attach_routes(
         page: Optional[int] = Query(default=1, description="Page number"),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
-        table: Optional[str] = Query(default=None, description="The database table to use"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="The ID of the database to use"),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="The database table to use"),
     ) -> PaginatedResponse[EvalSchema]:
         db = await get_db(dbs, db_id, table)
 
@@ -176,6 +177,7 @@ def attach_routes(
     @router.get(
         "/eval-runs/{eval_run_id}",
         response_model=EvalSchema,
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="get_eval_run",
         summary="Get Evaluation Run",
@@ -212,8 +214,8 @@ def attach_routes(
     )
     async def get_eval_run(
         eval_run_id: str,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
-        table: Optional[str] = Query(default=None, description="Table to query eval run from"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="The ID of the database to use"),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="Table to query eval run from"),
     ) -> EvalSchema:
         db = await get_db(dbs, db_id, table)
         if isinstance(db, AsyncBaseDb):
@@ -239,8 +241,8 @@ def attach_routes(
     )
     async def delete_eval_runs(
         request: DeleteEvalRunsRequest,
-        db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
-        table: Optional[str] = Query(default=None, description="Table to use for deletion"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to use for deletion"),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="Table to use for deletion"),
     ) -> None:
         try:
             db = await get_db(dbs, db_id, table)
@@ -255,6 +257,7 @@ def attach_routes(
     @router.patch(
         "/eval-runs/{eval_run_id}",
         response_model=EvalSchema,
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="update_eval_run",
         summary="Update Evaluation Run",
@@ -293,8 +296,10 @@ def attach_routes(
     async def update_eval_run(
         eval_run_id: str,
         request: UpdateEvalRunRequest,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
-        table: Optional[str] = Query(default=None, description="Table to use for rename operation"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="The ID of the database to use"),
+        table: Optional[str] = Header(
+            default=None, alias="X-TABLE-NAME", description="Table to use for rename operation"
+        ),
     ) -> EvalSchema:
         try:
             db = await get_db(dbs, db_id, table)
@@ -314,6 +319,7 @@ def attach_routes(
     @router.post(
         "/eval-runs",
         response_model=EvalSchema,
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="run_eval",
         summary="Execute Evaluation",
@@ -353,8 +359,8 @@ def attach_routes(
     )
     async def run_eval(
         eval_run_input: EvalRunInput,
-        db_id: Optional[str] = Query(default=None, description="Database ID to use for evaluation"),
-        table: Optional[str] = Query(default=None, description="Table to use for evaluation"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to use for evaluation"),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="Table to use for evaluation"),
     ) -> Optional[EvalSchema]:
         db = await get_db(dbs, db_id, table)
 

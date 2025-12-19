@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
+from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -25,54 +25,23 @@ from agno.team.team import Team
 from agno.workflow.workflow import Workflow
 
 
-class BadRequestResponse(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}})
+class ToolDefinitionResponse(BaseModel):
+    name: Optional[str] = Field(None, description="Name of the tool")
+    description: Optional[str] = Field(None, description="Description of the tool")
+    parameters: Optional[Dict[str, Any]] = Field(None, description="Parameters of the tool")
+    raw: Optional[Dict[str, Any]] = Field(None, description="Raw tool definition")
+    
+class DatabaseConfigResponse(BaseModel):
+    id: str = Field(..., description="The ID of the database")
+    table_names: List[Tuple[str, str]] = Field(..., description="The table names of the database")
+    config: Dict[str, Any] = Field(..., description="The configuration of the database")
 
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
-
-
-class NotFoundResponse(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Not found", "error_code": "NOT_FOUND"}})
-
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
-
-
-class UnauthorizedResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Unauthorized access", "error_code": "UNAUTHORIZED"}}
-    )
-
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
+class MessageResponse(BaseModel):
+    role: str = Field(..., description="The role of the message")
+    content: str = Field(..., description="The content of the message")
+    created_at: Optional[datetime] = Field(None, description="The timestamp of the message")
 
 
-class UnauthenticatedResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Unauthenticated access", "error_code": "UNAUTHENTICATED"}}
-    )
-
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
-
-
-class ValidationErrorResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Validation error", "error_code": "VALIDATION_ERROR"}}
-    )
-
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
-
-
-class InternalServerErrorResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Internal server error", "error_code": "INTERNAL_SERVER_ERROR"}}
-    )
-
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
 
 
 class HealthResponse(BaseModel):
@@ -532,3 +501,70 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
     data: List[T] = Field(..., description="List of items for the current page")
     meta: PaginationInfo = Field(..., description="Pagination metadata")
+
+
+# ERRORS
+
+class BadRequestResponse(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}})
+
+    detail: str = Field(..., description="Error detail message")
+    error_code: Optional[str] = Field(None, description="Error code for categorization")
+
+
+class NotFoundResponse(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Not found", "error_code": "NOT_FOUND"}})
+
+    detail: str = Field(..., description="Error detail message")
+    error_code: Optional[str] = Field(None, description="Error code for categorization")
+
+
+class UnauthorizedResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"detail": "Unauthorized access", "error_code": "UNAUTHORIZED"}}
+    )
+
+    detail: str = Field(..., description="Error detail message")
+    error_code: Optional[str] = Field(None, description="Error code for categorization")
+
+
+class UnauthenticatedResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"detail": "Unauthenticated access", "error_code": "UNAUTHENTICATED"}}
+    )
+
+    detail: str = Field(..., description="Error detail message")
+    error_code: Optional[str] = Field(None, description="Error code for categorization")
+
+
+class ValidationErrorResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"detail": "Validation error", "error_code": "VALIDATION_ERROR"}}
+    )
+
+    detail: str = Field(..., description="Error detail message")
+    error_code: Optional[str] = Field(None, description="Error code for categorization")
+
+
+class InternalServerErrorResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"detail": "Internal server error", "error_code": "INTERNAL_SERVER_ERROR"}}
+    )
+
+    detail: str = Field(..., description="Error detail message")
+    error_code: Optional[str] = Field(None, description="Error code for categorization")
+
+
+
+def filter_meaningful_config(d: Dict[str, Any], defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Filter out fields that match their default values, keeping only meaningful user configurations"""
+    filtered = {}
+    for key, value in d.items():
+        if value is None:
+            continue
+        # Skip if value matches the default exactly
+        if key in defaults and value == defaults[key]:
+            continue
+        # Keep non-default values
+        filtered[key] = value
+    return filtered if filtered else None

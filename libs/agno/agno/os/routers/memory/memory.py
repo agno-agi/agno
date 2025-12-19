@@ -3,7 +3,7 @@ import math
 from typing import List, Optional, Union, cast
 from uuid import uuid4
 
-from fastapi import Depends, HTTPException, Path, Query, Request
+from fastapi import Depends, Header, HTTPException, Path, Query, Request
 from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
@@ -56,6 +56,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     @router.post(
         "/memories",
         response_model=UserMemorySchema,
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="create_memory",
         summary="Create Memory",
@@ -87,8 +88,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     async def create_memory(
         request: Request,
         payload: UserMemoryCreateSchema,
-        db_id: Optional[str] = Query(default=None, description="Database ID to use for memory storage"),
-        table: Optional[str] = Query(default=None, description="Table to use for memory storage"),
+        db_id: Optional[str] = Header(
+            default=None, alias="X-DB-ID", description="Database ID to use for memory storage"
+        ),
+        table: Optional[str] = Header(
+            default=None, alias="X-TABLE-NAME", description="Table to use for memory storage"
+        ),
     ) -> UserMemorySchema:
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
@@ -141,8 +146,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     async def delete_memory(
         memory_id: str = Path(description="Memory ID to delete"),
         user_id: Optional[str] = Query(default=None, description="User ID to delete memory for"),
-        db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
-        table: Optional[str] = Query(default=None, description="Table to use for deletion"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to use for deletion"),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="Table to use for deletion"),
     ) -> None:
         db = await get_db(dbs, db_id, table)
         if isinstance(db, AsyncBaseDb):
@@ -168,8 +173,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     )
     async def delete_memories(
         request: DeleteMemoriesRequest,
-        db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
-        table: Optional[str] = Query(default=None, description="Table to use for deletion"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to use for deletion"),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="Table to use for deletion"),
     ) -> None:
         db = await get_db(dbs, db_id, table)
         if isinstance(db, AsyncBaseDb):
@@ -181,6 +186,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     @router.get(
         "/memories",
         response_model=PaginatedResponse[UserMemorySchema],
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="get_memories",
         summary="List Memories",
@@ -222,8 +228,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         page: Optional[int] = Query(default=1, description="Page number for pagination"),
         sort_by: Optional[str] = Query(default="updated_at", description="Field to sort memories by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
-        db_id: Optional[str] = Query(default=None, description="Database ID to query memories from"),
-        table: Optional[str] = Query(default=None, description="The database table to use"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to query memories from"),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="The database table to use"),
     ) -> PaginatedResponse[UserMemorySchema]:
         db = await get_db(dbs, db_id, table)
 
@@ -272,6 +278,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     @router.get(
         "/memories/{memory_id}",
         response_model=UserMemorySchema,
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="get_memory",
         summary="Get Memory by ID",
@@ -300,8 +307,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         request: Request,
         memory_id: str = Path(description="Memory ID to retrieve"),
         user_id: Optional[str] = Query(default=None, description="User ID to query memory for"),
-        db_id: Optional[str] = Query(default=None, description="Database ID to query memory from"),
-        table: Optional[str] = Query(default=None, description="Table to query memory from"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to query memory from"),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="Table to query memory from"),
     ) -> UserMemorySchema:
         db = await get_db(dbs, db_id, table)
 
@@ -321,6 +328,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     @router.get(
         "/memory_topics",
         response_model=List[str],
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="get_memory_topics",
         summary="Get Memory Topics",
@@ -350,8 +358,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def get_topics(
-        db_id: Optional[str] = Query(default=None, description="Database ID to query topics from"),
-        table: Optional[str] = Query(default=None, description="Table to query topics from"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to query topics from"),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="Table to query topics from"),
     ) -> List[str]:
         db = await get_db(dbs, db_id, table)
         if isinstance(db, AsyncBaseDb):
@@ -363,6 +371,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     @router.patch(
         "/memories/{memory_id}",
         response_model=UserMemorySchema,
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="update_memory",
         summary="Update Memory",
@@ -397,8 +406,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         request: Request,
         payload: UserMemoryCreateSchema,
         memory_id: str = Path(description="Memory ID to update"),
-        db_id: Optional[str] = Query(default=None, description="Database ID to use for update"),
-        table: Optional[str] = Query(default=None, description="Table to use for update"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to use for update"),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="Table to use for update"),
     ) -> UserMemorySchema:
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
@@ -438,6 +447,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     @router.get(
         "/user_memory_stats",
         response_model=PaginatedResponse[UserStatsSchema],
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="get_user_memory_stats",
         summary="Get User Memory Statistics",
@@ -468,8 +478,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     async def get_user_memory_stats(
         limit: Optional[int] = Query(default=20, description="Number of user statistics to return per page"),
         page: Optional[int] = Query(default=1, description="Page number for pagination"),
-        db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
-        table: Optional[str] = Query(default=None, description="Table to query statistics from"),
+        db_id: Optional[str] = Header(
+            default=None, alias="X-DB-ID", description="Database ID to query statistics from"
+        ),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="Table to query statistics from"),
     ) -> PaginatedResponse[UserStatsSchema]:
         db = await get_db(dbs, db_id, table)
         try:
@@ -503,6 +515,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     @router.post(
         "/optimize-memories",
         response_model=OptimizeMemoriesResponse,
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="optimize_memories",
         summary="Optimize User Memories",
@@ -550,8 +563,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     )
     async def optimize_memories(
         request: OptimizeMemoriesRequest,
-        db_id: Optional[str] = Query(default=None, description="Database ID to use for optimization"),
-        table: Optional[str] = Query(default=None, description="Table to use for optimization"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to use for optimization"),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="Table to use for optimization"),
     ) -> OptimizeMemoriesResponse:
         """Optimize user memories using the default summarize strategy."""
         from agno.memory import MemoryManager

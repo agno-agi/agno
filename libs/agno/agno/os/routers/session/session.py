@@ -3,7 +3,7 @@ import time
 from typing import Any, List, Optional, Union, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Query, Request
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.os.auth import get_authentication_dependency
@@ -55,14 +55,18 @@ def get_session_router(
 def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]]) -> APIRouter:
     @router.get(
         "/sessions",
-        response_model=PaginatedResponse[SessionSchema],
+        response_model=PaginatedResponse[
+            Union[SessionSchema, AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]
+        ],
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="get_sessions",
         summary="List Sessions",
         description=(
             "Retrieve paginated list of sessions with filtering and sorting options. "
             "Supports filtering by session type (agent, team, workflow), component, user, and name. "
-            "Sessions represent conversation histories and execution contexts."
+            "Sessions represent conversation histories and execution contexts. "
+            "Use minimal=true for a lightweight response with basic session info only."
         ),
         responses={
             200: {
@@ -100,18 +104,25 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             alias="type",
             description="Type of sessions to retrieve (agent, team, or workflow)",
         ),
+        minimal: bool = Query(
+            default=False,
+            description="If true, return minimal session info (session_id, session_name, session_state, timestamps). "
+            "If false, return full session details including chat_history, metrics, and metadata.",
+        ),
         component_id: Optional[str] = Query(
             default=None, description="Filter sessions by component ID (agent/team/workflow ID)"
         ),
-        user_id: Optional[str] = Query(default=None, description="Filter sessions by user ID"),
         session_name: Optional[str] = Query(default=None, description="Filter sessions by name (partial match)"),
+        user_id: Optional[str] = Query(default=None, description="Filter sessions by user ID"),
         limit: Optional[int] = Query(default=20, description="Number of sessions to return per page"),
         page: Optional[int] = Query(default=1, description="Page number for pagination"),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort sessions by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
-        db_id: Optional[str] = Query(default=None, description="Database ID to query sessions from"),
-        table: Optional[str] = Query(default=None, description="The database table to use"),
-    ) -> PaginatedResponse[SessionSchema]:
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to query sessions from"),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="The database table to use"),
+    ) -> PaginatedResponse[
+        Union[SessionSchema, AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]
+    ]:
         try:
             db = await get_db(dbs, db_id, table)
         except Exception as e:
@@ -131,7 +142,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 page=page,
                 sort_by=sort_by,
                 sort_order=sort_order,
-                deserialize=False,
+                deserialize=not minimal,
             )
         else:
             sessions, total_count = db.get_sessions(  # type: ignore
@@ -143,11 +154,26 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 page=page,
                 sort_by=sort_by,
                 sort_order=sort_order,
-                deserialize=False,
+                deserialize=not minimal,
             )
 
+        # Build response data based on minimal flag
+        if minimal:
+            data: List[
+                Union[SessionSchema, AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]
+            ] = [SessionSchema.from_dict(session) for session in sessions]  # type: ignore
+        else:
+            data = []
+            for session in sessions:
+                if session_type == SessionType.AGENT:
+                    data.append(AgentSessionDetailSchema.from_session(session))  # type: ignore
+                elif session_type == SessionType.TEAM:
+                    data.append(TeamSessionDetailSchema.from_session(session))  # type: ignore
+                else:
+                    data.append(WorkflowSessionDetailSchema.from_session(session))  # type: ignore
+
         return PaginatedResponse(
-            data=[SessionSchema.from_dict(session) for session in sessions],  # type: ignore
+            data=data,
             meta=PaginationInfo(
                 page=page,
                 limit=limit,
@@ -159,6 +185,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     @router.post(
         "/sessions",
         response_model=Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema],
+        response_model_exclude_none=True,
         status_code=201,
         operation_id="create_session",
         summary="Create New Session",
@@ -205,7 +232,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         create_session_request: CreateSessionRequest = Body(
             default=CreateSessionRequest(), description="Session configuration data"
         ),
-        db_id: Optional[str] = Query(default=None, description="Database ID to create session in"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to create session in"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         db = await get_db(dbs, db_id)
 
@@ -286,6 +313,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     @router.get(
         "/sessions/{session_id}",
         response_model=Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema],
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="get_session_by_id",
         summary="Get Session by ID",
@@ -377,8 +405,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             default=SessionType.AGENT, description="Session type (agent, team, or workflow)", alias="type"
         ),
         user_id: Optional[str] = Query(default=None, description="User ID to query session from"),
-        db_id: Optional[str] = Query(default=None, description="Database ID to query session from"),
-        table: Optional[str] = Query(default=None, description="Table to query session from"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to query session from"),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="Table to query session from"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         db = await get_db(dbs, db_id, table)
 
@@ -405,6 +433,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     @router.get(
         "/sessions/{session_id}/runs",
         response_model=List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="get_session_runs",
         summary="Get Session Runs",
@@ -533,8 +562,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             default=None,
             description="Filter runs created before this Unix timestamp (epoch time in seconds)",
         ),
-        db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
-        table: Optional[str] = Query(default=None, description="Table to query runs from"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to query runs from"),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="Table to query runs from"),
     ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
         db = await get_db(dbs, db_id, table)
 
@@ -608,6 +637,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     @router.get(
         "/sessions/{session_id}/runs/{run_id}",
         response_model=Union[RunSchema, TeamRunSchema, WorkflowRunSchema],
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="get_session_run",
         summary="Get Run by ID",
@@ -649,7 +679,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             default=SessionType.AGENT, description="Session type (agent, team, or workflow)", alias="type"
         ),
         user_id: Optional[str] = Query(default=None, description="User ID to query run from"),
-        db_id: Optional[str] = Query(default=None, description="Database ID to query run from"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to query run from"),
     ) -> Union[RunSchema, TeamRunSchema, WorkflowRunSchema]:
         db = await get_db(dbs, db_id)
 
@@ -708,8 +738,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     )
     async def delete_session(
         session_id: str = Path(description="Session ID to delete"),
-        db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
-        table: Optional[str] = Query(default=None, description="Table to use for deletion"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to use for deletion"),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="Table to use for deletion"),
     ) -> None:
         db = await get_db(dbs, db_id, table)
         if isinstance(db, AsyncBaseDb):
@@ -741,8 +771,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         session_type: SessionType = Query(
             default=SessionType.AGENT, description="Default session type filter", alias="type"
         ),
-        db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
-        table: Optional[str] = Query(default=None, description="Table to use for deletion"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to use for deletion"),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="Table to use for deletion"),
     ) -> None:
         if len(request.session_ids) != len(request.session_types):
             raise HTTPException(status_code=400, detail="Session IDs and session types must have the same length")
@@ -757,6 +787,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     @router.post(
         "/sessions/{session_id}/rename",
         response_model=Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema],
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="rename_session",
         summary="Rename Session",
@@ -848,8 +879,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             default=SessionType.AGENT, description="Session type (agent, team, or workflow)", alias="type"
         ),
         session_name: str = Body(embed=True, description="New name for the session"),
-        db_id: Optional[str] = Query(default=None, description="Database ID to use for rename operation"),
-        table: Optional[str] = Query(default=None, description="Table to use for rename operation"),
+        db_id: Optional[str] = Header(
+            default=None, alias="X-DB-ID", description="Database ID to use for rename operation"
+        ),
+        table: Optional[str] = Header(
+            default=None, alias="X-TABLE-NAME", description="Table to use for rename operation"
+        ),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         db = await get_db(dbs, db_id, table)
         if isinstance(db, AsyncBaseDb):
@@ -872,6 +907,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     @router.patch(
         "/sessions/{session_id}",
         response_model=Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema],
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="update_session",
         summary="Update Session",
@@ -934,7 +970,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         ),
         update_data: UpdateSessionRequest = Body(description="Session update data"),
         user_id: Optional[str] = Query(default=None, description="User ID"),
-        db_id: Optional[str] = Query(default=None, description="Database ID to use for update operation"),
+        db_id: Optional[str] = Header(
+            default=None, alias="X-DB-ID", description="Database ID to use for update operation"
+        ),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         db = await get_db(dbs, db_id)
 
