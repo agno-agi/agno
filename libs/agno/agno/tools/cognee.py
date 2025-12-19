@@ -1,12 +1,11 @@
 import json
 import asyncio
-from typing import Any, Dict, List, Union
-from asyncio import Queue
+from typing import Any, Dict, List
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
 
 try:
-    import cognee  # type: ignore[import-not-found]
+    import cognee
 except ImportError:
     raise ImportError("`cognee` package not found. Please install it with `pip install cognee`")
 
@@ -17,7 +16,7 @@ class CogneeTools(Toolkit):
         super().__init__(name="cognee_tools", tools=tools, **kwargs)
 
         self._add_lock = asyncio.Lock()
-        self._add_queue: Queue[str] = Queue()
+        self._add_queue: asyncio.Queue[str] = asyncio.Queue()
         log_debug("Initialized Cognee tools.")
 
     async def _enqueue_add(self, data: str):
@@ -39,18 +38,10 @@ class CogneeTools(Toolkit):
                 await cognee.add(next_data)
             await cognee.cognify()
 
-    def add_memory(self, session_state: Dict[str, Any], content: str) -> str:
-        """Store information in the knowledge graph for future retrieval.
-
-        This method persists textual data into Cognee's semantic memory system,
-        making it available for later queries and analysis.
-
-        Args:
-            session_state: Session context (not used, for compatibility)
-            content: Text data to be stored in the knowledge base
-
-        Returns:
-            JSON string with operation status or error details
+    def add_memory(self, content: str) -> str:
+        """
+        Store information in the knowledge graph for future retrieval if it is not already present.
+        If the information is already present, do not add it again.
         """
         try:
             if not isinstance(content, str):
@@ -70,18 +61,10 @@ class CogneeTools(Toolkit):
             log_error(f"Error adding memory: {e}")
             return f"Error adding memory: {e}"
 
-    def search_memory(self, session_state: Dict[str, Any], query: str) -> str:
-        """Retrieve relevant information from the knowledge graph using natural language.
-
-        Performs semantic search across stored data to find contextually relevant
-        information matching the provided query text.
-
-        Args:
-            session_state: Session context (not used, for compatibility)
-            query: Natural language search phrase
-
-        Returns:
-            JSON-formatted list of matching results or error information
+    def search_memory(self, query: str) -> str:
+        """
+        Provide context aware response based on the memory.
+        Retrieve relevant information from the memory for the given query.
         """
         try:
             log_debug(f"Searching memory: {query}")
@@ -101,12 +84,10 @@ class CogneeTools(Toolkit):
             else:
                 results = loop.run_until_complete(_search())
 
-            # Convert results to JSON-serializable format
-            serializable_results: List[Union[Dict[str, Any], str]] = []
+            serializable_results: List[Any] = []
             for item in results:
                 if isinstance(item, dict):
-                    # Convert any UUID objects to strings
-                    serializable_item: Dict[str, Any] = {}
+                    serializable_item = {}
                     for key, value in item.items():
                         if hasattr(value, '__str__'):
                             serializable_item[key] = str(value)
