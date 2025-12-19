@@ -1,16 +1,16 @@
 import json
 import logging
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, Request, UploadFile
 
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader import ReaderFactory
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.utils import get_all_chunkers_info, get_all_readers_info, get_content_types_to_readers_mapping
-from agno.os.auth import get_authentication_dependency
+from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.routers.knowledge.schemas import (
     ChunkerSchema,
     ConfigResponseSchema,
@@ -35,6 +35,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_knowledge_instance_by_db_id
+from agno.remote.base import RemoteKnowledge
 from agno.utils.log import log_debug, log_info
 from agno.utils.string import generate_id
 
@@ -42,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_knowledge_router(
-    knowledge_instances: List[Knowledge], settings: AgnoAPISettings = AgnoAPISettings()
+    knowledge_instances: List[Union[Knowledge, RemoteKnowledge]], settings: AgnoAPISettings = AgnoAPISettings()
 ) -> APIRouter:
     """Create knowledge router with comprehensive OpenAPI documentation for content management endpoints."""
     router = APIRouter(
@@ -59,7 +60,7 @@ def get_knowledge_router(
     return attach_routes(router=router, knowledge_instances=knowledge_instances)
 
 
-def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> APIRouter:
+def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, RemoteKnowledge]]) -> APIRouter:
     @router.post(
         "/knowledge/content",
         response_model=ContentResponseSchema,
@@ -93,6 +94,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         },
     )
     async def upload_content(
+        request: Request,
         background_tasks: BackgroundTasks,
         name: Optional[str] = Form(None, description="Content name (auto-generated from file/URL if not provided)"),
         description: Optional[str] = Form(None, description="Content description for context"),
@@ -107,7 +109,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         db_id: Optional[str] = Query(default=None, description="Database ID to use for content storage"),
     ):
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
-        log_info(f"Adding content: {name}, {description}, {url}, {metadata}")
 
         parsed_metadata = None
         if metadata:
@@ -116,6 +117,25 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             except json.JSONDecodeError:
                 # If it's not valid JSON, treat as a simple key-value pair
                 parsed_metadata = {"value": metadata} if metadata != "string" else None
+
+        if isinstance(knowledge, RemoteKnowledge):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await knowledge.upload_content(
+                name=name,
+                description=description,
+                url=url,
+                metadata=parsed_metadata,
+                file=file,
+                text_content=text_content,
+                reader_id=reader_id,
+                chunker=chunker,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                db_id=db_id,
+                headers=headers,
+            )
+
         if file:
             content_bytes = await file.read()
         elif text_content:
@@ -225,6 +245,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         },
     )
     async def update_content(
+        request: Request,
         content_id: str = Path(..., description="Content ID"),
         name: Optional[str] = Form(None, description="Content name"),
         description: Optional[str] = Form(None, description="Content description"),
@@ -241,6 +262,19 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                 parsed_metadata = json.loads(metadata)
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid JSON format for metadata")
+
+        if isinstance(knowledge, RemoteKnowledge):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await knowledge.update_content(
+                content_id=content_id,
+                name=name,
+                description=description,
+                metadata=parsed_metadata,
+                reader_id=reader_id,
+                db_id=db_id,
+                headers=headers,
+            )
 
         # Create ContentUpdateSchema object from form data
         update_data = ContentUpdateSchema(
@@ -309,6 +343,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         },
     )
     async def get_content(
+        request: Request,
         limit: Optional[int] = Query(default=20, description="Number of content entries to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
@@ -316,6 +351,19 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> PaginatedResponse[ContentResponseSchema]:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await knowledge.get_content(
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order.value if sort_order else None,
+                db_id=db_id,
+                headers=headers,
+            )
+
         contents, count = await knowledge.aget_content(limit=limit, page=page, sort_by=sort_by, sort_order=sort_order)
 
         return PaginatedResponse(
@@ -377,11 +425,16 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         },
     )
     async def get_content_by_id(
+        request: Request,
         content_id: str,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> ContentResponseSchema:
-        log_info(f"Getting content by id: {content_id}")
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        if isinstance(knowledge, RemoteKnowledge):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await knowledge.get_content_by_id(content_id=content_id, db_id=db_id, headers=headers)
+
         content = await knowledge.aget_content_by_id(content_id=content_id)
         if not content:
             raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
@@ -417,12 +470,17 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         },
     )
     async def delete_content_by_id(
+        request: Request,
         content_id: str,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> ContentResponseSchema:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
-        await knowledge.aremove_content_by_id(content_id=content_id)
-        log_info(f"Deleting content by id: {content_id}")
+        if isinstance(knowledge, RemoteKnowledge):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            await knowledge.delete_content_by_id(content_id=content_id, db_id=db_id, headers=headers)
+        else:
+            await knowledge.aremove_content_by_id(content_id=content_id)
 
         return ContentResponseSchema(
             id=content_id,
@@ -442,12 +500,17 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             500: {"description": "Failed to delete all content", "model": InternalServerErrorResponse},
         },
     )
-    def delete_all_content(
+    async def delete_all_content(
+        request: Request,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ):
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
-        log_info("Deleting all content")
-        knowledge.remove_all_content()
+        if isinstance(knowledge, RemoteKnowledge):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await knowledge.delete_all_content(db_id=db_id, headers=headers)
+
+        await knowledge.aremove_all_content()
         return "success"
 
     @router.get(
@@ -481,11 +544,16 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         },
     )
     async def get_content_status(
+        request: Request,
         content_id: str,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> ContentStatusResponse:
-        log_info(f"Getting content status: {content_id}")
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        if isinstance(knowledge, RemoteKnowledge):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await knowledge.get_content_status(content_id=content_id, db_id=db_id, headers=headers)
+
         knowledge_status, status_message = await knowledge.aget_content_status(content_id=content_id)
 
         # Handle the case where content is not found
@@ -550,12 +618,26 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             404: {"description": "No documents found"},
         },
     )
-    def search_knowledge(request: VectorSearchRequestSchema) -> PaginatedResponse[VectorSearchResult]:
+    async def search_knowledge(
+        http_request: Request, request: VectorSearchRequestSchema
+    ) -> PaginatedResponse[VectorSearchResult]:
         import time
 
         start_time = time.time()
 
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, request.db_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            auth_token = get_auth_token_from_request(http_request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await knowledge.search_knowledge(
+                query=request.query,
+                max_results=request.max_results,
+                filters=request.filters,
+                search_type=request.search_type,
+                db_id=request.db_id,
+                headers=headers,
+            )
 
         # For now, validate the vector db ids exist in the knowledge base
         # We will add more logic around this once we have multi vectordb support
@@ -578,7 +660,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         # Use max_results if specified, otherwise use a higher limit for search then paginate
         search_limit = request.max_results
 
-        results = knowledge.search(
+        results = await knowledge.async_search(
             query=request.query, max_results=search_limit, filters=request.filters, search_type=request.search_type
         )
 
@@ -869,10 +951,16 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             }
         },
     )
-    def get_config(
+    async def get_config(
+        request: Request,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> ConfigResponseSchema:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await knowledge.get_config(headers=headers)
 
         # Get factory readers info (including custom readers from this knowledge instance)
         readers_info = get_all_readers_info(knowledge)

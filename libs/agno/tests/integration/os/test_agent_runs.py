@@ -11,7 +11,7 @@ def test_create_agent_run(test_os_client, test_agent: Agent):
     """Test creating an agent run using form input."""
     response = test_os_client.post(
         f"/agents/{test_agent.id}/runs",
-        data={"message": "Hello, world!"},
+        data={"message": "Hello, world!", "stream": "false"},
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     assert response.status_code == 200
@@ -124,6 +124,7 @@ def test_kwargs_propagate_to_run_context(test_os_client, test_agent: Agent):
         f"/agents/{test_agent.id}/runs",
         data={
             "message": "Hello, world!",
+            "stream": "false",
             "user_id": "test-user-123",
             "session_id": "test-session-123",
             "session_state": {"test_session_state": "test-session-state"},

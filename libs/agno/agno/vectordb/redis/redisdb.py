@@ -477,7 +477,7 @@ class RedisDB(VectorDb):
                 vector_field_name="embedding",
                 text=query,
                 text_field_name="content",
-                alpha=self.vector_score_weight,
+                linear_alpha=self.vector_score_weight,
                 return_fields=["id", "name", "content"],
                 num_results=limit,
             )

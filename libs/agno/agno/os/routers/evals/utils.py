@@ -2,7 +2,7 @@ from typing import Optional, Union
 
 from fastapi import HTTPException
 
-from agno.agent.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.accuracy import AccuracyEval
 from agno.eval.agent_as_judge import AgentAsJudgeEval
@@ -10,7 +10,7 @@ from agno.eval.performance import PerformanceEval
 from agno.eval.reliability import ReliabilityEval
 from agno.models.base import Model
 from agno.os.routers.evals.schemas import EvalRunInput, EvalSchema
-from agno.team.team import Team
+from agno.team import RemoteTeam, Team
 
 
 async def run_accuracy_eval(
@@ -56,8 +56,8 @@ async def run_accuracy_eval(
 async def run_agent_as_judge_eval(
     eval_run_input: EvalRunInput,
     db: Union[BaseDb, AsyncBaseDb],
-    agent: Optional[Agent] = None,
-    team: Optional[Team] = None,
+    agent: Optional[Union[Agent, RemoteAgent]] = None,
+    team: Optional[Union[Team, RemoteTeam]] = None,
     default_model: Optional[Model] = None,
 ) -> EvalSchema:
     """Run an AgentAsJudge evaluation for the given agent or team"""
@@ -109,9 +109,9 @@ async def run_agent_as_judge_eval(
 
     # Restore original model after eval
     if default_model is not None:
-        if agent is not None:
+        if agent is not None and isinstance(agent, Agent):
             agent.model = default_model
-        elif team is not None:
+        elif team is not None and isinstance(team, Team):
             team.model = default_model
 
     return eval_run
