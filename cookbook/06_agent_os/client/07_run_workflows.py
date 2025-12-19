@@ -24,7 +24,7 @@ async def run_workflow_non_streaming():
     client = AgentOSClient(base_url="http://localhost:7777")
 
     # Get available workflows
-    config = await client.get_config()
+    config = await client.aget_config()
     if not config.workflows:
         print("No workflows available")
         return
@@ -56,7 +56,7 @@ async def run_workflow_streaming():
     client = AgentOSClient(base_url="http://localhost:7777")
 
     # Get available workflows
-    config = await client.get_config()
+    config = await client.aget_config()
     if not config.workflows:
         print("No workflows available")
         return
@@ -85,53 +85,9 @@ async def run_workflow_streaming():
         print(f"\nError: {type(e).__name__}")
 
 
-async def run_workflow_with_session():
-    """
-    Execute workflow runs within a session.
-    """
-    print("=" * 60)
-    print("Workflow with Session")
-    print("=" * 60)
-
-    client = AgentOSClient(base_url="http://localhost:7777")
-
-    # Get available workflows
-    config = await client.get_config()
-    if not config.workflows:
-        print("No workflows available")
-        return
-
-    workflow_id = config.workflows[0].id
-
-    try:
-        # Create a session for the workflow
-        session = await client.create_session(
-            workflow_id=workflow_id,
-            user_id="example-user",
-        )
-        print(f"Created session: {session.session_id}")
-
-        # Run a workflow with the session
-        result = await client.run_workflow(
-            workflow_id=workflow_id,
-            message="What are the key features of modern programming languages?",
-            session_id=session.session_id,
-        )
-        print(
-            f"Workflow: {result.content[:500]}..."
-            if len(str(result.content)) > 500
-            else f"Workflow: {result.content}"
-        )
-    except Exception as e:
-        print(f"Error: {e}")
-        if hasattr(e, "response"):
-            print(f"Response: {e.response.text}")
-
-
 async def main():
-    await run_workflow_non_streaming()
+    # await run_workflow_non_streaming()
     await run_workflow_streaming()
-    await run_workflow_with_session()
 
 
 if __name__ == "__main__":

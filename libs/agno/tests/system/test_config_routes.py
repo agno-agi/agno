@@ -114,8 +114,8 @@ def test_get_models(client: httpx.Client):
 
     model_ids = [model["id"] for model in data]
 
+    # Only the models of local agents
     assert "gpt-4o-mini" in model_ids
-    assert "gpt-5-mini" in model_ids
 
     for model in data:
         assert "id" in model

@@ -39,7 +39,7 @@ async def main():
     # List existing content
     print("\n2. Listing content...")
     try:
-        content = await client.list_content()
+        content = await client.list_knowledge_content()
         print(f"   Found {len(content.data)} content items")
         for item in content.data[:5]:
             print(

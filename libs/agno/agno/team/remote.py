@@ -134,12 +134,7 @@ class RemoteTeam(BaseRemote):
 
     @cached_property
     def model(self) -> Optional[Model]:
-        from agno.models.utils import get_model
-
-        model_response = self._team_config.model  # type: ignore
-        if model_response is not None:
-            model_str = f"{model_response.provider}:{model_response.model}"
-            return get_model(model_str)
+        # We don't expose the remote team's models, since they can't be used by other services in AgentOS.
         return None
 
     @cached_property

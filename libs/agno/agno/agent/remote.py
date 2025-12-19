@@ -137,7 +137,7 @@ class RemoteAgent(BaseRemote):
 
     @cached_property
     def model(self) -> Optional[Model]:
-        # We 
+        # We don't expose the remote agent's models, since they can't be used by other services in AgentOS.
         return None
 
     async def aget_tools(self, **kwargs: Any) -> List[Dict]:

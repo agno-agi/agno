@@ -119,7 +119,7 @@ class AgentOSClient:
         sync_client = get_default_sync_client()
 
         try:
-            response = sync_client.request(method, url, **kwargs)
+            response = sync_client.request(method, url, timeout=self.timeout, **kwargs)
             response.raise_for_status()
 
             # Return None for empty responses (204 No Content, etc.)

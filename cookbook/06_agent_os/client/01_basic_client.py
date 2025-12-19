@@ -32,7 +32,7 @@ async def main():
     # Connect to AgentOS using async context manager
     client = AgentOSClient(base_url="http://localhost:7777")
     # Get AgentOS configuration
-    config = await client.get_config()
+    config = await client.aget_config()
     print(f"Connected to: {config.name or config.os_id}")
     print(f"Available agents: {[a.id for a in (config.agents or [])]}")
     print(f"Available teams: {[t.id for t in (config.teams or [])]}")
@@ -41,7 +41,7 @@ async def main():
     # Get details about a specific agent
     if config.agents:
         agent_id = config.agents[0].id
-        agent = await client.get_agent(agent_id)
+        agent = await client.aget_agent(agent_id)
         print("\nAgent Details:")
         print(f"  Name: {agent.name}")
         print(f"  Model: {agent.model}")
