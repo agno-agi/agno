@@ -2226,6 +2226,22 @@ class Team:
                     return generator_wrapper(cancelled_run_error)  # type: ignore
                 else:
                     return run_response
+            except KeyboardInterrupt:
+                # Handle KeyboardInterrupt - stop retries immediately
+                run_response.status = RunStatus.cancelled
+                run_response.content = "Operation cancelled by user"
+                if stream:
+                    cancelled_run_error = handle_event(
+                        create_team_run_cancelled_event(
+                            from_run_response=run_response, reason="Operation cancelled by user"
+                        ),
+                        run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                    )
+                    return generator_wrapper(cancelled_run_error)  # type: ignore
+                else:
+                    return run_response
             except (InputCheckError, OutputCheckError) as e:
                 run_response.status = RunStatus.error
 

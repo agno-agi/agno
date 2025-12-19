@@ -1146,7 +1146,7 @@ jobs:
           fi
       - name: Install test dependencies
         run: |
-          pip install pytest pytest-asyncio httpx python-dotenv
+          pip install pytest pytest-asyncio httpx python-dotenv PyJWT
       - name: Run system tests
         working-directory: ./libs/agno/tests/system
         env:
