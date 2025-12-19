@@ -389,8 +389,9 @@ class JWTMiddleware(BaseHTTPMiddleware):
                       or JWT_JWKS env var for inline JWKS JSON content.
             secret_key: (deprecated) Use verification_keys instead. If provided, will be added to verification_keys.
             algorithm: JWT algorithm (default: RS256). Common options: RS256 (asymmetric), HS256 (symmetric).
-            validate: Whether to validate the JWT token (default: True). If False, tokens are decoded
-                     without signature verification and no verification key is required.
+            validate: Whether to validate the JWT signature (default: True). If False, tokens are decoded
+                     without signature verification and no verification key is required. Useful when
+                     JWT verification is handled upstream (API Gateway, etc.).
             authorization: Whether to add authorization checks to the request (i.e. validation of scopes)
             token_source: Where to extract JWT token from (header, cookie, or both)
             token_header_key: Header key for Authorization (default: "Authorization")
@@ -642,9 +643,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
         # Extract JWT token
         token = self._extract_token(request)
         if not token:
-            if self.validate:
-                error_msg = self._get_missing_token_error_message()
-                return self._create_error_response(401, error_msg, origin, cors_allowed_origins)
+            error_msg = self._get_missing_token_error_message()
+            return self._create_error_response(401, error_msg, origin, cors_allowed_origins)
 
         try:
             # Validate token and extract claims (with audience verification if configured)

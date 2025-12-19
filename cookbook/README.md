@@ -1,6 +1,6 @@
 # Agno Cookbooks
 
-Welcome to Agno's cookbook collection! Here you will find hundreds of examples on how to use the Agno framework to build what you want.
+Welcome to Agno's cookbook collection! Here you will find hundreds of examples on how to use the framework to build what you want.
 
 ## Setup
 
@@ -14,15 +14,16 @@ source .venv/bin/activate
 ### Install libraries
 
 ```shell
-pip install -U openai agno  # And all other packages you might need
+pip install -U openai agno
 ```
 
 ### Export your keys
 
 ```shell
 export OPENAI_API_KEY=***
-export GOOGLE_API_KEY=***
 ```
+
+Note: We have just added OpenAI library and API key as an example. You will need to install and export the API keys for the examples you want to run.
 
 ## Run a cookbook
 
@@ -30,196 +31,220 @@ export GOOGLE_API_KEY=***
 python cookbook/.../example.py
 ```
 
-The full folder is organized in sections focused on a specific concept or features. These are the top level ones:
+The full folder is organized in sections focused on a specific concept or feature:
 
-## Getting Started
+---
+
+## 00_getting_started
 
 The getting started guide walks through the basics of building with Agno. Cookbooks build on each other, introducing new concepts and capabilities.
 
-## Agent Levels
+## 01_demo
 
-Here you will find an introduction to Agents and to what they can do. Each level introduces a chore feature or abstractions for your AI system:
+The demo folder contains a complete example of a multi-agent system using Agno's AgentOS. It is a good example to run after getting familiar with the framework in the getting started guide.
 
-1. Agent with tools and instructions
-2. Agent with knowledge and storage
-3. Agent with memory and reasoning
-4. A Team of Agents
-5. A Workflow
-
-## Agents From Scratch
-
-Focused examples to showcase some of the main features you can use with Agno Agents:
-
-- Knowledge
-- Storage
-- Tools
-
-## Agents
-
-A more complete set of cookbooks related to Agno Agents. Here you will find more specific and advanced examples of what Agno Agents can do:
-
-- Agentic search: using RAG with an Agent
-- Async: running Agents asynchronously
-- Db: features related to long term storage
-- Dependencies: adding logic that runs when the Agent does
-- Events: handling events when streaming an Agent response
-- Human in the loop: everything about our HITL flows
-- Memory: a complete guide on User Memories
-- Multimodal: handling media with your Agents
-- Other: more examples of some of our features
-- RAG: guide on using RAG with your Agents
-- Session: guide on interacting with the current and previous Sessions
-- State: examples on handling Session state data
-- Tool concepts: comprehensive set of examples of Agents using Agno ToolKits and custom Tools
-
-## Db
-
-In this section you can see examples on how to use all our Db implementations with your Agents. These are all the supported ones:
-
-- PostgresDB
-- SqliteDB
-- MongoDB
-- MySQL
-- Redis
-- SingleStore
-- FireStore
-- JSON files
-- GCS with JSON files
-
-## Evals
-
-Section focused on evaluating your Agno Agents and Teams across three key dimensions:
-
-- Accuracy: How complete/correct/accurate is the Agent’s response (LLM-as-a-judge)
-- Performance: How fast does the Agent respond and what’s the memory footprint?
-- Reliability: Does the Agent make the expected tool calls?
-
-## Examples
+## 02_examples
 
 Collection of real world examples you can build using Agno Agents, Teams and Workflows.
 
-## Integrations
+## 03_agents
 
-Examples for some of the main integrations you can use with your Agno code.
+An Agent is the core piece of the Agno framework. It is the atomic component that can be used to build your AI system.
 
-## Knowledge
+You can find a comprehensive set of examples in this folder, organized by feature:
+
+- **agentic_search** - Agentic RAG and search patterns
+- **async** - Asynchronous agent operations
+- **caching** - Model response caching
+- **context_compression** - Tool call compression strategies
+- **context_management** - Instructions, few-shot learning, dynamic context
+- **culture** - Cultural knowledge management
+- **custom_logging** - Logging configuration
+- **dependencies** - Dependency injection
+- **events** - Agent event handling
+- **guardrails** - Input/output validation
+- **hooks** - Pre/post processing hooks
+- **human_in_the_loop** - Human oversight patterns
+- **input_and_output** - Structured inputs, outputs, and parsing
+- **multimodal** - Audio, image, and video processing
+- **rag** - Retrieval-augmented generation
+- **session** - Session persistence and history
+- **state** - Session state management
+
+## 04_teams
+
+A Team is a collection of Agents (or other sub-teams) that work together to accomplish tasks.
+
+You can find a comprehensive set of examples in this folder, organized by feature:
+
+- **async_flows** - Asynchronous team operations
+- **basic_flows** - Basic team coordination
+- **context_compression** - Team-level context compression
+- **context_management** - Team context and instructions
+- **dependencies** - Team dependency injection
+- **distributed_rag** - Distributed RAG patterns
+- **guardrails** - Team-level validation
+- **hooks** - Team pre/post processing hooks
+- **knowledge** - Team knowledge management
+- **memory** - Team memory patterns
+- **metrics** - Team performance metrics
+- **multimodal** - Team multimodal processing
+- **reasoning** - Team reasoning patterns
+- **search_coordination** - Coordinated search strategies
+- **session** - Team session management
+- **state** - Team state management
+- **streaming** - Team streaming responses
+- **structured_input_output** - Team structured I/O
+- **tools** - Team tool usage
+
+## 05_workflows
+
+Agno Workflows are designed to automate complex processes by defining a series of steps that are executed in sequence. Each step can be executed by an agent, a team, or a custom function.
+
+Workflows are our higher-level abstraction, useful for building complex AI systems. In this folder you will find a comprehensive guide showcasing the building blocks of Workflows and what can be achieved using them.
+
+## 06_agent_os
+
+AgentOS is a critical piece of the Agno SDK for building, deploying, and managing Agent Systems. It provides a unified platform to create intelligent agents, organize them into teams, orchestrate complex workflows, and deploy them across various interfaces like web APIs, Slack, WhatsApp, and more.
+
+## 07_database
+
+Examples on how to use all our Database implementations with your Agents, Teams, and Workflows:
+
+- **dynamodb** - AWS DynamoDB
+- **firestore** - Google Cloud Firestore
+- **gcs** - Google Cloud Storage JSON
+- **in_memory** - In-memory database
+- **json_db** - JSON file storage
+- **mongo** - MongoDB (sync and async)
+- **mysql** - MySQL
+- **postgres** - PostgreSQL (recommended for production)
+- **redis** - Redis
+- **singlestore** - SingleStore
+- **sqlite** - SQLite (recommended for development)
+- **surrealdb** - SurrealDB
+
+## 08_knowledge
 
 Knowledge is the way to provide your Agents with information they can search at runtime to make better decisions and generate better answers.
 
-In this section you will find a comprehensive list of examples on how to manage your Knowledge setup, what sources are available, what databases can be used, etc.
+This section covers:
 
-## Memory
+- **basic_operations** - Loading knowledge from various sources (paths, URLs, S3, GCS, YouTube)
+- **chunking** - Document chunking strategies (semantic, recursive, fixed-size, agentic)
+- **custom_retriever** - Custom retrieval implementations
+- **embedders** - Embedding providers (OpenAI, Cohere, Gemini, Mistral, Ollama, and more)
+- **filters** - Knowledge filtering and metadata queries
+- **readers** - Document readers (PDF, CSV, JSON, DOCX, PPTX, web content)
+- **search_type** - Vector, keyword, and hybrid search
+- **vector_db** - Vector database integrations
 
-An Agent can store insights and facts about users that it learns through conversations with them. This is great to personalize responses!
+## 09_memory
 
-Here you will find a guide to learn how Memory is setup and how much your Agent can do with it.
+An Agent can store insights and facts about users that it learns through conversations. This is great for personalizing responses!
 
-## Models
+In this section you will find a guide to learn how Memory is setup and how much your Agent can do with it.
 
-Models are the brain of Agno Agents. In this folder you will find specific examples for each of the Models we support:
-
-- AI/ML API
-- Anthropic
-- AWS Bedrock
-- Azure AI Foundry
-- Claude via AWS Bedrock
-- Cohere
-- DeepSeek
-- Fireworks
-- Google Gemini
-- Groq
-- Hugging Face
-- LiteLLM
-- Mistral
-- NVIDIA
-- Nebius Token Factory
-- Ollama
-- OpenAI
-- OpenAI Like
-- OpenAI via Azure
-- OpenRouter
-- Perplexity
-- Sambanova
-- Together
-- vLLM
-- xAI
-- LangDB
-
-## Reasoning
+## 10_reasoning
 
 Reasoning gives Agents the ability to plan before acting, and to analyze results after having generated them. This can greatly improve an Agent's capacity to solve problems. There are three ways to use reasoning:
 
 ### Reasoning models
 
-Some models are pre-trained to reasoning. The most popular reasoning models are available for your Agno Agents out of the box.
-
-See the [examples](./models/).
+Some models are pre-trained for reasoning. The most popular reasoning models are available for your Agno Agents out of the box.
 
 ### Reasoning tools
 
 You can give your Agent tools that enable reasoning. This is the simplest way to achieve reasoning.
 
-See the [examples](./tools/).
-
 ### Reasoning Agents
 
 Reasoning Agents are a new type of multi-agent system developed by Agno that combines chain of thought reasoning with tool use.
 
-You can enable reasoning on any Agent by setting reasoning=True.
+You can enable reasoning on any Agent by setting `reasoning=True`.
 
-When an Agent with reasoning=True is given a task, a separate “Reasoning Agent” first solves the problem using chain-of-thought. At each step, it calls tools to gather information, validate results, and iterate until it reaches a final answer. Once the Reasoning Agent has a final answer, it hands the results back to the original Agent to validate and provide a response.
+When an Agent with `reasoning=True` is given a task, a separate "Reasoning Agent" first solves the problem using chain-of-thought. At each step, it calls tools to gather information, validate results, and iterate until it reaches a final answer. Once the Reasoning Agent has a final answer, it hands the results back to the original Agent to validate and provide a response.
 
-See the [examples](./agents/).
+## 11_models
 
+Models are the brain of Agno Agents. In this folder you will find specific examples for each of the Models we support:
 
-## Scripts
+- AI/ML API
+- Anthropic Claude
+- AWS Bedrock
+- Azure AI Foundry
+- Cerebras
+- Cohere
+- Comet API
+- DashScope
+- DeepInfra
+- DeepSeek
+- Fireworks
+- Google Gemini
+- Google Vertex AI
+- Groq
+- Hugging Face
+- IBM
+- InternLM
+- LangDB
+- LiteLLM
+- Llama CPP
+- LM Studio
+- Meta Llama
+- Mistral
+- Nebius
+- Nexus
+- NVIDIA
+- Ollama
+- OpenAI (Chat and Responses API)
+- OpenRouter
+- Perplexity
+- Portkey
+- Requesty
+- Sambanova
+- SiliconFlow
+- Together
+- Vercel
+- vLLM
+- xAI
 
-Some utility scripts to make your work with Agno easier.
+## 12_evals
 
-## Teams
+Section focused on evaluating your Agno Agents and Teams across key dimensions:
 
-A Team is a collection of Agents (or other sub-teams) that work together to accomplish tasks. They are the main abstraction piece in the Agno framework after Agents.
+- **Accuracy**: How complete/correct/accurate is the Agent's response (LLM-as-a-judge)
+- **Performance**: How fast does the Agent respond and what's the memory footprint?
+- **Reliability**: Does the Agent make the expected tool calls?
+- **Agent as Judge**: How accurate is the Agent's response, given a question and expected response
 
-You can find a comprehensive set of examples in this folder, divided by the main features you can use with your Teams.
+## 13_integrations
 
-## Tools
+Examples for some of the main integrations you can use with your Agno code:
+
+- **a2a** - Agent-to-Agent protocol
+- **discord** - Discord bot integration
+- **memory** - Memory integrations
+- **observability** - Observability and tracing (Langfuse, Arize Phoenix, AgentOps, LangSmith, and more)
+
+## 14_tools
 
 Tools are utilities that allow Agents to perform tasks. Think searching the web, running SQL, sending emails or calling APIs.
 
-In this folder you will find examples for some of our ToolKits. An Agno ToolKit is the simplest way to give tools to your Agents and works out of the box.
+In this folder you will find examples for our ToolKits and custom tool implementations:
 
-You can also find examples to learn how to use custom tools, for any functionality we don't support out of the box yet.
+- **async** - Async tool examples
+- **exceptions** - Tool exception handling
+- **mcp** - Model Context Protocol tools
+- **models** - Model-specific tool examples
+- **tool_decorator** - Using the `@tool` decorator
+- **tool_hooks** - Tool hooks for pre/post processing
 
-## Workflows
+Plus examples for specific tools like Calculator, Discord, Docker, ElevenLabs, Email, Exa, MCP, Newspaper4k, OpenCV, SearXNG, SerpAPI, Slack, Trafilatura, Trello, WebBrowser, X (Twitter), and more.
 
-Agno Workflows are designed to automate complex processes by defining a series of steps that are executed in sequence. Each step can be executed by an agent, a team, or a custom function.
+## scripts
 
-Workflows are our higher-level abstraction, and are useful to build complex AI systems. In this folder you will find a comprehensive guide showcasing what are the building blocks of Workflows and how much can be achieved using them.
+Utility scripts to make your work with Agno easier.
 
-## Setup
+---
 
-### Create and activate a virtual environment
-
-```shell
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-### Install libraries
-
-```shell
-pip install -U openai agno  # And all other packages you might need
-```
-
-### Export your keys
-
-```shell
-export OPENAI_API_KEY=***
-export GOOGLE_API_KEY=***
-```
-
-## Run a cookbook
-
-```shell
-python cookbook/.../example.py
-```
+We are constantly adding new cookbooks to the repository. If you want to contribute, please check the [CONTRIBUTING.md](./CONTRIBUTING.md) file.

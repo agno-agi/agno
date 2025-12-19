@@ -5,8 +5,8 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.db.sqlite import SqliteDb
-from agno.exceptions import ModelProviderError
 from agno.models.openai import OpenAIResponses
+from agno.run.base import RunStatus
 
 
 @pytest.fixture(scope="module")
@@ -102,15 +102,15 @@ async def test_async_basic_stream(openai_responses_model, shared_db):
 
 
 def test_exception_handling():
-    """Test proper error handling for invalid model IDs."""
+    """Test that errors are handled gracefully and returned in RunOutput."""
     agent = Agent(model=OpenAIResponses(id="gpt-100"), markdown=True, telemetry=False)
 
-    with pytest.raises(ModelProviderError) as exc:
-        agent.run("Share a 2 sentence horror story")
+    # Agent now handles errors gracefully and returns RunOutput with error status
+    response = agent.run("Share a 2 sentence horror story")
 
-    assert exc.value.model_name == "OpenAIResponses"
-    assert exc.value.model_id == "gpt-100"
-    assert exc.value.status_code == 400
+    assert response.status == RunStatus.error
+    assert response.content is not None
+    assert "gpt-100" in response.content
 
 
 def test_with_memory(openai_responses_model):
