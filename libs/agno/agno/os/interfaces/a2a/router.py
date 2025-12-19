@@ -286,10 +286,10 @@ def attach_routes(
         id: str,
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
-    ):
+    ) -> dict:
         """List all tasks for an Agent. If session_id is provided in params, returns tasks from that session only."""
         request_body = await request.json()
-        request_id = request_body.get("id", "unknown")
+        request_id = request_body.get("id")
         session_id = request_body.get("params", {}).get("session_id")
 
         agent = get_agent_by_id(id, agents)
@@ -305,7 +305,7 @@ def attach_routes(
         if session_type is None:
             session_type = SessionType.AGENT
 
-        all_runs = []
+        a2a_tasks = []
 
         if session_id:
             # Load specific session
@@ -329,7 +329,7 @@ def attach_routes(
 
             session_dict = cast(dict, session)
             runs = session_dict.get("runs", [])
-            all_runs.extend(runs)
+            a2a_tasks.extend([map_run_schema_to_a2a_task(run) for run in runs])
         else:
             # Load all sessions for this agent
             if isinstance(db, AsyncBaseDb):
@@ -350,10 +350,10 @@ def attach_routes(
             sessions_list = cast(list, sessions)
             for session_dict in sessions_list:
                 runs = cast(dict, session_dict).get("runs", [])
-                all_runs.extend(runs)
+                
 
         # Convert runs to A2A tasks
-        a2a_tasks = [map_run_schema_to_a2a_task(run) for run in all_runs]
+        a2a_tasks = [map_run_schema_to_a2a_task(run) for run in runs]
         return {
             "jsonrpc": "2.0",
             "id": request_id,

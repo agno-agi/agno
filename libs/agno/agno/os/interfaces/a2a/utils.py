@@ -299,8 +299,8 @@ def map_run_schema_to_a2a_task(run_schema: Union[RunSchema, TeamRunSchema, Workf
 
     # Extract basic run information - handle both dict and object access
     if isinstance(run_schema, dict):
-        run_id = run_schema.get("run_id") or str(uuid4())
-        session_id = run_schema.get("session_id") or str(uuid4())
+        run_id = run_schema.get("run_id")
+        session_id = run_schema.get("session_id") 
         messages = run_schema.get("messages")
         content = run_schema.get("content")
         images = run_schema.get("images")
@@ -329,7 +329,11 @@ def map_run_schema_to_a2a_task(run_schema: Union[RunSchema, TeamRunSchema, Workf
     if messages:
         for msg in messages:
             if isinstance(msg, dict):
-                role = Role.agent if msg.get("role") == "assistant" else Role.user
+                
+                if msg.get("role") == ("assistant"):
+                    role = Role.agent 
+                elif msg.get("role")==("user"):
+                    role = Role.user
                 parts: List[Part] = []
 
                 if msg.get("content"):
@@ -344,7 +348,7 @@ def map_run_schema_to_a2a_task(run_schema: Union[RunSchema, TeamRunSchema, Workf
 
                 message_history.append(
                     A2AMessage(
-                        message_id=msg.get("id") or str(uuid4()),
+                        message_id=msg.get("id"),
                         role=role,
                         parts=parts,
                         context_id=session_id,
@@ -369,58 +373,54 @@ def map_run_schema_to_a2a_task(run_schema: Union[RunSchema, TeamRunSchema, Workf
     artifacts: List[Artifact] = []
 
     if images:
-        for idx, img in enumerate(images):
+        for img in images:
             artifact_parts = []
             img_url = img.get("url") if isinstance(img, dict) else getattr(img, "url", None)
-            img_name = img.get("name") if isinstance(img, dict) else getattr(img, "name", None)
             if img_url:
                 artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=img_url, mime_type="image/*"))))
             artifacts.append(
                 Artifact(
-                    artifact_id=f"image-{idx}",
-                    name=img_name or f"image-{idx}",
-                    description="Image from run",
+                    artifact_id=f"image-{str(uuid4())}",
+                    name=f"image-{img_url}",
+                    description=img.get("alt_text"),
                     parts=artifact_parts,
                 )
             )
 
     if videos:
-        for idx, vid in enumerate(videos):
+        for vid in videos:
             artifact_parts = []
             vid_url = vid.get("url") if isinstance(vid, dict) else getattr(vid, "url", None)
-            vid_name = vid.get("name") if isinstance(vid, dict) else getattr(vid, "name", None)
             if vid_url:
                 artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=vid_url, mime_type="video/*"))))
             artifacts.append(
                 Artifact(
-                    artifact_id=f"video-{idx}",
-                    name=vid_name or f"video-{idx}",
-                    description="Video from run",
+                    artifact_id=f"video-{str(uuid4())}",
+                    name=f"video-{vid_url}",
+                    description=vid.get("description"),
                     parts=artifact_parts,
                 )
             )
 
     if audio:
-        for idx, aud in enumerate(audio):
+        for aud in audio:
             artifact_parts = []
             aud_url = aud.get("url") if isinstance(aud, dict) else getattr(aud, "url", None)
-            aud_name = aud.get("name") if isinstance(aud, dict) else getattr(aud, "name", None)
             if aud_url:
                 artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=aud_url, mime_type="audio/*"))))
             artifacts.append(
                 Artifact(
-                    artifact_id=f"audio-{idx}",
-                    name=aud_name or f"audio-{idx}",
-                    description="Audio from run",
+                    artifact_id=f"audio-{str(uuid4())}",
+                    name=f"audio-{aud_url}",
+                    description=aud.get("description"),
                     parts=artifact_parts,
                 )
             )
 
     if files:
-        for idx, file in enumerate(files):
+        for file in files:
             artifact_parts = []
             file_url = file.get("url") if isinstance(file, dict) else getattr(file, "url", None)
-            file_name = file.get("name") if isinstance(file, dict) else getattr(file, "name", None)
             file_mime = file.get("mime_type") if isinstance(file, dict) else getattr(file, "mime_type", None)
             if file_url:
                 artifact_parts.append(
@@ -435,9 +435,9 @@ def map_run_schema_to_a2a_task(run_schema: Union[RunSchema, TeamRunSchema, Workf
                 )
             artifacts.append(
                 Artifact(
-                    artifact_id=f"file-{idx}",
-                    name=file_name or f"file-{idx}",
-                    description="File from run",
+                    artifact_id=f"file-{str(uuid4())}",
+                    name=f"file-{file_url}",
+                    description=file.get("description"),
                     parts=artifact_parts,
                 )
             )
