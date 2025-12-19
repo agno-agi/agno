@@ -1,4 +1,18 @@
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
+
+try:
+    import numpy as np
+except ImportError:
+    raise ImportError("`numpy` not installed. Please install using `pip install numpy`")
+
+try:
+    from chonkie import SemanticChunker
+    from chonkie.embeddings.base import BaseEmbeddings
+except ImportError:
+    raise ImportError(
+        "`chonkie` is required for semantic chunking. "
+        "Please install it using `pip install chonkie` to use SemanticChunking."
+    )
 
 from agno.knowledge.chunking.strategy import ChunkingStrategy
 from agno.knowledge.document.base import Document
@@ -8,8 +22,6 @@ from agno.utils.log import log_info
 
 def _get_chonkie_embedder_wrapper(embedder: Embedder):
     """Create a wrapper that adapts Agno Embedder to chonkie's BaseEmbeddings interface."""
-    import numpy as np
-    from chonkie.embeddings.base import BaseEmbeddings
 
     class _ChonkieEmbedderWrapper(BaseEmbeddings):
         """Wrapper to make Agno Embedders compatible with chonkie."""
@@ -20,7 +32,7 @@ def _get_chonkie_embedder_wrapper(embedder: Embedder):
 
         def embed(self, text: str):
             embedding = self._embedder.get_embedding(text)  # type: ignore[attr-defined]
-            return np.array(embedding)
+            return np.array(embedding, dtype=np.float32)
 
         def get_tokenizer(self):
             """Return a simple token counter function."""
@@ -28,7 +40,7 @@ def _get_chonkie_embedder_wrapper(embedder: Embedder):
 
         @property
         def dimension(self) -> int:
-            return getattr(self._embedder, "dimensions", 1536)
+            return getattr(self._embedder, "dimensions")
 
     return _ChonkieEmbedderWrapper(embedder)
 
@@ -37,7 +49,10 @@ class SemanticChunking(ChunkingStrategy):
     """Chunking strategy that splits text into semantic chunks using chonkie.
 
     Args:
-        embedder: The embedder to use for generating embeddings.
+        embedder: The embedder to use for generating embeddings. Can be:
+            - A string model identifier (e.g., "minishlab/potion-base-32M") for chonkie's built-in models
+            - A chonkie BaseEmbeddings instance (used directly)
+            - An Agno Embedder (wrapped for chonkie compatibility)
         chunk_size: Maximum tokens allowed per chunk.
         similarity_threshold: Threshold for semantic similarity (0-1).
         similarity_window: Number of sentences to consider for similarity calculation.
@@ -49,11 +64,12 @@ class SemanticChunking(ChunkingStrategy):
         filter_window: Window length for the Savitzky-Golay filter.
         filter_polyorder: Polynomial order for the Savitzky-Golay filter.
         filter_tolerance: Tolerance for the Savitzky-Golay filter.
+        chunker_params: Additional parameters to pass to chonkie's SemanticChunker.
     """
 
     def __init__(
         self,
-        embedder: Optional[Embedder] = None,
+        embedder: Optional[Union[str, Embedder]] = None,
         chunk_size: int = 5000,
         similarity_threshold: float = 0.5,
         similarity_window: int = 3,
@@ -65,6 +81,7 @@ class SemanticChunking(ChunkingStrategy):
         filter_window: int = 5,
         filter_polyorder: int = 3,
         filter_tolerance: float = 0.2,
+        chunker_params: Optional[Dict[str, Any]] = None,
     ):
         if embedder is None:
             from agno.knowledge.embedder.openai import OpenAIEmbedder
@@ -83,38 +100,43 @@ class SemanticChunking(ChunkingStrategy):
         self.filter_window = filter_window
         self.filter_polyorder = filter_polyorder
         self.filter_tolerance = filter_tolerance
-        self.chunker = None
+        self.chunker_params = chunker_params
+        self.chunker: Optional[SemanticChunker] = None
 
     def _initialize_chunker(self):
         """Lazily initialize the chunker with chonkie dependency."""
         if self.chunker is not None:
             return
 
-        try:
-            from chonkie import SemanticChunker
-        except ImportError:
-            raise ImportError(
-                "`chonkie` is required for semantic chunking. "
-                "Please install it using `pip install chonkie` to use SemanticChunking."
-            )
+        # Determine embedding model based on type:
+        # - str: pass directly to chonkie (uses chonkie's built-in models)
+        # - BaseEmbeddings: pass directly to chonkie
+        # - Agno Embedder: wrap for chonkie compatibility
+        if isinstance(self.embedder, str):
+            embedding_model = self.embedder
+        elif isinstance(self.embedder, BaseEmbeddings):
+            embedding_model = self.embedder
+        else:
+            embedding_model = _get_chonkie_embedder_wrapper(self.embedder)
 
-        # Wrap the Agno embedder for chonkie compatibility
-        wrapped_embedder = _get_chonkie_embedder_wrapper(self.embedder)
+        _chunker_params: Dict[str, Any] = {
+            "embedding_model": embedding_model,
+            "chunk_size": self.chunk_size,
+            "threshold": self.similarity_threshold,
+            "similarity_window": self.similarity_window,
+            "min_sentences_per_chunk": self.min_sentences_per_chunk,
+            "min_characters_per_sentence": self.min_characters_per_sentence,
+            "delim": self.delimiters,
+            "include_delim": self.include_delimiters,
+            "skip_window": self.skip_window,
+            "filter_window": self.filter_window,
+            "filter_polyorder": self.filter_polyorder,
+            "filter_tolerance": self.filter_tolerance,
+        }
+        if self.chunker_params:
+            _chunker_params.update(self.chunker_params)
 
-        self.chunker = SemanticChunker(
-            embedding_model=wrapped_embedder,
-            chunk_size=self.chunk_size,
-            threshold=self.similarity_threshold,
-            similarity_window=self.similarity_window,
-            min_sentences_per_chunk=self.min_sentences_per_chunk,
-            min_characters_per_sentence=self.min_characters_per_sentence,
-            delim=self.delimiters,
-            include_delim=self.include_delimiters,
-            skip_window=self.skip_window,
-            filter_window=self.filter_window,
-            filter_polyorder=self.filter_polyorder,
-            filter_tolerance=self.filter_tolerance,
-        )
+        self.chunker = SemanticChunker(**_chunker_params)
 
     def chunk(self, document: Document) -> List[Document]:
         """Split document into semantic chunks using chonkie"""

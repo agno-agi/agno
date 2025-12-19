@@ -1,9 +1,12 @@
 """Tests for SemanticChunking wrapper that adapts Agno embedders to chonkie."""
 
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
+
+# Skip all tests if chonkie is not installed
+pytest.importorskip("chonkie")
 
 from agno.knowledge.chunking.semantic import SemanticChunking
 from agno.knowledge.document.base import Document
@@ -20,39 +23,9 @@ class DummyEmbedder:
         return [0.0] * self.dimensions
 
 
-class FakeBaseEmbeddings:
-    """Fake BaseEmbeddings for testing."""
-
-    pass
-
-
-def _install_fake_chonkie(chunker_class):
-    """Install fake chonkie module with embeddings submodule."""
-    chonkie_mod = ModuleType("chonkie")
-    setattr(chonkie_mod, "SemanticChunker", chunker_class)
-
-    embeddings_mod = ModuleType("chonkie.embeddings")
-    base_mod = ModuleType("chonkie.embeddings.base")
-    setattr(base_mod, "BaseEmbeddings", FakeBaseEmbeddings)
-
-    setattr(embeddings_mod, "base", base_mod)
-    setattr(chonkie_mod, "embeddings", embeddings_mod)
-
-    sys.modules["chonkie"] = chonkie_mod
-    sys.modules["chonkie.embeddings"] = embeddings_mod
-    sys.modules["chonkie.embeddings.base"] = base_mod
-
-
-def _remove_fake_chonkie():
-    """Remove fake chonkie modules."""
-    sys.modules.pop("chonkie", None)
-    sys.modules.pop("chonkie.embeddings", None)
-    sys.modules.pop("chonkie.embeddings.base", None)
-
-
 @pytest.fixture
 def fake_chonkie_capturing():
-    """Fixture that installs fake chonkie and captures init kwargs."""
+    """Fixture that patches SemanticChunker and captures init kwargs."""
     captured = {}
 
     class FakeSemanticChunker:
@@ -62,9 +35,8 @@ def fake_chonkie_capturing():
         def chunk(self, text: str):
             return [SimpleNamespace(text=text)]
 
-    _install_fake_chonkie(FakeSemanticChunker)
-    yield captured
-    _remove_fake_chonkie()
+    with patch("agno.knowledge.chunking.semantic.SemanticChunker", FakeSemanticChunker):
+        yield captured
 
 
 def test_semantic_chunking_wraps_embedder(fake_chonkie_capturing):
@@ -155,3 +127,86 @@ def test_semantic_chunking_default_embedder():
     sc = SemanticChunking(chunk_size=100)
     assert sc.embedder is not None
     assert "OpenAIEmbedder" in type(sc.embedder).__name__
+
+
+def test_semantic_chunking_chunker_params(fake_chonkie_capturing):
+    """Test that chunker_params are passed through to chonkie."""
+    embedder = DummyEmbedder()
+    sc = SemanticChunking(
+        embedder=embedder,
+        chunk_size=500,
+        chunker_params={"future_param": "value", "another_param": 42},
+    )
+
+    _ = sc.chunk(Document(content="Test"))
+
+    assert fake_chonkie_capturing["chunk_size"] == 500
+    assert fake_chonkie_capturing["future_param"] == "value"
+    assert fake_chonkie_capturing["another_param"] == 42
+
+
+def test_semantic_chunking_chunker_params_override(fake_chonkie_capturing):
+    """Test that chunker_params can override default params."""
+    embedder = DummyEmbedder()
+    sc = SemanticChunking(
+        embedder=embedder,
+        chunk_size=500,
+        similarity_window=3,  # default
+        chunker_params={"similarity_window": 10},  # override
+    )
+
+    _ = sc.chunk(Document(content="Test"))
+
+    assert fake_chonkie_capturing["similarity_window"] == 10
+
+
+def test_semantic_chunking_string_embedder_passed_directly(fake_chonkie_capturing):
+    """Test that string embedder is passed directly to chonkie without wrapping."""
+    sc = SemanticChunking(embedder="text-embedding-3-small", chunk_size=100)
+
+    _ = sc.chunk(Document(content="Test"))
+
+    assert fake_chonkie_capturing["embedding_model"] == "text-embedding-3-small"
+    assert isinstance(fake_chonkie_capturing["embedding_model"], str)
+
+
+def test_semantic_chunking_base_embeddings_not_wrapped(fake_chonkie_capturing):
+    """Test that BaseEmbeddings subclass is passed directly without wrapping."""
+    import numpy as np
+    from chonkie.embeddings.base import BaseEmbeddings
+
+    class CustomChonkieEmbedder(BaseEmbeddings):
+        def embed(self, text: str):
+            return np.zeros(768, dtype=np.float32)
+
+        @property
+        def dimension(self):
+            return 768
+
+        def get_tokenizer(self):
+            return lambda x: len(x.split())
+
+    custom_embedder = CustomChonkieEmbedder()
+    sc = SemanticChunking(embedder=custom_embedder, chunk_size=100)
+
+    _ = sc.chunk(Document(content="Test"))
+
+    # Should be the same object, not wrapped
+    assert fake_chonkie_capturing["embedding_model"] is custom_embedder
+    assert not hasattr(fake_chonkie_capturing["embedding_model"], "_embedder")
+
+
+def test_semantic_chunking_wrapper_dtype_float32(fake_chonkie_capturing):
+    """Test that wrapper.embed() returns numpy array with float32 dtype."""
+    import numpy as np
+
+    embedder = DummyEmbedder(dimensions=1536)
+    sc = SemanticChunking(embedder=embedder, chunk_size=100)
+
+    _ = sc.chunk(Document(content="Test"))
+
+    wrapper = fake_chonkie_capturing["embedding_model"]
+    result = wrapper.embed("test text")
+
+    assert isinstance(result, np.ndarray)
+    assert result.dtype == np.float32
