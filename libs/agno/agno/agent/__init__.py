@@ -5,6 +5,7 @@ from agno.agent.agent import (
     Message,
     Toolkit,
 )
+from agno.agent.remote import RemoteAgent
 from agno.run.agent import (
     CompressionCompletedEvent,
     CompressionStartedEvent,
@@ -29,6 +30,7 @@ from agno.run.agent import (
 
 __all__ = [
     "Agent",
+    "RemoteAgent",
     "AgentSession",
     "Function",
     "Message",

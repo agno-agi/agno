@@ -53,29 +53,20 @@ class S3Reader(Reader):
         try:
             log_debug(f"Reading S3 file: {s3_object.uri}")
 
+            doc_name = name or s3_object.name.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
+
             # Read PDF files
             if s3_object.uri.endswith(".pdf"):
                 object_resource = s3_object.get_resource()
                 object_body = object_resource.get()["Body"]
-                doc_name = (
-                    s3_object.name.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
-                    if name is None
-                    else name
-                )
                 return PDFReader().read(pdf=BytesIO(object_body.read()), name=doc_name)
 
             # Read text files
             else:
-                doc_name = (
-                    s3_object.name.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
-                    if name is None
-                    else name
-                )
                 obj_name = s3_object.name.split("/")[-1]
                 temporary_file = Path("storage").joinpath(obj_name)
                 s3_object.download(temporary_file)
                 documents = TextReader().read(file=temporary_file, name=doc_name)
-
                 temporary_file.unlink()
                 return documents
 
