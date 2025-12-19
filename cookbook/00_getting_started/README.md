@@ -1,4 +1,4 @@
-# Getting Started with Agno Agents 🚀
+# Getting started with Agents, the easy way
 
 This guide walks through the basics of building Agents with Agno.
 

@@ -586,9 +586,7 @@ class ChromaDb(VectorDb):
         log_info(f"Found {len(search_results)} documents")
         return search_results
 
-    def _vector_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
+    def _vector_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Perform pure vector similarity search.
 
         Args:
@@ -619,9 +617,7 @@ class ChromaDb(VectorDb):
 
         return self._build_search_results(result)
 
-    def _keyword_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
+    def _keyword_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Perform keyword-based search using document content filtering.
 
         This uses ChromaDB's where_document filter with $contains operator
@@ -663,9 +659,7 @@ class ChromaDb(VectorDb):
             logger.error(f"Error in keyword search: {e}")
             return []
 
-    def _hybrid_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
+    def _hybrid_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Perform hybrid search combining vector similarity with full-text search using RRF.
 
         This method combines:
