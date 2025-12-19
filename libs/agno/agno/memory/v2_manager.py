@@ -7,6 +7,16 @@ from typing import Any, Callable, Dict, List, Optional, Type, Union, cast
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.user_profile import UserProfile
+from agno.memory.v2_prompts import (
+    DEFAULT_AGENTIC_INSTRUCTIONS,
+    DEFAULT_DECISION_FRAMEWORK,
+    DEFAULT_EXTRACTION_INTRO,
+    DEFAULT_EXTRACTION_TOOL_USAGE,
+    DEFAULT_FEEDBACK_PROMPT,
+    DEFAULT_KNOWLEDGE_PROMPT,
+    DEFAULT_POLICIES_PROMPT,
+    DEFAULT_PROFILE_PROMPT,
+)
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
@@ -74,6 +84,10 @@ class MemoryManagerV2:
     # Internal settings
     debug_mode: bool = False
 
+    # ==========================================================================
+    # INITIALIZATION
+    # ==========================================================================
+
     def __init__(
         self,
         model: Optional[Union[Model, str]] = None,
@@ -129,6 +143,10 @@ class MemoryManagerV2:
         self.feedback_extraction_prompt = feedback_extraction_prompt
         self.debug_mode = debug_mode
 
+    # ==========================================================================
+    # UTILITY METHODS
+    # ==========================================================================
+
     def set_log_level(self) -> None:
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             self.debug_mode = True
@@ -171,10 +189,15 @@ class MemoryManagerV2:
                 return f"\n            Expected fields: {', '.join(field_info)}"
         return ""
 
+    # ==========================================================================
+    # AUTOMATIC EXTRACTION (background memory extraction)
+    # ==========================================================================
+
     def _get_extraction_system_message(self, existing_profile: Optional[UserProfile] = None) -> str:
         """Build the system message for tool-based extraction.
 
         Conditionally includes layer sections based on extract_* flags.
+        Uses prompts from v2_prompts.py, with optional schema hints appended.
         """
         # If custom instructions provided, use those directly
         if self.extraction_instructions:
@@ -194,152 +217,53 @@ class MemoryManagerV2:
         if not enabled_layers:
             return "No memory layers are enabled for extraction."
 
-        # Base instructions
-        system_message = dedent(
-            f"""\
-            You are a User Memory Curator. Your task is to extract LONG-TERM valuable information about the user that will be useful in FUTURE conversations.
-
-            ## Core Principle: Quality Over Quantity
-
-            Only save information that will be useful weeks or months from now. Skip anything ephemeral or one-off.
-
-            ## What to SKIP (DO NOT SAVE)
-
-            - Temporary states ("I'm tired", "running late", "busy today")
-            - One-off questions without long-term relevance ("how do I fix this error")
-            - Ephemeral task details (specific debugging sessions, one-time API calls)
-            - Vague statements without concrete, actionable info
-            - Information already saved (check existing profile below)
-            - Guesses or inferences without clear evidence
-
-            ## What to SAVE (LONG-TERM Valuable)
-
-            - Identity facts that persist (name, role, company, location)
-            - Explicitly stated preferences ("I always want...", "Never...", "I prefer...")
-            - Recurring projects or long-term goals
-            - Communication style preferences that apply to all interactions
-            - Feedback that reveals generalizable preferences
-
-            ## Enabled Memory Layers: {", ".join(enabled_layers)}
-
-            Use save_user_info(info_type, key, value) to save information.
-            Always use explicit keyword arguments: save_user_info(info_type="...", key="...", value="...")
-            """
-        )
+        # Build system message from constants
+        system_message = DEFAULT_EXTRACTION_INTRO
+        system_message += f"\n## Enabled Memory Layers: {', '.join(enabled_layers)}\n\n"
+        system_message += DEFAULT_EXTRACTION_TOOL_USAGE
 
         # Add PROFILE layer instructions if enabled
         if self.extract_profile:
             if self.profile_extraction_prompt:
                 system_message += f'\n\n### PROFILE (info_type="profile")\n{self.profile_extraction_prompt}'
             else:
-                profile_hints = self._get_schema_hints(self.profile_schema)
-                system_message += dedent(
-                    f"""
-
-                    ### PROFILE (info_type="profile") - Who the user IS
-                    Stable identity information about the user.
-
-                    Common keys: name, role, company, location, timezone, experience_level, languages, frameworks{profile_hints}
-
-                    Examples:
-                    - save_user_info(info_type="profile", key="name", value="Sarah")
-                    - save_user_info(info_type="profile", key="role", value="Senior Engineer")
-                    - save_user_info(info_type="profile", key="company", value="Acme Corp")
-                    - save_user_info(info_type="profile", key="location", value="NYC")
-                    """
-                )
+                schema_hints = self._get_schema_hints(self.profile_schema)
+                system_message += "\n\n" + DEFAULT_PROFILE_PROMPT
+                if schema_hints:
+                    system_message += schema_hints
 
         # Add POLICY layer instructions if enabled
         if self.extract_policies:
             if self.policies_extraction_prompt:
                 system_message += f'\n\n### POLICY (info_type="policy")\n{self.policies_extraction_prompt}'
             else:
-                policies_hints = self._get_schema_hints(self.policies_schema)
-                system_message += dedent(
-                    f"""
-
-                    ### POLICY (info_type="policy") - How the user wants to be helped
-                    Explicit preferences and constraints. These have HIGH authority.
-
-                    Common keys: response_style, tone, format_preference, include_code_examples{policies_hints}
-
-                    Examples:
-                    - save_user_info(info_type="policy", key="response_style", value="concise")
-                    - save_user_info(info_type="policy", key="include_code_examples", value="true")
-                    - save_user_info(info_type="policy", key="tone", value="direct")
-
-                    Only save policies when user EXPLICITLY states preferences like:
-                    - "Please be concise" -> save
-                    - "I prefer bullet points" -> save
-                    - "Always include code examples" -> save
-                    Do NOT infer policies from behavior.
-                    """
-                )
+                schema_hints = self._get_schema_hints(self.policies_schema)
+                system_message += "\n\n" + DEFAULT_POLICIES_PROMPT
+                if schema_hints:
+                    system_message += schema_hints
 
         # Add KNOWLEDGE layer instructions if enabled
         if self.extract_knowledge:
             if self.knowledge_extraction_prompt:
                 system_message += f'\n\n### KNOWLEDGE (info_type="knowledge")\n{self.knowledge_extraction_prompt}'
             else:
-                knowledge_hints = self._get_schema_hints(self.knowledge_schema)
-                system_message += dedent(
-                    f"""
-
-                    ### KNOWLEDGE (info_type="knowledge") - What user is working on
-                    Long-term context about user's situation.
-
-                    Common keys: current_project, tech_stack, goal, interest, challenge{knowledge_hints}
-
-                    Examples:
-                    - save_user_info(info_type="knowledge", key="current_project", value="building payment API")
-                    - save_user_info(info_type="knowledge", key="tech_stack", value="Python and Kafka")
-                    - save_user_info(info_type="knowledge", key="goal", value="transition to engineering management")
-
-                    Only save knowledge that:
-                    - Is a recurring project/interest (mentioned multiple times)
-                    - Has long-term relevance (not a quick one-off question)
-                    - Provides useful context for future conversations
-                    """
-                )
+                schema_hints = self._get_schema_hints(self.knowledge_schema)
+                system_message += "\n\n" + DEFAULT_KNOWLEDGE_PROMPT
+                if schema_hints:
+                    system_message += schema_hints
 
         # Add FEEDBACK layer instructions if enabled
         if self.extract_feedback:
             if self.feedback_extraction_prompt:
                 system_message += f'\n\n### FEEDBACK (info_type="feedback")\n{self.feedback_extraction_prompt}'
             else:
-                feedback_hints = self._get_schema_hints(self.feedback_schema)
-                system_message += dedent(
-                    f"""
-
-                    ### FEEDBACK (info_type="feedback") - What works for this user
-                    Signals about response quality. Use key="positive" or key="negative".{feedback_hints}
-
-                    Examples:
-                    - save_user_info(info_type="feedback", key="positive", value="detailed code examples are helpful")
-                    - save_user_info(info_type="feedback", key="negative", value="too much explanation, prefers brevity")
-
-                    Only save feedback that reveals GENERALIZABLE preferences:
-                    - "That was too long" -> save as negative feedback about verbosity
-                    - "Perfect, exactly what I needed!" -> save positive about the approach used
-                    Do NOT save feedback about specific content ("that code worked").
-                    """
-                )
+                schema_hints = self._get_schema_hints(self.feedback_schema)
+                system_message += "\n\n" + DEFAULT_FEEDBACK_PROMPT
+                if schema_hints:
+                    system_message += schema_hints
 
         # Add decision framework
-        system_message += dedent(
-            """
-
-            ## Decision Framework
-
-            Before saving, ask yourself:
-            1. Will this be useful in a conversation 1 month from now? If no, skip.
-            2. Is this explicitly stated or clearly implied? If guessing, skip.
-            3. Is this already saved? If yes, skip (check existing profile below).
-            4. Is this a long-term trait or a temporary state? If temporary, skip.
-
-            If there is no long-term valuable information to extract, don't call any tools.
-            """
-        )
+        system_message += "\n\n" + DEFAULT_DECISION_FRAMEWORK
 
         # Add existing profile context to avoid duplicates
         if existing_profile:
@@ -388,17 +312,6 @@ class MemoryManagerV2:
         Returns:
             List of Function objects for the model to use
         """
-        # Build list of enabled layers for the docstring
-        enabled_layers = []
-        if self.extract_profile:
-            enabled_layers.append("profile")
-        if self.extract_policies:
-            enabled_layers.append("policy")
-        if self.extract_knowledge:
-            enabled_layers.append("knowledge")
-        if self.extract_feedback:
-            enabled_layers.append("feedback")
-
         # Capture self for closure
         manager = self
 
@@ -417,77 +330,28 @@ class MemoryManagerV2:
             Returns:
                 Confirmation message
             """
-            try:
-                # Check if this layer is enabled for extraction
-                if info_type == "profile" and not manager.extract_profile:
-                    log_debug(f"[Extraction] Skipped profile (extraction disabled) for {user_id}")
-                    return "Profile extraction is disabled"
-                if info_type == "policy" and not manager.extract_policies:
-                    log_debug(f"[Extraction] Skipped policy (extraction disabled) for {user_id}")
-                    return "Policy extraction is disabled"
-                if info_type == "knowledge" and not manager.extract_knowledge:
-                    log_debug(f"[Extraction] Skipped knowledge (extraction disabled) for {user_id}")
-                    return "Knowledge extraction is disabled"
-                if info_type == "feedback" and not manager.extract_feedback:
-                    log_debug(f"[Extraction] Skipped feedback (extraction disabled) for {user_id}")
-                    return "Feedback extraction is disabled"
+            # Check if this layer is enabled for extraction
+            if info_type == "profile" and not manager.extract_profile:
+                log_debug(f"[Extraction] Skipped profile (extraction disabled) for {user_id}")
+                return "Profile extraction is disabled"
+            if info_type == "policy" and not manager.extract_policies:
+                log_debug(f"[Extraction] Skipped policy (extraction disabled) for {user_id}")
+                return "Policy extraction is disabled"
+            if info_type == "knowledge" and not manager.extract_knowledge:
+                log_debug(f"[Extraction] Skipped knowledge (extraction disabled) for {user_id}")
+                return "Knowledge extraction is disabled"
+            if info_type == "feedback" and not manager.extract_feedback:
+                log_debug(f"[Extraction] Skipped feedback (extraction disabled) for {user_id}")
+                return "Feedback extraction is disabled"
 
-                user = manager.get_user(user_id)
-                if user is None:
-                    user = UserProfile(user_id=user_id)
-
-                if info_type == "profile":
-                    if user.user_profile is None:
-                        user.user_profile = {}
-                    user.user_profile[key] = value
-                    log_debug(f"[Extraction] Saved profile {key}={value} for {user_id}")
-
-                elif info_type == "policy":
-                    if user.memory_layers is None:
-                        user.memory_layers = {}
-                    if "policies" not in user.memory_layers:
-                        user.memory_layers["policies"] = {}
-                    user.memory_layers["policies"][key] = value
-                    log_debug(f"[Extraction] Saved policy {key}={value} for {user_id}")
-
-                elif info_type == "knowledge":
-                    if user.memory_layers is None:
-                        user.memory_layers = {}
-                    if "knowledge" not in user.memory_layers:
-                        user.memory_layers["knowledge"] = []
-                    fact_entry = {"key": key, "value": value}
-                    existing = user.memory_layers["knowledge"]
-                    user.memory_layers["knowledge"] = [f for f in existing if f.get("key") != key]
-                    user.memory_layers["knowledge"].append(fact_entry)
-                    log_debug(f"[Extraction] Saved knowledge {key}={value} for {user_id}")
-
-                elif info_type == "feedback":
-                    if user.memory_layers is None:
-                        user.memory_layers = {}
-                    if "feedback" not in user.memory_layers:
-                        user.memory_layers["feedback"] = {"positive": [], "negative": []}
-                    if key in ["positive", "negative"]:
-                        if key not in user.memory_layers["feedback"]:
-                            user.memory_layers["feedback"][key] = []
-                        if value not in user.memory_layers["feedback"][key]:
-                            user.memory_layers["feedback"][key].append(value)
-                        log_debug(f"[Extraction] Saved {key} feedback: {value} for {user_id}")
-                    else:
-                        return f"For feedback, key must be 'positive' or 'negative', got '{key}'"
-
-                else:
-                    return f"Unknown info_type: {info_type}. Use 'profile', 'policy', 'knowledge', or 'feedback'"
-
-                manager.upsert_user(user)
-                return f"Saved {info_type}: {key} = {value}"
-
-            except Exception as e:
-                log_error(f"Error saving user info during extraction: {e}")
-                return f"Error: {e}"
+            # Delegate to shared helper
+            return manager._save_to_layer(user_id, info_type, key, value)
 
         return [Function.from_callable(save_user_info)]
 
-    # === CRUD Operations ===
+    # ==========================================================================
+    # CRUD OPERATIONS (User Profile)
+    # ==========================================================================
 
     def get_user(self, user_id: str) -> Optional[UserProfile]:
         """Get user profile by ID."""
@@ -600,7 +464,135 @@ class MemoryManagerV2:
         else:
             self.db.delete_user_profile(user_id=user_id)
 
-    # === Profile/Memory Layer Operations ===
+    # ==========================================================================
+    # LAYER HELPERS (shared logic for save/delete operations)
+    # ==========================================================================
+
+    def _save_to_layer(self, user_id: str, info_type: str, key: str, value: Any) -> str:
+        """Shared logic for saving to any memory layer.
+
+        Used by both extraction tools and agentic memory tools.
+
+        Args:
+            user_id: The user ID to save to
+            info_type: One of "profile", "policy", "knowledge", or "feedback"
+            key: A label for the information
+            value: The actual information to save
+
+        Returns:
+            Confirmation message or error string
+        """
+        try:
+            user = self.get_user(user_id)
+            if user is None:
+                user = UserProfile(user_id=user_id)
+
+            if info_type == "profile":
+                if user.user_profile is None:
+                    user.user_profile = {}
+                user.user_profile[key] = value
+                log_debug(f"Saved profile {key}={value} for {user_id}")
+
+            elif info_type == "policy":
+                if user.memory_layers is None:
+                    user.memory_layers = {}
+                if "policies" not in user.memory_layers:
+                    user.memory_layers["policies"] = {}
+                user.memory_layers["policies"][key] = value
+                log_debug(f"Saved policy {key}={value} for {user_id}")
+
+            elif info_type == "knowledge":
+                if user.memory_layers is None:
+                    user.memory_layers = {}
+                if "knowledge" not in user.memory_layers:
+                    user.memory_layers["knowledge"] = []
+                fact_entry = {"key": key, "value": value}
+                # Deduplicate by key
+                existing = user.memory_layers["knowledge"]
+                user.memory_layers["knowledge"] = [f for f in existing if f.get("key") != key]
+                user.memory_layers["knowledge"].append(fact_entry)
+                log_debug(f"Saved knowledge {key}={value} for {user_id}")
+
+            elif info_type == "feedback":
+                if user.memory_layers is None:
+                    user.memory_layers = {}
+                if "feedback" not in user.memory_layers:
+                    user.memory_layers["feedback"] = {"positive": [], "negative": []}
+                if key in ["positive", "negative"]:
+                    if key not in user.memory_layers["feedback"]:
+                        user.memory_layers["feedback"][key] = []
+                    if value not in user.memory_layers["feedback"][key]:
+                        user.memory_layers["feedback"][key].append(value)
+                    log_debug(f"Saved {key} feedback: {value} for {user_id}")
+                else:
+                    return f"For feedback, key must be 'positive' or 'negative', got '{key}'"
+
+            else:
+                return f"Unknown info_type: {info_type}. Use 'profile', 'policy', 'knowledge', or 'feedback'"
+
+            self.upsert_user(user)
+            return f"Saved {info_type}: {key} = {value}"
+
+        except Exception as e:
+            log_error(f"Error saving to layer: {e}")
+            return f"Error: {e}"
+
+    def _delete_from_layer(self, user_id: str, info_type: str, key: str) -> str:
+        """Shared logic for deleting from any memory layer.
+
+        Used by agentic memory tools.
+
+        Args:
+            user_id: The user ID to delete from
+            info_type: One of "profile", "policy", "knowledge", or "feedback"
+            key: The key/label to delete
+
+        Returns:
+            Confirmation message or error string
+        """
+        try:
+            user = self.get_user(user_id)
+            if user is None:
+                return "No memory found for user"
+
+            if info_type == "profile":
+                if user.user_profile and key in user.user_profile:
+                    del user.user_profile[key]
+                    log_debug(f"Forgot profile {key} for {user_id}")
+
+            elif info_type == "policy":
+                if user.memory_layers and "policies" in user.memory_layers:
+                    if key in user.memory_layers["policies"]:
+                        del user.memory_layers["policies"][key]
+                        log_debug(f"Forgot policy {key} for {user_id}")
+
+            elif info_type == "knowledge":
+                if user.memory_layers and "knowledge" in user.memory_layers:
+                    existing = user.memory_layers["knowledge"]
+                    user.memory_layers["knowledge"] = [f for f in existing if f.get("key") != key]
+                    log_debug(f"Forgot knowledge {key} for {user_id}")
+
+            elif info_type == "feedback":
+                if user.memory_layers and "feedback" in user.memory_layers:
+                    if key in ["positive", "negative"]:
+                        user.memory_layers["feedback"][key] = []
+                        log_debug(f"Cleared {key} feedback for {user_id}")
+                    else:
+                        return f"For feedback, key must be 'positive' or 'negative', got '{key}'"
+
+            else:
+                return f"Unknown info_type: {info_type}. Use 'profile', 'policy', 'knowledge', or 'feedback'"
+
+            self.upsert_user(user)
+            return f"Forgot {info_type}: {key}"
+
+        except Exception as e:
+            log_error(f"Error deleting from layer: {e}")
+            return f"Error: {e}"
+
+    # ==========================================================================
+    # PROFILE & MEMORY LAYER OPERATIONS
+    # ==========================================================================
 
     def get_user_profile_data(self, user_id: str) -> Dict[str, Any]:
         """Get just the user profile data (not memory layers)."""
@@ -687,7 +679,9 @@ class MemoryManagerV2:
 
         return await self.aupsert_user(user)
 
-    # === Context Compilation ===
+    # ==========================================================================
+    # CONTEXT COMPILATION (READ - inject memory into system message)
+    # ==========================================================================
 
     def compile_user_context(self, user_id: str) -> str:
         """Compile user memory layers into XML for system message."""
@@ -849,7 +843,9 @@ class MemoryManagerV2:
 
         return output
 
-    # === LLM Extraction ===
+    # ==========================================================================
+    # LLM EXTRACTION (call model to extract memory from conversations)
+    # ==========================================================================
 
     def extract_from_conversation(
         self,
@@ -1003,7 +999,9 @@ class MemoryManagerV2:
             log_error(f"Error during memory extraction: {e}")
             return False
 
-    # === Agentic Memory Tools ===
+    # ==========================================================================
+    # AGENTIC MEMORY TOOLS (agent-controlled memory management)
+    # ==========================================================================
 
     def get_user_memory_tools(self, user_id: str) -> List[Callable]:
         """Get tools for agentic user memory management.
@@ -1021,6 +1019,9 @@ class MemoryManagerV2:
         if not self.db:
             log_warning("No database configured for agentic memory tools")
             return []
+
+        # Capture self for closures
+        manager = self
 
         def save_user_info(
             info_type: str,
@@ -1043,63 +1044,11 @@ class MemoryManagerV2:
             Returns:
                 Confirmation message
             """
-            try:
-                user = self.get_user(user_id)
-                if user is None:
-                    user = UserProfile(user_id=user_id)
-
-                if info_type == "profile":
-                    if user.user_profile is None:
-                        user.user_profile = {}
-                    user.user_profile[key] = value
-                    log_debug(f"Saved profile {key}={value} for {user_id}")
-
-                elif info_type == "policy":
-                    if user.memory_layers is None:
-                        user.memory_layers = {}
-                    if "policies" not in user.memory_layers:
-                        user.memory_layers["policies"] = {}
-                    user.memory_layers["policies"][key] = value
-                    log_debug(f"Saved policy {key}={value} for {user_id}")
-
-                elif info_type == "knowledge":
-                    if user.memory_layers is None:
-                        user.memory_layers = {}
-                    if "knowledge" not in user.memory_layers:
-                        user.memory_layers["knowledge"] = []
-                    # Store as dict with key and value for better retrieval
-                    fact_entry = {"key": key, "value": value}
-                    # Deduplicate by key
-                    existing = user.memory_layers["knowledge"]
-                    user.memory_layers["knowledge"] = [f for f in existing if f.get("key") != key]
-                    user.memory_layers["knowledge"].append(fact_entry)
-                    log_debug(f"Saved knowledge {key}={value} for {user_id}")
-
-                elif info_type == "feedback":
-                    if user.memory_layers is None:
-                        user.memory_layers = {}
-                    if "feedback" not in user.memory_layers:
-                        user.memory_layers["feedback"] = {"positive": [], "negative": []}
-                    # key should be "positive" or "negative"
-                    if key in ["positive", "negative"]:
-                        if key not in user.memory_layers["feedback"]:
-                            user.memory_layers["feedback"][key] = []
-                        # Avoid duplicates
-                        if value not in user.memory_layers["feedback"][key]:
-                            user.memory_layers["feedback"][key].append(value)
-                        log_debug(f"Saved {key} feedback: {value} for {user_id}")
-                    else:
-                        return f"For feedback, key must be 'positive' or 'negative', got '{key}'"
-
-                else:
-                    return f"Unknown info_type: {info_type}. Use 'profile', 'policy', 'knowledge', or 'feedback'"
-
-                self.upsert_user(user)
-                return f"Remembered {info_type}: {key} = {value}"
-
-            except Exception as e:
-                log_error(f"Error saving user info: {e}")
-                return f"Error: {e}"
+            result = manager._save_to_layer(user_id, info_type, key, value)
+            # Change "Saved" to "Remembered" for agentic mode
+            if result.startswith("Saved "):
+                return "Remembered " + result[6:]
+            return result
 
         def forget_user_info(
             info_type: str,
@@ -1116,45 +1065,7 @@ class MemoryManagerV2:
             Returns:
                 Confirmation message
             """
-            try:
-                user = self.get_user(user_id)
-                if user is None:
-                    return "No memory found for user"
-
-                if info_type == "profile":
-                    if user.user_profile and key in user.user_profile:
-                        del user.user_profile[key]
-                        log_debug(f"Forgot profile {key} for {user_id}")
-
-                elif info_type == "policy":
-                    if user.memory_layers and "policies" in user.memory_layers:
-                        if key in user.memory_layers["policies"]:
-                            del user.memory_layers["policies"][key]
-                            log_debug(f"Forgot policy {key} for {user_id}")
-
-                elif info_type == "knowledge":
-                    if user.memory_layers and "knowledge" in user.memory_layers:
-                        existing = user.memory_layers["knowledge"]
-                        user.memory_layers["knowledge"] = [f for f in existing if f.get("key") != key]
-                        log_debug(f"Forgot knowledge {key} for {user_id}")
-
-                elif info_type == "feedback":
-                    if user.memory_layers and "feedback" in user.memory_layers:
-                        if key in ["positive", "negative"]:
-                            user.memory_layers["feedback"][key] = []
-                            log_debug(f"Cleared {key} feedback for {user_id}")
-                        else:
-                            return f"For feedback, key must be 'positive' or 'negative', got '{key}'"
-
-                else:
-                    return f"Unknown info_type: {info_type}. Use 'profile', 'policy', 'knowledge', or 'feedback'"
-
-                self.upsert_user(user)
-                return f"Forgot {info_type}: {key}"
-
-            except Exception as e:
-                log_error(f"Error forgetting user info: {e}")
-                return f"Error: {e}"
+            return manager._delete_from_layer(user_id, info_type, key)
 
         return [
             save_user_info,
@@ -1167,35 +1078,4 @@ class MemoryManagerV2:
         Returns:
             String with instructions to add to agent's system message.
         """
-        return dedent("""\
-            You have access to memory tools to remember information about the user across 4 layers:
-
-            TOOLS:
-            - save_user_info(info_type, key, value): Save user information
-            - forget_user_info(info_type, key): Remove previously saved information
-
-            THE 4 MEMORY LAYERS (in order of authority):
-            1. "policy" (HIGHEST) - User preferences and constraints that override other context
-               Examples: "response_style"="concise", "no_emojis"="true", "always_show_code"="true"
-               Use when: User explicitly states how they want you to respond
-
-            2. "profile" - Stable identity information about the user
-               Examples: "name"="Sarah", "role"="Data Scientist", "company"="TechCorp"
-               Use when: User shares who they are
-
-            3. "knowledge" - Learned patterns and context about the user's situation
-               Examples: "current_project"="fraud detection", "tech_stack"="Python and Spark"
-               Use when: User shares context about their work or situation
-
-            4. "feedback" (LOWEST) - Signals about what works or doesn't work
-               Use key="positive" or key="negative" with value describing what worked/didn't
-               Examples: ("positive", "detailed code examples"), ("negative", "too verbose")
-               Use when: User reacts to your responses (praise, criticism, suggestions)
-
-            GUIDELINES:
-            - Save information that will be useful in future conversations
-            - Policies override other layers - if user says "be concise", follow it even if feedback suggests otherwise
-            - Use clear, descriptive keys
-            - Don't save trivial or temporary information
-            - When user says "forget X", use forget_user_info to remove it
-            """)
+        return DEFAULT_AGENTIC_INSTRUCTIONS
