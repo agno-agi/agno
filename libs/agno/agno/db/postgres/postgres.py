@@ -124,6 +124,15 @@ class PostgresDb(BaseDb):
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine, expire_on_commit=False))
 
+    def close(self) -> None:
+        """Close database connections and dispose of the connection pool.
+
+        Should be called during application shutdown to properly release
+        all database connections.
+        """
+        if self.db_engine is not None:
+            self.db_engine.dispose()
+
     # -- DB methods --
     def table_exists(self, table_name: str) -> bool:
         """Check if a table with the given name exists in the Postgres database.
