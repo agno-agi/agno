@@ -34,6 +34,7 @@ from agno.os.config import (
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router
 from agno.os.routers.agents import get_agent_router
+from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
@@ -63,24 +64,35 @@ from agno.workflow.workflow import Workflow
 @asynccontextmanager
 async def mcp_lifespan(_, mcp_tools):
     """Manage MCP connection lifecycle inside a FastAPI app"""
-    # Startup logic: connect to all contextual MCP servers
     for tool in mcp_tools:
         await tool.connect()
 
     yield
 
-    # Shutdown logic: Close all contextual MCP connections
     for tool in mcp_tools:
         await tool.close()
 
 
 @asynccontextmanager
+async def http_client_lifespan(_):
+    """Manage httpx client lifecycle for proper connection pool cleanup."""
+    from agno.utils.http import aclose_default_clients
+
+    yield
+
+    await aclose_default_clients()
+
+
+@asynccontextmanager
 async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
-    """Initializes databases in the event loop"""
+    """Initializes databases in the event loop and closes them on shutdown."""
     if agent_os.auto_provision_dbs:
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
+
     yield
+
+    await agent_os._close_databases()
 
 
 def _combine_app_lifespans(lifespans: list) -> Any:
@@ -534,6 +546,9 @@ class AgentOS:
             # The async database lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))
 
+            # The httpx client cleanup lifespan (should be last to close after other lifespans)
+            lifespans.append(http_client_lifespan)
+
             # Combine lifespans and set them in the app
             if lifespans:
                 fastapi_app.router.lifespan_context = _combine_app_lifespans(lifespans)
@@ -559,6 +574,9 @@ class AgentOS:
             # Async database initialization lifespan
             lifespans.append(partial(db_lifespan, agent_os=self))  # type: ignore
 
+            # The httpx client cleanup lifespan (should be last to close after other lifespans)
+            lifespans.append(http_client_lifespan)
+
             final_lifespan = _combine_app_lifespans(lifespans) if lifespans else None
             fastapi_app = self._make_app(lifespan=final_lifespan)
 
@@ -574,6 +592,7 @@ class AgentOS:
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
+            get_database_router(self, settings=self.settings),
         ]
 
         for router in routers:
@@ -614,6 +633,18 @@ class AgentOS:
 
         # Add JWT middleware if authorization is enabled
         if self.authorization:
+            # Set authorization_enabled flag on settings so security key validation is skipped
+            self.settings.authorization_enabled = True
+
+            jwt_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+            security_key_set = bool(self.settings.os_security_key)
+            if jwt_configured and security_key_set:
+                log_warning(
+                    "Both JWT configuration (JWT_VERIFICATION_KEY or JWT_JWKS_FILE) and OS_SECURITY_KEY are set. "
+                    "With authorization=True, only JWT authorization will be used. "
+                    "Consider removing OS_SECURITY_KEY from your environment."
+                )
+
             self._add_jwt_middleware(fastapi_app)
 
         return fastapi_app
@@ -818,6 +849,32 @@ class AgentOS:
                     await db._create_all_tables()
             except Exception as e:
                 log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {e}")
+
+    async def _close_databases(self) -> None:
+        """Close all database connections and release connection pools."""
+        from itertools import chain
+
+        if not hasattr(self, "dbs") or not hasattr(self, "knowledge_dbs"):
+            return
+
+        unique_dbs = list(
+            {
+                id(db): db
+                for db in chain(
+                    chain.from_iterable(self.dbs.values()), chain.from_iterable(self.knowledge_dbs.values())
+                )
+            }.values()
+        )
+
+        for db in unique_dbs:
+            try:
+                if hasattr(db, "close") and callable(db.close):
+                    if isinstance(db, AsyncBaseDb):
+                        await db.close()
+                    else:
+                        db.close()
+            except Exception as e:
+                log_warning(f"Failed to close {db.__class__.__name__} (id: {db.id}): {e}")
 
     def _get_db_table_names(self, db: BaseDb) -> Dict[str, str]:
         """Get the table names for a database"""
@@ -1033,8 +1090,12 @@ class AgentOS:
             Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]"),
             Align.center(f"\n\n[bold dark_orange]OS running on:[/bold dark_orange] http://{host}:{port}"),
         ]
-        if bool(self.settings.os_security_key):
-            panel_group.append(Align.center("\n\n[bold chartreuse3]:lock: Security Enabled[/bold chartreuse3]"))
+        if self.authorization:
+            panel_group.append(
+                Align.center("\n\n[bold chartreuse3]:lock: JWT Authorization Enabled[/bold chartreuse3]")
+            )
+        elif bool(self.settings.os_security_key):
+            panel_group.append(Align.center("\n\n[bold chartreuse3]:lock: Security Key Enabled[/bold chartreuse3]"))
 
         console = Console()
         console.print(
