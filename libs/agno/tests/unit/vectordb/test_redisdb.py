@@ -83,15 +83,6 @@ def stub_redisvl(monkeypatch):
     except ModuleNotFoundError:
         pass
 
-    # Also patch the already-imported names in the redisdb module itself
-    # This is necessary because the module imports these functions directly at the top level
-    try:
-        redisdb_module = importlib.import_module("agno.vectordb.redis.redisdb")
-        monkeypatch.setattr(redisdb_module, "convert_bytes", lambda x: x, raising=False)
-        monkeypatch.setattr(redisdb_module, "array_to_buffer", lambda a, dt: a, raising=False)
-    except (ModuleNotFoundError, AttributeError):
-        pass
-
     # Also ensure schema.from_dict is available (no-op)
     try:
         rvl_schema = importlib.import_module("redisvl.schema")
