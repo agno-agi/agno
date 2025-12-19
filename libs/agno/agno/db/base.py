@@ -11,6 +11,7 @@ from agno.db.schemas import UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.schemas.user_profile import UserProfile
 from agno.session import Session
 
 
@@ -37,6 +38,7 @@ class BaseDb(ABC):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        user_profiles_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -49,6 +51,7 @@ class BaseDb(ABC):
         self.trace_table_name = traces_table or "agno_traces"
         self.span_table_name = spans_table or "agno_spans"
         self.versions_table_name = versions_table or "agno_schema_versions"
+        self.user_profiles_table_name = user_profiles_table or "agno_user_profiles"
 
     @abstractmethod
     def table_exists(self, table_name: str) -> bool:
@@ -489,6 +492,38 @@ class BaseDb(ABC):
     def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
+    # --- User Profiles ---
+    @abstractmethod
+    def get_user_profile(
+        self,
+        user_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_user_profiles(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[UserProfile], Tuple[List[Dict[str, Any]], int]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_user_profile(
+        self,
+        user_profile: UserProfile,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_user_profile(self, user_id: str) -> None:
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -505,6 +540,7 @@ class AsyncBaseDb(ABC):
         spans_table: Optional[str] = None,
         culture_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        user_profiles_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -516,6 +552,7 @@ class AsyncBaseDb(ABC):
         self.span_table_name = spans_table or "agno_spans"
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
+        self.user_profiles_table_name = user_profiles_table or "agno_user_profiles"
 
     @abstractmethod
     async def table_exists(self, table_name: str) -> bool:
@@ -943,4 +980,36 @@ class AsyncBaseDb(ABC):
     async def upsert_cultural_knowledge(
         self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
     ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        raise NotImplementedError
+
+    # --- User Profiles ---
+    @abstractmethod
+    async def get_user_profile(
+        self,
+        user_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_user_profiles(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[UserProfile], Tuple[List[Dict[str, Any]], int]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def upsert_user_profile(
+        self,
+        user_profile: UserProfile,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_user_profile(self, user_id: str) -> None:
         raise NotImplementedError
