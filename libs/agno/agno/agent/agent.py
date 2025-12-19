@@ -8544,21 +8544,38 @@ class Agent:
             and len(input) > 0
             and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
         ):
+            # Convert all messages first
+            converted_messages: List[Message] = []
             for _m in input:
                 if isinstance(_m, Message):
-                    run_messages.messages.append(_m)
-                    if run_messages.extra_messages is None:
-                        run_messages.extra_messages = []
-                    run_messages.extra_messages.append(_m)
+                    converted_messages.append(_m)
                 elif isinstance(_m, dict):
                     try:
                         msg = Message.model_validate(_m)
-                        run_messages.messages.append(msg)
-                        if run_messages.extra_messages is None:
-                            run_messages.extra_messages = []
-                        run_messages.extra_messages.append(msg)
+                        converted_messages.append(msg)
                     except Exception as e:
                         log_warning(f"Failed to validate message: {e}")
+
+            # Inject dependencies into the last user message if enabled
+            if add_dependencies_to_context and run_context and run_context.dependencies:
+                for i in range(len(converted_messages) - 1, -1, -1):
+                    msg = converted_messages[i]
+                    if msg.role == "user" and isinstance(msg.content, str):
+                        dependencies_str = self._convert_dependencies_to_string(run_context.dependencies)
+                        msg.content = (
+                            msg.content
+                            + "\n\n<additional context>\n"
+                            + dependencies_str
+                            + "\n</additional context>"
+                        )
+                        break
+
+            # Add all messages to run_messages
+            for msg in converted_messages:
+                run_messages.messages.append(msg)
+                if run_messages.extra_messages is None:
+                    run_messages.extra_messages = []
+                run_messages.extra_messages.append(msg)
 
         # Add user message to run_messages
         if user_message is not None:
@@ -8755,21 +8772,38 @@ class Agent:
             and len(input) > 0
             and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
         ):
+            # Convert all messages first
+            converted_messages: List[Message] = []
             for _m in input:
                 if isinstance(_m, Message):
-                    run_messages.messages.append(_m)
-                    if run_messages.extra_messages is None:
-                        run_messages.extra_messages = []
-                    run_messages.extra_messages.append(_m)
+                    converted_messages.append(_m)
                 elif isinstance(_m, dict):
                     try:
                         msg = Message.model_validate(_m)
-                        run_messages.messages.append(msg)
-                        if run_messages.extra_messages is None:
-                            run_messages.extra_messages = []
-                        run_messages.extra_messages.append(msg)
+                        converted_messages.append(msg)
                     except Exception as e:
                         log_warning(f"Failed to validate message: {e}")
+
+            # Inject dependencies into the last user message if enabled
+            if add_dependencies_to_context and dependencies:
+                for i in range(len(converted_messages) - 1, -1, -1):
+                    msg = converted_messages[i]
+                    if msg.role == "user" and isinstance(msg.content, str):
+                        dependencies_str = self._convert_dependencies_to_string(dependencies)
+                        msg.content = (
+                            msg.content
+                            + "\n\n<additional context>\n"
+                            + dependencies_str
+                            + "\n</additional context>"
+                        )
+                        break
+
+            # Add all messages to run_messages
+            for msg in converted_messages:
+                run_messages.messages.append(msg)
+                if run_messages.extra_messages is None:
+                    run_messages.extra_messages = []
+                run_messages.extra_messages.append(msg)
 
         # Add user message to run_messages
         if user_message is not None:
