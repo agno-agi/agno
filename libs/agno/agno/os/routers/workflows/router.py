@@ -15,13 +15,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from agno.exceptions import InputCheckError, OutputCheckError
-from agno.os.managers import event_buffer, websocket_manager
 from agno.os.auth import (
     get_auth_token_from_request,
     get_authentication_dependency,
     require_resource_access,
     validate_websocket_token,
 )
+from agno.os.managers import event_buffer, websocket_manager
 from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -38,9 +38,9 @@ from agno.os.utils import (
     get_workflow_by_id,
 )
 from agno.run.base import RunStatus
-from agno.utils.serialize import json_serializer
 from agno.run.workflow import WorkflowErrorEvent
-from agno.utils.log import log_warning, logger
+from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.serialize import json_serializer
 from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
@@ -142,8 +142,8 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
             # Run not in buffer - check database
             if workflow_id and session_id:
                 workflow = get_workflow_by_id(workflow_id, os.workflows)
-                if workflow:
-                    workflow_run = await workflow.aget_run_output(run_id, session_id)
+                if workflow and isinstance(workflow, Workflow):
+                    workflow_run = await workflow.aget_run_output(run_id, session_id) 
 
                     if workflow_run:
                         # Run exists in DB - send all events from DB
