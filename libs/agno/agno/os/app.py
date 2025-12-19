@@ -306,6 +306,7 @@ class AgentOS:
             get_traces_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
             get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
+            get_database_router(dbs=self.dbs),
         ]
 
         # Clear all previously existing routes
