@@ -1,16 +1,13 @@
 import json
-from typing import TYPE_CHECKING, List, Optional, Union, cast
+from typing import TYPE_CHECKING, List, Union, cast
 
 from fastapi import (
     APIRouter,
     Depends,
-    HTTPException,
     WebSocket,
 )
 
 from agno.agent.agent import Agent
-from agno.db.base import AsyncBaseDb
-from agno.db.migrations.manager import MigrationManager
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.managers import websocket_manager
 from agno.os.routers.agents.router import handle_agent_subscription, handle_agent_via_websocket

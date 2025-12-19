@@ -15,8 +15,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from agno.exceptions import InputCheckError, OutputCheckError
-from agno.os.managers import event_buffer, websocket_manager
 from agno.os.auth import get_authentication_dependency, require_resource_access, validate_websocket_token
+from agno.os.managers import event_buffer, websocket_manager
 from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import (
     BadRequestResponse,

@@ -18,8 +18,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.os.managers import event_buffer, websocket_manager
 from agno.os.auth import get_authentication_dependency, require_resource_access
+from agno.os.managers import event_buffer, websocket_manager
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.schema import (
     BadRequestResponse,
