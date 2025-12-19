@@ -47,11 +47,9 @@ class DocxReader(Reader):
                 docx_document = DocxDocument(str(file))
                 doc_name = name or file.stem
             else:
-                log_debug(f"Reading uploaded file: {getattr(file, 'name', 'docx_file')}")
+                log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
                 docx_document = DocxDocument(file)
-                doc_name = name or (
-                    getattr(file, "name", "docx_file").split(".")[0] if hasattr(file, "name") else "docx_file"
-                )
+                doc_name = name or getattr(file, "name", "docx_file").split(".")[0]
 
             doc_content = "\n\n".join([para.text for para in docx_document.paragraphs])
 

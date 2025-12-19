@@ -34,6 +34,7 @@ from agno.os.config import (
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router
 from agno.os.routers.agents import get_agent_router
+from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
@@ -574,6 +575,7 @@ class AgentOS:
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
+            get_database_router(self, settings=self.settings),
         ]
 
         for router in routers:
@@ -614,6 +616,18 @@ class AgentOS:
 
         # Add JWT middleware if authorization is enabled
         if self.authorization:
+            # Set authorization_enabled flag on settings so security key validation is skipped
+            self.settings.authorization_enabled = True
+
+            jwt_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+            security_key_set = bool(self.settings.os_security_key)
+            if jwt_configured and security_key_set:
+                log_warning(
+                    "Both JWT configuration (JWT_VERIFICATION_KEY or JWT_JWKS_FILE) and OS_SECURITY_KEY are set. "
+                    "With authorization=True, only JWT authorization will be used. "
+                    "Consider removing OS_SECURITY_KEY from your environment."
+                )
+
             self._add_jwt_middleware(fastapi_app)
 
         return fastapi_app
@@ -1033,8 +1047,12 @@ class AgentOS:
             Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]"),
             Align.center(f"\n\n[bold dark_orange]OS running on:[/bold dark_orange] http://{host}:{port}"),
         ]
-        if bool(self.settings.os_security_key):
-            panel_group.append(Align.center("\n\n[bold chartreuse3]:lock: Security Enabled[/bold chartreuse3]"))
+        if self.authorization:
+            panel_group.append(
+                Align.center("\n\n[bold chartreuse3]:lock: JWT Authorization Enabled[/bold chartreuse3]")
+            )
+        elif bool(self.settings.os_security_key):
+            panel_group.append(Align.center("\n\n[bold chartreuse3]:lock: Security Key Enabled[/bold chartreuse3]"))
 
         console = Console()
         console.print(
