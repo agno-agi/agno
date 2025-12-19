@@ -1586,7 +1586,7 @@ class Agent:
                     self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
                     log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
-                    
+
                     break
 
                 except RunCancelledException as e:
@@ -2628,7 +2628,7 @@ class Agent:
                     await self._alog_agent_telemetry(session_id=agent_session.session_id, run_id=run_response.run_id)
 
                     log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
-                    
+
                     # Break out of the run function
                     break
 
@@ -4503,7 +4503,7 @@ class Agent:
                     await self._alog_agent_telemetry(session_id=agent_session.session_id, run_id=run_response.run_id)
 
                     log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
-                    
+
                     break
                 except RunCancelledException as e:
                     run_response = cast(RunOutput, run_response)
