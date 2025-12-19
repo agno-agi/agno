@@ -69,7 +69,7 @@ class SemanticChunking(ChunkingStrategy):
 
     def __init__(
         self,
-        embedder: Optional[Union[str, Embedder]] = None,
+        embedder: Optional[Union[str, Embedder, BaseEmbeddings]] = None,
         chunk_size: int = 5000,
         similarity_threshold: float = 0.5,
         similarity_window: int = 3,
@@ -112,6 +112,7 @@ class SemanticChunking(ChunkingStrategy):
         # - str: pass directly to chonkie (uses chonkie's built-in models)
         # - BaseEmbeddings: pass directly to chonkie
         # - Agno Embedder: wrap for chonkie compatibility
+        embedding_model: Union[str, BaseEmbeddings]
         if isinstance(self.embedder, str):
             embedding_model = self.embedder
         elif isinstance(self.embedder, BaseEmbeddings):
