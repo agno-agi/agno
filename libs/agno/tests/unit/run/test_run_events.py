@@ -212,3 +212,51 @@ def test_api_schema_session_state():
     team_api_response = team_schema.model_dump(exclude_none=True)
     assert "session_state" in team_api_response
     assert team_api_response["session_state"] == {"team_api_data": "value"}
+
+
+def test_requirements_in_run_paused_event():
+    """Test that RunPausedEvent includes requirements field and serializes/deserializes properly."""
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunPausedEvent
+    from agno.run.requirement import RunRequirement
+
+    # Create a ToolExecution that requires confirmation
+    tool_execution = ToolExecution(
+        tool_call_id="call_123",
+        tool_name="get_the_weather",
+        tool_args={"city": "Tokyo"},
+        requires_confirmation=True,
+    )
+
+    # Create a RunRequirement from the tool execution
+    requirement = RunRequirement(tool_execution=tool_execution)
+
+    # Create a RunPausedEvent with the requirement
+    paused_event = RunPausedEvent(
+        run_id="run_456",
+        agent_id="agent_789",
+        agent_name="TestAgent",
+        tools=[tool_execution],
+        requirements=[requirement],
+    )
+
+    # Test that requirements field exists and is properly set
+    assert paused_event.requirements is not None
+    assert len(paused_event.requirements) == 1
+    assert paused_event.requirements[0].tool_execution.tool_name == "get_the_weather"
+    assert paused_event.requirements[0].tool_execution.requires_confirmation is True
+
+    # Test to_dict serialization
+    event_dict = paused_event.to_dict()
+    assert "requirements" in event_dict
+    assert len(event_dict["requirements"]) == 1
+    assert event_dict["requirements"][0]["tool_execution"]["tool_name"] == "get_the_weather"
+    assert event_dict["requirements"][0]["tool_execution"]["requires_confirmation"] is True
+
+    # Test from_dict deserialization
+    reconstructed = RunPausedEvent.from_dict(event_dict)
+    assert reconstructed.requirements is not None
+    assert len(reconstructed.requirements) == 1
+    assert reconstructed.requirements[0].tool_execution.tool_name == "get_the_weather"
+    assert reconstructed.requirements[0].tool_execution.requires_confirmation is True
+    assert reconstructed.requirements[0].needs_confirmation is True

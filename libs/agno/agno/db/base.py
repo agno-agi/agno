@@ -58,6 +58,14 @@ class BaseDb(ABC):
         """Create all tables for this database."""
         pass
 
+    def close(self) -> None:
+        """Close database connections and release resources.
+
+        Override in subclasses to properly dispose of connection pools.
+        Should be called during application shutdown.
+        """
+        pass
+
     # --- Schema Version ---
     @abstractmethod
     def get_latest_schema_version(self, table_name: str):

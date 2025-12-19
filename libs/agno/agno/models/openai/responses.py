@@ -234,8 +234,8 @@ class OpenAIResponses(Model):
                     "strict": self.strict_output,
                 }
             else:
-                # JSON mode
-                text_params["format"] = {"type": "json_object"}
+                # Pass through directly, user handles everything
+                text_params["format"] = response_format
 
         # Add text parameter if there are any text-level params
         if text_params:

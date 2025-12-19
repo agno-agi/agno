@@ -1,16 +1,21 @@
+<<<<<<< HEAD
 from typing import TYPE_CHECKING, List, Optional, cast
+=======
+from typing import TYPE_CHECKING, List, Union, cast
+>>>>>>> a1a48ff15a55f114d5cdc2a88fbf51be0c6e6f22
 
 from fastapi import (
     APIRouter,
     Depends,
-    HTTPException,
 )
-from fastapi.responses import JSONResponse
-from packaging import version
 
+<<<<<<< HEAD
 from agno.db.base import AsyncBaseDb
 from agno.db.migrations.manager import MigrationManager
 from agno.exceptions import RemoteServerUnavailableError
+=======
+from agno.agent.agent import Agent
+>>>>>>> a1a48ff15a55f114d5cdc2a88fbf51be0c6e6f22
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     AgentSummaryResponse,
@@ -26,10 +31,14 @@ from agno.os.schema import (
     WorkflowSummaryResponse,
 )
 from agno.os.settings import AgnoAPISettings
+<<<<<<< HEAD
 from agno.os.utils import (
     get_db,
 )
 from agno.remote.base import RemoteDb
+=======
+from agno.team.team import Team
+>>>>>>> a1a48ff15a55f114d5cdc2a88fbf51be0c6e6f22
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -233,56 +242,5 @@ def get_base_router(
                         unique_models[key] = Model(id=model.id, provider=model.provider)
 
         return list(unique_models.values())
-
-    # -- Database Migration routes ---
-    @router.post(
-        "/databases/{db_id}/migrate",
-        tags=["Database"],
-        operation_id="migrate_database",
-        summary="Migrate Database",
-        description=(
-            "Migrate the given database schema to the given target version. "
-            "If a target version is not provided, the database will be migrated to the latest version. "
-        ),
-        responses={
-            200: {
-                "description": "Database migrated successfully",
-                "content": {
-                    "application/json": {
-                        "example": {"message": "Database migrated successfully to version 3.0.0"},
-                    }
-                },
-            },
-            404: {"description": "Database not found", "model": NotFoundResponse},
-            500: {"description": "Failed to migrate database", "model": InternalServerErrorResponse},
-        },
-    )
-    async def migrate_database(db_id: str, target_version: Optional[str] = None):
-        db = await get_db(os.dbs, db_id)
-        if not db:
-            raise HTTPException(status_code=404, detail="Database not found")
-
-        if isinstance(db, RemoteDb):
-            return await db.migrate_database(target_version)
-
-        if target_version:
-            # Use the session table as proxy for the database schema version
-            if isinstance(db, AsyncBaseDb):
-                current_version = await db.get_latest_schema_version(db.session_table_name)
-            else:
-                current_version = db.get_latest_schema_version(db.session_table_name)
-
-            if version.parse(target_version) > version.parse(current_version):  # type: ignore
-                await MigrationManager(db).up(target_version)  # type: ignore
-            else:
-                await MigrationManager(db).down(target_version)  # type: ignore
-
-        # If the target version is not provided, migrate to the latest version
-        else:
-            await MigrationManager(db).up()  # type: ignore
-
-        return JSONResponse(
-            content={"message": f"Database migrated successfully to version {target_version}"}, status_code=200
-        )
 
     return router
