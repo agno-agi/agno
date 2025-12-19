@@ -7,7 +7,7 @@ This module provides bidirectional mapping between:
 
 from typing import AsyncIterator, List, Optional
 
-from agno.a2a.schemas import Artifact, StreamEvent, TaskResult
+from agno.client.a2a.schemas import Artifact, StreamEvent, TaskResult
 from agno.media import Audio, File, Image, Video
 from agno.run.agent import (
     RunCompletedEvent,
@@ -18,8 +18,14 @@ from agno.run.agent import (
 )
 from agno.run.team import (
     RunCompletedEvent as TeamRunCompletedEvent,
+)
+from agno.run.team import (
     RunContentEvent as TeamRunContentEvent,
+)
+from agno.run.team import (
     RunStartedEvent as TeamRunStartedEvent,
+)
+from agno.run.team import (
     TeamRunOutput,
     TeamRunOutputEvent,
 )

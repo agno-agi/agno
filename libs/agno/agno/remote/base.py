@@ -17,9 +17,9 @@ from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent
 if TYPE_CHECKING:
     from fastapi import UploadFile
 
-    from agno.a2a import A2AClient
-    from agno.a2a.schemas import AgentCard
     from agno.client import AgentOSClient
+    from agno.client.a2a import A2AClient
+    from agno.client.a2a.schemas import AgentCard
     from agno.os.routers.evals.schemas import EvalSchema
     from agno.os.routers.knowledge.schemas import (
         ConfigResponseSchema,
@@ -66,7 +66,7 @@ class RemoteDb:
         """Create a RemoteDb instance from an AgentResponse/TeamResponse/WorkflowResponse and ConfigResponse.
 
         Args:
-            response: The agent, team, or workflow response containing the db_id.
+            db_id (str): The id of the remote database
             client: The AgentOSClient for remote operations.
             config: The ConfigResponse containing database table information.
 
@@ -354,7 +354,7 @@ class BaseRemote:
         base_url: str,
         timeout: float = 60.0,
         protocol: Literal["agentos", "a2a"] = "agentos",
-        json_rpc_endpoint: Optional[str] = None,
+        a2a_protocol: Literal["json-rpc", "rest"] = "json-rpc",
         config_ttl: float = 300.0,
     ):
         """Initialize BaseRemote for remote execution.
@@ -370,18 +370,17 @@ class BaseRemote:
             base_url: Base URL for remote instance (e.g., "http://localhost:7777")
             timeout: Request timeout in seconds (default: 60)
             protocol: Communication protocol - "agentos" (default) or "a2a"
-            json_rpc_endpoint: For A2A protocol only - endpoint for JSON-RPC calls.
-                Use "/" for Google ADK servers. If None, uses REST-style endpoints.
+            a2a_protocol: For A2A protocol only - Whether to use JSON-RPC or REST protocol.
             config_ttl: Time-to-live for cached config in seconds (default: 300)
         """
         self.base_url = base_url.rstrip("/")
         self.timeout: float = timeout
         self.protocol = protocol
-        self.json_rpc_endpoint = json_rpc_endpoint
+        self.a2a_protocol = a2a_protocol
         self.config_ttl: float = config_ttl
         self._cached_config = None
         self._cached_agent_card = None
-        
+
         self.agentos_client = self.get_os_client()
         self.a2a_client = self.get_a2a_client()
 
@@ -410,15 +409,13 @@ class BaseRemote:
         Returns:
             A2AClient: Client configured for A2A protocol communication
         """
-        if self._a2a_client is None:
-            from agno.a2a import A2AClient
+        from agno.client.a2a import A2AClient
 
-            self._a2a_client = A2AClient(
-                base_url=self.base_url,
-                timeout=int(self.timeout),
-                json_rpc_endpoint=self.json_rpc_endpoint,
-            )
-        return self._a2a_client
+        return A2AClient(
+            base_url=self.base_url,
+            timeout=int(self.timeout),
+            protocol=self.a2a_protocol,
+        )
 
     @property
     def _agent_card(self) -> Optional["AgentCard"]:
@@ -465,7 +462,7 @@ class BaseRemote:
                 return config
 
         # Fetch fresh config
-        config: ConfigResponse = self.client.get_config()  # type: ignore
+        config: ConfigResponse = self.agentos_client.get_config()  # type: ignore
         self._cached_config = (config, current_time)
         return config
 
@@ -473,7 +470,7 @@ class BaseRemote:
         """Force refresh the cached OS config."""
         from agno.os.schema import ConfigResponse
 
-        config: ConfigResponse = self.client.get_config()
+        config: ConfigResponse = self.agentos_client.get_config()
         self._cached_config = (config, time.time())
         return config
 

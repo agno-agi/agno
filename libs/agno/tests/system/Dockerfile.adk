@@ -18,10 +18,10 @@ RUN pip install --no-cache-dir \
 COPY tests/system/adk_server.py /app/adk_server.py
 
 # Expose port
-EXPOSE 8001
+EXPOSE 7003
 
 # Health check - ADK servers respond to POST at /
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8001/ -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"agent/card","id":1}' || exit 1
+    CMD curl -f http://localhost:7003/ -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"agent/card","id":1}' || exit 1
 
 CMD ["python", "adk_server.py"]

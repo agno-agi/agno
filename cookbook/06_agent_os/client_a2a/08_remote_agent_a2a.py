@@ -35,7 +35,6 @@ from agno.run.agent import RunContentEvent
 
 # Google ADK server settings
 ADK_SERVER_URL = "http://localhost:8001"
-AGENT_ID = "facts_agent"
 
 
 async def basic_messaging():
@@ -48,12 +47,12 @@ async def basic_messaging():
     # json_rpc_endpoint="/" is required for Google ADK servers
     agent = RemoteAgent(
         base_url=ADK_SERVER_URL,
-        agent_id=AGENT_ID,
+        agent_id="facts_agent",
         protocol="a2a",
-        json_rpc_endpoint="/",  # Google ADK uses root endpoint
+        a2a_protocol="json-rpc",
     )
 
-    print(f"\nSending message to {AGENT_ID} via A2A protocol...")
+    print("\nSending message via A2A protocol...")
 
     # Use the same arun() interface as local agents
     result = await agent.arun("Tell me an interesting fact about the moon.")
@@ -71,9 +70,9 @@ async def streaming_response():
 
     agent = RemoteAgent(
         base_url=ADK_SERVER_URL,
-        agent_id=AGENT_ID,
+        agent_id="facts_agent",
         protocol="a2a",
-        json_rpc_endpoint="/",
+        a2a_protocol="json-rpc",
     )
 
     print("\nStreaming response: ", end="", flush=True)
@@ -97,9 +96,9 @@ async def multi_turn_conversation():
 
     agent = RemoteAgent(
         base_url=ADK_SERVER_URL,
-        agent_id=AGENT_ID,
+        agent_id="facts_agent",
         protocol="a2a",
-        json_rpc_endpoint="/",
+        a2a_protocol="json-rpc",
     )
 
     # First turn - establish context
@@ -123,38 +122,11 @@ async def multi_turn_conversation():
     print(f"Response: {result2.content}")
 
 
-async def protocol_comparison():
-    """Compare the same RemoteAgent interface with different protocols."""
-    print("\n" + "=" * 60)
-    print("Protocol Comparison - Same Interface, Different Backends")
-    print("=" * 60)
-
-    # A2A protocol (Google ADK)
-    print("\n--- A2A Protocol (Google ADK) ---")
-    a2a_agent = RemoteAgent(
-        base_url=ADK_SERVER_URL,
-        agent_id=AGENT_ID,
-        protocol="a2a",
-        json_rpc_endpoint="/",
-    )
-
-    result = await a2a_agent.arun("What is the largest planet?")
-    print(f"Response: {result.content[:200]}...")
-
-    # Note: To test AgentOS protocol, you'd need an Agno AgentOS server running:
-    # agentos_agent = RemoteAgent(
-    #     base_url="http://localhost:7003",
-    #     agent_id="my-agent",
-    #     protocol="agentos",  # default
-    # )
-    # result = await agentos_agent.arun("What is the largest planet?")
-
-    print("\nBoth protocols use the same RemoteAgent interface!")
-    print("Just change protocol='a2a' to connect to A2A servers.")
+async def main():
+    await basic_messaging()
+    await streaming_response()
+    await multi_turn_conversation()
 
 
 if __name__ == "__main__":
-    asyncio.run(basic_messaging())
-    asyncio.run(streaming_response())
-    asyncio.run(multi_turn_conversation())
-    asyncio.run(protocol_comparison())
+    asyncio.run(main())

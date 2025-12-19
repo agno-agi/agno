@@ -110,4 +110,3 @@ class AgentCard:
     version: Optional[str] = None
     capabilities: List[str] = field(default_factory=list)
     metadata: Optional[Dict[str, Any]] = None
-

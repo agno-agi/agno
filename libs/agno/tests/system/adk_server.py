@@ -13,7 +13,6 @@ from google.adk import Agent
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
 from google.adk.tools import google_search
 
-
 agent = Agent(
     name="facts_agent",
     model="gemini-2.5-flash-lite",
@@ -27,4 +26,4 @@ app = to_a2a(agent, port=int(os.getenv("PORT", "8001")))
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=7003)

@@ -19,11 +19,10 @@ Prerequisites:
 
 import asyncio
 
-from agno.a2a import A2AClient
+from agno.client.a2a import A2AClient
 
 # Google ADK server URL
-ADK_SERVER_URL = "http://localhost:8001"
-AGENT_ID = "facts_agent"
+ADK_SERVER_URL = "http://localhost:8001/"
 
 
 async def basic_messaging():
@@ -34,23 +33,22 @@ async def basic_messaging():
 
     # Connect to Google ADK server
     # Note: json_rpc_endpoint="/" enables pure JSON-RPC mode for Google ADK
-    async with A2AClient(ADK_SERVER_URL, json_rpc_endpoint="/") as client:
-        print(f"\nSending message to {AGENT_ID}...")
+    client = A2AClient(ADK_SERVER_URL, protocol="json-rpc")
+    print("\nSending message...")
 
-        result = await client.send_message(
-            agent_id=AGENT_ID,
-            message="Tell me an interesting fact about the moon.",
-        )
+    result = await client.send_message(
+        message="Tell me an interesting fact about the moon.",
+    )
 
-        print(f"\nTask ID: {result.task_id}")
-        print(f"Context ID: {result.context_id}")
-        print(f"Status: {result.status}")
-        print(f"\nResponse:\n{result.content}")
+    print(f"\nTask ID: {result.task_id}")
+    print(f"Context ID: {result.context_id}")
+    print(f"Status: {result.status}")
+    print(f"\nResponse:\n{result.content}")
 
-        if result.is_completed:
-            print("\nTask completed successfully!")
-        elif result.is_failed:
-            print("\nTask failed!")
+    if result.is_completed:
+        print("\nTask completed successfully!")
+    elif result.is_failed:
+        print("\nTask failed!")
 
 
 async def with_user_id():
@@ -59,14 +57,13 @@ async def with_user_id():
     print("Messaging with User ID")
     print("=" * 60)
 
-    async with A2AClient(ADK_SERVER_URL, json_rpc_endpoint="/") as client:
-        result = await client.send_message(
-            agent_id=AGENT_ID,
-            message="What's an interesting fact about Mars?",
-            user_id="user-123",
-        )
+    client = A2AClient(ADK_SERVER_URL, protocol="json-rpc")
+    result = await client.send_message(
+        message="What's an interesting fact about Mars?",
+        user_id="user-123",
+    )
 
-        print(f"\nResponse:\n{result.content}")
+    print(f"\nResponse:\n{result.content}")
 
 
 async def get_agent_info():
@@ -75,22 +72,26 @@ async def get_agent_info():
     print("Agent Card Discovery")
     print("=" * 60)
 
-    async with A2AClient(ADK_SERVER_URL, json_rpc_endpoint="/") as client:
-        try:
-            card = await client.get_agent_card()
-            if card:
-                print(f"\nAgent Name: {card.name}")
-                print(f"Description: {card.description}")
-                print(f"Version: {card.version}")
-                print(f"Capabilities: {card.capabilities}")
-            else:
-                print("\nAgent card not available")
-        except Exception as e:
-            print(f"\nAgent card not available: {e}")
-            print("(This is optional - not all A2A servers provide agent cards)")
+    client = A2AClient(ADK_SERVER_URL, protocol="json-rpc")
+    try:
+        card = await client.get_agent_card()
+        if card:
+            print(f"\nAgent Name: {card.name}")
+            print(f"Description: {card.description}")
+            print(f"Version: {card.version}")
+            print(f"Capabilities: {card.capabilities}")
+        else:
+            print("\nAgent card not available")
+    except Exception as e:
+        print(f"\nAgent card not available: {e}")
+        print("(This is optional - not all A2A servers provide agent cards)")
+
+
+async def main():
+    await basic_messaging()
+    await with_user_id()
+    await get_agent_info()
 
 
 if __name__ == "__main__":
-    asyncio.run(basic_messaging())
-    asyncio.run(with_user_id())
-    asyncio.run(get_agent_info())
+    asyncio.run(main())

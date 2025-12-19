@@ -34,5 +34,4 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    print("Server URL: http://localhost:7003")
     agent_os.serve(app="agno_server:app", reload=True, port=7003)

@@ -87,7 +87,8 @@ local_workflow = Workflow(
 # =============================================================================
 
 REMOTE_SERVER_URL = os.getenv("REMOTE_SERVER_URL", "http://remote-server:7002")
-ADK_SERVER_URL = os.getenv("ADK_SERVER_URL", "http://adk-server:8001")
+ADK_SERVER_URL = os.getenv("ADK_SERVER_URL", "http://adk-server:7003")
+REMOTE_A2A_SERVER_URL = os.getenv("REMOTE_A2A_SERVER_URL", "http://agno-a2a-server:7004")
 
 # Remote agent for interface testing
 remote_assistant = RemoteAgent(base_url=REMOTE_SERVER_URL, agent_id="assistant-agent")
@@ -98,6 +99,26 @@ remote_team = RemoteTeam(base_url=REMOTE_SERVER_URL, team_id="research-team")
 
 # Remote workflow for interface testing
 remote_workflow = RemoteWorkflow(base_url=REMOTE_SERVER_URL, workflow_id="qa-workflow")
+
+# ADK Remote agent (A2A protocol)
+adk_facts_agent = RemoteAgent(
+    base_url=ADK_SERVER_URL,
+    agent_id="facts_agent",
+    protocol="a2a",
+    a2a_protocol="json-rpc",  # Needed for Google ADK servers
+)
+
+remote_a2a_assistant = RemoteAgent(
+    base_url=REMOTE_A2A_SERVER_URL + "/a2a/agent/assistant-agent-2",
+    agent_id="assistant-agent-2",
+    protocol="a2a",
+)
+
+remote_a2a_researcher = RemoteAgent(
+    base_url=REMOTE_A2A_SERVER_URL + "/a2a/agent/researcher-agent-2",
+    agent_id="researcher-agent-2",
+    protocol="a2a",
+)
 
 # =============================================================================
 # Interface Configuration
@@ -127,13 +148,6 @@ a2a_interface = A2A(
 # AgentOS Configuration
 # =============================================================================
 
-# ADK Remote agent (A2A protocol)
-adk_facts_agent = RemoteAgent(
-    base_url=ADK_SERVER_URL,
-    agent_id="facts_agent",
-    protocol="a2a",
-    json_rpc_endpoint="/",
-)
 
 agent_os = AgentOS(
     id="gateway-os",
@@ -143,6 +157,8 @@ agent_os = AgentOS(
         remote_assistant,
         remote_researcher,
         adk_facts_agent,
+        remote_a2a_assistant,
+        remote_a2a_researcher,
     ],
     teams=[
         remote_team,

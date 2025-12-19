@@ -30,10 +30,9 @@ Stream Events:
 
 import asyncio
 
-from agno.a2a import A2AClient
+from agno.client.a2a import A2AClient
 
 ADK_SERVER_URL = "http://localhost:8001"
-AGENT_ID = "facts_agent"
 
 
 async def basic_streaming():
@@ -42,30 +41,29 @@ async def basic_streaming():
     print("Streaming from Google ADK Server")
     print("=" * 60)
 
-    async with A2AClient(ADK_SERVER_URL, json_rpc_endpoint="/") as client:
-        print("\nStreaming response: ", end="", flush=True)
+    client = A2AClient(ADK_SERVER_URL, protocol="json-rpc")
+    print("\nStreaming response: ", end="", flush=True)
 
-        event_count = 0
-        content_events = 0
+    event_count = 0
+    content_events = 0
 
-        async for event in client.stream_message(
-            agent_id=AGENT_ID,
-            message="Tell me 3 interesting facts about space exploration.",
-        ):
-            event_count += 1
+    async for event in client.stream_message(
+        message="Tell me 3 interesting facts about space exploration.",
+    ):
+        event_count += 1
 
-            # Print content as it streams
-            if event.is_content and event.content:
-                print(event.content, end="", flush=True)
-                content_events += 1
+        # Print content as it streams
+        if event.is_content and event.content:
+            print(event.content, end="", flush=True)
+            content_events += 1
 
-            # Handle final event
-            if event.is_final:
-                print("\n")
-                break
+        # Handle final event
+        if event.is_final:
+            print("\n")
+            break
 
-        print(f"\nTotal events received: {event_count}")
-        print(f"Content events: {content_events}")
+    print(f"\nTotal events received: {event_count}")
+    print(f"Content events: {content_events}")
 
 
 async def streaming_with_metadata():
@@ -74,29 +72,28 @@ async def streaming_with_metadata():
     print("Streaming with Event Tracking")
     print("=" * 60)
 
-    async with A2AClient(ADK_SERVER_URL, json_rpc_endpoint="/") as client:
-        print("\nEvent log:")
-        print("-" * 40)
+    client = A2AClient(ADK_SERVER_URL, protocol="json-rpc")
+    print("\nEvent log:")
+    print("-" * 40)
 
-        async for event in client.stream_message(
-            agent_id=AGENT_ID,
-            message="What's the largest planet in our solar system?",
-        ):
-            # Log each event type
-            if event.is_content:
-                content_preview = (event.content or "")[:50]
-                if len(event.content or "") > 50:
-                    content_preview += "..."
-                print(f"  [content] {content_preview}")
-            elif event.event_type == "working":
-                print(f"  [working] Agent is processing...")
-            elif event.event_type == "completed":
-                print(f"  [completed] Task finished")
-            elif event.is_final:
-                print(f"  [final] Stream ended")
-                break
-            else:
-                print(f"  [{event.event_type}] {event.metadata or ''}")
+    async for event in client.stream_message(
+        message="What's the largest planet in our solar system?",
+    ):
+        # Log each event type
+        if event.is_content:
+            content_preview = (event.content or "")[:50]
+            if len(event.content or "") > 50:
+                content_preview += "..."
+            print(f"  [content] {content_preview}")
+        elif event.event_type == "working":
+            print("  [working] Agent is processing...")
+        elif event.event_type == "completed":
+            print("  [completed] Task finished")
+        elif event.is_final:
+            print("  [final] Stream ended")
+            break
+        else:
+            print(f"  [{event.event_type}] {event.metadata or ''}")
 
 
 async def collect_full_response():
@@ -105,37 +102,40 @@ async def collect_full_response():
     print("Collect Full Streamed Response")
     print("=" * 60)
 
-    async with A2AClient(ADK_SERVER_URL, json_rpc_endpoint="/") as client:
-        print("\nStreaming and collecting...")
+    client = A2AClient(ADK_SERVER_URL, protocol="json-rpc")
+    print("\nStreaming and collecting...")
 
-        full_response = []
-        task_id = None
-        context_id = None
+    full_response = []
+    task_id = None
+    context_id = None
 
-        async for event in client.stream_message(
-            agent_id=AGENT_ID,
-            message="Tell me about the James Webb Space Telescope.",
-        ):
-            if event.is_content and event.content:
-                full_response.append(event.content)
+    async for event in client.stream_message(
+        message="Tell me about the James Webb Space Telescope.",
+    ):
+        if event.is_content and event.content:
+            full_response.append(event.content)
 
-            if event.task_id:
-                task_id = event.task_id
-            if event.context_id:
-                context_id = event.context_id
+        if event.task_id:
+            task_id = event.task_id
+        if event.context_id:
+            context_id = event.context_id
 
-            if event.is_final:
-                break
+        if event.is_final:
+            break
 
-        complete_text = "".join(full_response)
-        print(f"\nTask ID: {task_id}")
-        print(f"Context ID: {context_id}")
-        print(f"\nFull Response ({len(complete_text)} chars):")
-        print("-" * 40)
-        print(complete_text)
+    complete_text = "".join(full_response)
+    print(f"\nTask ID: {task_id}")
+    print(f"Context ID: {context_id}")
+    print(f"\nFull Response ({len(complete_text)} chars):")
+    print("-" * 40)
+    print(complete_text)
+
+
+async def main():
+    await basic_streaming()
+    await streaming_with_metadata()
+    await collect_full_response()
 
 
 if __name__ == "__main__":
-    asyncio.run(basic_streaming())
-    asyncio.run(streaming_with_metadata())
-    asyncio.run(collect_full_response())
+    asyncio.run(main())

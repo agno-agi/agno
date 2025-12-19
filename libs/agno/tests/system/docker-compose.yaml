@@ -58,13 +58,41 @@ services:
     container_name: system-test-adk
     environment:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY}
-      PORT: "8001"
+      PORT: "7003"
     ports:
-      - "8001:8001"
+      - "7003:7003"
     volumes:
       - ./adk_server.py:/app/adk_server.py
     healthcheck:
-      test: ["CMD", "curl", "-f", "-X", "POST", "-H", "Content-Type: application/json", "-d", "{\"jsonrpc\":\"2.0\",\"method\":\"agent/card\",\"id\":1}", "http://localhost:8001/"]
+      test: ["CMD", "curl", "-f", "-X", "POST", "-H", "Content-Type: application/json", "-d", "{\"jsonrpc\":\"2.0\",\"method\":\"agent/card\",\"id\":1}", "http://localhost:7003/"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
+    networks:
+      - agno-test-network
+
+  # A2A AgentOS Server (hosts actual agents, teams, workflows)
+  agno-a2a-server:
+    build:
+      context: ../..
+      dockerfile: tests/system/Dockerfile.agno_a2a
+    container_name: system-test-agno-a2a
+    environment:
+      DATABASE_URL: postgresql+psycopg://ai:ai@postgres:5432/ai
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    ports:
+      - "7004:7004"
+    volumes:
+      # Mount agno source for live code updates
+      - ../../agno:/app/agno/agno
+      # Mount the server file for live updates
+      - ./agno_a2a_server.py:/app/agno_a2a_server.py
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7004/health"]
       interval: 10s
       timeout: 5s
       start_period: 60s

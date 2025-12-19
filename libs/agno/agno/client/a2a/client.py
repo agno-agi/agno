@@ -6,10 +6,10 @@ agent server, enabling cross-framework agent communication.
 """
 
 import json
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Literal, Optional
 from uuid import uuid4
 
-from agno.a2a.schemas import AgentCard, Artifact, StreamEvent, TaskResult
+from agno.client.a2a.schemas import AgentCard, Artifact, StreamEvent, TaskResult
 from agno.exceptions import RemoteServerUnavailableError
 from agno.media import Audio, File, Image, Video
 from agno.utils.http import get_default_async_client
@@ -44,38 +44,34 @@ class A2AClient:
         self,
         base_url: str,
         timeout: int = 30,
-        a2a_prefix: str = "/a2a",
-        json_rpc_endpoint: Optional[str] = None,
+        protocol: Literal["rest", "json-rpc"] = "rest",
     ):
         """Initialize A2AClient.
 
         Args:
             base_url: Base URL of the A2A server (e.g., "http://localhost:7777")
             timeout: Request timeout in seconds (default: 30)
-            a2a_prefix: URL prefix for A2A endpoints (default: "/a2a")
-            json_rpc_endpoint: Optional single endpoint for all JSON-RPC calls.
-                If set, all A2A methods will POST to this endpoint instead of
-                individual REST endpoints. Use "/" for Google ADK compatibility.
-                Example: json_rpc_endpoint="/" for Google ADK servers.
+            protocol: Protocol to use for A2A communication (default: "rest")
         """
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
-        self.a2a_prefix = a2a_prefix
-        self.json_rpc_endpoint = json_rpc_endpoint
+        self.protocol = protocol
 
     def _get_endpoint(self, path: str) -> str:
         """Build full endpoint URL.
 
-        If json_rpc_endpoint is set, always use that endpoint. Otherwise, use the traditional
+        If protocol is "json-rpc", always use the base URL. Otherwise, use the traditional
         REST-style endpoints.
         """
-        if self.json_rpc_endpoint is not None:
-            return f"{self.base_url}{self.json_rpc_endpoint}"
-        return f"{self.base_url}{self.a2a_prefix}{path}"
+        if self.protocol == "json-rpc":
+            return self.base_url if self.base_url.endswith("/") else f"{self.base_url}/"
+
+        from urllib.parse import urljoin
+
+        return urljoin(self.base_url + "/", path.lstrip("/"))
 
     def _build_message_request(
         self,
-        agent_id: str,
         message: str,
         context_id: Optional[str] = None,
         user_id: Optional[str] = None,
@@ -89,7 +85,6 @@ class A2AClient:
         """Build A2A JSON-RPC request payload.
 
         Args:
-            agent_id: Target agent identifier
             message: Text message to send
             context_id: Session/context ID for multi-turn conversations
             user_id: User identifier
@@ -164,7 +159,6 @@ class A2AClient:
         message_obj: Dict[str, Any] = {
             "messageId": message_id,
             "role": "user",
-            "agentId": agent_id,
             "parts": parts,
         }
         if context_id:
@@ -177,9 +171,7 @@ class A2AClient:
             "jsonrpc": "2.0",
             "method": "message/stream" if stream else "message/send",
             "id": message_id,
-            "params": {
-                "message": message_obj
-            },
+            "params": {"message": message_obj},
         }
 
     def _parse_task_result(self, response_data: Dict[str, Any]) -> TaskResult:
@@ -324,7 +316,6 @@ class A2AClient:
 
     async def send_message(
         self,
-        agent_id: str,
         message: str,
         *,
         context_id: Optional[str] = None,
@@ -338,7 +329,6 @@ class A2AClient:
         """Send a message to an A2A agent and wait for the response.
 
         Args:
-            agent_id: Target agent identifier
             message: Text message to send
             context_id: Session/context ID for multi-turn conversations
             user_id: User identifier (optional)
@@ -356,10 +346,8 @@ class A2AClient:
             RemoteServerUnavailableError: If connection fails or times out
         """
         client = get_default_async_client()
-        client.timeout = self.timeout
 
         request_body = self._build_message_request(
-            agent_id=agent_id,
             message=message,
             context_id=context_id,
             user_id=user_id,
@@ -373,8 +361,9 @@ class A2AClient:
 
         try:
             response = await client.post(
-                self._get_endpoint(f"/agents/{agent_id}/v1/message:send"),
+                self._get_endpoint("/v1/message:send"),
                 json=request_body,
+                timeout=self.timeout,
             )
             response.raise_for_status()
             response_data = response.json()
@@ -396,7 +385,6 @@ class A2AClient:
 
     async def stream_message(
         self,
-        agent_id: str,
         message: str,
         *,
         context_id: Optional[str] = None,
@@ -410,7 +398,6 @@ class A2AClient:
         """Stream a message to an A2A agent with real-time events.
 
         Args:
-            agent_id: Target agent identifier
             message: Text message to send
             context_id: Session/context ID for multi-turn conversations
             user_id: User identifier (optional)
@@ -437,10 +424,8 @@ class A2AClient:
             ```
         """
         http_client = get_default_async_client()
-        http_client.timeout = self.timeout
 
         request_body = self._build_message_request(
-            agent_id=agent_id,
             message=message,
             context_id=context_id,
             user_id=user_id,
@@ -455,8 +440,9 @@ class A2AClient:
         try:
             async with http_client.stream(
                 "POST",
-                self._get_endpoint(f"/agents/{agent_id}/v1/message:stream"),
+                self._get_endpoint("/v1/message:stream"),
                 json=request_body,
+                timeout=self.timeout,
             ) as response:
                 response.raise_for_status()
 
@@ -497,37 +483,29 @@ class A2AClient:
                 original_error=e,
             ) from e
 
-    async def get_agent_card(self, agent_card_path: str = "/.well-known/agent.json") -> Optional[AgentCard]:
+    async def get_agent_card(self) -> Optional[AgentCard]:
         """Get agent card for capability discovery.
 
         Note: Not all A2A servers support agent cards. This method returns
         None if the server doesn't provide an agent card.
 
-        Args:
-            agent_card_path: Path to the agent card endpoint
-
         Returns:
             AgentCard if available, None otherwise
         """
         client = get_default_async_client()
-        client.timeout = self.timeout
 
-        try:
-            response = await client.get(
-                f"{self.base_url}{agent_card_path}",
-            )
-            if response.status_code != 200:
-                return None
+        agent_card_path = "/.well-known/agent-card.json"
 
-            data = response.json()
-            return AgentCard(
-                name=data.get("name", "Unknown"),
-                url=data.get("url", self.base_url),
-                description=data.get("description"),
-                version=data.get("version"),
-                capabilities=data.get("capabilities", []),
-                metadata=data.get("metadata"),
-            )
-        except Exception:
+        response = await client.get(f"{self.base_url}{agent_card_path}", timeout=self.timeout)
+        if response.status_code != 200:
             return None
 
+        data = response.json()
+        return AgentCard(
+            name=data.get("name", "Unknown"),
+            url=data.get("url", self.base_url),
+            description=data.get("description"),
+            version=data.get("version"),
+            capabilities=data.get("capabilities", []),
+            metadata=data.get("metadata"),
+        )

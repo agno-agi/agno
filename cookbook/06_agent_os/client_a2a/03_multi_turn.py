@@ -14,7 +14,7 @@ Prerequisites:
 
 import asyncio
 
-from agno.a2a import A2AClient
+from agno.client.a2a import A2AClient
 
 
 async def multi_turn_conversation():
@@ -23,12 +23,11 @@ async def multi_turn_conversation():
     print("Multi-Turn A2A Conversation")
     print("=" * 60)
 
-    client = A2AClient("http://localhost:7003")
+    client = A2AClient("http://localhost:7003/a2a/agents/basic-agent")
 
     # First message - introduce ourselves
     print("\nUser: My name is Alice and I love Python programming.")
     result1 = await client.send_message(
-        agent_id="basic-agent",
         message="My name is Alice and I love Python programming.",
     )
     print(f"Agent: {result1.content}")
@@ -40,7 +39,6 @@ async def multi_turn_conversation():
     # Second message - ask about previous context
     print("\nUser: What is my name?")
     result2 = await client.send_message(
-        agent_id="basic-agent",
         message="What is my name?",
         context_id=context_id,  # Pass the context_id
     )
@@ -49,7 +47,6 @@ async def multi_turn_conversation():
     # Third message - continue the conversation
     print("\nUser: What do I love?")
     result3 = await client.send_message(
-        agent_id="basic-agent",
         message="What do I love?",
         context_id=context_id,
     )
@@ -62,7 +59,7 @@ async def streaming_multi_turn():
     print("Streaming Multi-Turn Conversation")
     print("=" * 60)
 
-    client = A2AClient("http://localhost:7003")
+    client = A2AClient("http://localhost:7003/a2a/agents/basic-agent")
     context_id = None
 
     questions = [
@@ -76,7 +73,6 @@ async def streaming_multi_turn():
         print("Agent: ", end="", flush=True)
 
         async for event in client.stream_message(
-            agent_id="basic-agent",
             message=question,
             context_id=context_id,
         ):
@@ -90,6 +86,10 @@ async def streaming_multi_turn():
         print()  # Newline after each response
 
 
+async def main():
+    await multi_turn_conversation()
+    await streaming_multi_turn()
+
+
 if __name__ == "__main__":
-    asyncio.run(multi_turn_conversation())
-    asyncio.run(streaming_multi_turn())
+    asyncio.run(main())

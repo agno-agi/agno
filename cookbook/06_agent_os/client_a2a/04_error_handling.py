@@ -14,10 +14,9 @@ Prerequisites:
 
 import asyncio
 
-from httpx import HTTPStatusError
-
-from agno.a2a import A2AClient
+from agno.client.a2a import A2AClient
 from agno.exceptions import RemoteServerUnavailableError
+from httpx import HTTPStatusError
 
 
 async def handle_http_error():
@@ -26,10 +25,9 @@ async def handle_http_error():
     print("Handling HTTP Errors (e.g., Agent Not Found)")
     print("=" * 60)
 
-    client = A2AClient("http://localhost:7003")
+    client = A2AClient("http://localhost:7003/a2a/agents/nonexistent-agent")
     try:
         await client.send_message(
-            agent_id="nonexistent-agent",
             message="Hello",
         )
     except HTTPStatusError as e:
@@ -45,10 +43,9 @@ async def handle_connection_error():
     print("=" * 60)
 
     # Try to connect to a server that doesn't exist
-    client = A2AClient("http://localhost:9999")
+    client = A2AClient("http://localhost:9999/a2a/agents/any-agent")
     try:
         await client.send_message(
-            agent_id="any-agent",
             message="Hello",
         )
     except RemoteServerUnavailableError as e:
@@ -64,10 +61,9 @@ async def handle_timeout():
     print("=" * 60)
 
     # Use a very short timeout
-    client = A2AClient("http://localhost:7003", timeout=0.001)
+    client = A2AClient("http://localhost:7003/a2a/agents/basic-agent", timeout=0.001)
     try:
         await client.send_message(
-            agent_id="basic-agent",
             message="This might timeout",
         )
     except RemoteServerUnavailableError as e:
@@ -81,11 +77,10 @@ async def comprehensive_error_handling():
     print("Comprehensive Error Handling Pattern")
     print("=" * 60)
 
-    async def safe_send_message(client, agent_id: str, message: str):
+    async def safe_send_message(client, message: str):
         """Safely send a message with proper error handling."""
         try:
             result = await client.send_message(
-                agent_id=agent_id,
                 message=message,
             )
 
@@ -104,21 +99,26 @@ async def comprehensive_error_handling():
             print(f"Error: Server unavailable - {e.message}")
             return None
 
-    client = A2AClient("http://localhost:7003")
+    client = A2AClient("http://localhost:7003/a2a/agents/basic-agent")
 
     print("\nTrying valid agent...")
-    result = await safe_send_message(client, "basic-agent", "Hello!")
+    result = await safe_send_message(client, "Hello!")
     if result:
         print(f"Success: {result.content[:50]}...")
 
+    client = A2AClient("http://localhost:7003/a2a/agents/invalid-agent")
     print("\nTrying invalid agent...")
-    result = await safe_send_message(client, "invalid-agent", "Hello!")
+    result = await safe_send_message(client, "Hello!")
     if result:
         print(f"Success: {result.content}")
 
 
+async def main():
+    await handle_http_error()
+    await handle_connection_error()
+    await handle_timeout()
+    await comprehensive_error_handling()
+
+
 if __name__ == "__main__":
-    asyncio.run(handle_http_error())
-    asyncio.run(handle_connection_error())
-    asyncio.run(handle_timeout())
-    asyncio.run(comprehensive_error_handling())
+    asyncio.run(main())

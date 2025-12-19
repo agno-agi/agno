@@ -1,5 +1,4 @@
 import json
-import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Sequence, Tuple, Union, overload
 
@@ -30,7 +29,7 @@ class RemoteAgent(BaseRemote):
         agent_id: str,
         timeout: float = 60.0,
         protocol: Literal["agentos", "a2a"] = "agentos",
-        json_rpc_endpoint: Optional[str] = None,
+        a2a_protocol: Literal["json-rpc", "rest"] = "json-rpc",
         config_ttl: float = 300.0,
     ):
         """Initialize RemoteAgent for remote execution.
@@ -44,11 +43,10 @@ class RemoteAgent(BaseRemote):
             agent_id: ID of remote agent on the remote server
             timeout: Request timeout in seconds (default: 60)
             protocol: Communication protocol - "agentos" (default) or "a2a"
-            json_rpc_endpoint: For A2A protocol only - endpoint for JSON-RPC calls.
-                Use "/" for Google ADK servers. If None, uses REST-style endpoints.
+            a2a_protocol: For A2A protocol only - Whether to use JSON-RPC or REST protocol.
             config_ttl: Time-to-live for cached config in seconds (default: 300)
         """
-        super().__init__(base_url, timeout, protocol, json_rpc_endpoint, config_ttl)
+        super().__init__(base_url, timeout, protocol, a2a_protocol, config_ttl)
         self.agent_id = agent_id
         self._cached_agent_config = None
 
@@ -73,7 +71,7 @@ class RemoteAgent(BaseRemote):
                 description=f"A2A agent: {self.agent_id}",
             )
 
-        return await self.client.aget_agent(self.agent_id)
+        return await self.agentos_client.aget_agent(self.agent_id)
 
     @property
     def _agent_config(self) -> Optional["AgentResponse"]:
@@ -81,8 +79,9 @@ class RemoteAgent(BaseRemote):
         Get the agent config from remote, cached with TTL.
         Returns None for A2A protocol since A2A servers don't expose agent config endpoints.
         """
-        from agno.os.routers.agents.schema import AgentResponse
         import time
+
+        from agno.os.routers.agents.schema import AgentResponse
 
         # TODO: Implement A2A Agent Card
         if self.protocol == "a2a":
@@ -101,7 +100,7 @@ class RemoteAgent(BaseRemote):
                 return config
 
         # Fetch fresh config
-        config: AgentResponse = self.client.get_agent(self.agent_id)  # type: ignore
+        config: AgentResponse = self.agentos_client.get_agent(self.agent_id)  # type: ignore
         self._cached_agent_config = (config, current_time)
         return config
 
@@ -110,14 +109,15 @@ class RemoteAgent(BaseRemote):
         Force refresh the cached agent config.
         Returns None for A2A protocol.
         """
-        from agno.os.routers.agents.schema import AgentResponse
         import time
+
+        from agno.os.routers.agents.schema import AgentResponse
 
         if self.protocol == "a2a":
             self._cached_agent_config = None
             return None
 
-        config: AgentResponse = self.client.get_agent(self.agent_id)
+        config: AgentResponse = self.agentos_client.get_agent(self.agent_id)
         self._cached_agent_config = (config, time.time())
         return config
 
@@ -132,6 +132,7 @@ class RemoteAgent(BaseRemote):
         if self._agent_config is not None:
             return self._agent_config.description
         return ""
+
     def role(self) -> Optional[str]:
         if self._agent_config is not None:
             return self._agent_config.role
@@ -152,20 +153,19 @@ class RemoteAgent(BaseRemote):
         if self._agent_config is not None and self._agent_config.db_id is not None:
             return RemoteDb.from_config(
                 db_id=self._agent_config.db_id,
-                client=self.client,
+                client=self.agentos_client,
                 config=self._config,
             )
         return None
 
     @property
     def knowledge(self) -> Optional[RemoteKnowledge]:
-        """Whether the agent has knowledge enabled."""
         if self._agent_config is not None and self._agent_config.knowledge is not None:
             return RemoteKnowledge(
-                client=self.client,
+                client=self.agentos_client,
                 contents_db=RemoteDb(
                     id=self._agent_config.knowledge.get("db_id"),  # type: ignore
-                    client=self.client,
+                    client=self.agentos_client,
                     knowledge_table_name=self._agent_config.knowledge.get("knowledge_table"),
                 )
                 if self._agent_config.knowledge.get("db_id") is not None
@@ -179,7 +179,7 @@ class RemoteAgent(BaseRemote):
         return None
 
     async def aget_tools(self, **kwargs: Any) -> List[Dict]:
-        if self._agent_config.tools is not None:
+        if self._agent_config is not None and self._agent_config.tools is not None:
             return json.loads(self._agent_config.tools["tools"])
         return []
 
@@ -278,7 +278,7 @@ class RemoteAgent(BaseRemote):
         # AgentOS protocol path (default)
         if stream:
             # Handle streaming response
-            return self.get_client().run_agent_stream(
+            return self.agentos_client.run_agent_stream(
                 agent_id=self.agent_id,
                 message=serialized_input,
                 session_id=session_id,
@@ -300,7 +300,7 @@ class RemoteAgent(BaseRemote):
                 **kwargs,
             )
         else:
-            return self.get_client().run_agent(  # type: ignore
+            return self.agentos_client.run_agent(  # type: ignore
                 agent_id=self.agent_id,
                 message=serialized_input,
                 session_id=session_id,
@@ -348,14 +348,11 @@ class RemoteAgent(BaseRemote):
         Returns:
             RunOutput for non-streaming, AsyncIterator[RunOutputEvent] for streaming
         """
-        from agno.a2a.utils import map_stream_events_to_run_events
-
-        a2a_client = self.get_a2a_client()
+        from agno.client.a2a.utils import map_stream_events_to_run_events
 
         if stream:
             # Return async generator for streaming
-            event_stream = a2a_client.stream_message(
-                agent_id=self.agent_id,
+            event_stream = self.a2a_client.stream_message(
                 message=message,
                 context_id=context_id,
                 user_id=user_id,
@@ -388,21 +385,17 @@ class RemoteAgent(BaseRemote):
         files: Optional[Sequence[File]],
     ) -> RunOutput:
         """Send a non-streaming A2A message and convert response to RunOutput."""
-        from agno.a2a.utils import map_task_result_to_run_output
+        from agno.client.a2a.utils import map_task_result_to_run_output
 
-        a2a_client = self.get_a2a_client()
-
-        async with a2a_client:
-            task_result = await a2a_client.send_message(
-                agent_id=self.agent_id,
-                message=message,
-                context_id=context_id,
-                user_id=user_id,
-                images=list(images) if images else None,
-                audio=list(audio) if audio else None,
-                videos=list(videos) if videos else None,
-                files=list(files) if files else None,
-            )
+        task_result = await self.a2a_client.send_message(
+            message=message,
+            context_id=context_id,
+            user_id=user_id,
+            images=list(images) if images else None,
+            audio=list(audio) if audio else None,
+            videos=list(videos) if videos else None,
+            files=list(files) if files else None,
+        )
         return map_task_result_to_run_output(task_result, agent_id=self.agent_id)
 
     @overload
@@ -446,7 +439,7 @@ class RemoteAgent(BaseRemote):
 
         if stream:
             # Handle streaming response
-            return self.get_client().continue_agent_run_stream(  # type: ignore
+            return self.agentos_client.continue_agent_run_stream(  # type: ignore
                 agent_id=self.agent_id,
                 run_id=run_id,
                 user_id=user_id,
@@ -456,7 +449,7 @@ class RemoteAgent(BaseRemote):
                 **kwargs,
             )
         else:
-            return self.get_client().continue_agent_run(  # type: ignore
+            return self.agentos_client.continue_agent_run(  # type: ignore
                 agent_id=self.agent_id,
                 run_id=run_id,
                 tools=updated_tools,
@@ -478,7 +471,7 @@ class RemoteAgent(BaseRemote):
         """
         headers = self._get_auth_headers(auth_token)
         try:
-            await self.get_client().cancel_agent_run(
+            await self.agentos_client.cancel_agent_run(
                 agent_id=self.agent_id,
                 run_id=run_id,
                 headers=headers,

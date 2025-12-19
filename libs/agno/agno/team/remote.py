@@ -1,5 +1,5 @@
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Sequence, Tuple, Union, overload
 import json
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Sequence, Tuple, Union, overload
 
 from pydantic import BaseModel
 
@@ -27,6 +27,7 @@ class RemoteTeam(BaseRemote):
         team_id: str,
         timeout: float = 300.0,
         protocol: Literal["agentos", "a2a"] = "agentos",
+        a2a_protocol: Literal["json-rpc", "rest"] = "json-rpc",
         config_ttl: float = 300.0,
     ):
         """Initialize RemoteTeam for remote execution.
@@ -40,9 +41,10 @@ class RemoteTeam(BaseRemote):
             team_id: ID of remote team on the remote server
             timeout: Request timeout in seconds (default: 300)
             protocol: Communication protocol - "agentos" (default) or "a2a"
+            a2a_protocol: For A2A protocol only - Whether to use JSON-RPC or REST protocol.
             config_ttl: Time-to-live for cached config in seconds (default: 300)
         """
-        super().__init__(base_url, timeout, protocol, config_ttl)
+        super().__init__(base_url, timeout, protocol, a2a_protocol, config_ttl)
         self.team_id = team_id
         self._cached_team_config = None
 
@@ -73,7 +75,7 @@ class RemoteTeam(BaseRemote):
             )
 
         # Fetch fresh config from remote for AgentOS
-        return await self.client.aget_team(self.team_id)
+        return await self.agentos_client.aget_team(self.team_id)
 
     @property
     def _team_config(self) -> Optional["TeamResponse"]:
@@ -83,8 +85,9 @@ class RemoteTeam(BaseRemote):
         - Returns None for A2A protocol (no config available).
         - For AgentOS protocol, uses TTL caching for efficiency.
         """
-        from agno.os.routers.teams.schema import TeamResponse
         import time
+
+        from agno.os.routers.teams.schema import TeamResponse
 
         # TODO: Implement A2A _agent_card to get the team config
         if self.protocol == "a2a":
@@ -102,7 +105,7 @@ class RemoteTeam(BaseRemote):
                 return config
 
         # Fetch fresh config and update cache
-        config: TeamResponse = self.client.get_team(self.team_id)
+        config: TeamResponse = self.agentos_client.get_team(self.team_id)  # type: ignore
         self._cached_team_config = (config, current_time)
         return config
 
@@ -110,13 +113,14 @@ class RemoteTeam(BaseRemote):
         """
         Force refresh the cached team config from remote.
         """
-        from agno.os.routers.teams.schema import TeamResponse
         import time
+
+        from agno.os.routers.teams.schema import TeamResponse
 
         if self.protocol == "a2a":
             return None
 
-        config: TeamResponse = self.client.get_team(self.team_id)
+        config: TeamResponse = self.agentos_client.get_team(self.team_id)
         self._cached_team_config = (config, time.time())
         return config
 
@@ -133,6 +137,7 @@ class RemoteTeam(BaseRemote):
         if config is not None:
             return config.description
         return ""
+
     def role(self) -> Optional[str]:
         if self._team_config is not None:
             return self._team_config.role
@@ -153,7 +158,7 @@ class RemoteTeam(BaseRemote):
         if self._team_config is not None and self._team_config.db_id is not None:
             return RemoteDb.from_config(
                 db_id=self._team_config.db_id,
-                client=self.client,
+                client=self.agentos_client,
                 config=self._config,
             )
         return None
@@ -163,10 +168,10 @@ class RemoteTeam(BaseRemote):
         """Whether the team has knowledge enabled."""
         if self._team_config is not None and self._team_config.knowledge is not None:
             return RemoteKnowledge(
-                client=self.client,
+                client=self.agentos_client,
                 contents_db=RemoteDb(
                     id=self._team_config.knowledge.get("db_id"),  # type: ignore
-                    client=self.client,
+                    client=self.agentos_client,
                     knowledge_table_name=self._team_config.knowledge.get("knowledge_table"),
                 )
                 if self._team_config.knowledge.get("db_id") is not None
@@ -342,14 +347,11 @@ class RemoteTeam(BaseRemote):
         Returns:
             TeamRunOutput for non-streaming, AsyncIterator[TeamRunOutputEvent] for streaming
         """
-        from agno.a2a.utils import map_stream_events_to_team_run_events
-
-        a2a_client = self.get_a2a_client()
+        from agno.client.a2a.utils import map_stream_events_to_team_run_events
 
         if stream:
             # Return async generator for streaming
-            event_stream = a2a_client.stream_message(
-                agent_id=self.team_id,
+            event_stream = self.a2a_client.stream_message(
                 message=message,
                 context_id=context_id,
                 user_id=user_id,
@@ -376,19 +378,15 @@ class RemoteTeam(BaseRemote):
         files: Optional[Sequence[File]],
     ) -> TeamRunOutput:
         """Send a non-streaming A2A message and convert response to TeamRunOutput."""
-        from agno.a2a.utils import map_task_result_to_team_run_output
+        from agno.client.a2a.utils import map_task_result_to_team_run_output
 
-        a2a_client = self.get_a2a_client()
-
-        async with a2a_client:
-            task_result = await a2a_client.send_message(
-                agent_id=self.team_id,
-                message=message,
-                context_id=context_id,
-                user_id=user_id,
-                images=list(images) if images else None,
-                files=list(files) if files else None,
-            )
+        task_result = await self.a2a_client.send_message(
+            message=message,
+            context_id=context_id,
+            user_id=user_id,
+            images=list(images) if images else None,
+            files=list(files) if files else None,
+        )
         return map_task_result_to_team_run_output(task_result, team_id=self.team_id)
 
     async def cancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
@@ -403,7 +401,7 @@ class RemoteTeam(BaseRemote):
         """
         headers = self._get_auth_headers(auth_token)
         try:
-            await self.get_client().cancel_team_run(
+            await self.agentos_client.cancel_team_run(  # type: ignore
                 team_id=self.team_id,
                 run_id=run_id,
                 headers=headers,
