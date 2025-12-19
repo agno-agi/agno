@@ -8,15 +8,21 @@ A2A (Agent-to-Agent) is a standardized protocol for agent-to-agent communication
 
 ## Prerequisites
 
-1. Install agno with httpx:
-   ```bash
-   pip install agno httpx
-   ```
+### Client Only
+```bash
+pip install agno httpx
+```
 
-2. Start an AgentOS server with A2A interface:
-   ```bash
-   python cookbook/agent_os/interfaces/a2a/basic.py
-   ```
+### Running AgentOS Server
+```bash
+pip install "agno[server]"
+```
+
+### Running Google ADK Server
+```bash
+pip install google-adk uvicorn
+export GOOGLE_API_KEY=your_api_key_here
+```
 
 ## Examples
 
@@ -28,6 +34,7 @@ A2A (Agent-to-Agent) is a standardized protocol for agent-to-agent communication
 | `02_streaming.py` | Real-time streaming responses |
 | `03_multi_turn.py` | Multi-turn conversations with context |
 | `04_error_handling.py` | Handling errors and edge cases |
+| `servers/agno_server.py` | Agno AgentOS A2A server |
 
 ### Google ADK Examples (localhost:8001)
 
@@ -44,12 +51,12 @@ A2A (Agent-to-Agent) is a standardized protocol for agent-to-agent communication
 ```python
 from agno.a2a import A2AClient
 
-async with A2AClient("http://localhost:7777") as client:
-    result = await client.send_message(
-        agent_id="basic-agent",
-        message="Hello!"
-    )
-    print(result.content)
+client = A2AClient("http://localhost:7777")
+result = await client.send_message(
+    agent_id="basic-agent",
+    message="Hello!"
+)
+print(result.content)
 ```
 
 ## A2AClient vs AgentOSClient
@@ -90,50 +97,36 @@ A2AClient(
 
 ```bash
 # Start the Agno A2A server first
-python cookbook/agent_os/interfaces/a2a/basic.py
+python cookbook/clients/a2a/servers/agno_server.py
 
 # In another terminal, run examples
-python cookbook/agent_os/a2a_client/01_basic_messaging.py
-python cookbook/agent_os/a2a_client/02_streaming.py
-python cookbook/agent_os/a2a_client/03_multi_turn.py
+python cookbook/clients/a2a/01_basic_messaging.py
+python cookbook/clients/a2a/02_streaming.py
+python cookbook/clients/a2a/03_multi_turn.py
 ```
 
 ### With Google ADK Server
 
 This demonstrates cross-framework A2A communication (Agno client -> Google ADK server).
 
-**Prerequisites:**
+```bash
+# Start the Google ADK server
+python cookbook/clients/a2a/servers/google_adk_server.py
 
-1. Install Google ADK:
-   ```bash
-   pip install google-adk uvicorn
-   ```
-
-2. Set your Google API key:
-   ```bash
-   export GOOGLE_API_KEY=your_api_key_here
-   ```
-
-3. Start the Google ADK server:
-   ```bash
-   python cookbook/agent_os/a2a_client/servers/google_adk_server.py
-   ```
-
-4. Run the examples:
-   ```bash
-   python cookbook/agent_os/a2a_client/05_connect_to_google_adk.py
-   python cookbook/agent_os/a2a_client/07_multi_turn_with_google_adk.py
-   ```
+# In another terminal, run examples
+python cookbook/clients/a2a/05_connect_to_google_adk.py
+python cookbook/clients/a2a/07_multi_turn_with_google_adk.py
+```
 
 **Key Difference:** Google ADK uses pure JSON-RPC at root "/", so use `json_rpc_endpoint="/"`:
 
 ```python
 # Google ADK uses pure JSON-RPC mode (all calls POST to root "/")
-async with A2AClient("http://localhost:8001", json_rpc_endpoint="/") as client:
-    result = await client.send_message(
-        agent_id="facts_agent",
-        message="Hello!"
-    )
+client = A2AClient("http://localhost:8001", json_rpc_endpoint="/")
+result = await client.send_message(
+    agent_id="facts_agent",
+    message="Hello!"
+)
 ```
 
 ## RemoteAgent with A2A Protocol
@@ -161,6 +154,5 @@ async for event in agent.arun("Tell me a story", stream=True):
 ```
 
 **Protocol Options:**
-- `protocol="agentos"` (default): Use Agno's proprietary REST API
+- `protocol="agentos"` (default): Use Agno specific REST API
 - `protocol="a2a"`: Use A2A protocol for cross-framework communication
-
