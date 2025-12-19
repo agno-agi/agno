@@ -98,9 +98,19 @@ class MongoDb(BaseDb):
 
         self.db_url: Optional[str] = db_url
         self.db_client: MongoClient = _client
+
         self.db_name: str = db_name if db_name is not None else "agno"
 
         self._database: Optional[Database] = None
+
+    def close(self) -> None:
+        """Close the MongoDB client connection.
+
+        Should be called during application shutdown to properly release
+        all database connections.
+        """
+        if self.db_client is not None:
+            self.db_client.close()
 
     @property
     def database(self) -> Database:
