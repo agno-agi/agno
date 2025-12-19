@@ -34,7 +34,7 @@ from agno.os.config import (
     TracesDomainConfig,
 )
 from agno.os.interfaces.base import BaseInterface
-from agno.os.router import get_base_router
+from agno.os.router import get_base_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
 from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
@@ -46,7 +46,7 @@ from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.session import get_session_router
 from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
-from agno.os.routers.workflows import get_websocket_router, get_workflow_router
+from agno.os.routers.workflows import get_workflow_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     collect_mcp_tools_from_team,

@@ -1,5 +1,5 @@
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union
 from uuid import uuid4
 
 from fastapi import (
@@ -21,6 +21,7 @@ from agno.os.auth import (
     require_resource_access,
     validate_websocket_token,
 )
+from agno.os.managers import event_buffer, websocket_manager
 from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -36,109 +37,15 @@ from agno.os.utils import (
     get_request_kwargs,
     get_workflow_by_id,
 )
-from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutput
-from agno.utils.log import log_warning, logger
+from agno.run.base import RunStatus
+from agno.run.workflow import WorkflowErrorEvent
+from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.serialize import json_serializer
 from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
-
-
-class WebSocketManager:
-    """Manages WebSocket connections for workflow runs"""
-
-    active_connections: Dict[str, WebSocket]  # {run_id: websocket}
-    authenticated_connections: Dict[WebSocket, bool]  # {websocket: is_authenticated}
-
-    def __init__(
-        self,
-        active_connections: Optional[Dict[str, WebSocket]] = None,
-    ):
-        # Store active connections: {run_id: websocket}
-        self.active_connections = active_connections or {}
-        # Track authentication state for each websocket
-        self.authenticated_connections = {}
-
-    async def connect(self, websocket: WebSocket, requires_auth: bool = True):
-        """Accept WebSocket connection"""
-        await websocket.accept()
-        logger.debug("WebSocket connected")
-
-        # If auth is not required, mark as authenticated immediately
-        self.authenticated_connections[websocket] = not requires_auth
-
-        # Send connection confirmation with auth requirement info
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "event": "connected",
-                    "message": (
-                        "Connected to workflow events. Please authenticate to continue."
-                        if requires_auth
-                        else "Connected to workflow events. Authentication not required."
-                    ),
-                    "requires_auth": requires_auth,
-                }
-            )
-        )
-
-    async def authenticate_websocket(self, websocket: WebSocket):
-        """Mark a WebSocket connection as authenticated"""
-        self.authenticated_connections[websocket] = True
-        logger.debug("WebSocket authenticated")
-
-        # Send authentication confirmation
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "event": "authenticated",
-                    "message": "Authentication successful. You can now send commands.",
-                }
-            )
-        )
-
-    def is_authenticated(self, websocket: WebSocket) -> bool:
-        """Check if a WebSocket connection is authenticated"""
-        return self.authenticated_connections.get(websocket, False)
-
-    async def register_workflow_websocket(self, run_id: str, websocket: WebSocket):
-        """Register a workflow run with its WebSocket connection"""
-        self.active_connections[run_id] = websocket
-        logger.debug(f"Registered WebSocket for run_id: {run_id}")
-
-    async def disconnect_by_run_id(self, run_id: str):
-        """Remove WebSocket connection by run_id"""
-        if run_id in self.active_connections:
-            websocket = self.active_connections[run_id]
-            del self.active_connections[run_id]
-            # Clean up authentication state
-            if websocket in self.authenticated_connections:
-                del self.authenticated_connections[websocket]
-            logger.debug(f"WebSocket disconnected for run_id: {run_id}")
-
-    async def disconnect_websocket(self, websocket: WebSocket):
-        """Remove WebSocket connection and clean up all associated state"""
-        # Remove from authenticated connections
-        if websocket in self.authenticated_connections:
-            del self.authenticated_connections[websocket]
-
-        # Remove from active connections
-        runs_to_remove = [run_id for run_id, ws in self.active_connections.items() if ws == websocket]
-        for run_id in runs_to_remove:
-            del self.active_connections[run_id]
-
-        logger.debug("WebSocket disconnected and cleaned up")
-
-    async def get_websocket_for_run(self, run_id: str) -> Optional[WebSocket]:
-        """Get WebSocket connection for a workflow run"""
-        return self.active_connections.get(run_id)
-
-
-# Global manager instance
-websocket_manager = WebSocketManager(
-    active_connections={},
-)
 
 
 async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os: "AgentOS"):
@@ -174,7 +81,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
                 session_id = str(uuid4())
 
         # Execute workflow in background with streaming
-        workflow_result = await workflow.arun(  # type: ignore
+        await workflow.arun(  # type: ignore
             input=user_message,
             session_id=session_id,
             user_id=user_id,
@@ -184,9 +91,9 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             websocket=websocket,
         )
 
-        workflow_run_output = cast(WorkflowRunOutput, workflow_result)
-
-        await websocket_manager.register_workflow_websocket(workflow_run_output.run_id, websocket)  # type: ignore
+        # NOTE: Don't register the original websocket in the manager
+        # It's already handled by the WebSocketHandler passed to the workflow
+        # The manager is ONLY for reconnected clients (see handle_workflow_subscription)
 
     except (InputCheckError, OutputCheckError) as e:
         await websocket.send_text(
@@ -210,6 +117,168 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
         }
         error_payload = {k: v for k, v in error_payload.items() if v is not None}
         await websocket.send_text(json.dumps(error_payload))
+
+
+async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: "AgentOS"):
+    """
+    Handle subscription/reconnection to an existing workflow run.
+
+    Allows clients to reconnect after page refresh or disconnection and catch up on missed events.
+    """
+    try:
+        run_id = message.get("run_id")
+        workflow_id = message.get("workflow_id")
+        session_id = message.get("session_id")
+        last_event_index = message.get("last_event_index")  # 0-based index of last received event
+
+        if not run_id:
+            await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required for subscription"}))
+            return
+
+        # Check if run exists in event buffer
+        buffer_status = event_buffer.get_run_status(run_id)
+
+        if buffer_status is None:
+            # Run not in buffer - check database
+            if workflow_id and session_id:
+                workflow = get_workflow_by_id(workflow_id, os.workflows)
+                if workflow and isinstance(workflow, Workflow):
+                    workflow_run = await workflow.aget_run_output(run_id, session_id) 
+
+                    if workflow_run:
+                        # Run exists in DB - send all events from DB
+                        if workflow_run.events:
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "event": "replay",
+                                        "run_id": run_id,
+                                        "status": workflow_run.status.value if workflow_run.status else "unknown",
+                                        "total_events": len(workflow_run.events),
+                                        "message": "Run completed. Replaying all events from database.",
+                                    }
+                                )
+                            )
+
+                            # Send events one by one
+                            for idx, event in enumerate(workflow_run.events):
+                                # Convert event to dict and add event_index
+                                event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
+                                event_dict["event_index"] = idx
+                                if "run_id" not in event_dict:
+                                    event_dict["run_id"] = run_id
+
+                                await websocket.send_text(json.dumps(event_dict, default=json_serializer))
+                        else:
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "event": "replay",
+                                        "run_id": run_id,
+                                        "status": workflow_run.status.value if workflow_run.status else "unknown",
+                                        "total_events": 0,
+                                        "message": "Run completed but no events stored.",
+                                    }
+                                )
+                            )
+                        return
+
+            # Run not found anywhere
+            await websocket.send_text(
+                json.dumps({"event": "error", "error": f"Run {run_id} not found in buffer or database"})
+            )
+            return
+
+        # Run is in buffer (still active or recently completed)
+        if buffer_status in [RunStatus.completed, RunStatus.error, RunStatus.cancelled]:
+            # Run finished - send all events from buffer
+            all_events = event_buffer.get_events(run_id, last_event_index=None)
+
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "event": "replay",
+                        "run_id": run_id,
+                        "status": buffer_status.value,
+                        "total_events": len(all_events),
+                        "message": f"Run {buffer_status.value}. Replaying all events.",
+                    }
+                )
+            )
+
+            # Send all events
+            for idx, buffered_event in enumerate(all_events):
+                # Convert event to dict and add event_index
+                event_dict = (
+                    buffered_event.model_dump() if hasattr(buffered_event, "model_dump") else buffered_event.to_dict()
+                )
+                event_dict["event_index"] = idx
+                if "run_id" not in event_dict:
+                    event_dict["run_id"] = run_id
+
+                await websocket.send_text(json.dumps(event_dict))
+            return
+
+        # Run is still active - send missed events and subscribe to new ones
+        missed_events = event_buffer.get_events(run_id, last_event_index)
+        current_event_count = event_buffer.get_event_count(run_id)
+
+        if missed_events:
+            # Send catch-up notification
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "event": "catch_up",
+                        "run_id": run_id,
+                        "status": "running",
+                        "missed_events": len(missed_events),
+                        "current_event_count": current_event_count,
+                        "message": f"Catching up on {len(missed_events)} missed events.",
+                    }
+                )
+            )
+
+            # Send missed events
+            start_index = (last_event_index + 1) if last_event_index is not None else 0
+            for idx, buffered_event in enumerate(missed_events):
+                # Convert event to dict and add event_index
+                event_dict = (
+                    buffered_event.model_dump() if hasattr(buffered_event, "model_dump") else buffered_event.to_dict()
+                )
+                event_dict["event_index"] = start_index + idx
+                if "run_id" not in event_dict:
+                    event_dict["run_id"] = run_id
+
+                await websocket.send_text(json.dumps(event_dict))
+
+        # Register websocket for future events
+        await websocket_manager.register_websocket(run_id, websocket)
+
+        # Send subscription confirmation
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "event": "subscribed",
+                    "run_id": run_id,
+                    "status": "running",
+                    "current_event_count": current_event_count,
+                    "message": "Subscribed to workflow run. You will receive new events as they occur.",
+                }
+            )
+        )
+
+        log_debug(f"Client subscribed to workflow run {run_id} (last_event_index: {last_event_index})")
+
+    except Exception as e:
+        logger.error(f"Error handling workflow subscription: {e}")
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "event": "error",
+                    "error": f"Subscription failed: {str(e)}",
+                }
+            )
+        )
 
 
 async def workflow_response_streamer(
@@ -389,6 +458,10 @@ def get_websocket_router(
                             message["user_id"] = websocket_user_context["user_id"]
                     # Handle workflow execution directly via WebSocket
                     await handle_workflow_via_websocket(websocket, message, os)
+
+                elif action == "reconnect":
+                    # Subscribe/reconnect to an existing workflow run
+                    await handle_workflow_subscription(websocket, message, os)
 
                 else:
                     await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))

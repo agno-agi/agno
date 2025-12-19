@@ -30,6 +30,7 @@ from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledExcep
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
+from agno.os.managers import WebSocketHandler
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunContentEvent, RunEvent, RunOutput
 from agno.run.cancel import (
@@ -81,7 +82,6 @@ from agno.workflow.types import (
     StepMetrics,
     StepOutput,
     StepType,
-    WebSocketHandler,
     WorkflowExecutionInput,
     WorkflowMetrics,
 )
@@ -1006,8 +1006,71 @@ class Workflow:
                     workflow_run_response.events = []
                 workflow_run_response.events.append(event)
 
+        # Add to event buffer for reconnection support
+        # Use workflow_run_id for agent/team events, run_id for workflow events
+        buffer_run_id = None
+        event_index = None
+        if hasattr(event, "workflow_run_id") and event.workflow_run_id:
+            # Agent/Team event - use workflow_run_id
+            buffer_run_id = event.workflow_run_id
+        elif hasattr(event, "run_id") and event.run_id:
+            # Workflow event - use run_id
+            buffer_run_id = event.run_id
+
+        if buffer_run_id:
+            try:
+                from agno.os.managers import event_buffer
+
+                # add_event now returns the event_index
+                event_index = event_buffer.add_event(buffer_run_id, event)  # type: ignore
+            except Exception as e:
+                # Don't fail workflow execution if buffering fails
+                log_debug(f"Failed to add event to buffer: {e}")
+
         # Broadcast to WebSocket if available (async context only)
-        self._broadcast_to_websocket(event, websocket_handler)
+        # Include event_index for frontend reconnection support
+        if websocket_handler:
+            import asyncio
+
+            try:
+                loop = asyncio.get_running_loop()
+                if loop:
+                    # Pass event_index and run_id to websocket handler
+                    asyncio.create_task(
+                        websocket_handler.handle_event(event, event_index=event_index, run_id=buffer_run_id)
+                    )
+            except RuntimeError:
+                pass
+
+        # ALSO broadcast through websocket manager for reconnected clients
+        # This ensures clients who reconnect after workflow started still receive events
+        if buffer_run_id:
+            try:
+                import asyncio
+
+                from agno.os.managers import websocket_manager
+
+                loop = asyncio.get_running_loop()
+                if loop:
+                    # Format the event for broadcast
+                    event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
+                    if event_index is not None:
+                        event_dict["event_index"] = event_index
+                    if "run_id" not in event_dict:
+                        event_dict["run_id"] = buffer_run_id
+
+                    # Broadcast to registered websocket (if different from original)
+                    import json
+
+                    from agno.utils.serialize import json_serializer
+
+                    asyncio.create_task(
+                        websocket_manager.broadcast_to_run(
+                            buffer_run_id, json.dumps(event_dict, default=json_serializer)
+                        )
+                    )
+            except Exception as e:
+                log_debug(f"Failed to broadcast through manager: {e}")
 
         return event
 
@@ -1702,6 +1765,17 @@ class Workflow:
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
+        # Mark run as completed in event buffer
+        try:
+            from agno.os.managers import event_buffer
+
+            event_buffer.set_run_completed(
+                workflow_run_response.run_id,  # type: ignore
+                workflow_run_response.status or RunStatus.completed,
+            )
+        except Exception as e:
+            log_debug(f"Failed to mark run as completed in buffer: {e}")
+
         # Stop timer on error
         if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
@@ -2293,6 +2367,17 @@ class Workflow:
             metadata=workflow_run_response.metadata,
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
+
+        # Mark run as completed in event buffer
+        try:
+            from agno.os.managers import event_buffer
+
+            event_buffer.set_run_completed(
+                workflow_run_response.run_id,  # type: ignore
+                workflow_run_response.status or RunStatus.completed,
+            )
+        except Exception as e:
+            log_debug(f"Failed to mark run as completed in buffer: {e}")
 
         # Stop timer on error
         if workflow_run_response.metrics:
@@ -3650,7 +3735,7 @@ class Workflow:
 
         websocket_handler = None
         if websocket:
-            from agno.workflow.types import WebSocketHandler
+            from agno.os.managers import WebSocketHandler
 
             websocket_handler = WebSocketHandler(websocket=websocket)
 

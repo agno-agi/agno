@@ -1,13 +1,17 @@
+import json
 from typing import TYPE_CHECKING, List, cast
 
 from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    WebSocket,
 )
 
 from agno.exceptions import RemoteServerUnavailableError
-from agno.os.auth import get_authentication_dependency
+from agno.os.auth import get_authentication_dependency, validate_websocket_token
+from agno.os.managers import websocket_manager
+from agno.os.routers.workflows.router import handle_workflow_subscription, handle_workflow_via_websocket
 from agno.os.schema import (
     AgentSummaryResponse,
     BadRequestResponse,
@@ -22,6 +26,7 @@ from agno.os.schema import (
     WorkflowSummaryResponse,
 )
 from agno.os.settings import AgnoAPISettings
+from agno.utils.log import logger
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -227,3 +232,78 @@ def get_base_router(
         return list(unique_models.values())
 
     return router
+
+
+def get_websocket_router(
+    os: "AgentOS",
+    settings: AgnoAPISettings = AgnoAPISettings(),
+) -> APIRouter:
+    """
+    Create WebSocket router without HTTP authentication dependencies.
+    WebSocket endpoints handle authentication internally via message-based auth.
+    """
+    ws_router = APIRouter()
+
+    @ws_router.websocket(
+        "/workflows/ws",
+        name="workflow_websocket",
+    )
+    async def workflow_websocket_endpoint(websocket: WebSocket):
+        """WebSocket endpoint for receiving real-time workflow events"""
+        requires_auth = bool(settings.os_security_key)
+        await websocket_manager.connect(websocket, requires_auth=requires_auth)
+
+        try:
+            while True:
+                data = await websocket.receive_text()
+                message = json.loads(data)
+                action = message.get("action")
+
+                # Handle authentication first
+                if action == "authenticate":
+                    token = message.get("token")
+                    if not token:
+                        await websocket.send_text(json.dumps({"event": "auth_error", "error": "Token is required"}))
+                        continue
+
+                    if validate_websocket_token(token, settings):
+                        await websocket_manager.authenticate_websocket(websocket)
+                    else:
+                        await websocket.send_text(json.dumps({"event": "auth_error", "error": "Invalid token"}))
+                        continue
+
+                # Check authentication for all other actions (only when required)
+                elif requires_auth and not websocket_manager.is_authenticated(websocket):
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "event": "auth_required",
+                                "error": "Authentication required. Send authenticate action with valid token.",
+                            }
+                        )
+                    )
+                    continue
+
+                # Handle authenticated actions
+                elif action == "ping":
+                    await websocket.send_text(json.dumps({"event": "pong"}))
+
+                elif action == "start-workflow":
+                    # Handle workflow execution directly via WebSocket
+                    await handle_workflow_via_websocket(websocket, message, os)
+
+                elif action == "reconnect":
+                    # Subscribe/reconnect to an existing workflow run
+                    await handle_workflow_subscription(websocket, message, os)
+
+                else:
+                    await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))
+
+        except Exception as e:
+            if "1012" not in str(e) and "1001" not in str(e):
+                logger.error(f"WebSocket error: {e}")
+        finally:
+            # Clean up the websocket connection
+            await websocket_manager.disconnect_websocket(websocket)
+
+    return ws_router

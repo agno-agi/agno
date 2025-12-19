@@ -356,11 +356,12 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
         "files": [],
     }
 
-    input = run_dict.get("input", {})
-    input_media["images"].extend(input.get("images", []))
-    input_media["videos"].extend(input.get("videos", []))
-    input_media["audios"].extend(input.get("audios", []))
-    input_media["files"].extend(input.get("files", []))
+    input_data = run_dict.get("input", {})
+    if isinstance(input_data, dict):
+        input_media["images"].extend(input_data.get("images", []))
+        input_media["videos"].extend(input_data.get("videos", []))
+        input_media["audios"].extend(input_data.get("audios", []))
+        input_media["files"].extend(input_data.get("files", []))
 
     return input_media
 

@@ -15,6 +15,7 @@ Tests cover:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from agno.client import AgentOSClient
 
 
