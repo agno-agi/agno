@@ -58,6 +58,7 @@ computes key ratios, and produces concise, decision-ready insights.
 # Create the Agent
 # ============================================================================
 agent = Agent(
+    name="Finance Agent",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[YFinanceTools()],

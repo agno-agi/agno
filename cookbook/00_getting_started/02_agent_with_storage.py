@@ -72,6 +72,7 @@ agent_db = SqliteDb(
 # Create the Agent
 # ============================================================================
 agent = Agent(
+    name="Finance Agent with Persistence",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[YFinanceTools()],
@@ -87,6 +88,7 @@ agent = Agent(
 # ============================================================================
 if __name__ == "__main__":
     # Use a consistent session_id to persist conversation across runs
+    # Note: session_id is auto-generated if not set
     session_id = "finance-agent-session"
 
     # Turn 1: Analyze a stock
