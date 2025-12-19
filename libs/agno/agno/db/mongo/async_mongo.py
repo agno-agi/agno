@@ -249,6 +249,17 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection_name and not await self.table_exists(collection_name):
                 await self._get_collection(collection_type, create_collection_if_not_found=True)
 
+    async def close(self) -> None:
+        """Close the MongoDB client connection.
+
+        Should be called during application shutdown to properly release
+        all database connections.
+        """
+        if self._client is not None:
+            self._client.close()
+            self._client = None
+            self._database = None
+
     def _ensure_client(self) -> AsyncMongoClientType:
         """
         Ensure the MongoDB async client is valid for the current event loop.
