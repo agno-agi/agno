@@ -3,15 +3,14 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from httpx import HTTPStatusError, Request, Response
 
 from agno.a2a import (
-    A2AAgentNotFoundError,
     A2AClient,
-    A2ARequestError,
-    A2ATaskFailedError,
     StreamEvent,
     TaskResult,
 )
+from agno.exceptions import RemoteServerUnavailableError
 
 
 class TestA2AClientInit:
@@ -21,9 +20,8 @@ class TestA2AClientInit:
         """Test client initialization with default values."""
         client = A2AClient("http://localhost:7777")
         assert client.base_url == "http://localhost:7777"
-        assert client.timeout == 300.0
+        assert client.timeout == 30
         assert client.a2a_prefix == "/a2a"
-        assert client._http_client is None
 
     def test_init_custom_values(self):
         """Test client initialization with custom values."""
@@ -40,39 +38,6 @@ class TestA2AClientInit:
         """Test endpoint URL building."""
         client = A2AClient("http://localhost:7777")
         assert client._get_endpoint("/message/send") == "http://localhost:7777/a2a/message/send"
-
-
-class TestA2AClientContextManager:
-    """Test A2AClient context manager."""
-
-    @pytest.mark.asyncio
-    async def test_async_context_manager(self):
-        """Test async context manager creates and closes client."""
-        with patch("agno.a2a.client.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client_class.return_value = mock_client
-
-            async with A2AClient("http://localhost:7777") as client:
-                assert client._http_client is not None
-
-            mock_client.aclose.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_connect_method(self):
-        """Test explicit connect method."""
-        with patch("agno.a2a.client.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client_class.return_value = mock_client
-
-            client = A2AClient("http://localhost:7777")
-            assert client._http_client is None
-
-            result = await client.connect()
-            assert result is client
-            assert client._http_client is not None
-
-            await client.close()
-            mock_client.aclose.assert_called_once()
 
 
 class TestBuildMessageRequest:
@@ -272,7 +237,7 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_send_message_success(self):
         """Test successful message send."""
-        with patch("agno.a2a.client.AsyncClient") as mock_client_class:
+        with patch("agno.a2a.client.get_default_async_client") as mock_get_client:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.json.return_value = {
@@ -294,43 +259,78 @@ class TestSendMessage:
 
             mock_http_client = AsyncMock()
             mock_http_client.post.return_value = mock_response
-            mock_client_class.return_value = mock_http_client
+            mock_get_client.return_value = mock_http_client
 
-            async with A2AClient("http://localhost:7777") as client:
-                result = await client.send_message(
-                    agent_id="my-agent",
-                    message="What is 2 + 2?",
-                )
+            client = A2AClient("http://localhost:7777")
+            result = await client.send_message(
+                agent_id="my-agent",
+                message="What is 2 + 2?",
+            )
 
             assert result.content == "The answer is 4"
             assert result.is_completed
             mock_http_client.post.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_send_message_agent_not_found(self):
-        """Test send_message with non-existent agent."""
-        with patch("agno.a2a.client.AsyncClient") as mock_client_class:
-            from httpx import HTTPStatusError, Request, Response
-
+    async def test_send_message_http_error(self):
+        """Test send_message with HTTP error."""
+        with patch("agno.a2a.client.get_default_async_client") as mock_get_client:
             mock_response = Response(404, request=Request("POST", "http://test"))
             mock_http_client = AsyncMock()
             mock_http_client.post.side_effect = HTTPStatusError(
                 "Not Found", request=mock_response.request, response=mock_response
             )
-            mock_client_class.return_value = mock_http_client
+            mock_get_client.return_value = mock_http_client
 
-            async with A2AClient("http://localhost:7777") as client:
-                with pytest.raises(A2AAgentNotFoundError) as exc_info:
-                    await client.send_message(
-                        agent_id="nonexistent-agent",
-                        message="Hello",
-                    )
-                assert "nonexistent-agent" in str(exc_info.value)
+            client = A2AClient("http://localhost:7777")
+            with pytest.raises(HTTPStatusError) as exc_info:
+                await client.send_message(
+                    agent_id="nonexistent-agent",
+                    message="Hello",
+                )
+            assert exc_info.value.response.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_send_message_task_failed(self):
-        """Test send_message with failed task."""
-        with patch("agno.a2a.client.AsyncClient") as mock_client_class:
+    async def test_send_message_connection_error(self):
+        """Test send_message with connection error."""
+        with patch("agno.a2a.client.get_default_async_client") as mock_get_client:
+            from httpx import ConnectError
+
+            mock_http_client = AsyncMock()
+            mock_http_client.post.side_effect = ConnectError("Connection refused")
+            mock_get_client.return_value = mock_http_client
+
+            client = A2AClient("http://localhost:7777")
+            with pytest.raises(RemoteServerUnavailableError) as exc_info:
+                await client.send_message(
+                    agent_id="my-agent",
+                    message="Hello",
+                )
+            assert "Failed to connect" in str(exc_info.value)
+            assert exc_info.value.base_url == "http://localhost:7777"
+
+    @pytest.mark.asyncio
+    async def test_send_message_timeout(self):
+        """Test send_message with timeout."""
+        with patch("agno.a2a.client.get_default_async_client") as mock_get_client:
+            from httpx import TimeoutException
+
+            mock_http_client = AsyncMock()
+            mock_http_client.post.side_effect = TimeoutException("Request timed out")
+            mock_get_client.return_value = mock_http_client
+
+            client = A2AClient("http://localhost:7777")
+            with pytest.raises(RemoteServerUnavailableError) as exc_info:
+                await client.send_message(
+                    agent_id="my-agent",
+                    message="Hello",
+                )
+            assert "timed out" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_send_message_failed_task_returns_result(self):
+        """Test send_message returns TaskResult even when task reports failed status."""
+        with patch("agno.a2a.client.get_default_async_client") as mock_get_client:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.json.return_value = {
@@ -350,15 +350,15 @@ class TestSendMessage:
 
             mock_http_client = AsyncMock()
             mock_http_client.post.return_value = mock_response
-            mock_client_class.return_value = mock_http_client
+            mock_get_client.return_value = mock_http_client
 
-            async with A2AClient("http://localhost:7777") as client:
-                with pytest.raises(A2ATaskFailedError) as exc_info:
-                    await client.send_message(
-                        agent_id="my-agent",
-                        message="Do something",
-                    )
-                assert "task-123" in str(exc_info.value)
+            client = A2AClient("http://localhost:7777")
+            result = await client.send_message(
+                agent_id="my-agent",
+                message="Do something",
+            )
+            assert result.is_failed
+            assert result.task_id == "task-123"
 
 
 class TestStreamMessage:
@@ -367,7 +367,7 @@ class TestStreamMessage:
     @pytest.mark.asyncio
     async def test_stream_message_success(self):
         """Test successful message streaming."""
-        with patch("agno.a2a.client.AsyncClient") as mock_client_class:
+        with patch("agno.a2a.client.get_default_async_client") as mock_get_client:
             # Create mock streaming response
             async def mock_aiter_lines():
                 lines = [
@@ -391,16 +391,15 @@ class TestStreamMessage:
 
             mock_http_client = MagicMock()
             mock_http_client.stream.return_value = mock_stream_cm
-            mock_http_client.aclose = AsyncMock()
-            mock_client_class.return_value = mock_http_client
+            mock_get_client.return_value = mock_http_client
 
             events = []
-            async with A2AClient("http://localhost:7777") as client:
-                async for event in client.stream_message(
-                    agent_id="my-agent",
-                    message="Hello",
-                ):
-                    events.append(event)
+            client = A2AClient("http://localhost:7777")
+            async for event in client.stream_message(
+                agent_id="my-agent",
+                message="Hello",
+            ):
+                events.append(event)
 
             assert len(events) == 4
             # Check content events
@@ -451,25 +450,4 @@ class TestSchemas:
         assert completed_event.is_final
 
 
-class TestExceptions:
-    """Test exception classes."""
-
-    def test_a2a_agent_not_found_error(self):
-        """Test A2AAgentNotFoundError."""
-        error = A2AAgentNotFoundError("my-agent")
-        assert error.agent_id == "my-agent"
-        assert "my-agent" in str(error)
-
-    def test_a2a_task_failed_error(self):
-        """Test A2ATaskFailedError."""
-        error = A2ATaskFailedError("task-123", "Something went wrong")
-        assert error.task_id == "task-123"
-        assert error.reason == "Something went wrong"
-        assert "task-123" in str(error)
-
-    def test_a2a_request_error(self):
-        """Test A2ARequestError."""
-        error = A2ARequestError(400, "Bad request")
-        assert error.status_code == 400
-        assert error.detail == "Bad request"
 

@@ -12,10 +12,11 @@ from uuid import uuid4
 from agno.a2a.schemas import AgentCard, Artifact, StreamEvent, TaskResult
 from agno.exceptions import RemoteServerUnavailableError
 from agno.media import Audio, File, Image, Video
+from agno.utils.http import get_default_async_client
 from agno.utils.log import log_warning
 
 try:
-    from httpx import AsyncClient, Client, ConnectError, ConnectTimeout, HTTPStatusError, TimeoutException
+    from httpx import ConnectError, ConnectTimeout, TimeoutException
 except ImportError:
     raise ImportError("`httpx` not installed. Please install using `pip install httpx`")
 
@@ -61,78 +62,6 @@ class A2AClient:
         self.timeout = timeout
         self.a2a_prefix = a2a_prefix
         self.json_rpc_endpoint = json_rpc_endpoint
-        self._async_client: Optional[AsyncClient] = None
-        self._sync_client: Optional[Client] = None
-
-    # Sync context manager support
-    def __enter__(self) -> "A2AClient":
-        """Enter sync context manager."""
-        self.connect_sync()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Exit sync context manager and cleanup resources."""
-        self.close_sync()
-
-    # Async context manager support
-    async def __aenter__(self) -> "A2AClient":
-        """Enter async context manager."""
-        await self.connect()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Exit async context manager and cleanup resources."""
-        await self.close()
-
-    def _get_async_client(self) -> AsyncClient:
-        """Get or create async HTTP client.
-
-        Returns:
-            AsyncClient: The httpx async client instance
-        """
-        if self._async_client is None:
-            self._async_client = AsyncClient(timeout=self.timeout)
-        return self._async_client
-
-    def _get_sync_client(self) -> Client:
-        """Get or create sync HTTP client.
-
-        Returns:
-            Client: The httpx sync client instance
-        """
-        if self._sync_client is None:
-            self._sync_client = Client(timeout=self.timeout)
-        return self._sync_client
-
-    async def connect(self) -> None:
-        """Explicitly create async HTTP client connection.
-
-        Use this when you need to manage the client lifecycle manually
-        without using the async context manager.
-        """
-        if self._async_client is None:
-            self._async_client = AsyncClient(timeout=self.timeout)
-
-    def connect_sync(self) -> None:
-        """Explicitly create sync HTTP client connection.
-
-        Use this when you need to manage the client lifecycle manually
-        without using the sync context manager.
-        """
-        if self._sync_client is None:
-            self._sync_client = Client(timeout=self.timeout)
-
-    async def close(self) -> None:
-        """Close async HTTP client connections."""
-        if self._async_client:
-            await self._async_client.aclose()
-            self._async_client = None
-
-    def close_sync(self) -> None:
-        """Close sync HTTP client connections."""
-        if self._sync_client:
-            self._sync_client.close()
-            self._sync_client = None
 
     def _get_endpoint(self, path: str) -> str:
         """Build full endpoint URL.
@@ -426,7 +355,8 @@ class A2AClient:
             HTTPStatusError: If the server returns an HTTP error (4xx, 5xx)
             RemoteServerUnavailableError: If connection fails or times out
         """
-        client = self._get_async_client()
+        client = get_default_async_client()
+        client.timeout = self.timeout
 
         request_body = self._build_message_request(
             agent_id=agent_id,
@@ -506,7 +436,8 @@ class A2AClient:
                     print()  # Newline at end
             ```
         """
-        http_client = self._get_async_client()
+        http_client = get_default_async_client()
+        http_client.timeout = self.timeout
 
         request_body = self._build_message_request(
             agent_id=agent_id,
@@ -572,7 +503,8 @@ class A2AClient:
         Returns:
             AgentCard if available, None otherwise
         """
-        client = self._get_async_client()
+        client = get_default_async_client()
+        client.timeout = self.timeout
 
         try:
             response = await client.get(
