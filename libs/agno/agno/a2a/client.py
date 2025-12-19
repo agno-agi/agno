@@ -9,20 +9,13 @@ import json
 from typing import Any, AsyncIterator, Dict, List, Optional
 from uuid import uuid4
 
-from agno.a2a.exceptions import (
-    A2AAgentNotFoundError,
-    A2AConnectionError,
-    A2AError,
-    A2ARequestError,
-    A2ATaskFailedError,
-    A2ATimeoutError,
-)
 from agno.a2a.schemas import AgentCard, Artifact, StreamEvent, TaskResult
+from agno.exceptions import RemoteServerUnavailableError
 from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_warning
 
 try:
-    from httpx import AsyncClient, Client, HTTPStatusError, TimeoutException
+    from httpx import AsyncClient, Client, ConnectError, ConnectTimeout, HTTPStatusError, TimeoutException
 except ImportError:
     raise ImportError("`httpx` not installed. Please install using `pip install httpx`")
 
@@ -439,11 +432,8 @@ class A2AClient:
             TaskResult containing the agent's response
 
         Raises:
-            A2AAgentNotFoundError: If the agent is not found
-            A2ATaskFailedError: If the task fails
-            A2ARequestError: If the request is invalid
-            A2AConnectionError: If connection fails
-            A2ATimeoutError: If request times out
+            HTTPStatusError: If the server returns an HTTP error (4xx, 5xx)
+            RemoteServerUnavailableError: If connection fails or times out
         """
         client = self._get_async_client()
 
@@ -468,38 +458,20 @@ class A2AClient:
             response.raise_for_status()
             response_data = response.json()
 
-            # Check for JSON-RPC error
-            if "error" in response_data:
-                error = response_data["error"]
-                raise A2ARequestError(
-                    status_code=error.get("code", -1),
-                    detail=error.get("message", "Unknown error"),
-                )
+            return self._parse_task_result(response_data)
 
-            result = self._parse_task_result(response_data)
-
-            # Check if task failed
-            if result.is_failed:
-                raise A2ATaskFailedError(
-                    task_id=result.task_id,
-                    reason=result.content or "Unknown error",
-                )
-
-            return result
-
-        except HTTPStatusError as e:
-            if e.response.status_code == 404:
-                raise A2AAgentNotFoundError(agent_id) from e
-            raise A2ARequestError(
-                status_code=e.response.status_code,
-                detail=e.response.text,
+        except (ConnectError, ConnectTimeout) as e:
+            raise RemoteServerUnavailableError(
+                message=f"Failed to connect to A2A server at {self.base_url}",
+                base_url=self.base_url,
+                original_error=e,
             ) from e
         except TimeoutException as e:
-            raise A2ATimeoutError(f"Request to {agent_id} timed out") from e
-        except A2AError:
-            raise
-        except Exception as e:
-            raise A2AConnectionError(f"Failed to connect to A2A server: {e}") from e
+            raise RemoteServerUnavailableError(
+                message=f"Request to A2A server at {self.base_url} timed out",
+                base_url=self.base_url,
+                original_error=e,
+            ) from e
 
     async def stream_message(
         self,
@@ -531,10 +503,8 @@ class A2AClient:
             StreamEvent objects for each event in the stream
 
         Raises:
-            A2AAgentNotFoundError: If the agent is not found
-            A2ARequestError: If the request is invalid
-            A2AConnectionError: If connection fails
-            A2ATimeoutError: If request times out
+            HTTPStatusError: If the server returns an HTTP error (4xx, 5xx)
+            RemoteServerUnavailableError: If connection fails or times out
 
         Example:
             ```python
@@ -566,8 +536,6 @@ class A2AClient:
                 self._get_endpoint("/message/stream"),
                 json=request_body,
             ) as response:
-                if response.status_code == 404:
-                    raise A2AAgentNotFoundError(agent_id)
                 response.raise_for_status()
 
                 async for line in response.aiter_lines():
@@ -588,19 +556,18 @@ class A2AClient:
                         log_warning(f"Failed to decode JSON from stream line: {line[:100]}. Error: {e}")
                         continue
 
-        except HTTPStatusError as e:
-            if e.response.status_code == 404:
-                raise A2AAgentNotFoundError(agent_id) from e
-            raise A2ARequestError(
-                status_code=e.response.status_code,
-                detail=str(e),
+        except (ConnectError, ConnectTimeout) as e:
+            raise RemoteServerUnavailableError(
+                message=f"Failed to connect to A2A server at {self.base_url}",
+                base_url=self.base_url,
+                original_error=e,
             ) from e
         except TimeoutException as e:
-            raise A2ATimeoutError(f"Stream to {agent_id} timed out") from e
-        except A2AError:
-            raise
-        except Exception as e:
-            raise A2AConnectionError(f"Failed to stream from A2A server: {e}") from e
+            raise RemoteServerUnavailableError(
+                message=f"Request to A2A server at {self.base_url} timed out",
+                base_url=self.base_url,
+                original_error=e,
+            ) from e
 
     async def get_agent_card(self, agent_card_path: str = "/.well-known/agent.json") -> Optional[AgentCard]:
         """Get agent card for capability discovery.

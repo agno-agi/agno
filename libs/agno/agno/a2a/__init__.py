@@ -24,14 +24,6 @@ For streaming:
 """
 
 from agno.a2a.client import A2AClient
-from agno.a2a.exceptions import (
-    A2AAgentNotFoundError,
-    A2AConnectionError,
-    A2AError,
-    A2ARequestError,
-    A2ATaskFailedError,
-    A2ATimeoutError,
-)
 from agno.a2a.schemas import AgentCard, Artifact, StreamEvent, TaskResult
 from agno.a2a.utils import map_stream_events_to_run_events, map_task_result_to_run_output
 
@@ -46,12 +38,5 @@ __all__ = [
     # Utils
     "map_task_result_to_run_output",
     "map_stream_events_to_run_events",
-    # Exceptions
-    "A2AError",
-    "A2AConnectionError",
-    "A2AAgentNotFoundError",
-    "A2ATaskFailedError",
-    "A2ARequestError",
-    "A2ATimeoutError",
 ]
 
