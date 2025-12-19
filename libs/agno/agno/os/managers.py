@@ -114,9 +114,6 @@ class WebSocketManager:
         await websocket.accept()
         logger.debug("WebSocket connected")
 
-        # If auth is not required, mark as authenticated immediately
-        self.authenticated_connections[websocket] = not requires_auth
-
         # Send connection confirmation with auth requirement info
         await websocket.send_text(
             json.dumps(
@@ -125,7 +122,7 @@ class WebSocketManager:
                     "message": (
                         "Connected to AgentOS. Please authenticate to continue."
                         if requires_auth
-                        else "Connected to AgentOS. Authentication not required."
+                        else "Connected to AgentOS."
                     ),
                     "requires_auth": requires_auth,
                 }
