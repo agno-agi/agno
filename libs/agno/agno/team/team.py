@@ -2975,7 +2975,7 @@ class Team:
                     await self._alog_team_telemetry(session_id=team_session.session_id, run_id=run_response.run_id)
 
                     log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
-
+                    break
                 except RunCancelledException as e:
                     # Handle run cancellation during async streaming
                     log_info(f"Team run {run_response.run_id} was cancelled during async streaming")

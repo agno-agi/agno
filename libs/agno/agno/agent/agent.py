@@ -2632,7 +2632,7 @@ class Agent:
                     await self._alog_agent_telemetry(session_id=agent_session.session_id, run_id=run_response.run_id)
 
                     log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
-
+                    break
                 except RunCancelledException as e:
                     # Handle run cancellation during async streaming
                     log_info(f"Run {run_response.run_id} was cancelled during async streaming")
