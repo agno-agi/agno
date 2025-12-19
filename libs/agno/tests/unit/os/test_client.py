@@ -15,7 +15,7 @@ Tests cover:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agno.client.client import AgentOSClient
+from agno.client import AgentOSClient
 
 
 def test_init_with_base_url():
@@ -47,13 +47,10 @@ async def test_get_method():
     mock_response.raise_for_status = MagicMock()
     mock_response.content = b'{"data": "test"}'
 
-    with patch("agno.os.client.AsyncClient") as MockAsyncClient:
-        mock_http_client = MagicMock()
-        mock_http_client.__aenter__ = AsyncMock(return_value=mock_http_client)
-        mock_http_client.__aexit__ = AsyncMock(return_value=None)
-        mock_http_client.request = AsyncMock(return_value=mock_response)
-        MockAsyncClient.return_value = mock_http_client
+    mock_http_client = MagicMock()
+    mock_http_client.request = AsyncMock(return_value=mock_response)
 
+    with patch("agno.client.os.get_default_async_client", return_value=mock_http_client):
         result = await client._aget("/test-endpoint")
 
         mock_http_client.request.assert_called_once()
@@ -73,13 +70,10 @@ async def test_post_method():
     mock_response.raise_for_status = MagicMock()
     mock_response.content = b'{"created": true}'
 
-    with patch("agno.os.client.AsyncClient") as MockAsyncClient:
-        mock_http_client = MagicMock()
-        mock_http_client.__aenter__ = AsyncMock(return_value=mock_http_client)
-        mock_http_client.__aexit__ = AsyncMock(return_value=None)
-        mock_http_client.request = AsyncMock(return_value=mock_response)
-        MockAsyncClient.return_value = mock_http_client
+    mock_http_client = MagicMock()
+    mock_http_client.request = AsyncMock(return_value=mock_response)
 
+    with patch("agno.client.os.get_default_async_client", return_value=mock_http_client):
         result = await client._apost("/test-endpoint", {"key": "value"})
 
         mock_http_client.request.assert_called_once()
@@ -98,13 +92,10 @@ async def test_patch_method():
     mock_response.raise_for_status = MagicMock()
     mock_response.content = b'{"updated": true}'
 
-    with patch("agno.os.client.AsyncClient") as MockAsyncClient:
-        mock_http_client = MagicMock()
-        mock_http_client.__aenter__ = AsyncMock(return_value=mock_http_client)
-        mock_http_client.__aexit__ = AsyncMock(return_value=None)
-        mock_http_client.request = AsyncMock(return_value=mock_response)
-        MockAsyncClient.return_value = mock_http_client
+    mock_http_client = MagicMock()
+    mock_http_client.request = AsyncMock(return_value=mock_response)
 
+    with patch("agno.client.os.get_default_async_client", return_value=mock_http_client):
         result = await client._apatch("/test-endpoint", {"key": "value"})
 
         mock_http_client.request.assert_called_once()
@@ -122,13 +113,10 @@ async def test_delete_method():
     mock_response.raise_for_status = MagicMock()
     mock_response.content = b""
 
-    with patch("agno.os.client.AsyncClient") as MockAsyncClient:
-        mock_http_client = MagicMock()
-        mock_http_client.__aenter__ = AsyncMock(return_value=mock_http_client)
-        mock_http_client.__aexit__ = AsyncMock(return_value=None)
-        mock_http_client.request = AsyncMock(return_value=mock_response)
-        MockAsyncClient.return_value = mock_http_client
+    mock_http_client = MagicMock()
+    mock_http_client.request = AsyncMock(return_value=mock_response)
 
+    with patch("agno.client.os.get_default_async_client", return_value=mock_http_client):
         await client._adelete("/test-endpoint")
 
         mock_http_client.request.assert_called_once()
@@ -152,7 +140,7 @@ async def test_get_config():
     }
     with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = mock_data
-        config = await client.get_config()
+        config = await client.aget_config()
 
         mock_get.assert_called_once_with("/config", headers=None)
         assert config.os_id == "test-os"
@@ -171,7 +159,7 @@ async def test_get_agent():
     }
     with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = mock_data
-        agent = await client.get_agent("agent-1")
+        agent = await client.aget_agent("agent-1")
 
         mock_get.assert_called_once_with("/agents/agent-1", headers=None)
         assert agent.id == "agent-1"
@@ -190,7 +178,7 @@ async def test_get_team():
     }
     with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = mock_data
-        team = await client.get_team("team-1")
+        team = await client.aget_team("team-1")
 
         mock_get.assert_called_once_with("/teams/team-1", headers=None)
         assert team.id == "team-1"
@@ -207,7 +195,7 @@ async def test_get_workflow():
     }
     with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = mock_data
-        workflow = await client.get_workflow("workflow-1")
+        workflow = await client.aget_workflow("workflow-1")
 
         mock_get.assert_called_once_with("/workflows/workflow-1", headers=None)
         assert workflow.id == "workflow-1"
@@ -324,7 +312,7 @@ async def test_list_sessions():
     }
     with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = mock_data
-        result = await client.list_sessions()
+        result = await client.get_sessions()
 
         assert len(result.data) == 1
         assert result.data[0].session_id == "sess-1"
@@ -433,7 +421,7 @@ async def test_list_content():
     }
     with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = mock_data
-        result = await client.list_content()
+        result = await client.list_knowledge_content()
 
         assert len(result.data) == 1
         assert result.data[0].id == "content-1"
@@ -449,7 +437,7 @@ async def test_get_content():
     }
     with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = mock_data
-        content = await client.get_content("content-123")
+        content = await client.get_knowledge_content("content-123")
 
         assert "content-123" in str(mock_get.call_args)
         assert content.id == "content-123"
@@ -581,7 +569,7 @@ async def test_headers_passed_through():
     with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = mock_data
         headers = {"Authorization": "Bearer test-token", "X-Custom": "value"}
-        await client.get_config(headers=headers)
+        await client.aget_config(headers=headers)
 
         mock_get.assert_called_once_with("/config", headers=headers)
 
