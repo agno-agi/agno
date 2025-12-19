@@ -62,7 +62,7 @@ class RemoteWorkflow(BaseRemote):
                 return config
 
         # Fetch fresh config
-        config: WorkflowResponse = self.client.get_workflow(self.workflow_id)
+        config: WorkflowResponse = self.client.get_workflow(self.workflow_id)  # type: ignore
         self._cached_workflow_config = (config, current_time)
         return config
 
@@ -75,16 +75,16 @@ class RemoteWorkflow(BaseRemote):
         return config
 
     @property
-    def name(self) -> str:
+    def name(self) -> Optional[str]:
         if self._workflow_config is not None:
             return self._workflow_config.name
-        return self.workflow_id
+        return None
 
     @property
-    def description(self) -> str:
+    def description(self) -> Optional[str]:
         if self._workflow_config is not None:
             return self._workflow_config.description
-        return ""
+        return None
 
     @property
     def db(self) -> Optional[RemoteDb]:

@@ -472,7 +472,7 @@ def get_agent_router(
             )
 
         # Convert tools dict to ToolExecution objects if provided
-        updated_tools = None
+        updated_tools = []
         if tools_data:
             try:
                 from agno.models.response import ToolExecution
@@ -506,7 +506,7 @@ def get_agent_router(
             try:
                 run_response_obj = cast(
                     RunOutput,
-                    await agent.acontinue_run(
+                    await agent.acontinue_run(  # type: ignore
                         run_id=run_id,  # run_id from path
                         updated_tools=updated_tools,
                         session_id=session_id,

@@ -67,7 +67,7 @@ class RemoteAgent(BaseRemote):
                 return config
 
         # Fetch fresh config
-        config: AgentResponse = self.client.get_agent(self.agent_id)
+        config: AgentResponse = self.client.get_agent(self.agent_id)  # type: ignore
         self._cached_agent_config = (config, current_time)
         return config
 

@@ -398,7 +398,7 @@ class BaseRemote:
                 return config
 
         # Fetch fresh config
-        config: ConfigResponse = self.client.get_config()
+        config: ConfigResponse = self.client.get_config()  # type: ignore
         self._cached_config = (config, current_time)
         return config
 

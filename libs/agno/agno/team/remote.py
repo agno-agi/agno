@@ -65,7 +65,7 @@ class RemoteTeam(BaseRemote):
                 return config
 
         # Fetch fresh config
-        config: TeamResponse = self.client.get_team(self.team_id)
+        config: TeamResponse = self.client.get_team(self.team_id)  # type: ignore
         self._cached_team_config = (config, current_time)
         return config
 
@@ -73,21 +73,21 @@ class RemoteTeam(BaseRemote):
         """Force refresh the cached team config."""
         from agno.os.routers.teams.schema import TeamResponse
 
-        config: TeamResponse = self.client.get_team(self.team_id)
+        config: TeamResponse = self.client.get_team(self.team_id)  # type: ignore
         self._cached_team_config = (config, time.time())
         return config
 
     @property
-    def name(self) -> str:
+    def name(self) -> Optional[str]:
         if self._team_config is not None:
             return self._team_config.name
-        return self.team_id
+        return None
 
     @property
-    def description(self) -> str:
+    def description(self) -> Optional[str]:
         if self._team_config is not None:
             return self._team_config.description
-        return ""
+        return None
 
     @property
     def role(self) -> Optional[str]:
