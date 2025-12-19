@@ -5,9 +5,6 @@ from unittest.mock import patch
 
 import pytest
 
-# Skip all tests if chonkie is not installed
-pytest.importorskip("chonkie")
-
 from agno.knowledge.chunking.semantic import SemanticChunking
 from agno.knowledge.document.base import Document
 
