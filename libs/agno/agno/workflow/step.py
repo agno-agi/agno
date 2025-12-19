@@ -1,5 +1,4 @@
 import inspect
-import warnings
 from copy import copy
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
@@ -464,7 +463,6 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         run_context: Optional[RunContext] = None,
@@ -491,15 +489,6 @@ class Step:
             session_state_copy = run_context.session_state
         else:
             session_state_copy = copy(session_state) if session_state is not None else {}
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         # Emit StepStartedEvent
         if stream_events and workflow_run_response:
@@ -949,7 +938,6 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         run_context: Optional[RunContext] = None,
@@ -976,15 +964,6 @@ class Step:
             session_state_copy = run_context.session_state
         else:
             session_state_copy = copy(session_state) if session_state is not None else {}
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
             # Emit StepStartedEvent

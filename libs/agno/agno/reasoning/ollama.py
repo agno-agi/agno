@@ -86,7 +86,7 @@ def get_ollama_reasoning_stream(
     reasoning_content: str = ""
 
     try:
-        for event in reasoning_agent.run(input=messages, stream=True, stream_intermediate_steps=True):
+        for event in reasoning_agent.run(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
                     # Check for reasoning_content attribute first (native reasoning)
@@ -132,7 +132,7 @@ async def aget_ollama_reasoning_stream(
     reasoning_content: str = ""
 
     try:
-        async for event in reasoning_agent.arun(input=messages, stream=True, stream_intermediate_steps=True):
+        async for event in reasoning_agent.arun(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
                     # Check for reasoning_content attribute first (native reasoning)
