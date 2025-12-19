@@ -10,7 +10,6 @@ Prerequisites:
 """
 
 import asyncio
-import json
 
 from agno.client import AgentOSClient
 
@@ -66,27 +65,29 @@ async def run_workflow_streaming():
     print("\nResponse: ", end="", flush=True)
 
     try:
-        # Stream the response
-        async for line in client.run_workflow_stream(
+        # Stream the response - returns typed WorkflowRunOutputEvent objects
+        # Workflows can emit both workflow events and nested agent events
+        async for event in client.run_workflow_stream(
             workflow_id=workflow_id,
             message="Explain machine learning in simple terms.",
         ):
-            if line.startswith("data: "):
-                try:
-                    data = json.loads(line[6:])
-                    if data.get("event") == "RunContent":
-                        content = data.get("content", "")
-                        print(content, end="", flush=True)
-                except json.JSONDecodeError:
-                    pass
+            # Handle content from agent events (RunContent) or workflow completion
+            if event.event == "RunContent" and hasattr(event, "content"):
+                print(event.content, end="", flush=True)
+            elif (
+                event.event == "WorkflowAgentCompleted"
+                and hasattr(event, "content")
+                and event.content
+            ):
+                print(event.content, end="", flush=True)
 
         print("\n")
     except Exception as e:
-        print(f"\nError: {type(e).__name__}")
+        print(f"\nError: {type(e).__name__}: {e}")
 
 
 async def main():
-    # await run_workflow_non_streaming()
+    await run_workflow_non_streaming()
     await run_workflow_streaming()
 
 

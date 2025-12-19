@@ -101,7 +101,13 @@ pip install -q -r requirements.txt
 
 # Run tests
 echo -e "${GREEN}Running tests...${NC}"
-pytest test_agentos_routes.py "$@"
+if [ $# -eq 0 ]; then
+    # No test files specified, run all tests
+    pytest
+else
+    # Run specific test files passed as arguments
+    pytest "$@"
+fi
 TEST_EXIT_CODE=$?
 
 # Clean up if requested

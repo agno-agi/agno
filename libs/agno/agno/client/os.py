@@ -12,7 +12,12 @@ from agno.media import Audio, File, Image, Video
 from agno.media import File as MediaFile
 from agno.models.response import ToolExecution
 from agno.os.routers.agents.schema import AgentResponse
-from agno.os.routers.evals.schemas import EvalSchema
+from agno.os.routers.evals.schemas import (
+    DeleteEvalRunsRequest,
+    EvalRunInput,
+    EvalSchema,
+    UpdateEvalRunRequest,
+)
 from agno.os.routers.knowledge.schemas import (
     ConfigResponseSchema as KnowledgeConfigResponse,
 )
@@ -22,7 +27,10 @@ from agno.os.routers.knowledge.schemas import (
     VectorSearchResult,
 )
 from agno.os.routers.memory.schemas import (
+    DeleteMemoriesRequest,
+    OptimizeMemoriesRequest,
     OptimizeMemoriesResponse,
+    UserMemoryCreateSchema,
     UserMemorySchema,
     UserStatsSchema,
 )
@@ -39,6 +47,8 @@ from agno.os.schema import (
     AgentSessionDetailSchema,
     AgentSummaryResponse,
     ConfigResponse,
+    CreateSessionRequest,
+    DeleteSessionRequest,
     Model,
     PaginatedResponse,
     PaginationInfo,
@@ -47,6 +57,7 @@ from agno.os.schema import (
     TeamRunSchema,
     TeamSessionDetailSchema,
     TeamSummaryResponse,
+    UpdateSessionRequest,
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
     WorkflowSummaryResponse,
@@ -134,7 +145,7 @@ class AgentOSClient:
             ) from e
         except TimeoutException as e:
             raise RemoteServerUnavailableError(
-                message=f"Request to remote server at {self.base_url} timed out",
+                message=f"Request to remote server at {self.base_url} timed out after {self.timeout} seconds.",
                 base_url=self.base_url,
                 original_error=e,
             ) from e
@@ -194,7 +205,7 @@ class AgentOSClient:
             ) from e
         except TimeoutException as e:
             raise RemoteServerUnavailableError(
-                message=f"Request to remote server at {self.base_url} timed out",
+                message=f"Request to remote server at {self.base_url} timed out after {self.timeout} seconds",
                 base_url=self.base_url,
                 original_error=e,
             ) from e
@@ -346,7 +357,7 @@ class AgentOSClient:
             ) from e
         except TimeoutException as e:
             raise RemoteServerUnavailableError(
-                message=f"Request to remote server at {self.base_url} timed out",
+                message=f"Request to remote server at {self.base_url} timed out after {self.timeout} seconds",
                 base_url=self.base_url,
                 original_error=e,
             ) from e
@@ -1145,11 +1156,11 @@ class AgentOSClient:
         """
         params = {"db_id": db_id, "table": table}
         params = {k: v for k, v in params.items() if v is not None}
-        payload: Dict[str, Any] = {"memory": memory, "user_id": user_id}
-        if topics:
-            payload["topics"] = topics
 
-        data = await self._apost("/memories", payload, params=params, headers=headers)
+        # Use schema for type-safe payload construction
+        payload = UserMemoryCreateSchema(memory=memory, user_id=user_id, topics=topics)
+
+        data = await self._apost("/memories", payload.model_dump(exclude_none=True), params=params, headers=headers)
         return UserMemorySchema.model_validate(data)
 
     async def get_memory(
@@ -1266,11 +1277,12 @@ class AgentOSClient:
         params = {"db_id": db_id, "table": table}
         params = {k: v for k, v in params.items() if v is not None}
 
-        payload: Dict[str, Any] = {"memory": memory, "user_id": user_id}
-        if topics:
-            payload["topics"] = topics
+        # Use schema for type-safe payload construction
+        payload = UserMemoryCreateSchema(memory=memory, user_id=user_id, topics=topics)
 
-        data = await self._apatch(f"/memories/{memory_id}", payload, params=params, headers=headers)
+        data = await self._apatch(
+            f"/memories/{memory_id}", payload.model_dump(exclude_none=True), params=params, headers=headers
+        )
         return UserMemorySchema.model_validate(data)
 
     async def delete_memory(
@@ -1321,9 +1333,10 @@ class AgentOSClient:
         params = {"db_id": db_id, "table": table}
         params = {k: v for k, v in params.items() if v is not None}
 
-        payload: Dict[str, Any] = {"memory_ids": memory_ids, "user_id": user_id}
+        # Use schema for type-safe payload construction
+        payload = DeleteMemoriesRequest(memory_ids=memory_ids, user_id=user_id)
 
-        await self._adelete("/memories", payload, params=params, headers=headers)
+        await self._adelete("/memories", payload.model_dump(exclude_none=True), params=params, headers=headers)
 
     async def get_memory_topics(
         self,
@@ -1400,10 +1413,15 @@ class AgentOSClient:
         Returns:
             OptimizeMemoriesResponse
         """
-        params: Dict[str, Any] = {"user_id": user_id, "model": model, "apply": apply, "db_id": db_id, "table": table}
+        params: Dict[str, Any] = {"db_id": db_id, "table": table}
         params = {k: v for k, v in params.items() if v is not None}
 
-        data = await self._apost("/optimize-memories", params=params, headers=headers)
+        # Use schema for type-safe payload construction
+        payload = OptimizeMemoriesRequest(user_id=user_id, model=model, apply=apply)
+
+        data = await self._apost(
+            "/optimize-memories", payload.model_dump(exclude_none=True), params=params, headers=headers
+        )
         return OptimizeMemoriesResponse.model_validate(data)
 
     # Session Operations
@@ -1445,18 +1463,19 @@ class AgentOSClient:
         params: Dict[str, Any] = {"type": session_type.value, "db_id": db_id}
         params = {k: v for k, v in params.items() if v is not None}
 
-        payload: Dict[str, Any] = {
-            "session_id": session_id,
-            "user_id": user_id,
-            "session_name": session_name,
-            "session_state": session_state,
-            "metadata": metadata,
-            "agent_id": agent_id,
-            "team_id": team_id,
-            "workflow_id": workflow_id,
-        }
+        # Use schema for type-safe payload construction
+        payload = CreateSessionRequest(
+            session_id=session_id,
+            user_id=user_id,
+            session_name=session_name,
+            session_state=session_state,
+            metadata=metadata,
+            agent_id=agent_id,
+            team_id=team_id,
+            workflow_id=workflow_id,
+        )
 
-        data = await self._apost("/sessions", payload, params=params, headers=headers)
+        data = await self._apost("/sessions", payload.model_dump(), params=params, headers=headers)
 
         if session_type == SessionType.AGENT:
             return AgentSessionDetailSchema.model_validate(data)
@@ -1698,7 +1717,6 @@ class AgentOSClient:
         Args:
             session_ids: List of session IDs to delete
             session_types: List of session types corresponding to each session ID
-            session_type: Default session type filter
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
@@ -1713,12 +1731,10 @@ class AgentOSClient:
 
         params = {k: v for k, v in params.items() if v is not None}
 
-        payload = {
-            "session_ids": session_ids,
-            "session_types": [st.value for st in session_types],
-        }
+        # Use schema for type-safe payload construction
+        payload = DeleteSessionRequest(session_ids=session_ids, session_types=session_types)
 
-        await self._adelete("/sessions", payload, params=params, headers=headers)
+        await self._adelete("/sessions", payload.model_dump(mode="json"), params=params, headers=headers)
 
     async def rename_session(
         self,
@@ -1803,17 +1819,17 @@ class AgentOSClient:
         }
         params = {k: v for k, v in params.items() if v is not None}
 
-        payload: Dict[str, Any] = {}
-        if session_name is not None:
-            payload["session_name"] = session_name
-        if session_state is not None:
-            payload["session_state"] = session_state
-        if metadata is not None:
-            payload["metadata"] = metadata
-        if summary is not None:
-            payload["summary"] = summary
+        # Use schema for type-safe payload construction
+        payload = UpdateSessionRequest(
+            session_name=session_name,
+            session_state=session_state,
+            metadata=metadata,
+            summary=summary,
+        )
 
-        data = await self._apatch(f"/sessions/{session_id}", payload, params=params, headers=headers)
+        data = await self._apatch(
+            f"/sessions/{session_id}", payload.model_dump(exclude_none=True), params=params, headers=headers
+        )
 
         if session_type == SessionType.AGENT:
             return AgentSessionDetailSchema.model_validate(data)
@@ -1936,8 +1952,9 @@ class AgentOSClient:
         }
         params = {k: v for k, v in params.items() if v is not None}
 
-        payload = {"eval_run_ids": eval_run_ids}
-        await self._adelete("/eval-runs", payload, params=params, headers=headers)
+        # Use schema for type-safe payload construction
+        payload = DeleteEvalRunsRequest(eval_run_ids=eval_run_ids)
+        await self._adelete("/eval-runs", payload.model_dump(), params=params, headers=headers)
 
     async def update_eval_run(
         self,
@@ -1968,8 +1985,9 @@ class AgentOSClient:
         }
         params = {k: v for k, v in params.items() if v is not None}
 
-        payload = {"name": name}
-        data = await self._apatch(f"/eval-runs/{eval_run_id}", payload, params=params, headers=headers)
+        # Use schema for type-safe payload construction
+        payload = UpdateEvalRunRequest(name=name)
+        data = await self._apatch(f"/eval-runs/{eval_run_id}", payload.model_dump(), params=params, headers=headers)
         return EvalSchema.model_validate(data)
 
     async def run_eval(
@@ -2015,20 +2033,23 @@ class AgentOSClient:
         }
         params = {k: v for k, v in params.items() if v is not None}
 
-        payload: Dict[str, Any] = {
-            "eval_type": eval_type.value,
-            "input": input_text,
-            "agent_id": agent_id,
-            "team_id": team_id,
-            "model_id": model_id,
-            "model_provider": model_provider,
-            "expected_output": expected_output,
-            "expected_tool_calls": expected_tool_calls,
-            "num_iterations": num_iterations,
-        }
+        # Use schema for type-safe payload construction
+        payload = EvalRunInput(
+            eval_type=eval_type,
+            input=input_text,
+            agent_id=agent_id,
+            team_id=team_id,
+            model_id=model_id,
+            model_provider=model_provider,
+            expected_output=expected_output,
+            expected_tool_calls=expected_tool_calls,
+            num_iterations=num_iterations,
+        )
 
         endpoint = "/eval-runs"
-        data = await self._apost(endpoint, payload, params=params, headers=headers)
+        data = await self._apost(
+            endpoint, payload.model_dump(exclude_none=True, mode="json"), params=params, headers=headers
+        )
         if data is None:
             return None
         return EvalSchema.model_validate(data)
@@ -2082,7 +2103,7 @@ class AgentOSClient:
             ) from e
         except TimeoutException as e:
             raise RemoteServerUnavailableError(
-                message=f"Request to remote server at {self.base_url} timed out",
+                message=f"Request to remote server at {self.base_url} timed out after {self.timeout} seconds.",
                 base_url=self.base_url,
                 original_error=e,
             ) from e

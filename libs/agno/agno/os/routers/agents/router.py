@@ -107,7 +107,7 @@ async def agent_response_streamer(
 async def agent_continue_response_streamer(
     agent: Union[Agent, RemoteAgent],
     run_id: str,
-    updated_tools: Optional[List] = None,
+    updated_tools: List,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
@@ -409,8 +409,7 @@ def get_agent_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        if not agent.cancel_run(run_id=run_id):
-            raise HTTPException(status_code=500, detail="Failed to cancel run")
+        agent.cancel_run(run_id=run_id)
 
         return JSONResponse(content={}, status_code=200)
 

@@ -1,5 +1,5 @@
-from functools import cached_property
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Union, overload
+import time
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Tuple, Union, overload
 
 from fastapi import WebSocket
 from pydantic import BaseModel
@@ -16,11 +16,15 @@ if TYPE_CHECKING:
 
 
 class RemoteWorkflow(BaseRemote):
+    # Private cache for workflow config with TTL: (config, timestamp)
+    _cached_workflow_config: Optional[Tuple["WorkflowResponse", float]] = None
+
     def __init__(
         self,
         base_url: str,
         workflow_id: str,
         timeout: float = 300.0,
+        config_ttl: float = 300.0,
     ):
         """Initialize AgentOSRunner for local or remote execution.
 
@@ -30,76 +34,65 @@ class RemoteWorkflow(BaseRemote):
             base_url: Base URL for remote AgentOS instance (e.g., "http://localhost:7777")
             workflow_id: ID of remote workflow
             timeout: Request timeout in seconds (default: 300)
+            config_ttl: Time-to-live for cached config in seconds (default: 300)
         """
-        super().__init__(base_url, timeout)
+        super().__init__(base_url, timeout, config_ttl)
         self.workflow_id = workflow_id
+        self._cached_workflow_config = None
 
     @property
     def id(self) -> str:
         return self.workflow_id
 
     async def get_workflow_config(self) -> "WorkflowResponse":
-        """Get the workflow config from remote, cached after first access."""
+        """Get the workflow config from remote (always fetches fresh)."""
         return await self.client.aget_workflow(self.workflow_id)
 
-    @cached_property
-    def _workflow_config(self) -> Optional[Any]:
-        """Get the workflow config from remote, cached after first access."""
+    @property
+    def _workflow_config(self) -> "WorkflowResponse":
+        """Get the workflow config from remote, cached with TTL."""
+        from agno.os.routers.workflows.schema import WorkflowResponse
+
+        current_time = time.time()
+
+        # Check if cache is valid
+        if self._cached_workflow_config is not None:
+            config, cached_at = self._cached_workflow_config
+            if current_time - cached_at < self.config_ttl:
+                return config
+
+        # Fetch fresh config
+        config: WorkflowResponse = self.client.get_workflow(self.workflow_id)
+        self._cached_workflow_config = (config, current_time)
+        return config
+
+    def refresh_config(self) -> "WorkflowResponse":
+        """Force refresh the cached workflow config."""
         from agno.os.routers.workflows.schema import WorkflowResponse
 
         config: WorkflowResponse = self.client.get_workflow(self.workflow_id)
+        self._cached_workflow_config = (config, time.time())
         return config
 
-    @cached_property
+    @property
     def name(self) -> str:
         if self._workflow_config is not None:
             return self._workflow_config.name
         return self.workflow_id
 
-    @cached_property
+    @property
     def description(self) -> str:
         if self._workflow_config is not None:
             return self._workflow_config.description
         return ""
 
-    @cached_property
+    @property
     def db(self) -> Optional[RemoteDb]:
         if self._workflow_config is not None and self._workflow_config.db_id is not None:
-            config = self._config
-            db_id = self._workflow_config.db_id
-            session_table_name = None
-            knowledge_table_name = None
-            memory_table_name = None
-            metrics_table_name = None
-            eval_table_name = None
-            traces_table_name = None
-            if config and config.session and config.session.dbs is not None:
-                session_dbs = [db for db in config.session.dbs if db.db_id == db_id]
-                session_table_name = session_dbs[0].tables[0] if session_dbs and session_dbs[0].tables else None
-            if config and config.knowledge and config.knowledge.dbs is not None:
-                knowledge_dbs = [db for db in config.knowledge.dbs if db.db_id == db_id]
-                knowledge_table_name = knowledge_dbs[0].tables[0] if knowledge_dbs and knowledge_dbs[0].tables else None
-            if config and config.memory and config.memory.dbs is not None:
-                memory_dbs = [db for db in config.memory.dbs if db.db_id == db_id]
-                memory_table_name = memory_dbs[0].tables[0] if memory_dbs and memory_dbs[0].tables else None
-            if config and config.metrics and config.metrics.dbs is not None:
-                metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
-                metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
-            if config and config.evals and config.evals.dbs is not None:
-                eval_dbs = [db for db in config.evals.dbs if db.db_id == db_id]
-                eval_table_name = eval_dbs[0].tables[0] if eval_dbs and eval_dbs[0].tables else None
-            if config and config.traces and config.traces.dbs is not None:
-                traces_dbs = [db for db in config.traces.dbs if db.db_id == db_id]
-                traces_table_name = traces_dbs[0].tables[0] if traces_dbs and traces_dbs[0].tables else None
-            return RemoteDb(
-                id=db_id,
+            return RemoteDb.from_config(
+                db_id=self._workflow_config.db_id,
                 client=self.client,
-                session_table_name=session_table_name,
-                knowledge_table_name=knowledge_table_name,
-                memory_table_name=memory_table_name,
-                metrics_table_name=metrics_table_name,
-                eval_table_name=eval_table_name,
-                traces_table_name=traces_table_name,
+                config=self._config,
             )
         return None
 
@@ -218,9 +211,12 @@ class RemoteWorkflow(BaseRemote):
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
         headers = self._get_auth_headers(auth_token)
-        await self.get_client().cancel_workflow_run(
-            workflow_id=self.workflow_id,
-            run_id=run_id,
-            headers=headers,
-        )
-        return True
+        try:
+            await self.get_client().cancel_workflow_run(
+                workflow_id=self.workflow_id,
+                run_id=run_id,
+                headers=headers,
+            )
+            return True
+        except Exception:
+            return False

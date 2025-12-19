@@ -90,6 +90,27 @@ docker compose logs -f
 
 ### 3. Run the tests
 
+#### Using run_tests.sh (Recommended)
+
+The `run_tests.sh` script handles container management and test execution:
+
+```bash
+# Run all tests (builds containers, waits for health, runs pytest)
+./run_tests.sh
+
+# Run specific test files
+./run_tests.sh test_agents_routes.py
+./run_tests.sh test_agents_routes.py test_teams_routes.py
+
+# Options
+./run_tests.sh --rebuild                 # Rebuild containers from scratch
+./run_tests.sh --skip-build              # Skip container build (use existing)
+./run_tests.sh --down                    # Stop containers after tests
+./run_tests.sh --skip-build test_agents_routes.py -v  # Combine options with pytest args
+```
+
+#### Running manually
+
 ```bash
 # Install test dependencies
 pip install -r requirements.txt
@@ -108,6 +129,10 @@ pytest test_knowledge_routes.py -v       # Knowledge route tests
 pytest test_traces_routes.py -v          # Traces route tests
 pytest test_evals_routes.py -v           # Eval route tests
 pytest test_metrics_routes.py -v         # Metrics route tests
+pytest test_a2a_routes.py -v             # A2A protocol tests
+pytest test_agui_routes.py -v            # AG-UI route tests
+pytest test_mcp_routes.py -v             # MCP route tests
+pytest test_slack_routes.py -v           # Slack integration tests
 pytest test_agentos_routes.py -v         # Integration tests (remote resources, error handling, auth)
 
 # Run specific test class
@@ -142,6 +167,10 @@ The tests are organized into separate modules for independent execution:
 - **`test_traces_routes.py`** - Trace monitoring routes
 - **`test_evals_routes.py`** - Evaluation routes
 - **`test_metrics_routes.py`** - Metrics routes
+- **`test_a2a_routes.py`** - A2A (Agent-to-Agent) protocol routes
+- **`test_agui_routes.py`** - AG-UI routes
+- **`test_mcp_routes.py`** - MCP (Model Context Protocol) routes
+- **`test_slack_routes.py`** - Slack integration routes
 - **`test_agentos_routes.py`** - Integration tests (remote resources, error handling, auth)
 
 Each test module can be run independently, making it easier to:

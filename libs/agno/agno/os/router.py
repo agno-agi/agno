@@ -1,21 +1,12 @@
-<<<<<<< HEAD
-from typing import TYPE_CHECKING, List, Optional, cast
-=======
-from typing import TYPE_CHECKING, List, Union, cast
->>>>>>> a1a48ff15a55f114d5cdc2a88fbf51be0c6e6f22
+from typing import TYPE_CHECKING, List, cast
 
 from fastapi import (
     APIRouter,
     Depends,
+    HTTPException,
 )
 
-<<<<<<< HEAD
-from agno.db.base import AsyncBaseDb
-from agno.db.migrations.manager import MigrationManager
 from agno.exceptions import RemoteServerUnavailableError
-=======
-from agno.agent.agent import Agent
->>>>>>> a1a48ff15a55f114d5cdc2a88fbf51be0c6e6f22
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     AgentSummaryResponse,
@@ -31,14 +22,6 @@ from agno.os.schema import (
     WorkflowSummaryResponse,
 )
 from agno.os.settings import AgnoAPISettings
-<<<<<<< HEAD
-from agno.os.utils import (
-    get_db,
-)
-from agno.remote.base import RemoteDb
-=======
-from agno.team.team import Team
->>>>>>> a1a48ff15a55f114d5cdc2a88fbf51be0c6e6f22
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS

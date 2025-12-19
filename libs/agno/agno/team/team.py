@@ -2028,7 +2028,7 @@ class Team:
                     background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
                 # Validate input against input_schema if provided
-                validated_input = self._validate_input(input)
+                validated_input = validate_input(input, self.input_schema)
 
                 # Normalise hook & guardails
                 if not self._hooks_normalised:

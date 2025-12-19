@@ -73,11 +73,7 @@ async def aget_groq_reasoning(reasoning_agent: "Agent", messages: List[Message])
 
 def get_groq_reasoning_stream(
     reasoning_agent: "Agent",  # type: ignore  # noqa: F821
-<<<<<<< HEAD
-    messages: List[Message],  # type: ignore  # noqa: F821
-=======
     messages: List[Message],
->>>>>>> a1a48ff15a55f114d5cdc2a88fbf51be0c6e6f22
 ) -> Iterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from Groq model.
@@ -128,11 +124,7 @@ def get_groq_reasoning_stream(
 
 async def aget_groq_reasoning_stream(
     reasoning_agent: "Agent",  # type: ignore  # noqa: F821
-<<<<<<< HEAD
-    messages: List[Message],  # type: ignore  # noqa: F821
-=======
     messages: List[Message],
->>>>>>> a1a48ff15a55f114d5cdc2a88fbf51be0c6e6f22
 ) -> AsyncIterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from Groq model asynchronously.

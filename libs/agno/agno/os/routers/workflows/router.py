@@ -648,8 +648,7 @@ def get_workflow_router(
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        if not workflow.cancel_run(run_id=run_id):
-            raise HTTPException(status_code=500, detail="Failed to cancel run")
+        workflow.cancel_run(run_id=run_id)
 
         return JSONResponse(content={}, status_code=200)
 

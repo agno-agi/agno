@@ -1,8 +1,8 @@
+import time
 from abc import abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
-from functools import cached_property
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Sequence, Tuple, Union
 
 from pydantic import BaseModel
 
@@ -54,7 +54,65 @@ class RemoteDb:
     spans_table_name: Optional[str] = None
     culture_table_name: Optional[str] = None
 
-    # TODO: Pass headers for auth
+    @classmethod
+    def from_config(
+        cls,
+        db_id: str,
+        client: "AgentOSClient",
+        config: "ConfigResponse",
+    ) -> Optional["RemoteDb"]:
+        """Create a RemoteDb instance from an AgentResponse/TeamResponse/WorkflowResponse and ConfigResponse.
+
+        Args:
+            response: The agent, team, or workflow response containing the db_id.
+            client: The AgentOSClient for remote operations.
+            config: The ConfigResponse containing database table information.
+
+        Returns:
+            RemoteDb instance if db_id is present, None otherwise.
+        """
+
+        session_table_name = None
+        knowledge_table_name = None
+        memory_table_name = None
+        metrics_table_name = None
+        eval_table_name = None
+        traces_table_name = None
+
+        if config and config.session and config.session.dbs is not None:
+            session_dbs = [db for db in config.session.dbs if db.db_id == db_id]
+            session_table_name = session_dbs[0].tables[0] if session_dbs and session_dbs[0].tables else None
+
+        if config and config.knowledge and config.knowledge.dbs is not None:
+            knowledge_dbs = [db for db in config.knowledge.dbs if db.db_id == db_id]
+            knowledge_table_name = knowledge_dbs[0].tables[0] if knowledge_dbs and knowledge_dbs[0].tables else None
+
+        if config and config.memory and config.memory.dbs is not None:
+            memory_dbs = [db for db in config.memory.dbs if db.db_id == db_id]
+            memory_table_name = memory_dbs[0].tables[0] if memory_dbs and memory_dbs[0].tables else None
+
+        if config and config.metrics and config.metrics.dbs is not None:
+            metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
+            metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
+
+        if config and config.evals and config.evals.dbs is not None:
+            eval_dbs = [db for db in config.evals.dbs if db.db_id == db_id]
+            eval_table_name = eval_dbs[0].tables[0] if eval_dbs and eval_dbs[0].tables else None
+
+        if config and config.traces and config.traces.dbs is not None:
+            traces_dbs = [db for db in config.traces.dbs if db.db_id == db_id]
+            traces_table_name = traces_dbs[0].tables[0] if traces_dbs and traces_dbs[0].tables else None
+
+        return cls(
+            id=db_id,
+            client=client,
+            session_table_name=session_table_name,
+            knowledge_table_name=knowledge_table_name,
+            memory_table_name=memory_table_name,
+            metrics_table_name=metrics_table_name,
+            eval_table_name=eval_table_name,
+            traces_table_name=traces_table_name,
+        )
 
     # SESSIONS
     async def get_sessions(self, **kwargs: Any) -> "PaginatedResponse[SessionSchema]":
@@ -284,10 +342,14 @@ class RemoteKnowledge:
 
 @dataclass
 class BaseRemote:
+    # Private cache for OS config with TTL: (config, timestamp)
+    _cached_config: Optional[Tuple["ConfigResponse", float]] = field(default=None, init=False, repr=False)
+
     def __init__(
         self,
         base_url: str,
         timeout: float = 60.0,
+        config_ttl: float = 300.0,
     ):
         """Initialize BaseRemote for remote execution.
 
@@ -297,9 +359,12 @@ class BaseRemote:
         Args:
             base_url: Base URL for remote instance (e.g., "http://localhost:7777")
             timeout: Request timeout in seconds (default: 60)
+            config_ttl: Time-to-live for cached config in seconds (default: 300)
         """
         self.base_url = base_url.rstrip("/")
         self.timeout: float = timeout
+        self.config_ttl: float = config_ttl
+        self._cached_config = None
 
         self.client = self.get_client()
 
@@ -319,12 +384,30 @@ class BaseRemote:
             timeout=self.timeout,
         )
 
-    @cached_property
+    @property
     def _config(self) -> "ConfigResponse":
-        """Get the agent config from remote, cached after first access."""
+        """Get the OS config from remote, cached with TTL."""
+        from agno.os.schema import ConfigResponse
+
+        current_time = time.time()
+
+        # Check if cache is valid
+        if self._cached_config is not None:
+            config, cached_at = self._cached_config
+            if current_time - cached_at < self.config_ttl:
+                return config
+
+        # Fetch fresh config
+        config: ConfigResponse = self.client.get_config()
+        self._cached_config = (config, current_time)
+        return config
+
+    def refresh_os_config(self) -> "ConfigResponse":
+        """Force refresh the cached OS config."""
         from agno.os.schema import ConfigResponse
 
         config: ConfigResponse = self.client.get_config()
+        self._cached_config = (config, time.time())
         return config
 
     def _get_headers(self, auth_token: Optional[str] = None) -> Dict[str, str]:

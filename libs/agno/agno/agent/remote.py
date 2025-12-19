@@ -1,7 +1,7 @@
 import json
-from dataclasses import dataclass
-from functools import cached_property
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Sequence, Union, overload
+import time
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Sequence, Tuple, Union, overload
 
 from pydantic import BaseModel
 
@@ -12,6 +12,7 @@ from agno.models.response import ToolExecution
 from agno.remote.base import BaseRemote, RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutput, RunOutputEvent
 from agno.utils.agent import validate_input
+from agno.utils.log import log_warning
 from agno.utils.remote import serialize_input
 
 if TYPE_CHECKING:
@@ -20,11 +21,15 @@ if TYPE_CHECKING:
 
 @dataclass
 class RemoteAgent(BaseRemote):
+    # Private cache for agent config with TTL: (config, timestamp)
+    _cached_agent_config: Optional[Tuple["AgentResponse", float]] = field(default=None, init=False, repr=False)
+
     def __init__(
         self,
         base_url: str,
         agent_id: str,
         timeout: float = 60.0,
+        config_ttl: float = 300.0,
     ):
         """Initialize AgentOSRunner for local or remote execution.
 
@@ -34,92 +39,85 @@ class RemoteAgent(BaseRemote):
             base_url: Base URL for remote AgentOS instance (e.g., "http://localhost:7777")
             agent_id: ID of remote agent
             timeout: Request timeout in seconds (default: 60)
+            config_ttl: Time-to-live for cached config in seconds (default: 300)
         """
-        super().__init__(base_url, timeout)
+        super().__init__(base_url, timeout, config_ttl)
         self.agent_id = agent_id
+        self._cached_agent_config = None
 
     @property
     def id(self) -> str:
         return self.agent_id
 
     async def get_agent_config(self) -> "AgentResponse":
-        """Get the agent config from remote, cached after first access."""
+        """Get the agent config from remote (always fetches fresh)."""
         return await self.client.aget_agent(self.agent_id)
 
-    @cached_property
+    @property
     def _agent_config(self) -> "AgentResponse":
-        """Get the agent config from remote, cached after first access."""
+        """Get the agent config from remote, cached with TTL."""
+        from agno.os.routers.agents.schema import AgentResponse
+
+        current_time = time.time()
+
+        # Check if cache is valid
+        if self._cached_agent_config is not None:
+            config, cached_at = self._cached_agent_config
+            if current_time - cached_at < self.config_ttl:
+                return config
+
+        # Fetch fresh config
+        config: AgentResponse = self.client.get_agent(self.agent_id)
+        self._cached_agent_config = (config, current_time)
+        return config
+
+    def refresh_config(self) -> "AgentResponse":
+        """Force refresh the cached agent config."""
         from agno.os.routers.agents.schema import AgentResponse
 
         config: AgentResponse = self.client.get_agent(self.agent_id)
+        self._cached_agent_config = (config, time.time())
         return config
 
-    @cached_property
+    @property
     def name(self) -> Optional[str]:
         if self._agent_config is not None:
             return self._agent_config.name
         return self.agent_id
 
-    @cached_property
+    @property
     def description(self) -> Optional[str]:
         if self._agent_config is not None:
             return self._agent_config.description
         return ""
 
-    @cached_property
+    @property
     def role(self) -> Optional[str]:
         if self._agent_config is not None:
             return self._agent_config.role
         return None
 
-    @cached_property
+    @property
     def tools(self) -> Optional[List[Dict[str, Any]]]:
         if self._agent_config is not None:
-            return json.loads(self._agent_config.tools["tools"]) if self._agent_config.tools else None
+            try:
+                return json.loads(self._agent_config.tools["tools"]) if self._agent_config.tools else None
+            except Exception as e:
+                log_warning(f"Failed to load tools for agent {self.agent_id}: {e}")
+                return None
         return None
 
-    @cached_property
+    @property
     def db(self) -> Optional[RemoteDb]:
         if self._agent_config is not None and self._agent_config.db_id is not None:
-            config = self._config
-            db_id = self._agent_config.db_id
-            session_table_name = None
-            knowledge_table_name = None
-            memory_table_name = None
-            metrics_table_name = None
-            eval_table_name = None
-            traces_table_name = None
-            if config and config.session and config.session.dbs is not None:
-                session_dbs = [db for db in config.session.dbs if db.db_id == db_id]
-                session_table_name = session_dbs[0].tables[0] if session_dbs and session_dbs[0].tables else None
-            if config and config.knowledge and config.knowledge.dbs is not None:
-                knowledge_dbs = [db for db in config.knowledge.dbs if db.db_id == db_id]
-                knowledge_table_name = knowledge_dbs[0].tables[0] if knowledge_dbs and knowledge_dbs[0].tables else None
-            if config and config.memory and config.memory.dbs is not None:
-                memory_dbs = [db for db in config.memory.dbs if db.db_id == db_id]
-                memory_table_name = memory_dbs[0].tables[0] if memory_dbs and memory_dbs[0].tables else None
-            if config and config.metrics and config.metrics.dbs is not None:
-                metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
-                metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
-            if config and config.evals and config.evals.dbs is not None:
-                eval_dbs = [db for db in config.evals.dbs if db.db_id == db_id]
-                eval_table_name = eval_dbs[0].tables[0] if eval_dbs and eval_dbs[0].tables else None
-            if config and config.traces and config.traces.dbs is not None:
-                traces_dbs = [db for db in config.traces.dbs if db.db_id == db_id]
-                traces_table_name = traces_dbs[0].tables[0] if traces_dbs and traces_dbs[0].tables else None
-            return RemoteDb(
-                id=db_id,
+            return RemoteDb.from_config(
+                db_id=self._agent_config.db_id,
                 client=self.client,
-                session_table_name=session_table_name,
-                knowledge_table_name=knowledge_table_name,
-                memory_table_name=memory_table_name,
-                metrics_table_name=metrics_table_name,
-                eval_table_name=eval_table_name,
-                traces_table_name=traces_table_name,
+                config=self._config,
             )
         return None
 
-    @cached_property
+    @property
     def knowledge(self) -> Optional[RemoteKnowledge]:
         """Whether the agent has knowledge enabled."""
         if self._agent_config is not None and self._agent_config.knowledge is not None:
@@ -135,7 +133,7 @@ class RemoteAgent(BaseRemote):
             )
         return None
 
-    @cached_property
+    @property
     def model(self) -> Optional[Model]:
         # We don't expose the remote agent's models, since they can't be used by other services in AgentOS.
         return None
@@ -274,9 +272,8 @@ class RemoteAgent(BaseRemote):
     async def acontinue_run(
         self,
         run_id: str,
+        updated_tools: List[ToolExecution],
         stream: Literal[False] = False,
-        stream_events: Optional[bool] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         auth_token: Optional[str] = None,
@@ -287,9 +284,8 @@ class RemoteAgent(BaseRemote):
     def acontinue_run(
         self,
         run_id: str,
+        updated_tools: List[ToolExecution],
         stream: Literal[True] = True,
-        stream_events: Optional[bool] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         auth_token: Optional[str] = None,
@@ -301,7 +297,6 @@ class RemoteAgent(BaseRemote):
         run_id: str,  # type: ignore
         updated_tools: List[ToolExecution],
         stream: Optional[bool] = None,
-        stream_events: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         auth_token: Optional[str] = None,
@@ -342,12 +337,15 @@ class RemoteAgent(BaseRemote):
             auth_token: Optional JWT token for authentication.
 
         Returns:
-            bool: True if the run was found and marked for cancellation, False otherwise.
+            bool: True if the run was successfully cancelled, False otherwise.
         """
         headers = self._get_auth_headers(auth_token)
-        await self.get_client().cancel_agent_run(
-            agent_id=self.agent_id,
-            run_id=run_id,
-            headers=headers,
-        )
-        return True
+        try:
+            await self.get_client().cancel_agent_run(
+                agent_id=self.agent_id,
+                run_id=run_id,
+                headers=headers,
+            )
+            return True
+        except Exception:
+            return False

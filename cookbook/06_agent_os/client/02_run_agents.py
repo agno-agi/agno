@@ -22,7 +22,7 @@ async def run_agent_non_streaming():
 
     client = AgentOSClient(base_url="http://localhost:7777")
     # Get available agents
-    config = client.get_config()
+    config = await client.aget_config()
     if not config.agents:
         print("No agents available")
         return
@@ -50,7 +50,7 @@ async def run_agent_streaming():
     client = AgentOSClient(base_url="http://localhost:7777")
 
     # Get available agents
-    config = client.get_config()
+    config = await client.aget_config()
     if not config.agents:
         print("No agents available")
         return
