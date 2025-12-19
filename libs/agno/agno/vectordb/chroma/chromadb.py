@@ -19,7 +19,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -69,7 +69,10 @@ class ChromaDb(VectorDb):
             - SearchType.vector: Pure vector similarity search (default)
             - SearchType.keyword: Keyword-based search using document content
             - SearchType.hybrid: Combines vector + FTS with Reciprocal Rank Fusion
-        hybrid_rrf_k: RRF constant for hybrid search (default 60)
+        hybrid_rrf_k: RRF (Reciprocal Rank Fusion) constant for hybrid search.
+            Controls ranking smoothness - higher values give more weight to lower-ranked
+            results, lower values make top results more dominant. Default is 60
+            (per original RRF paper by Cormack et al.).
         reranker: The reranker to use when reranking documents.
         **kwargs: Additional arguments to pass to the ChromaDB client.
     """
@@ -709,7 +712,7 @@ class ChromaDb(VectorDb):
                         ranked.append((doc_id, score))
                 return ranked
             except Exception as e:
-                logger.error(f"Error in vector search component: {e}")
+                log_error(f"Error in vector search component: {e}")
                 return []
 
         def fts_search() -> List[Tuple[str, float]]:
@@ -745,7 +748,7 @@ class ChromaDb(VectorDb):
                 ranked.sort(key=lambda x: x[1], reverse=True)
                 return ranked
             except Exception as e:
-                logger.error(f"Error in FTS search component: {e}")
+                log_error(f"Error in FTS search component: {e}")
                 return []
 
         # Execute searches in parallel for better performance
@@ -775,7 +778,7 @@ class ChromaDb(VectorDb):
                 include=["documents", "metadatas", "embeddings"],
             )
         except Exception as e:
-            logger.error(f"Error fetching full results: {e}")
+            log_error(f"Error fetching full results: {e}")
             return []
 
         # Build lookup dict for results
@@ -935,7 +938,7 @@ class ChromaDb(VectorDb):
                     )
                 )
         except Exception as e:
-            logger.error(f"Error building search results: {e}")
+            log_error(f"Error building search results: {e}")
 
         return search_results
 
@@ -1022,7 +1025,7 @@ class ChromaDb(VectorDb):
                     )
                 )
         except Exception as e:
-            logger.error(f"Error building get results: {e}")
+            log_error(f"Error building get results: {e}")
 
         return search_results
 
@@ -1328,7 +1331,7 @@ class ChromaDb(VectorDb):
                     current_metadatas = []
 
                 if not ids:
-                    logger.debug(f"No documents found with content_id: {content_id}")
+                    log_debug(f"No documents found with content_id: {content_id}")
                     return
 
                 # Flatten the new metadata first
@@ -1350,11 +1353,11 @@ class ChromaDb(VectorDb):
                 chroma_metadatas = cast(List[Mapping[str, Union[str, int, float, bool]]], updated_metadatas)
                 chroma_metadatas = [{k: v for k, v in m.items() if k and v} for m in chroma_metadatas]
                 collection.update(ids=ids, metadatas=chroma_metadatas)  # type: ignore
-                logger.debug(f"Updated metadata for {len(ids)} documents with content_id: {content_id}")
+                log_debug(f"Updated metadata for {len(ids)} documents with content_id: {content_id}")
 
             except TypeError as te:
                 if "object of type 'int' has no len()" in str(te):
-                    logger.warning(
+                    log_warning(
                         f"ChromaDB internal error (version 0.5.0 bug): {te}. Cannot update metadata for content_id '{content_id}'."
                     )
                     return
@@ -1362,7 +1365,7 @@ class ChromaDb(VectorDb):
                     raise te
 
         except Exception as e:
-            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+            log_error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
 
     def get_supported_search_types(self) -> List[str]:

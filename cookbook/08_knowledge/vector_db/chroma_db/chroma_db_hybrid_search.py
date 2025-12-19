@@ -31,6 +31,9 @@ knowledge = Knowledge(
         persistent_client=True,
         # Enable hybrid search - combines vector similarity with keyword matching using RRF
         search_type=SearchType.hybrid,
+        # RRF (Reciprocal Rank Fusion) constant - controls ranking smoothness.
+        # Higher values (e.g., 60) give more weight to lower-ranked results,
+        # Lower values make top results more dominant. Default is 60 (per original RRF paper).
         hybrid_rrf_k=60,
     ),
 )
