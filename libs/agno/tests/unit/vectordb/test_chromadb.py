@@ -1109,7 +1109,7 @@ def test_reranker_success(mock_embedder, sample_documents):
         db.create()
         db.insert(content_hash="test_hash", documents=sample_documents)
 
-        results = db.search("coconut", limit=2)
+        db.search("coconut", limit=2)
         # Reranker should have been called
         mock_reranker.rerank.assert_called()
 
