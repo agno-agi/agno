@@ -1,4 +1,5 @@
-from typing import Any, Dict, List, Optional
+from enum import Enum
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -10,57 +11,115 @@ from agno.workflow.agent import WorkflowAgent
 from agno.workflow.workflow import Workflow
 
 
+class StepTypeResponse(str, Enum):
+    """The type of workflow step"""
+    FUNCTION = "Function"
+    STEP = "Step"
+    STEPS = "Steps"
+    LOOP = "Loop"
+    PARALLEL = "Parallel"
+    CONDITION = "Condition"
+    ROUTER = "Router"
+
+
+class StepResponse(BaseModel):
+    """A workflow step definition"""
+    name: Optional[str] = Field(None, description="The name of the step")
+    description: Optional[str] = Field(None, description="The description of the step")
+    type: Optional[StepTypeResponse] = Field(None, description="The type of the step")
+    
+    # Executor configuration (only one should be present)
+    agent: Optional[Dict[str, Any]] = Field(None, description="The agent configuration if this step uses an agent")
+    team: Optional[Dict[str, Any]] = Field(None, description="The team configuration if this step uses a team")
+    
+    # Nested steps for container types (Steps, Loop, Parallel, Condition, Router)
+    steps: Optional[List["StepResponse"]] = Field(None, description="Nested steps for container step types")
+    
+    # Step configuration
+    max_retries: Optional[int] = Field(None, description="Maximum retry attempts for the step")
+    timeout_seconds: Optional[int] = Field(None, description="Timeout in seconds for step execution")
+    skip_on_failure: Optional[bool] = Field(None, description="Whether to skip this step on failure")
+    
+    # Loop-specific configuration
+    max_iterations: Optional[int] = Field(None, description="Maximum iterations for Loop steps")
+    
+    # Additional metadata
+    step_id: Optional[str] = Field(None, description="Unique identifier for the step")
+
+
 class WorkflowResponse(BaseModel):
     id: str = Field(..., description="The ID of the workflow")
     name: Optional[str] = Field(None, description="The name of the workflow")
     description: Optional[str] = Field(None, description="The description of the workflow")
     database: Optional[DatabaseConfigResponse] = Field(None, description="The database of the workflow")
     input_schema: Optional[Dict[str, Any]] = Field(None, description="The input schema of the workflow")
-    steps: Optional[List[Dict[str, Any]]] = Field(None, description="The steps of the workflow")
+    steps: Optional[List[StepResponse]] = Field(None, description="The steps of the workflow")
     metadata: Optional[Dict[str, Any]] = Field(None, description="The metadata of the workflow")
     workflow_agent: bool = Field(False, description="Whether this workflow uses a WorkflowAgent")
 
     @classmethod
-    async def _resolve_agents_and_teams_recursively(cls, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Parse Agents and Teams into AgentResponse and TeamResponse objects.
+    async def _resolve_step_recursively(cls, step_dict: Dict[str, Any]) -> StepResponse:
+        """Convert a step dictionary to a StepResponse, resolving agents and teams."""
+        
+        # Resolve agent if present
+        agent_data: Optional[Dict[str, Any]] = None
+        if step_dict.get("agent"):
+            agent_response = await AgentResponse.from_agent(step_dict["agent"])
+            agent_data = agent_response.model_dump(exclude_none=True)
+        
+        # Resolve team if present
+        team_data: Optional[Dict[str, Any]] = None
+        if step_dict.get("team"):
+            team_response = await TeamResponse.from_team(step_dict["team"])
+            team_data = team_response.model_dump(exclude_none=True)
+        
+        # Recursively resolve nested steps
+        nested_steps: Optional[List[StepResponse]] = None
+        if step_dict.get("steps"):
+            nested_steps = []
+            for nested_step in step_dict["steps"]:
+                resolved_step = await cls._resolve_step_recursively(nested_step)
+                nested_steps.append(resolved_step)
+        
+        # Map step type string to enum
+        step_type: Optional[StepTypeResponse] = None
+        if step_dict.get("type"):
+            try:
+                step_type = StepTypeResponse(step_dict["type"])
+            except ValueError:
+                step_type = None
+        
+        return StepResponse(
+            name=step_dict.get("name"),
+            description=step_dict.get("description"),
+            type=step_type,
+            agent=agent_data,
+            team=team_data,
+            steps=nested_steps,
+            max_retries=step_dict.get("max_retries"),
+            timeout_seconds=step_dict.get("timeout_seconds"),
+            skip_on_failure=step_dict.get("skip_on_failure"),
+            max_iterations=step_dict.get("max_iterations"),
+            step_id=step_dict.get("step_id"),
+        )
 
-        If the given steps have nested steps, recursively work on those."""
-        if not steps:
-            return steps
-
-        def _prune_none(value: Any) -> Any:
-            # Recursively remove None values from dicts and lists
-            if isinstance(value, dict):
-                return {k: _prune_none(v) for k, v in value.items() if v is not None}
-            if isinstance(value, list):
-                return [_prune_none(v) for v in value]
-            return value
-
-        for idx, step in enumerate(steps):
-            if step.get("agent"):
-                # Convert to dict and exclude fields that are None
-                agent_response = await AgentResponse.from_agent(step.get("agent"))  # type: ignore
-                step["agent"] = agent_response.model_dump(exclude_none=True)
-
-            if step.get("team"):
-                team_response = await TeamResponse.from_team(step.get("team"))  # type: ignore
-                step["team"] = team_response.model_dump(exclude_none=True)
-
-            if step.get("steps"):
-                step["steps"] = await cls._resolve_agents_and_teams_recursively(step["steps"])
-
-            # Prune None values in the entire step
-            steps[idx] = _prune_none(step)
-
-        return steps
+    @classmethod
+    async def _resolve_steps(cls, steps: List[Dict[str, Any]]) -> List[StepResponse]:
+        """Convert a list of step dictionaries to StepResponse objects."""
+        resolved_steps: List[StepResponse] = []
+        for step_dict in steps:
+            resolved_step = await cls._resolve_step_recursively(step_dict)
+            resolved_steps.append(resolved_step)
+        return resolved_steps
 
     @classmethod
     async def from_workflow(cls, workflow: Workflow) -> "WorkflowResponse":
         workflow_dict = workflow.to_dict()
-        steps = workflow_dict.get("steps")
+        raw_steps = workflow_dict.get("steps")
 
-        if steps:
-            steps = await cls._resolve_agents_and_teams_recursively(steps)
+        steps: Optional[List[StepResponse]] = None
+        if raw_steps:
+            steps = await cls._resolve_steps(raw_steps)
 
         database: Optional[DatabaseConfigResponse] = None
         if workflow.db:
