@@ -75,9 +75,8 @@ agent = Agent(
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[YFinanceTools()],
-    storage=agent_db,
+    db=agent_db,
     add_datetime_to_context=True,
-    # Adds conversation history to the agent's context
     add_history_to_context=True,
     num_history_runs=5,
     markdown=True,
