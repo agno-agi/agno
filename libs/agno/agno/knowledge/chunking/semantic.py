@@ -117,8 +117,10 @@ class SemanticChunking(ChunkingStrategy):
             embedding_model = self.embedder
         elif isinstance(self.embedder, BaseEmbeddings):
             embedding_model = self.embedder
-        else:
+        elif isinstance(self.embedder, Embedder):
             embedding_model = _get_chonkie_embedder_wrapper(self.embedder)
+        else:
+            raise ValueError("Invalid embedder type. Must be a string, BaseEmbeddings, or Embedder instance.")
 
         _chunker_params: Dict[str, Any] = {
             "embedding_model": embedding_model,

@@ -143,7 +143,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
             if workflow_id and session_id:
                 workflow = get_workflow_by_id(workflow_id, os.workflows)
                 if workflow and isinstance(workflow, Workflow):
-                    workflow_run = await workflow.aget_run_output(run_id, session_id) 
+                    workflow_run = await workflow.aget_run_output(run_id, session_id)
 
                     if workflow_run:
                         # Run exists in DB - send all events from DB
