@@ -3026,15 +3026,6 @@ class SqliteDb(BaseDb):
         user_profile: UserProfile,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
-        """Create or update a user profile.
-
-        Args:
-            user_profile: The UserProfile object to upsert
-            deserialize: If True, return UserProfile object; if False, return dict
-
-        Returns:
-            The upserted UserProfile or dict, None on failure
-        """
         try:
             table = self._get_table(table_type="user_profiles", create_table_if_not_found=True)
             if table is None:

@@ -62,7 +62,7 @@ def example_per_layer_controls():
     )
 
     print("\n--- Extracted Memory ---")
-    user = memory.get_user(user_id)
+    user = memory.get_user_profile(user_id)
     print("\nProfile (extracted):")
     pprint(user.user_profile)
     print("\nPolicies (extracted):")
@@ -70,7 +70,7 @@ def example_per_layer_controls():
     print("\nKnowledge (should be empty - extraction disabled):")
     pprint(user.knowledge)
 
-    memory.delete_user(user_id)
+    memory.delete_user_profile(user_id)
 
 
 def example_schema_override():
@@ -108,9 +108,9 @@ def example_schema_override():
     )
 
     print("\n--- Extracted Profile (guided by schema) ---")
-    pprint(memory.get_user(user_id).user_profile)
+    pprint(memory.get_user_profile(user_id).user_profile)
 
-    memory.delete_user(user_id)
+    memory.delete_user_profile(user_id)
 
 
 def example_custom_extraction_prompt():
@@ -144,9 +144,9 @@ def example_custom_extraction_prompt():
     )
 
     print("\n--- Extracted Policies (using custom prompt) ---")
-    pprint(memory.get_user(user_id).policies)
+    pprint(memory.get_user_profile(user_id).policies)
 
-    memory.delete_user(user_id)
+    memory.delete_user_profile(user_id)
 
 
 def example_nested_categories():
@@ -192,9 +192,9 @@ def example_nested_categories():
     memory.upsert_user(user)
 
     print("\n--- Compiled Context (with nested XML tags) ---")
-    print(memory.compile_user_context(user_id))
+    print(memory.compile_user_memory(user_id))
 
-    memory.delete_user(user_id)
+    memory.delete_user_profile(user_id)
 
 
 if __name__ == "__main__":

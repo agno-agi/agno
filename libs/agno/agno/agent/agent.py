@@ -811,6 +811,12 @@ class Agent:
                 self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None
             )
 
+    def _set_memory_manager_v2(self) -> None:
+        if self.memory_manager_v2.model is None:
+            self.memory_manager_v2.model = self.model
+        if self.memory_manager_v2.db is None:
+            self.memory_manager_v2.db = self.db
+
     def _set_session_summary_manager(self) -> None:
         if self.enable_session_summaries and self.session_summary_manager is None:
             self.session_summary_manager = SessionSummaryManager(model=self.model)
@@ -860,6 +866,8 @@ class Agent:
         self.set_id()
         if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
             self._set_memory_manager()
+        if self.memory_manager_v2 is not None:
+            self._set_memory_manager_v2()
         if (
             self.add_culture_to_context
             or self.update_cultural_knowledge
@@ -7708,7 +7716,7 @@ class Agent:
 
         # 3.3.10b Add user memory layers from MemoryManagerV2 to the system prompt
         if self.memory_manager_v2 is not None and user_id is not None:
-            user_context = self.memory_manager_v2.compile_user_context(user_id)
+            user_context = self.memory_manager_v2.compile_user_memory(user_id)
             if user_context:
                 system_message_content += (
                     "The following is personalized context about the user you are interacting with. "
@@ -8071,7 +8079,7 @@ class Agent:
 
         # 3.3.10b Add user memory layers from MemoryManagerV2 to the system prompt
         if self.memory_manager_v2 is not None and user_id is not None:
-            user_context = await self.memory_manager_v2.acompile_user_context(user_id)
+            user_context = self.memory_manager_v2.compile_user_memory(user_id)
             if user_context:
                 system_message_content += (
                     "The following is personalized context about the user you are interacting with. "

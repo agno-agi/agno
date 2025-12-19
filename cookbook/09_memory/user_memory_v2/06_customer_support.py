@@ -47,7 +47,7 @@ def show_customer_profile():
     print("CUSTOMER PROFILE (Auto-Extracted)")
     print("=" * 70)
 
-    user = memory.get_user(USER_ID)
+    user = memory.get_user_profile(USER_ID)
     if not user:
         print("(no data yet)")
         return
@@ -89,7 +89,7 @@ def show_customer_profile():
     print("\n" + "-" * 70)
     print("INJECTED INTO AGENT CONTEXT:")
     print("-" * 70)
-    context = memory.compile_user_context(USER_ID)
+    context = memory.compile_user_memory(USER_ID)
     print(context if context else "(nothing yet)")
 
 

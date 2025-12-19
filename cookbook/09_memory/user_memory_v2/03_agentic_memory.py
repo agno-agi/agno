@@ -38,7 +38,7 @@ agent.print_response(
 )
 
 print("\nMemory after conversation 1:")
-pprint(memory.get_user(user_id).to_dict() if memory.get_user(user_id) else {})
+pprint(memory.get_user_profile(user_id).to_dict() if memory.get_user_profile(user_id) else {})
 
 # Conversation 2: Agent uses update_user_policies tool
 print("\nConversation 2: User states preferences")
@@ -49,7 +49,7 @@ agent.print_response(
 )
 
 print("\nMemory after conversation 2:")
-pprint(memory.get_user(user_id).to_dict() if memory.get_user(user_id) else {})
+pprint(memory.get_user_profile(user_id).to_dict() if memory.get_user_profile(user_id) else {})
 
 # Conversation 3: Agent uses manage_user_memory tool to delete
 print("\nConversation 3: User asks to forget something")
@@ -60,7 +60,7 @@ agent.print_response(
 )
 
 print("\nMemory after deletion:")
-pprint(memory.get_user(user_id).to_dict() if memory.get_user(user_id) else {})
+pprint(memory.get_user_profile(user_id).to_dict() if memory.get_user_profile(user_id) else {})
 
 # Cleanup
-memory.delete_user(user_id)
+memory.delete_user_profile(user_id)

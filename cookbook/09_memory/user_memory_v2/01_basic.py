@@ -50,7 +50,7 @@ print("\n" + "=" * 60)
 print("USER MEMORY LAYERS (in authority order)")
 print("=" * 60)
 
-user = memory.get_user("sarah")
+user = memory.get_user_profile("sarah")
 if user:
     print("\n1. POLICIES (highest authority - preferences/constraints):")
     policies = user.memory_layers.get("policies", {})

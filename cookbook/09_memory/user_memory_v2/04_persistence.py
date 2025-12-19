@@ -19,7 +19,7 @@ def session_1():
     print("SESSION 1: User shares information")
 
     db = SqliteDb(db_file=DB_FILE)
-    memory = MemoryManagerV2(db=db, model=OpenAIChat(id="gpt-4o-mini"))
+    memory = MemoryManagerV2(db=db)
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         memory_manager_v2=memory,
@@ -40,7 +40,7 @@ def session_2():
 
     # Create fresh instances
     db = SqliteDb(db_file=DB_FILE)
-    memory = MemoryManagerV2(db=db, model=OpenAIChat(id="gpt-4o-mini"))
+    memory = MemoryManagerV2(db=db)
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         memory_manager_v2=memory,
@@ -48,7 +48,7 @@ def session_2():
     )
 
     # Show what was loaded from database
-    profile = memory.get_user(USER_ID)
+    profile = memory.get_user_profile(USER_ID)
     if profile:
         print("Loaded from database:")
         pprint(profile.to_dict())
@@ -64,7 +64,7 @@ def session_2():
 def cleanup():
     db = SqliteDb(db_file=DB_FILE)
     memory = MemoryManagerV2(db=db)
-    memory.delete_user(USER_ID)
+    memory.delete_user_profile(USER_ID)
     print("\nCleaned up.")
 
 

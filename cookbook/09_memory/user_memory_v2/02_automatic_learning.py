@@ -38,7 +38,7 @@ agent.print_response(
 )
 
 print("\nExtracted profile:")
-pprint(memory.get_user(user_id).user_profile)
+pprint(memory.get_user_profile(user_id).user_profile)
 
 # Conversation 2: User shares preferences (policies)
 print("\nConversation 2: User states preferences")
@@ -50,7 +50,7 @@ agent.print_response(
 )
 
 print("\nExtracted policies:")
-pprint(memory.get_user(user_id).policies)
+pprint(memory.get_user_profile(user_id).policies)
 
 # Conversation 3: Agent uses learned context
 print("\nConversation 3: Agent uses context to respond")
@@ -62,7 +62,7 @@ agent.print_response(
 
 # Show compiled context injected into system message
 print("\nCompiled context (what agent sees):")
-print(memory.compile_user_context(user_id))
+print(memory.compile_user_memory(user_id))
 
 # Cleanup
-memory.delete_user(user_id)
+memory.delete_user_profile(user_id)
