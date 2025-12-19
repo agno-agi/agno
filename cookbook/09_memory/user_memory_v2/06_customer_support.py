@@ -13,7 +13,7 @@ Memory layers populated automatically:
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.memory import MemoryManagerV2
+from agno.memory_v2 import MemoryManagerV2
 from agno.models.openai import OpenAIChat
 
 # Database for customer profiles
@@ -23,13 +23,13 @@ db = SqliteDb(db_file="tmp/support_memory.db")
 memory = MemoryManagerV2(
     db=db,
     model=OpenAIChat(id="gpt-4o-mini"),  # Extraction model
-    update_memory_on_run=True,  # Auto-extract after each message
 )
 
 # Support agent
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     memory_manager_v2=memory,
+    update_memory_on_run=True,  # Auto-extract after each message
     instructions=(
         "You are a customer support agent for CloudSync, a file synchronization "
         "SaaS product. Be helpful, empathetic, and professional. Ask clarifying "

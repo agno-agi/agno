@@ -5,11 +5,9 @@ from agno.memory.strategies import (
     MemoryOptimizationStrategyType,
     SummarizeStrategy,
 )
-from agno.memory.v2_manager import MemoryManagerV2
 
 __all__ = [
     "MemoryManager",
-    "MemoryManagerV2",
     "UserMemory",
     "MemoryOptimizationStrategy",
     "MemoryOptimizationStrategyType",

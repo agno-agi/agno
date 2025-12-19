@@ -45,7 +45,8 @@ from agno.guardrails import BaseGuardrail
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.types import KnowledgeFilter
 from agno.media import Audio, File, Image, Video
-from agno.memory import MemoryManager, MemoryManagerV2
+from agno.memory import MemoryManager
+from agno.memory_v2 import MemoryManagerV2
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
 from agno.models.metrics import Metrics
@@ -233,6 +234,10 @@ class Agent:
     # --- Memory Manager V2 (new user memory system) ---
     # Memory Manager V2 for structured user memory layers
     memory_manager_v2: Optional[MemoryManagerV2] = None
+    # If True, automatically extracts user memory after each run (V2)
+    update_memory_on_run: bool = False
+    # If True, enables agentic memory tools for V2 memory system
+    enable_agentic_memory_v2: bool = False
 
     # --- Database ---
     # Database to use for this agent
@@ -470,6 +475,8 @@ class Agent:
         enable_user_memories: bool = False,
         add_memories_to_context: Optional[bool] = None,
         memory_manager_v2: Optional[MemoryManagerV2] = None,
+        update_memory_on_run: bool = False,
+        enable_agentic_memory_v2: bool = False,
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
@@ -575,6 +582,8 @@ class Agent:
         self.enable_user_memories = enable_user_memories
         self.add_memories_to_context = add_memories_to_context
         self.memory_manager_v2 = memory_manager_v2
+        self.update_memory_on_run = update_memory_on_run
+        self.enable_agentic_memory_v2 = enable_agentic_memory_v2
 
         self.enable_session_summaries = enable_session_summaries
 
@@ -1062,14 +1071,10 @@ class Agent:
             memory_future = None
             # 4. Start memory creation in background thread if memory manager is enabled
             should_create_memories = run_messages.user_message is not None and (
-                # V1 memory manager
+                # V1 memory manager with automatic extraction
                 (self.memory_manager is not None and self.enable_user_memories and not self.enable_agentic_memory)
                 # V2 memory manager with automatic extraction
-                or (
-                    self.memory_manager_v2 is not None
-                    and self.memory_manager_v2.update_memory_on_run
-                    and not self.enable_agentic_memory
-                )
+                or (self.memory_manager_v2 is not None and self.update_memory_on_run)
             )
             if should_create_memories:
                 log_debug("Starting memory creation in background thread.")
@@ -1280,14 +1285,10 @@ class Agent:
             memory_future = None
             # 4. Start memory creation in background thread if memory manager is enabled
             should_create_memories = run_messages.user_message is not None and (
-                # V1 memory manager
+                # V1 memory manager with automatic extraction
                 (self.memory_manager is not None and self.enable_user_memories and not self.enable_agentic_memory)
                 # V2 memory manager with automatic extraction
-                or (
-                    self.memory_manager_v2 is not None
-                    and self.memory_manager_v2.update_memory_on_run
-                    and not self.enable_agentic_memory
-                )
+                or (self.memory_manager_v2 is not None and self.update_memory_on_run)
             )
             if should_create_memories:
                 log_debug("Starting memory creation in background thread.")
@@ -5846,7 +5847,7 @@ class Agent:
                 log_warning("Unable to add messages to memory")
 
         # MemoryManagerV2 extraction (automatic mode)
-        if self.memory_manager_v2 is not None and user_id is not None and self.memory_manager_v2.update_memory_on_run:
+        if self.memory_manager_v2 is not None and user_id is not None and self.update_memory_on_run:
             # Build list of messages to extract from
             messages_to_extract: List[Message] = []
             if run_messages.user_message is not None:
@@ -5917,7 +5918,7 @@ class Agent:
                 log_warning("Unable to add messages to memory")
 
         # MemoryManagerV2 extraction (async, automatic mode)
-        if self.memory_manager_v2 is not None and user_id is not None and self.memory_manager_v2.update_memory_on_run:
+        if self.memory_manager_v2 is not None and user_id is not None and self.update_memory_on_run:
             # Build list of messages to extract from
             messages_to_extract: List[Message] = []
             if run_messages.user_message is not None:
@@ -6001,7 +6002,7 @@ class Agent:
             agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=False))
 
         # Add MemoryManagerV2 agentic tools
-        if self.memory_manager_v2 is not None and self.memory_manager_v2.enable_agentic_memory and user_id:
+        if self.memory_manager_v2 is not None and self.enable_agentic_memory_v2 and user_id:
             v2_tools = self.memory_manager_v2.get_user_memory_tools(user_id=user_id)
             agent_tools.extend(v2_tools)
 
@@ -6111,7 +6112,7 @@ class Agent:
             agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=True))
 
         # Add MemoryManagerV2 agentic tools
-        if self.memory_manager_v2 is not None and self.memory_manager_v2.enable_agentic_memory and user_id:
+        if self.memory_manager_v2 is not None and self.enable_agentic_memory_v2 and user_id:
             v2_tools = self.memory_manager_v2.get_user_memory_tools(user_id=user_id)
             agent_tools.extend(v2_tools)
 
@@ -7717,7 +7718,7 @@ class Agent:
                 system_message_content += "\n"
 
             # Add agentic memory instructions if enabled
-            if self.memory_manager_v2.enable_agentic_memory:
+            if self.enable_agentic_memory_v2:
                 system_message_content += self.memory_manager_v2.get_agentic_memory_instructions()
                 system_message_content += "\n"
 
@@ -8080,7 +8081,7 @@ class Agent:
                 system_message_content += "\n"
 
             # Add agentic memory instructions if enabled
-            if self.memory_manager_v2.enable_agentic_memory:
+            if self.enable_agentic_memory_v2:
                 system_message_content += self.memory_manager_v2.get_agentic_memory_instructions()
                 system_message_content += "\n"
 

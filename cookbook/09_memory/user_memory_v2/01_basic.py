@@ -1,17 +1,15 @@
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.memory import MemoryManagerV2
+from agno.memory_v2 import MemoryManagerV2
 from agno.models.openai import OpenAIChat
 
 db = SqliteDb(db_file="tmp/memory.db")
-memory = MemoryManagerV2(
-    db=db,
-    enable_agentic_memory=True,
-)
+memory = MemoryManagerV2(db=db)
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     memory_manager_v2=memory,
+    enable_agentic_memory_v2=True,
     user_id="sarah",
     debug_mode=True,
     markdown=True,

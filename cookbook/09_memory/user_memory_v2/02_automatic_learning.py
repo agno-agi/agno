@@ -9,7 +9,7 @@ The agent automatically extracts:
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.memory import MemoryManagerV2
+from agno.memory_v2 import MemoryManagerV2
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
@@ -17,12 +17,12 @@ db = SqliteDb(db_file="tmp/user_memory.db")
 memory = MemoryManagerV2(
     db=db,
     model=OpenAIChat(id="gpt-4o-mini"),
-    update_memory_on_run=True,  # Automatic extraction enabled
 )
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     memory_manager_v2=memory,
+    update_memory_on_run=True,  # Automatic extraction enabled
     markdown=True,
 )
 

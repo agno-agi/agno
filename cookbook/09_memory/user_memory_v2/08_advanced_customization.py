@@ -12,7 +12,7 @@ from typing import List, Optional
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.memory import MemoryManagerV2
+from agno.memory_v2 import MemoryManagerV2
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
@@ -41,12 +41,12 @@ def example_per_layer_controls():
     memory = MemoryManagerV2(
         db=db,
         model=OpenAIChat(id="gpt-4o-mini"),
-        update_memory_on_run=True,
     )
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         memory_manager_v2=memory,
+        update_memory_on_run=True,
         markdown=True,
     )
 
@@ -85,7 +85,6 @@ def example_schema_override():
     memory = MemoryManagerV2(
         db=db,
         model=OpenAIChat(id="gpt-4o-mini"),
-        update_memory_on_run=True,
         # Custom schema hints for profile
         profile_schema=EngineerProfile,
     )
@@ -93,6 +92,7 @@ def example_schema_override():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         memory_manager_v2=memory,
+        update_memory_on_run=True,
         markdown=True,
     )
 
@@ -121,33 +121,15 @@ def example_custom_extraction_prompt():
 
     db = SqliteDb(db_file="tmp/custom_memory.db")
 
-    # Custom prompt for policies - more restrictive
-    custom_policies_prompt = """
-Only extract EXPLICIT preference statements. The user must use words like:
-- "I want...", "I prefer...", "Always...", "Never...", "Please..."
-
-Do NOT infer preferences from context or behavior.
-
-Examples of what TO save:
-- "Please be brief" -> save_user_info("policy", "response_length", "brief")
-- "I prefer bullet points" -> save_user_info("policy", "format", "bullet_points")
-
-Examples of what NOT to save:
-- User asks a short question -> DON'T assume they want short answers
-- User uses formal language -> DON'T assume they prefer formal responses
-"""
-
     memory = MemoryManagerV2(
         db=db,
         model=OpenAIChat(id="gpt-4o-mini"),
-        update_memory_on_run=True,
-        # Custom prompt for policies layer
-        policies_extraction_prompt=custom_policies_prompt,
     )
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         memory_manager_v2=memory,
+        update_memory_on_run=True,
         markdown=True,
     )
 

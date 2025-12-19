@@ -6,7 +6,7 @@ so the agent remembers users across app restarts.
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.memory import MemoryManagerV2
+from agno.memory_v2 import MemoryManagerV2
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 

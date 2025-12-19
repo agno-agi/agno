@@ -12,20 +12,17 @@ The agent decides when and what to remember.
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.memory import MemoryManagerV2
+from agno.memory_v2 import MemoryManagerV2
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
 db = SqliteDb(db_file="tmp/user_memory.db")
-memory = MemoryManagerV2(
-    db=db,
-    update_memory_on_run=False,  # Disable automatic extraction
-    enable_agentic_memory=True,  # Agent has tools
-)
+memory = MemoryManagerV2(db=db)
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     memory_manager_v2=memory,
+    enable_agentic_memory_v2=True,  # Agent has tools to manage memory
     markdown=True,
     show_tool_calls=True,
 )
