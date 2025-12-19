@@ -22,6 +22,7 @@ from agno.os.interfaces.agui.utils import (
     validate_agui_state,
 )
 from agno.team.team import Team
+from agno.workflow.workflow import Workflow
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +108,52 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 
-def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
-    if agent is None and team is None:
-        raise ValueError("Either agent or team must be provided.")
+async def run_workflow(workflow: Workflow, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
+    """Run the contextual Workflow, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
+    run_id = input.run_id or str(uuid.uuid4())
+    try:
+        # Extract the last user message for workflow execution
+        messages = convert_agui_messages_to_agno_messages(input.messages or [])
+        yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
+
+        # Look for user_id in input.forwarded_props
+        user_id = None
+        if input.forwarded_props and isinstance(input.forwarded_props, dict):
+            user_id = input.forwarded_props.get("user_id")
+
+        # Validating the session state is of the expected type (dict)
+        session_state = validate_agui_state(input.state, input.thread_id)
+
+        # Request streaming response from workflow
+        response_stream = workflow.arun(
+            input=messages,
+            session_id=input.thread_id,
+            stream=True,
+            stream_events=True,
+            user_id=user_id,
+            session_state=session_state,
+            run_id=run_id,
+        )
+
+        # Stream the response content in AG-UI format
+        async for event in async_stream_agno_response_as_agui_events(
+            response_stream=response_stream, thread_id=input.thread_id, run_id=run_id
+        ):
+            yield event
+
+    except Exception as e:
+        logger.error(f"Error running workflow: {e}", exc_info=True)
+        yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
+
+
+def attach_routes(
+    router: APIRouter,
+    agent: Optional[Agent] = None,
+    team: Optional[Team] = None,
+    workflow: Optional[Workflow] = None,
+) -> APIRouter:
+    if agent is None and team is None and workflow is None:
+        raise ValueError("Either agent, team or workflow must be provided.")
 
     encoder = EventEncoder()
 
@@ -125,6 +169,10 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
                     yield encoded_event
             elif team:
                 async for event in run_team(team, run_input):
+                    encoded_event = encoder.encode(event)
+                    yield encoded_event
+            elif workflow:
+                async for event in run_workflow(workflow, run_input):
                     encoded_event = encoder.encode(event)
                     yield encoded_event
 
