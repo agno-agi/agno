@@ -1,8 +1,6 @@
 from copy import deepcopy
 from dataclasses import dataclass, is_dataclass
 from dataclasses import fields as dataclass_fields
-from os import getenv
-from textwrap import dedent
 from typing import Any, Callable, Dict, List, Optional, Type, Union, cast
 
 from agno.db.base import AsyncBaseDb, BaseDb
@@ -26,63 +24,28 @@ from agno.utils.log import (
     log_error,
     log_info,
     log_warning,
-    set_log_level_to_debug,
-    set_log_level_to_info,
 )
 
 
 @dataclass
 class MemoryManagerV2:
-    """Memory Manager V2 - Handles structured user memory layers
-
-    This manager handles the new memory system with:
-    - User profile (WHO the user is)
-    - Policies (rules and constraints)
-    - Knowledge (learned patterns)
-    - Feedback (what worked/didn't work)
-    """
-
-    # Model for LLM extraction (optional for Phase 1)
     model: Optional[Model] = None
-
-    # Database
     db: Optional[Union[AsyncBaseDb, BaseDb]] = None
 
-    # Context compilation flags (READ - what gets injected into system message)
-    add_user_profile_to_context: bool = True
-    add_user_policies_to_context: bool = True
-    add_knowledge_to_context: bool = True
-    add_feedback_to_context: bool = True
+    # Enable memory system (controls both READ and WRITE for all layers)
+    add_memory_to_context: bool = True
 
-    # Automatic extraction flags (WRITE - background extraction after run)
+    # Automatic extraction (WRITE - background extraction after run)
     update_memory_on_run: bool = False
 
-    # Per-layer extraction controls (which layers to extract)
-    extract_profile: bool = True
-    extract_policies: bool = True
-    extract_knowledge: bool = True
-    extract_feedback: bool = True
-
-    # Agentic memory flags (WRITE - agent has tools to manage memory)
+    # Agentic memory (WRITE - agent has tools to manage memory)
     enable_agentic_memory: bool = False
-
-    # Custom prompts (for LLM extraction)
-    extraction_instructions: Optional[str] = None
 
     # Schema overrides (custom dataclasses for each layer)
     profile_schema: Optional[Type] = None
     policies_schema: Optional[Type] = None
     knowledge_schema: Optional[Type] = None
     feedback_schema: Optional[Type] = None
-
-    # Per-layer extraction prompt overrides
-    profile_extraction_prompt: Optional[str] = None
-    policies_extraction_prompt: Optional[str] = None
-    knowledge_extraction_prompt: Optional[str] = None
-    feedback_extraction_prompt: Optional[str] = None
-
-    # Internal settings
-    debug_mode: bool = False
 
     # ==========================================================================
     # INITIALIZATION
@@ -92,67 +55,31 @@ class MemoryManagerV2:
         self,
         model: Optional[Union[Model, str]] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-        # Context compilation flags (READ)
-        add_user_profile_to_context: bool = True,
-        add_user_policies_to_context: bool = True,
-        add_knowledge_to_context: bool = True,
-        add_feedback_to_context: bool = True,
+        # Memory system flag (controls both READ and WRITE for all layers)
+        add_memory_to_context: bool = True,
         # Automatic extraction (WRITE - background)
         update_memory_on_run: bool = False,
-        # Per-layer extraction controls
-        extract_profile: bool = True,
-        extract_policies: bool = True,
-        extract_knowledge: bool = True,
-        extract_feedback: bool = True,
         # Agentic memory (WRITE - agent has tools)
         enable_agentic_memory: bool = False,
-        # Custom prompts
-        extraction_instructions: Optional[str] = None,
-        # Schema overrides
+        # Schema overrides (custom dataclasses for each layer)
         profile_schema: Optional[Type] = None,
         policies_schema: Optional[Type] = None,
         knowledge_schema: Optional[Type] = None,
         feedback_schema: Optional[Type] = None,
-        # Per-layer extraction prompt overrides
-        profile_extraction_prompt: Optional[str] = None,
-        policies_extraction_prompt: Optional[str] = None,
-        knowledge_extraction_prompt: Optional[str] = None,
-        feedback_extraction_prompt: Optional[str] = None,
-        debug_mode: bool = False,
     ):
         self.model = get_model(model) if model else None
         self.db = db
-        self.add_user_profile_to_context = add_user_profile_to_context
-        self.add_user_policies_to_context = add_user_policies_to_context
-        self.add_knowledge_to_context = add_knowledge_to_context
-        self.add_feedback_to_context = add_feedback_to_context
+        self.add_memory_to_context = add_memory_to_context
         self.update_memory_on_run = update_memory_on_run
-        self.extract_profile = extract_profile
-        self.extract_policies = extract_policies
-        self.extract_knowledge = extract_knowledge
-        self.extract_feedback = extract_feedback
         self.enable_agentic_memory = enable_agentic_memory
-        self.extraction_instructions = extraction_instructions
         self.profile_schema = profile_schema
         self.policies_schema = policies_schema
         self.knowledge_schema = knowledge_schema
         self.feedback_schema = feedback_schema
-        self.profile_extraction_prompt = profile_extraction_prompt
-        self.policies_extraction_prompt = policies_extraction_prompt
-        self.knowledge_extraction_prompt = knowledge_extraction_prompt
-        self.feedback_extraction_prompt = feedback_extraction_prompt
-        self.debug_mode = debug_mode
 
     # ==========================================================================
     # UTILITY METHODS
     # ==========================================================================
-
-    def set_log_level(self) -> None:
-        if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
-            self.debug_mode = True
-            set_log_level_to_debug()
-        else:
-            set_log_level_to_info()
 
     def get_model(self) -> Model:
         """Get the model for extraction, defaulting to OpenAI if not provided."""
@@ -196,71 +123,39 @@ class MemoryManagerV2:
     def _get_extraction_system_message(self, existing_profile: Optional[UserProfile] = None) -> str:
         """Build the system message for tool-based extraction.
 
-        Conditionally includes layer sections based on extract_* flags.
         Uses prompts from v2_prompts.py, with optional schema hints appended.
         """
-        # If custom instructions provided, use those directly
-        if self.extraction_instructions:
-            return self.extraction_instructions
-
-        # Build enabled layers list for the intro
-        enabled_layers = []
-        if self.extract_profile:
-            enabled_layers.append("Profile")
-        if self.extract_policies:
-            enabled_layers.append("Policies")
-        if self.extract_knowledge:
-            enabled_layers.append("Knowledge")
-        if self.extract_feedback:
-            enabled_layers.append("Feedback")
-
-        if not enabled_layers:
-            return "No memory layers are enabled for extraction."
+        if not self.add_memory_to_context:
+            return "Memory is disabled."
 
         # Build system message from constants
         system_message = DEFAULT_EXTRACTION_INTRO
-        system_message += f"\n## Enabled Memory Layers: {', '.join(enabled_layers)}\n\n"
+        system_message += "\n## Enabled Memory Layers: Profile, Policies, Knowledge, Feedback\n\n"
         system_message += DEFAULT_EXTRACTION_TOOL_USAGE
 
-        # Add PROFILE layer instructions if enabled
-        if self.extract_profile:
-            if self.profile_extraction_prompt:
-                system_message += f'\n\n### PROFILE (info_type="profile")\n{self.profile_extraction_prompt}'
-            else:
-                schema_hints = self._get_schema_hints(self.profile_schema)
-                system_message += "\n\n" + DEFAULT_PROFILE_PROMPT
-                if schema_hints:
-                    system_message += schema_hints
+        # Add PROFILE layer instructions
+        schema_hints = self._get_schema_hints(self.profile_schema)
+        system_message += "\n\n" + DEFAULT_PROFILE_PROMPT
+        if schema_hints:
+            system_message += schema_hints
 
-        # Add POLICY layer instructions if enabled
-        if self.extract_policies:
-            if self.policies_extraction_prompt:
-                system_message += f'\n\n### POLICY (info_type="policy")\n{self.policies_extraction_prompt}'
-            else:
-                schema_hints = self._get_schema_hints(self.policies_schema)
-                system_message += "\n\n" + DEFAULT_POLICIES_PROMPT
-                if schema_hints:
-                    system_message += schema_hints
+        # Add POLICY layer instructions
+        schema_hints = self._get_schema_hints(self.policies_schema)
+        system_message += "\n\n" + DEFAULT_POLICIES_PROMPT
+        if schema_hints:
+            system_message += schema_hints
 
-        # Add KNOWLEDGE layer instructions if enabled
-        if self.extract_knowledge:
-            if self.knowledge_extraction_prompt:
-                system_message += f'\n\n### KNOWLEDGE (info_type="knowledge")\n{self.knowledge_extraction_prompt}'
-            else:
-                schema_hints = self._get_schema_hints(self.knowledge_schema)
-                system_message += "\n\n" + DEFAULT_KNOWLEDGE_PROMPT
-                if schema_hints:
-                    system_message += schema_hints
+        # Add KNOWLEDGE layer instructions
+        schema_hints = self._get_schema_hints(self.knowledge_schema)
+        system_message += "\n\n" + DEFAULT_KNOWLEDGE_PROMPT
+        if schema_hints:
+            system_message += schema_hints
 
-        # Add FEEDBACK layer instructions if enabled
-        if self.extract_feedback:
-            if self.feedback_extraction_prompt:
-                system_message += f'\n\n### FEEDBACK (info_type="feedback")\n{self.feedback_extraction_prompt}'
-            else:
-                schema_hints = self._get_schema_hints(self.feedback_schema)
-                system_message += "\n\n" + DEFAULT_FEEDBACK_PROMPT
-                if schema_hints:
-                    system_message += schema_hints
+        # Add FEEDBACK layer instructions
+        schema_hints = self._get_schema_hints(self.feedback_schema)
+        system_message += "\n\n" + DEFAULT_FEEDBACK_PROMPT
+        if schema_hints:
+            system_message += schema_hints
 
         # Add decision framework
         system_message += "\n\n" + DEFAULT_DECISION_FRAMEWORK
@@ -269,13 +164,13 @@ class MemoryManagerV2:
         if existing_profile:
             system_message += "\n## Existing User Profile (do NOT re-save these)\n"
 
-            if self.extract_profile and existing_profile.user_profile:
+            if existing_profile.user_profile:
                 system_message += "<existing_profile>\n"
                 for key, value in existing_profile.user_profile.items():
                     system_message += f"  {key}: {value}\n"
                 system_message += "</existing_profile>\n\n"
 
-            if self.extract_knowledge and existing_profile.knowledge:
+            if existing_profile.knowledge:
                 system_message += "<existing_knowledge>\n"
                 for item in existing_profile.knowledge:
                     if isinstance(item, dict):
@@ -284,13 +179,13 @@ class MemoryManagerV2:
                         system_message += f"  - {item}\n"
                 system_message += "</existing_knowledge>\n\n"
 
-            if self.extract_policies and existing_profile.policies:
+            if existing_profile.policies:
                 system_message += "<existing_policies>\n"
                 for category, rules in existing_profile.policies.items():
                     system_message += f"  {category}: {rules}\n"
                 system_message += "</existing_policies>\n\n"
 
-            if self.extract_feedback and existing_profile.feedback:
+            if existing_profile.feedback:
                 system_message += "<existing_feedback>\n"
                 if isinstance(existing_profile.feedback, dict):
                     for key, items in existing_profile.feedback.items():
@@ -304,7 +199,6 @@ class MemoryManagerV2:
         """Get tools for background memory extraction.
 
         Returns only the save_user_info tool (no forget needed for extraction).
-        Respects per-layer extraction flags.
 
         Args:
             user_id: The user ID to save memory for
@@ -330,19 +224,10 @@ class MemoryManagerV2:
             Returns:
                 Confirmation message
             """
-            # Check if this layer is enabled for extraction
-            if info_type == "profile" and not manager.extract_profile:
-                log_debug(f"[Extraction] Skipped profile (extraction disabled) for {user_id}")
-                return "Profile extraction is disabled"
-            if info_type == "policy" and not manager.extract_policies:
-                log_debug(f"[Extraction] Skipped policy (extraction disabled) for {user_id}")
-                return "Policy extraction is disabled"
-            if info_type == "knowledge" and not manager.extract_knowledge:
-                log_debug(f"[Extraction] Skipped knowledge (extraction disabled) for {user_id}")
-                return "Knowledge extraction is disabled"
-            if info_type == "feedback" and not manager.extract_feedback:
-                log_debug(f"[Extraction] Skipped feedback (extraction disabled) for {user_id}")
-                return "Feedback extraction is disabled"
+            # Check if memory is enabled
+            if not manager.add_memory_to_context:
+                log_debug(f"[Extraction] Skipped {info_type} (memory disabled) for {user_id}")
+                return "Memory is disabled"
 
             # Delegate to shared helper
             return manager._save_to_layer(user_id, info_type, key, value)
@@ -753,7 +638,7 @@ class MemoryManagerV2:
         output = ""
 
         # 1. Policies (HIGHEST AUTHORITY) - preferences and constraints
-        if self.add_user_policies_to_context and user.policies:
+        if user.policies:
             output += "<user_policies>\n"
             output += "<!-- These are user preferences that should be followed -->\n"
             for key, value in user.policies.items():
@@ -771,7 +656,7 @@ class MemoryManagerV2:
             output += "</user_policies>\n\n"
 
         # 2. Profile - user identity information
-        if self.add_user_profile_to_context and user.user_profile:
+        if user.user_profile:
             output += "<user_profile>\n"
             for key, value in user.user_profile.items():
                 if isinstance(value, dict):
@@ -788,7 +673,7 @@ class MemoryManagerV2:
             output += "</user_profile>\n\n"
 
         # 3. Knowledge - learned patterns and context
-        if self.add_knowledge_to_context and user.knowledge:
+        if user.knowledge:
             output += "<user_knowledge>\n"
             for item in user.knowledge:
                 if isinstance(item, dict):
@@ -813,7 +698,7 @@ class MemoryManagerV2:
             output += "</user_knowledge>\n\n"
 
         # 4. Feedback (LOWEST AUTHORITY) - what worked/didn't work
-        if self.add_feedback_to_context and user.feedback:
+        if user.feedback:
             output += "<user_feedback>\n"
             output += "<!-- Signals about what works for this user -->\n"
             if isinstance(user.feedback, dict):
@@ -865,8 +750,6 @@ class MemoryManagerV2:
         Returns:
             True if extraction was attempted, False if skipped
         """
-        self.set_log_level()
-
         if not messages:
             log_debug("No messages to extract from")
             return False
@@ -941,8 +824,6 @@ class MemoryManagerV2:
         Returns:
             True if extraction was attempted, False if skipped
         """
-        self.set_log_level()
-
         if not messages:
             log_debug("No messages to extract from")
             return False

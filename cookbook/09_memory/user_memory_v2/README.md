@@ -119,35 +119,14 @@ memory = MemoryManagerV2(
     db=db,
     model=OpenAIChat(id="gpt-4o-mini"),
     
-    # What to extract (automatic mode)
+    # Enable memory (controls both READ and WRITE for all layers)
+    add_memory_to_context=True,
+    
+    # Automatic extraction (background)
     update_memory_on_run=True,
     
     # Agent tools (agentic mode)
     enable_agentic_memory=False,
-    
-    # What to inject into context (READ)
-    add_user_profile_to_context=True,
-    add_user_policies_to_context=True,
-    add_knowledge_to_context=True,
-    add_feedback_to_context=True,
-)
-```
-
-## Advanced: Per-Layer Controls
-
-Control which layers are extracted and with what rules:
-
-```python
-memory = MemoryManagerV2(
-    db=db,
-    model=OpenAIChat(id="gpt-4o-mini"),
-    update_memory_on_run=True,
-    
-    # Per-layer extraction controls (WRITE)
-    extract_profile=True,
-    extract_policies=True,
-    extract_knowledge=False,  # Disable knowledge extraction
-    extract_feedback=True,
 )
 ```
 

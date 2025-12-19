@@ -32,26 +32,16 @@ class EngineerProfile:
 def example_per_layer_controls():
     """Demonstrate enabling/disabling specific memory layers."""
     print("=" * 60)
-    print("Example 1: Per-Layer Extraction Controls")
+    print("Example 1: Basic Memory with Automatic Extraction")
     print("=" * 60)
 
     db = SqliteDb(db_file="tmp/custom_memory.db")
 
-    # Only extract profile and policies, skip knowledge and feedback
+    # Basic memory setup with automatic extraction
     memory = MemoryManagerV2(
         db=db,
         model=OpenAIChat(id="gpt-4o-mini"),
         update_memory_on_run=True,
-        # Per-layer extraction controls
-        extract_profile=True,
-        extract_policies=True,
-        extract_knowledge=False,  # Skip knowledge extraction
-        extract_feedback=False,  # Skip feedback extraction
-        # Context compilation controls (what gets injected)
-        add_user_profile_to_context=True,
-        add_user_policies_to_context=True,
-        add_knowledge_to_context=False,
-        add_feedback_to_context=False,
     )
 
     agent = Agent(
