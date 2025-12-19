@@ -11,4 +11,4 @@ pgvector
 pillow
 psycopg[binary]
 sqlalchemy
-sqlalchemy
+yfinance

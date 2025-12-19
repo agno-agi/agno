@@ -88,7 +88,7 @@ async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message
 
 def get_openai_reasoning_stream(
     reasoning_agent: "Agent",  # type: ignore  # noqa: F821
-    messages: List[Message],  # type: ignore  # noqa: F821
+    messages: List[Message],
 ) -> Iterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from OpenAI model.
@@ -144,7 +144,7 @@ def get_openai_reasoning_stream(
 
 async def aget_openai_reasoning_stream(
     reasoning_agent: "Agent",  # type: ignore  # noqa: F821
-    messages: List[Message],  # type: ignore  # noqa: F821
+    messages: List[Message],
 ) -> AsyncIterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from OpenAI model asynchronously.

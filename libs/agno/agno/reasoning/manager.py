@@ -810,7 +810,7 @@ class ReasoningManager:
         # Validate reasoning agent output schema
         if (
             reasoning_agent.output_schema is not None
-            and not isinstance(reasoning_agent.output_schema, type)
+            and isinstance(reasoning_agent.output_schema, type)
             and not issubclass(reasoning_agent.output_schema, ReasoningSteps)
         ):
             yield (
@@ -914,7 +914,7 @@ class ReasoningManager:
         # Validate reasoning agent output schema
         if (
             reasoning_agent.output_schema is not None
-            and not isinstance(reasoning_agent.output_schema, type)
+            and isinstance(reasoning_agent.output_schema, type)
             and not issubclass(reasoning_agent.output_schema, ReasoningSteps)
         ):
             yield (

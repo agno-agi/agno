@@ -24,7 +24,7 @@ async def run_accuracy_eval():
     client = AgentOSClient(base_url="http://localhost:7777")
 
     # Get available agents
-    config = await client.get_config()
+    config = await client.aget_config()
     if not config.agents:
         print("No agents available")
         return
@@ -63,7 +63,7 @@ async def run_performance_eval():
     client = AgentOSClient(base_url="http://localhost:7777")
 
     # Get available agents
-    config = await client.get_config()
+    config = await client.aget_config()
     if not config.agents:
         print("No agents available")
         return

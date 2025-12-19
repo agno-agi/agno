@@ -325,8 +325,9 @@ def get_team_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        if not team.cancel_run(run_id=run_id):
-            raise HTTPException(status_code=500, detail="Failed to cancel run")
+        cancelled = team.cancel_run(run_id=run_id)
+        if not cancelled:
+            raise HTTPException(status_code=500, detail="Failed to cancel run - run not found or already completed")
 
         return JSONResponse(content={}, status_code=200)
 

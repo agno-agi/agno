@@ -109,9 +109,9 @@ async def run_agent_as_judge_eval(
 
     # Restore original model after eval
     if default_model is not None:
-        if agent is not None:
+        if agent is not None and isinstance(agent, Agent):
             agent.model = default_model
-        elif team is not None:
+        elif team is not None and isinstance(team, Team):
             team.model = default_model
 
     return eval_run

@@ -46,7 +46,7 @@ async def upload_text_content():
         print("Uploading text content...")
 
         # Upload the content using text_content parameter
-        result = await client.upload_content(
+        result = await client.upload_knowledge_content(
             text_content=content,
             name="Agno Guide",
             description="A guide to the Agno framework",
@@ -78,7 +78,7 @@ async def list_uploaded_content():
     client = AgentOSClient(base_url="http://localhost:7777")
 
     try:
-        content = await client.list_content()
+        content = await client.list_knowledge_content()
         print(f"\nFound {len(content.data)} content items")
 
         for item in content.data:

@@ -22,7 +22,7 @@ async def run_agent_non_streaming():
 
     client = AgentOSClient(base_url="http://localhost:7777")
     # Get available agents
-    config = await client.get_config()
+    config = await client.aget_config()
     if not config.agents:
         print("No agents available")
         return
@@ -50,7 +50,7 @@ async def run_agent_streaming():
     client = AgentOSClient(base_url="http://localhost:7777")
 
     # Get available agents
-    config = await client.get_config()
+    config = await client.aget_config()
     if not config.agents:
         print("No agents available")
         return
@@ -77,56 +77,9 @@ async def run_agent_streaming():
     print("\n")
 
 
-async def run_agent_with_session():
-    """Execute agent runs within a session for multi-turn conversations."""
-    print("=" * 60)
-    print("Multi-Turn Conversation with Session")
-    print("=" * 60)
-
-    client = AgentOSClient(base_url="http://localhost:7777")
-
-    # Get available agents
-    config = await client.get_config()
-    if not config.agents:
-        print("No agents available")
-        return
-
-    agent_id = config.agents[0].id
-
-    # Create a session for multi-turn conversation
-    session = await client.create_session(
-        agent_id=agent_id,
-        user_id="example-user",
-    )
-    print(f"Created session: {session.session_id}")
-
-    # First message
-    print("\nUser: My name is Alice.")
-    result1 = await client.run_agent(
-        agent_id=agent_id,
-        message="My name is Alice.",
-        session_id=session.session_id,
-    )
-    print(f"Assistant: {result1.content}")
-
-    # Second message - agent should remember the context
-    print("\nUser: What is my name?")
-    result2 = await client.run_agent(
-        agent_id=agent_id,
-        message="What is my name?",
-        session_id=session.session_id,
-    )
-    print(f"Assistant: {result2.content}")
-
-    # Get session runs
-    runs = await client.get_session_runs(session_id=session.session_id)
-    print(f"\nSession has {len(runs)} runs")
-
-
 async def main():
     await run_agent_non_streaming()
     await run_agent_streaming()
-    await run_agent_with_session()
 
 
 if __name__ == "__main__":

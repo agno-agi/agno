@@ -107,7 +107,7 @@ async def agent_response_streamer(
 async def agent_continue_response_streamer(
     agent: Union[Agent, RemoteAgent],
     run_id: str,
-    updated_tools: Optional[List] = None,
+    updated_tools: List,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
@@ -409,8 +409,9 @@ def get_agent_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        if not agent.cancel_run(run_id=run_id):
-            raise HTTPException(status_code=500, detail="Failed to cancel run")
+        cancelled = agent.cancel_run(run_id=run_id)
+        if not cancelled:
+            raise HTTPException(status_code=500, detail="Failed to cancel run - run not found or already completed")
 
         return JSONResponse(content={}, status_code=200)
 
@@ -473,7 +474,7 @@ def get_agent_router(
             )
 
         # Convert tools dict to ToolExecution objects if provided
-        updated_tools = None
+        updated_tools = []
         if tools_data:
             try:
                 from agno.models.response import ToolExecution
@@ -507,7 +508,7 @@ def get_agent_router(
             try:
                 run_response_obj = cast(
                     RunOutput,
-                    await agent.acontinue_run(
+                    await agent.acontinue_run(  # type: ignore
                         run_id=run_id,  # run_id from path
                         updated_tools=updated_tools,
                         session_id=session_id,

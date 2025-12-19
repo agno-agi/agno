@@ -23,7 +23,7 @@ async def run_team_non_streaming():
     client = AgentOSClient(base_url="http://localhost:7777")
 
     # Get available teams
-    config = await client.get_config()
+    config = await client.aget_config()
     if not config.teams:
         print("No teams available")
         return
@@ -50,7 +50,7 @@ async def run_team_streaming():
     client = AgentOSClient(base_url="http://localhost:7777")
 
     # Get available teams
-    config = await client.get_config()
+    config = await client.aget_config()
     if not config.teams:
         print("No teams available")
         return
@@ -76,50 +76,9 @@ async def run_team_streaming():
     print("\n")
 
 
-async def run_team_with_session():
-    """Execute team runs within a session.
-
-    Note: Teams coordinate multiple agents and may not maintain
-    conversation context like a single agent would.
-    """
-    print("=" * 60)
-    print("Team Run with Session")
-    print("=" * 60)
-
-    client = AgentOSClient(base_url="http://localhost:7777")
-
-    # Get available teams
-    config = await client.get_config()
-    if not config.teams:
-        print("No teams available")
-        return
-
-    team_id = config.teams[0].id
-
-    # Create a session for the team
-    session = await client.create_session(
-        team_id=team_id,
-        user_id="example-user",
-    )
-    print(f"Created session: {session.session_id}")
-
-    # Run a query that requires team coordination
-    print("\nUser: Research what Python is and calculate 100 / 4.")
-    try:
-        result = await client.run_team(
-            team_id=team_id,
-            message="Research what Python is and calculate 100 / 4.",
-            session_id=session.session_id,
-        )
-        print(f"Team: {result.content}")
-    except Exception as e:
-        print(f"Error: {type(e).__name__}: {e}")
-
-
 async def main():
     await run_team_non_streaming()
     await run_team_streaming()
-    await run_team_with_session()
 
 
 if __name__ == "__main__":

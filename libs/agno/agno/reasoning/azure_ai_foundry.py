@@ -69,7 +69,7 @@ async def aget_ai_foundry_reasoning(reasoning_agent: "Agent", messages: List[Mes
 
 def get_ai_foundry_reasoning_stream(
     reasoning_agent: "Agent",  # type: ignore  # noqa: F821
-    messages: List[Message],  # type: ignore  # noqa: F821
+    messages: List[Message],
 ) -> Iterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from Azure AI Foundry model.
@@ -115,7 +115,7 @@ def get_ai_foundry_reasoning_stream(
 
 async def aget_ai_foundry_reasoning_stream(
     reasoning_agent: "Agent",  # type: ignore  # noqa: F821
-    messages: List[Message],  # type: ignore  # noqa: F821
+    messages: List[Message],
 ) -> AsyncIterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from Azure AI Foundry model asynchronously.

@@ -17,7 +17,7 @@ async def main():
     client = AgentOSClient(base_url="http://localhost:7777")
 
     # Get available agents
-    config = await client.get_config()
+    config = await client.aget_config()
     if not config.agents:
         print("No agents available")
         return
@@ -41,7 +41,7 @@ async def main():
 
     # List sessions
     print("\n2. Listing sessions...")
-    sessions = await client.list_sessions(user_id=user_id)
+    sessions = await client.get_sessions(user_id=user_id)
     print(f"   Found {len(sessions.data)} sessions")
     for sess in sessions.data[:5]:  # Show first 5
         print(f"   - {sess.session_id}: {sess.session_name or 'Unnamed'}")

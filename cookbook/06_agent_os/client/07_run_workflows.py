@@ -10,7 +10,6 @@ Prerequisites:
 """
 
 import asyncio
-import json
 
 from agno.client import AgentOSClient
 
@@ -24,7 +23,7 @@ async def run_workflow_non_streaming():
     client = AgentOSClient(base_url="http://localhost:7777")
 
     # Get available workflows
-    config = await client.get_config()
+    config = await client.aget_config()
     if not config.workflows:
         print("No workflows available")
         return
@@ -56,7 +55,7 @@ async def run_workflow_streaming():
     client = AgentOSClient(base_url="http://localhost:7777")
 
     # Get available workflows
-    config = await client.get_config()
+    config = await client.aget_config()
     if not config.workflows:
         print("No workflows available")
         return
@@ -66,72 +65,30 @@ async def run_workflow_streaming():
     print("\nResponse: ", end="", flush=True)
 
     try:
-        # Stream the response
-        async for line in client.run_workflow_stream(
+        # Stream the response - returns typed WorkflowRunOutputEvent objects
+        # Workflows can emit both workflow events and nested agent events
+        async for event in client.run_workflow_stream(
             workflow_id=workflow_id,
             message="Explain machine learning in simple terms.",
         ):
-            if line.startswith("data: "):
-                try:
-                    data = json.loads(line[6:])
-                    if data.get("event") == "RunContent":
-                        content = data.get("content", "")
-                        print(content, end="", flush=True)
-                except json.JSONDecodeError:
-                    pass
+            # Handle content from agent events (RunContent) or workflow completion
+            if event.event == "RunContent" and hasattr(event, "content"):
+                print(event.content, end="", flush=True)
+            elif (
+                event.event == "WorkflowAgentCompleted"
+                and hasattr(event, "content")
+                and event.content
+            ):
+                print(event.content, end="", flush=True)
 
         print("\n")
     except Exception as e:
-        print(f"\nError: {type(e).__name__}")
-
-
-async def run_workflow_with_session():
-    """
-    Execute workflow runs within a session.
-    """
-    print("=" * 60)
-    print("Workflow with Session")
-    print("=" * 60)
-
-    client = AgentOSClient(base_url="http://localhost:7777")
-
-    # Get available workflows
-    config = await client.get_config()
-    if not config.workflows:
-        print("No workflows available")
-        return
-
-    workflow_id = config.workflows[0].id
-
-    try:
-        # Create a session for the workflow
-        session = await client.create_session(
-            workflow_id=workflow_id,
-            user_id="example-user",
-        )
-        print(f"Created session: {session.session_id}")
-
-        # Run a workflow with the session
-        result = await client.run_workflow(
-            workflow_id=workflow_id,
-            message="What are the key features of modern programming languages?",
-            session_id=session.session_id,
-        )
-        print(
-            f"Workflow: {result.content[:500]}..."
-            if len(str(result.content)) > 500
-            else f"Workflow: {result.content}"
-        )
-    except Exception as e:
-        print(f"Error: {e}")
-        if hasattr(e, "response"):
-            print(f"Response: {e.response.text}")
+        print(f"\nError: {type(e).__name__}: {e}")
 
 
 async def main():
     await run_workflow_non_streaming()
     await run_workflow_streaming()
-    await run_workflow_with_session()
 
 
 if __name__ == "__main__":
