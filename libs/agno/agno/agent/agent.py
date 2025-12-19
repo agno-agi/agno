@@ -103,11 +103,12 @@ from agno.utils.agent import (
     set_session_name_util,
     store_media_util,
     update_session_state_util,
+    validate_input,
     validate_media_object_id,
     wait_for_open_threads,
     wait_for_thread_tasks_stream,
 )
-from agno.utils.common import is_typed_dict, validate_typed_dict
+from agno.utils.common import is_typed_dict
 from agno.utils.events import (
     add_error_event,
     create_parser_model_response_completed_event,
@@ -761,56 +762,6 @@ class Agent:
 
             log_info("Setting default model to OpenAI Chat")
             self.model = OpenAIChat(id="gpt-4o")
-
-    def _validate_input(
-        self, input: Union[str, List, Dict, Message, BaseModel]
-    ) -> Union[str, List, Dict, Message, BaseModel]:
-        """Parse and validate input against input_schema if provided, otherwise return input as-is"""
-        if self.input_schema is None:
-            return input  # Return input unchanged if no schema is set
-
-        # Handle Message objects - extract content
-        if isinstance(input, Message):
-            input = input.content  # type: ignore
-
-        # If input is a string, convert it to a dict
-        if isinstance(input, str):
-            import json
-
-            try:
-                input = json.loads(input)
-            except Exception as e:
-                raise ValueError(f"Failed to parse input. Is it a valid JSON string?: {e}")
-
-        # Case 1: Message is already a BaseModel instance
-        if isinstance(input, BaseModel):
-            if isinstance(input, self.input_schema):
-                try:
-                    return input
-                except Exception as e:
-                    raise ValueError(f"BaseModel validation failed: {str(e)}")
-            else:
-                # Different BaseModel types
-                raise ValueError(f"Expected {self.input_schema.__name__} but got {type(input).__name__}")
-
-        # Case 2: Message is a dict
-        elif isinstance(input, dict):
-            try:
-                # Check if the schema is a TypedDict
-                if is_typed_dict(self.input_schema):
-                    validated_dict = validate_typed_dict(input, self.input_schema)
-                    return validated_dict
-                else:
-                    validated_model = self.input_schema(**input)
-                    return validated_model
-            except Exception as e:
-                raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
-
-        # Case 3: Other types not supported for structured input
-        else:
-            raise ValueError(
-                f"Cannot validate {type(input)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
-            )
 
     def _set_culture_manager(self) -> None:
         if self.db is None:
@@ -1654,7 +1605,7 @@ class Agent:
                     background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
                 # Validate input against input_schema if provided
-                validated_input = self._validate_input(input)
+                validated_input = validate_input(input, self.input_schema)
 
                 # Normalise hook & guardails
                 if not self._hooks_normalised:
@@ -2828,7 +2779,7 @@ class Agent:
             background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         # 2. Validate input against input_schema if provided
-        validated_input = self._validate_input(input)
+        validated_input = validate_input(input, self.input_schema)
 
         # Normalise hooks & guardails
         if not self._hooks_normalised:

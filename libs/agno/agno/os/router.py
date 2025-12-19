@@ -1,16 +1,18 @@
 import json
-from typing import TYPE_CHECKING, List, Union, cast
+from typing import TYPE_CHECKING, List, cast
 
 from fastapi import (
     APIRouter,
     Depends,
     WebSocket,
+    HTTPException,
 )
 
-from agno.agent.agent import Agent
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.managers import websocket_manager
 from agno.os.routers.workflows.router import handle_workflow_subscription, handle_workflow_via_websocket
+
+from agno.exceptions import RemoteServerUnavailableError
 from agno.os.schema import (
     AgentSummaryResponse,
     BadRequestResponse,
@@ -25,7 +27,6 @@ from agno.os.schema import (
     WorkflowSummaryResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.team.team import Team
 from agno.utils.log import logger
 
 if TYPE_CHECKING:
@@ -140,6 +141,27 @@ def get_base_router(
         },
     )
     async def config() -> ConfigResponse:
+        try:
+            agent_summaries = []
+            if os.agents:
+                for agent in os.agents:
+                    agent_summaries.append(AgentSummaryResponse.from_agent(agent))
+
+            team_summaries = []
+            if os.teams:
+                for team in os.teams:
+                    team_summaries.append(TeamSummaryResponse.from_team(team))
+
+            workflow_summaries = []
+            if os.workflows:
+                for workflow in os.workflows:
+                    workflow_summaries.append(WorkflowSummaryResponse.from_workflow(workflow))
+        except RemoteServerUnavailableError as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to fetch config from remote AgentOS: {e}",
+            )
+
         return ConfigResponse(
             os_id=os.id or "Unnamed OS",
             description=os.description,
@@ -151,10 +173,10 @@ def get_base_router(
             knowledge=os._get_knowledge_config(),
             evals=os._get_evals_config(),
             metrics=os._get_metrics_config(),
+            agents=agent_summaries,
+            teams=team_summaries,
+            workflows=workflow_summaries,
             traces=os._get_traces_config(),
-            agents=[AgentSummaryResponse.from_agent(agent) for agent in os.agents] if os.agents else [],
-            teams=[TeamSummaryResponse.from_team(team) for team in os.teams] if os.teams else [],
-            workflows=[WorkflowSummaryResponse.from_workflow(w) for w in os.workflows] if os.workflows else [],
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.prefix)
                 for interface in os.interfaces
@@ -188,19 +210,25 @@ def get_base_router(
     )
     async def get_models() -> List[Model]:
         """Return the list of all models used by agents and teams in the contextual OS"""
-        all_components: List[Union[Agent, Team]] = []
-        if os.agents:
-            all_components.extend(os.agents)
-        if os.teams:
-            all_components.extend(os.teams)
-
         unique_models = {}
-        for item in all_components:
-            model = cast(Model, item.model)
-            if model.id is not None and model.provider is not None:
-                key = (model.id, model.provider)
-                if key not in unique_models:
-                    unique_models[key] = Model(id=model.id, provider=model.provider)
+
+        # Collect models from local agents
+        if os.agents:
+            for agent in os.agents:
+                model = cast(Model, agent.model)
+                if model and model.id is not None and model.provider is not None:
+                    key = (model.id, model.provider)
+                    if key not in unique_models:
+                        unique_models[key] = Model(id=model.id, provider=model.provider)
+
+        # Collect models from local teams
+        if os.teams:
+            for team in os.teams:
+                model = cast(Model, team.model)
+                if model and model.id is not None and model.provider is not None:
+                    key = (model.id, model.provider)
+                    if key not in unique_models:
+                        unique_models[key] = Model(id=model.id, provider=model.provider)
 
         return list(unique_models.values())
 

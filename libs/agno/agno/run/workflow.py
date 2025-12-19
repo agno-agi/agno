@@ -500,6 +500,7 @@ class WorkflowRunOutput:
 
     run_id: Optional[str] = None
     session_id: Optional[str] = None
+    user_id: Optional[str] = None
 
     # Media content fields
     images: Optional[List[Image]] = None
