@@ -11,7 +11,6 @@ from fastapi import (
     HTTPException,
     Request,
     UploadFile,
-    WebSocket,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -20,7 +19,6 @@ from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import get_authentication_dependency, require_resource_access
-from agno.os.managers import event_buffer, websocket_manager
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -40,204 +38,10 @@ from agno.os.utils import (
     process_video,
 )
 from agno.run.agent import RunErrorEvent, RunOutput
-from agno.run.base import RunStatus
-from agno.utils.log import log_debug, log_error, log_warning, logger
-from agno.utils.serialize import json_serializer
+from agno.utils.log import log_debug, log_error, log_warning
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
-
-
-async def handle_agent_via_websocket(websocket: WebSocket, message: dict, os: "AgentOS"):
-    """Handle agent execution directly via WebSocket"""
-    try:
-        agent_id = message.get("agent_id")
-        session_id = message.get("session_id")
-        user_message = message.get("message", "")
-        user_id = message.get("user_id")
-
-        if not agent_id:
-            await websocket.send_text(json.dumps({"event": "error", "error": "agent_id is required"}))
-            return
-
-        # Get agent from OS
-        agent = get_agent_by_id(agent_id, os.agents)
-        if not agent:
-            await websocket.send_text(json.dumps({"event": "error", "error": f"Agent {agent_id} not found"}))
-            return
-
-        # Generate session_id if not provided
-        if not session_id:
-            if agent.session_id:
-                session_id = agent.session_id
-            else:
-                session_id = str(uuid4())
-
-        # Execute agent in background with streaming
-        await agent.arun(  # type: ignore[misc]
-            input=user_message,
-            session_id=session_id,
-            user_id=user_id,
-            stream=True,
-            stream_events=True,
-            background=True,
-            websocket=websocket,
-        )
-
-        # NOTE: Don't register the original websocket in the manager
-        # It's already handled by the WebSocketHandler passed to the agent
-        # The manager is ONLY for reconnected clients (see handle_agent_subscription)
-
-    except (InputCheckError, OutputCheckError) as e:
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "event": "error",
-                    "error": str(e),
-                    "error_type": e.type,
-                    "error_id": e.error_id,
-                    "additional_data": e.additional_data,
-                }
-            )
-        )
-    except Exception as e:
-        logger.error(f"Error executing agent via WebSocket: {e}")
-        error_payload = {
-            "event": "error",
-            "error": str(e),
-            "error_type": e.type if hasattr(e, "type") else None,
-            "error_id": e.error_id if hasattr(e, "error_id") else None,
-        }
-        error_payload = {k: v for k, v in error_payload.items() if v is not None}
-        await websocket.send_text(json.dumps(error_payload))
-
-
-async def handle_agent_subscription(websocket: WebSocket, message: dict, os: "AgentOS"):
-    """
-    Handle subscription/reconnection to an existing agent run.
-    Allows clients to reconnect after page refresh or disconnection and catch up on missed events.
-    """
-    try:
-        run_id = message.get("run_id")
-        agent_id = message.get("agent_id")
-        session_id = message.get("session_id")
-        last_event_index = message.get("last_event_index")  # 0-based index of last received event
-
-        if not run_id:
-            await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required for subscription"}))
-            return
-
-        # Check if run exists in event buffer
-        buffer_status = event_buffer.get_run_status(run_id)
-
-        if buffer_status is None:
-            # Run not in buffer - check database
-            if agent_id and session_id:
-                agent = get_agent_by_id(agent_id, os.agents)
-                if agent:
-                    agent_run = await agent.aget_run_output(run_id, session_id)
-
-                    if agent_run:
-                        # Run exists in DB - send all events from DB
-                        await websocket.send_text(
-                            json.dumps(
-                                {
-                                    "event": "subscription_confirmed",
-                                    "run_id": run_id,
-                                    "status": agent_run.status.value if agent_run.status else "unknown",
-                                    "source": "database",
-                                    "message": "Run found in database. Replaying all events.",
-                                }
-                            )
-                        )
-
-                        # Send events from run output
-                        if agent_run.events:
-                            for idx, buffered_event in enumerate(agent_run.events):
-                                event_dict = (
-                                    buffered_event.model_dump()
-                                    if hasattr(buffered_event, "model_dump")
-                                    else buffered_event.to_dict()
-                                )
-                                event_dict["event_index"] = idx
-                                event_dict["run_id"] = run_id
-                                await websocket.send_text(json.dumps(event_dict, default=json_serializer))
-
-                        # Send completion event
-                        await websocket.send_text(
-                            json.dumps(
-                                {
-                                    "event": "replay_completed",
-                                    "run_id": run_id,
-                                    "total_events": len(agent_run.events) if agent_run.events else 0,
-                                }
-                            )
-                        )
-                        return
-
-            # Run not found anywhere
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "event": "error",
-                        "error": f"Run {run_id} not found in buffer or database",
-                    }
-                )
-            )
-            return
-
-        # Run exists in buffer
-        events_to_send = event_buffer.get_events(run_id, last_event_index)
-        total_events = event_buffer.get_event_count(run_id)
-
-        # Send subscription confirmation
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "event": "subscription_confirmed",
-                    "run_id": run_id,
-                    "status": buffer_status.value if buffer_status else "unknown",
-                    "source": "buffer",
-                    "total_events": total_events,
-                    "events_to_send": len(events_to_send),
-                    "last_event_index": last_event_index,
-                }
-            )
-        )
-
-        # Send missed events
-        start_index = (last_event_index + 1) if last_event_index is not None else 0
-        for idx, evt in enumerate(events_to_send):
-            event_dict = evt.model_dump() if hasattr(evt, "model_dump") else evt.to_dict()
-            event_dict["event_index"] = start_index + idx
-            event_dict["run_id"] = run_id
-            await websocket.send_text(json.dumps(event_dict, default=json_serializer))
-
-        # Register websocket for future events
-        await websocket_manager.register_websocket(run_id, websocket)
-
-        # Send catch-up completion
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "event": "catch_up_completed",
-                    "run_id": run_id,
-                    "events_sent": len(events_to_send),
-                    "is_running": buffer_status == RunStatus.running,
-                }
-            )
-        )
-
-    except Exception as e:
-        logger.error(f"Error in agent subscription: {e}")
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "event": "error",
-                    "error": f"Subscription failed: {str(e)}",
-                }
-            )
-        )
 
 
 async def agent_response_streamer(

@@ -10,8 +10,6 @@ from fastapi import (
 from agno.agent.agent import Agent
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.managers import websocket_manager
-from agno.os.routers.agents.router import handle_agent_subscription, handle_agent_via_websocket
-from agno.os.routers.teams.router import handle_team_subscription, handle_team_via_websocket
 from agno.os.routers.workflows.router import handle_workflow_subscription, handle_workflow_via_websocket
 from agno.os.schema import (
     AgentSummaryResponse,
@@ -270,130 +268,6 @@ def get_websocket_router(
                 elif action == "reconnect":
                     # Subscribe/reconnect to an existing workflow run
                     await handle_workflow_subscription(websocket, message, os)
-
-                else:
-                    await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))
-
-        except Exception as e:
-            if "1012" not in str(e) and "1001" not in str(e):
-                logger.error(f"WebSocket error: {e}")
-        finally:
-            # Clean up the websocket connection
-            await websocket_manager.disconnect_websocket(websocket)
-
-    @ws_router.websocket(
-        "/agents/ws",
-        name="agent_websocket",
-    )
-    async def agent_websocket_endpoint(websocket: WebSocket):
-        """WebSocket endpoint for receiving real-time agent events"""
-        requires_auth = bool(settings.os_security_key)
-        await websocket_manager.connect(websocket, requires_auth=requires_auth)
-
-        try:
-            while True:
-                data = await websocket.receive_text()
-                message = json.loads(data)
-                action = message.get("action")
-
-                # Handle authentication first
-                if action == "authenticate":
-                    token = message.get("token")
-                    if not token:
-                        await websocket.send_text(json.dumps({"event": "auth_error", "error": "Token is required"}))
-                        continue
-
-                    if validate_websocket_token(token, settings):
-                        await websocket_manager.authenticate_websocket(websocket)
-                    else:
-                        await websocket.send_text(json.dumps({"event": "auth_error", "error": "Invalid token"}))
-                        continue
-
-                # Check authentication for all other actions (only when required)
-                elif requires_auth and not websocket_manager.is_authenticated(websocket):
-                    await websocket.send_text(
-                        json.dumps(
-                            {
-                                "event": "auth_required",
-                                "error": "Authentication required. Send authenticate action with valid token.",
-                            }
-                        )
-                    )
-                    continue
-
-                # Handle authenticated actions
-                elif action == "ping":
-                    await websocket.send_text(json.dumps({"event": "pong"}))
-
-                elif action == "start-agent":
-                    # Handle agent execution directly via WebSocket
-                    await handle_agent_via_websocket(websocket, message, os)
-
-                elif action == "reconnect":
-                    # Subscribe/reconnect to an existing agent run
-                    await handle_agent_subscription(websocket, message, os)
-
-                else:
-                    await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))
-
-        except Exception as e:
-            if "1012" not in str(e) and "1001" not in str(e):
-                logger.error(f"WebSocket error: {e}")
-        finally:
-            # Clean up the websocket connection
-            await websocket_manager.disconnect_websocket(websocket)
-
-    @ws_router.websocket(
-        "/teams/ws",
-        name="team_websocket",
-    )
-    async def team_websocket_endpoint(websocket: WebSocket):
-        """WebSocket endpoint for receiving real-time team events"""
-        requires_auth = bool(settings.os_security_key)
-        await websocket_manager.connect(websocket, requires_auth=requires_auth)
-
-        try:
-            while True:
-                data = await websocket.receive_text()
-                message = json.loads(data)
-                action = message.get("action")
-
-                # Handle authentication first
-                if action == "authenticate":
-                    token = message.get("token")
-                    if not token:
-                        await websocket.send_text(json.dumps({"event": "auth_error", "error": "Token is required"}))
-                        continue
-
-                    if validate_websocket_token(token, settings):
-                        await websocket_manager.authenticate_websocket(websocket)
-                    else:
-                        await websocket.send_text(json.dumps({"event": "auth_error", "error": "Invalid token"}))
-                        continue
-
-                # Check authentication for all other actions (only when required)
-                elif requires_auth and not websocket_manager.is_authenticated(websocket):
-                    await websocket.send_text(
-                        json.dumps(
-                            {
-                                "event": "auth_required",
-                                "error": "Authentication required. Send authenticate action with valid token.",
-                            }
-                        )
-                    )
-                    continue
-
-                # Handle authenticated actions
-                elif action == "ping":
-                    await websocket.send_text(json.dumps({"event": "pong"}))
-
-                elif action == "start-team":
-                    # Handle team execution directly via WebSocket
-                    await handle_team_via_websocket(websocket, message, os)
-
-                elif action == "reconnect":
-                    # Subscribe/reconnect to an existing team run
-                    await handle_team_subscription(websocket, message, os)
 
                 else:
                     await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))

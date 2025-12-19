@@ -3050,8 +3050,6 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        background: Optional[bool] = None,
-        websocket: Optional[Any] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
@@ -3082,8 +3080,6 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
-        background: Optional[bool] = None,
-        websocket: Optional[Any] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
@@ -3113,55 +3109,10 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
-        background: Optional[bool] = None,
-        websocket: Optional[Any] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
-        """Run the Team asynchronously and return the response.
-
-        Args:
-            input: The input to the team.
-            stream: Whether to stream the response.
-            background: If True, run in background with WebSocket streaming.
-            websocket: WebSocket connection for real-time event streaming (required if background=True and stream=True).
-            ... (other args)
-        """
-        # Handle background WebSocket execution
-        if background:
-            from agno.os.managers import WebSocketHandler
-
-            websocket_handler = WebSocketHandler(websocket=websocket) if websocket else None
-
-            if stream and websocket:
-                # Background + Streaming + WebSocket = Real-time events
-                return self._arun_background_stream(  # type: ignore
-                    input=input,
-                    user_id=user_id,
-                    session_id=session_id,
-                    session_state=session_state,
-                    audio=audio,
-                    images=images,
-                    videos=videos,
-                    files=files,
-                    stream_events=stream_events or stream_intermediate_steps or False,
-                    websocket_handler=websocket_handler,
-                    knowledge_filters=knowledge_filters,
-                    add_history_to_context=add_history_to_context,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    dependencies=dependencies,
-                    metadata=metadata,
-                    output_schema=output_schema,
-                    debug_mode=debug_mode,
-                    **kwargs,
-                )
-            elif stream and not websocket:
-                # Background + Streaming but no WebSocket = Not supported
-                raise ValueError("Background streaming execution requires a WebSocket for real-time events")
-            else:
-                # Background + Non-streaming = Not implemented yet
-                raise ValueError("Background non-streaming execution is not yet supported for teams")
+        """Run the Team asynchronously and return the response."""
 
         # Set the id for the run and register it immediately for cancellation tracking
         run_id = run_id or str(uuid4())
@@ -3337,239 +3288,6 @@ class Team:
                 background_tasks=background_tasks,
                 **kwargs,
             )
-
-    async def _arun_background_stream(
-        self,
-        input: Union[str, List, Dict, Message, BaseModel],
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        session_state: Optional[Dict[str, Any]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
-        stream_events: bool = False,
-        websocket_handler: Optional[Any] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-        add_history_to_context: Optional[bool] = None,
-        add_dependencies_to_context: Optional[bool] = None,
-        add_session_state_to_context: Optional[bool] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
-        debug_mode: Optional[bool] = None,
-        **kwargs: Any,
-    ) -> TeamRunOutput:
-        """Execute team in background with streaming and WebSocket broadcasting.
-
-        This method runs the team in a background task while streaming events
-        to a WebSocket connection in real-time.
-
-        Args:
-            input: The input to the team.
-            websocket_handler: WebSocketHandler for sending events.
-            stream_events: Whether to stream intermediate events.
-            ... (other args same as arun)
-
-        Returns:
-            TeamRunOutput with pending status (updated by background execution)
-        """
-        import asyncio
-
-        from agno.os.managers import event_buffer
-        from agno.run.cancel import register_run
-
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
-        register_run(run_id)
-
-        # Validate input
-        validated_input = self._validate_input(input)
-
-        # Initialize session
-        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
-
-        # Initialize the Team
-        self.initialize_team(debug_mode=debug_mode)
-
-        # Read existing session from database
-        if self._has_async_db():
-            team_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
-        else:
-            team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
-
-        # Create TeamRunInput
-        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
-            images=images, videos=videos, audios=audio, files=files
-        )
-        run_input = TeamRunInput(
-            input_content=validated_input,
-            images=image_artifacts,
-            videos=video_artifacts,
-            audios=audio_artifacts,
-            files=file_artifacts,
-        )
-
-        # Resolve variables
-        dependencies = dependencies if dependencies is not None else self.dependencies
-        add_dependencies = (
-            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
-        )
-        add_session_state = (
-            add_session_state_to_context
-            if add_session_state_to_context is not None
-            else self.add_session_state_to_context
-        )
-        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-
-        # Get knowledge filters
-        if self.knowledge_filters or knowledge_filters:
-            knowledge_filters = self._get_effective_filters(knowledge_filters)
-
-        # Merge team metadata with run metadata
-        if self.metadata is not None:
-            if metadata is None:
-                metadata = self.metadata
-            else:
-                merge_dictionaries(metadata, self.metadata)
-
-        # Resolve output_schema
-        if output_schema is None:
-            output_schema = self.output_schema
-
-        # Initialize run context
-        run_context = RunContext(
-            run_id=run_id,
-            session_id=session_id,
-            user_id=user_id,
-            session_state=session_state,
-            dependencies=dependencies,
-            knowledge_filters=knowledge_filters,
-            metadata=metadata,
-            output_schema=output_schema,
-        )
-
-        # Prepare arguments for the model
-        response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
-
-        # Create run_response with PENDING status
-        run_response = TeamRunOutput(
-            run_id=run_id,
-            session_id=session_id,
-            team_id=self.id,
-            team_name=self.name,
-            user_id=user_id,
-            metadata=run_context.metadata,
-            session_state=run_context.session_state,
-            input=run_input,
-            status=RunStatus.pending,
-        )
-
-        run_response.model = self.model.id if self.model is not None else None
-        run_response.model_provider = self.model.provider if self.model is not None else None
-
-        # Start the run metrics timer
-        run_response.metrics = Metrics()
-        run_response.metrics.start_timer()
-
-        async def execute_team_background_stream():
-            """Background execution with streaming and WebSocket broadcasting"""
-            from agno.os.managers import websocket_manager
-
-            try:
-                # Update status to RUNNING
-                run_response.status = RunStatus.running
-
-                # Save running status to database
-                team_session.upsert_run(run_response=run_response)
-                if self._has_async_db():
-                    await self.asave_session(session=team_session)
-                else:
-                    self.save_session(session=team_session)
-
-                # Execute with streaming
-                async for event in self._arun_stream(
-                    run_response=run_response,
-                    run_context=run_context,
-                    user_id=user_id,
-                    response_format=response_format,
-                    stream_events=stream_events,
-                    yield_run_output=False,
-                    session_id=session_id,
-                    add_history_to_context=add_history,
-                    add_dependencies_to_context=add_dependencies,
-                    add_session_state_to_context=add_session_state,
-                    debug_mode=debug_mode,
-                    **kwargs,
-                ):
-                    if isinstance(event, TeamRunOutput):
-                        continue
-
-                    # Add event to buffer for reconnection support
-                    event_index = event_buffer.add_event(run_id, event)  # type: ignore[arg-type]
-
-                    # Broadcast via original WebSocket handler if available
-                    if websocket_handler:
-                        await websocket_handler.handle_event(event, event_index=event_index, run_id=run_id)
-
-                    # ALSO broadcast through websocket manager for reconnected clients
-                    # This ensures clients who reconnect after team started still receive events
-                    try:
-                        # Format the event for broadcast
-                        event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
-                        if event_index is not None:
-                            event_dict["event_index"] = event_index
-                        if "run_id" not in event_dict:
-                            event_dict["run_id"] = run_id
-
-                        import json
-
-                        from agno.utils.serialize import json_serializer
-
-                        await websocket_manager.broadcast_to_run(
-                            run_id, json.dumps(event_dict, default=json_serializer)
-                        )
-                    except Exception as e:
-                        log_debug(f"Failed to broadcast through manager: {e}")
-
-                log_debug(f"Background streaming execution completed with status: {run_response.status}")
-
-                # Mark run as completed in buffer
-                event_buffer.set_run_completed(run_id, run_response.status)
-
-            except Exception as e:
-                log_error(f"Background streaming team execution failed: {e}")
-                run_response.status = RunStatus.error
-                run_response.content = f"Background streaming execution failed: {str(e)}"
-
-                # Mark run as error in buffer
-                event_buffer.set_run_completed(run_id, RunStatus.error)
-
-                # Save error run to database
-                team_session.upsert_run(run_response=run_response)
-                if self._has_async_db():
-                    await self.asave_session(session=team_session)
-                else:
-                    self.save_session(session=team_session)
-
-                # Send error event via WebSocket
-                if websocket_handler:
-                    from agno.run.team import RunErrorEvent
-
-                    error_event = RunErrorEvent(
-                        run_id=run_id,
-                        team_id=self.id or "",
-                        team_name=self.name or "",
-                        content=str(e),
-                    )
-                    await websocket_handler.handle_event(error_event, run_id=run_id)
-
-        # Start background execution
-        loop = asyncio.get_running_loop()
-        loop.create_task(execute_team_background_stream())
-
-        # Return SAME object that will be updated by background execution
-        return run_response
 
     def _update_run_response(
         self,
