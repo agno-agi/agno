@@ -61,6 +61,14 @@ class BaseDb(ABC):
         """Create all tables for this database."""
         pass
 
+    def close(self) -> None:
+        """Close database connections and release resources.
+
+        Override in subclasses to properly dispose of connection pools.
+        Should be called during application shutdown.
+        """
+        pass
+
     # --- Schema Version ---
     @abstractmethod
     def get_latest_schema_version(self, table_name: str):
@@ -553,6 +561,18 @@ class AsyncBaseDb(ABC):
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
         self.user_profiles_table_name = user_profiles_table or "agno_user_profiles"
+
+    async def _create_all_tables(self) -> None:
+        """Create all tables for this database. Override in subclasses."""
+        pass
+
+    async def close(self) -> None:
+        """Close database connections and release resources.
+
+        Override in subclasses to properly dispose of connection pools.
+        Should be called during application shutdown.
+        """
+        pass
 
     @abstractmethod
     async def table_exists(self, table_name: str) -> bool:

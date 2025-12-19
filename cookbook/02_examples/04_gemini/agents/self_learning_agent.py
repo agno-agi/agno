@@ -25,9 +25,7 @@ from agno.tools.parallel import ParallelTools
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.log import logger
 from agno.vectordb.pgvector import PgVector, SearchType
-
 from db import db_url, gemini_agents_db
-
 
 # ============================================================================
 # Knowledge Base: stores successful learnings

@@ -103,11 +103,12 @@ from agno.utils.agent import (
     set_session_name_util,
     store_media_util,
     update_session_state_util,
+    validate_input,
     validate_media_object_id,
     wait_for_open_threads,
     wait_for_thread_tasks_stream,
 )
-from agno.utils.common import is_typed_dict, validate_typed_dict
+from agno.utils.common import is_typed_dict
 from agno.utils.events import (
     add_team_error_event,
     create_team_parser_model_response_completed_event,
@@ -793,56 +794,6 @@ class Team:
         telemetry_env = getenv("AGNO_TELEMETRY")
         if telemetry_env is not None:
             self.telemetry = telemetry_env.lower() == "true"
-
-    def _validate_input(
-        self, input: Union[str, List, Dict, Message, BaseModel]
-    ) -> Union[str, List, Dict, Message, BaseModel]:
-        """Parse and validate input against input_schema if provided, otherwise return input as-is"""
-        if self.input_schema is None:
-            return input  # Return input unchanged if no schema is set
-
-        # Handle Message objects - extract content
-        if isinstance(input, Message):
-            input = input.content  # type: ignore
-
-        # If input is a string, convert it to a dict
-        if isinstance(input, str):
-            import json
-
-            try:
-                input = json.loads(input)
-            except Exception as e:
-                raise ValueError(f"Failed to parse input. Is it a valid JSON string?: {e}")
-
-        # Case 1: Message is already a BaseModel instance
-        if isinstance(input, BaseModel):
-            if isinstance(input, self.input_schema):
-                try:
-                    return input
-                except Exception as e:
-                    raise ValueError(f"BaseModel validation failed: {str(e)}")
-            else:
-                # Different BaseModel types
-                raise ValueError(f"Expected {self.input_schema.__name__} but got {type(input).__name__}")
-
-        # Case 2: Message is a dict
-        elif isinstance(input, dict):
-            try:
-                # Check if the schema is a TypedDict
-                if is_typed_dict(self.input_schema):
-                    validated_dict = validate_typed_dict(input, self.input_schema)
-                    return validated_dict
-                else:
-                    validated_model = self.input_schema(**input)
-                    return validated_model
-            except Exception as e:
-                raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
-
-        # Case 3: Other types not supported for structured input
-        else:
-            raise ValueError(
-                f"Cannot validate {type(input)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
-            )
 
     def _initialize_member(self, member: Union["Team", Agent], debug_mode: Optional[bool] = None) -> None:
         # Set debug mode for all members
@@ -2077,7 +2028,7 @@ class Team:
                     background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
                 # Validate input against input_schema if provided
-                validated_input = self._validate_input(input)
+                validated_input = validate_input(input, self.input_schema)
 
                 # Normalise hook & guardails
                 if not self._hooks_normalised:
@@ -3139,7 +3090,7 @@ class Team:
             background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         # Validate input against input_schema if provided
-        validated_input = self._validate_input(input)
+        validated_input = validate_input(input, self.input_schema)
 
         # Normalise hook & guardails
         if not self._hooks_normalised:
@@ -5416,6 +5367,10 @@ class Team:
                             system_message_content += f"{indent * ' '}    - {_tool.name}\n"
                         elif callable(_tool):
                             system_message_content += f"{indent * ' '}    - {_tool.__name__}\n"
+                        elif isinstance(_tool, dict) and "name" in _tool and _tool.get("name") is not None:
+                            system_message_content += f"{indent * ' '}    - {_tool['name']}\n"
+                        else:
+                            system_message_content += f"{indent * ' '}    - {str(_tool)}\n"
 
         return system_message_content
 
@@ -7297,7 +7252,7 @@ class Team:
 
             # 7. Add member-level history for the member if enabled (because we won't load the session for the member, so history won't be loaded automatically)
             history = None
-            if member_agent.add_history_to_context:
+            if hasattr(member_agent, "add_history_to_context") and member_agent.add_history_to_context:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
                     if isinstance(member_agent_task, str):
