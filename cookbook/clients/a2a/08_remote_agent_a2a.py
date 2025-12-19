@@ -143,7 +143,7 @@ async def protocol_comparison():
 
     # Note: To test AgentOS protocol, you'd need an Agno AgentOS server running:
     # agentos_agent = RemoteAgent(
-    #     base_url="http://localhost:7777",
+    #     base_url="http://localhost:7003",
     #     agent_id="my-agent",
     #     protocol="agentos",  # default
     # )

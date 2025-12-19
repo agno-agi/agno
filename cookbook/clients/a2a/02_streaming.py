@@ -6,10 +6,10 @@ using the A2A protocol.
 
 Prerequisites:
 1. Start an AgentOS server with A2A interface:
-   python cookbook/agent_os/interfaces/a2a/basic.py
+   python cookbook/clients/a2a/servers/agno_server.py
 
 2. Run this script:
-   python cookbook/agent_os/a2a_client/02_streaming.py
+   python cookbook/clients/a2a/02_streaming.py
 """
 
 import asyncio
@@ -23,21 +23,21 @@ async def basic_streaming():
     print("Streaming A2A Response")
     print("=" * 60)
 
-    async with A2AClient("http://localhost:7777") as client:
-        print("\nStreaming response from agent...")
-        print("\nResponse: ", end="", flush=True)
+    client = A2AClient("http://localhost:7003")
+    print("\nStreaming response from agent...")
+    print("\nResponse: ", end="", flush=True)
 
-        async for event in client.stream_message(
-            agent_id="basic-agent",
-            message="Tell me a short joke.",
-        ):
-            # Print content as it arrives
-            if event.is_content and event.content:
-                print(event.content, end="", flush=True)
+    async for event in client.stream_message(
+        agent_id="basic-agent",
+        message="Tell me a short joke.",
+    ):
+        # Print content as it arrives
+        if event.is_content and event.content:
+            print(event.content, end="", flush=True)
 
-            # Check for completion
-            if event.is_final:
-                print("\n\n[Stream completed]")
+        # Check for completion
+        if event.is_final:
+            print("\n\n[Stream completed]")
 
 
 async def streaming_with_events():
@@ -46,32 +46,31 @@ async def streaming_with_events():
     print("Streaming with Event Details")
     print("=" * 60)
 
-    async with A2AClient("http://localhost:7777") as client:
-        print("\nEvent log:")
+    client = A2AClient("http://localhost:7003")
+    print("\nEvent log:")
 
-        content_buffer = []
+    content_buffer = []
 
-        async for event in client.stream_message(
-            agent_id="basic-agent",
-            message="What is Python?",
-        ):
-            # Log event type
-            print(f"  [{event.event_type}]", end="")
+    async for event in client.stream_message(
+        agent_id="basic-agent",
+        message="What is Python?",
+    ):
+        # Log event type
+        print(f"  [{event.event_type}]", end="")
 
-            if event.content:
-                content_buffer.append(event.content)
-                # Show preview of content
-                preview = event.content[:20] + "..." if len(event.content) > 20 else event.content
-                print(f" content: {repr(preview)}")
-            else:
-                print()
+        if event.content:
+            content_buffer.append(event.content)
+            # Show preview of content
+            preview = event.content[:20] + "..." if len(event.content) > 20 else event.content
+            print(f" content: {repr(preview)}")
+        else:
+            print()
 
-            if event.is_final:
-                print("\nFull response:")
-                print("".join(content_buffer))
+        if event.is_final:
+            print("\nFull response:")
+            print("".join(content_buffer))
 
 
 if __name__ == "__main__":
     asyncio.run(basic_streaming())
     asyncio.run(streaming_with_events())
-

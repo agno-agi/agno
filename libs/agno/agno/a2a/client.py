@@ -373,7 +373,7 @@ class A2AClient:
 
         try:
             response = await client.post(
-                self._get_endpoint("/message/send"),
+                self._get_endpoint(f"/agents/{agent_id}/v1/message:send"),
                 json=request_body,
             )
             response.raise_for_status()
@@ -455,7 +455,7 @@ class A2AClient:
         try:
             async with http_client.stream(
                 "POST",
-                self._get_endpoint("/message/stream"),
+                self._get_endpoint(f"/agents/{agent_id}/v1/message:stream"),
                 json=request_body,
             ) as response:
                 response.raise_for_status()
@@ -464,6 +464,12 @@ class A2AClient:
                     line = line.strip()
                     if not line:
                         continue
+
+                    # Handle SSE format: skip "event:" lines, parse "data:" lines
+                    if line.startswith("event:"):
+                        continue
+                    if line.startswith("data:"):
+                        line = line[5:].strip()  # Remove "data:" prefix
 
                     try:
                         data = json.loads(line)

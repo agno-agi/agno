@@ -26,7 +26,7 @@ export GOOGLE_API_KEY=your_api_key_here
 
 ## Examples
 
-### Agno AgentOS Examples (localhost:7777)
+### Agno AgentOS Examples (localhost:7003)
 
 | File | Description |
 |------|-------------|
@@ -51,7 +51,7 @@ export GOOGLE_API_KEY=your_api_key_here
 ```python
 from agno.a2a import A2AClient
 
-client = A2AClient("http://localhost:7777")
+client = A2AClient("http://localhost:7003")
 result = await client.send_message(
     agent_id="basic-agent",
     message="Hello!"

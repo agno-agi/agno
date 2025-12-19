@@ -23,7 +23,7 @@ async def main():
     print("A2A Messaging with User ID")
     print("=" * 60)
 
-    client = A2AClient("http://localhost:7777")
+    client = A2AClient("http://localhost:7003")
     result = await client.send_message(
         agent_id="basic-agent",
         message="Remember my name is Alice.",

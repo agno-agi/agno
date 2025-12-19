@@ -9,7 +9,7 @@ Prerequisites:
 Usage:
     python cookbook/clients/a2a/servers/agno_server.py
 
-The server will start at http://localhost:7777
+The server will start at http://localhost:7003
 """
 
 from agno.agent.agent import Agent
@@ -19,7 +19,7 @@ from agno.os import AgentOS
 chat_agent = Agent(
     name="basic-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    id="basic_agent",
+    id="basic-agent",
     description="A helpful AI assistant that provides thoughtful answers.",
     instructions="You are a helpful AI assistant.",
     add_datetime_to_context=True,
@@ -34,5 +34,5 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    print("Server URL: http://localhost:7777")
-    agent_os.serve(app="agno_server:app", reload=True, port=7777)
+    print("Server URL: http://localhost:7003")
+    agent_os.serve(app="agno_server:app", reload=True, port=7003)
