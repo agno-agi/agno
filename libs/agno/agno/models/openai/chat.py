@@ -945,4 +945,6 @@ class OpenAIChat(Model):
             metrics.audio_output_tokens = completion_tokens_details.audio_tokens or 0
             metrics.reasoning_tokens = completion_tokens_details.reasoning_tokens or 0
 
+        metrics.cost = getattr(response_usage, "cost", None)
+
         return metrics
