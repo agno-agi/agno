@@ -5923,6 +5923,29 @@ class Agent:
             else:
                 log_warning("Unable to add messages to memory")
 
+        # MemoryManagerV2 extraction (async, automatic mode)
+        if self.memory_manager_v2 is not None and user_id is not None and self.memory_manager_v2.update_memory_on_run:
+            # Build list of messages to extract from
+            messages_to_extract: List[Message] = []
+            if run_messages.user_message is not None:
+                messages_to_extract.append(run_messages.user_message)
+            if run_messages.extra_messages is not None:
+                for msg in run_messages.extra_messages:
+                    if isinstance(msg, Message):
+                        messages_to_extract.append(msg)
+                    elif isinstance(msg, dict):
+                        try:
+                            messages_to_extract.append(Message(**msg))
+                        except Exception:
+                            pass
+
+            if messages_to_extract:
+                log_debug("Extracting user memory via MemoryManagerV2 (automatic mode)")
+                await self.memory_manager_v2.aextract_from_conversation(
+                    messages=messages_to_extract,
+                    user_id=user_id,
+                )
+
     def _raise_if_async_tools(self) -> None:
         """Raise an exception if any tools contain async functions"""
         if self.tools is None:
