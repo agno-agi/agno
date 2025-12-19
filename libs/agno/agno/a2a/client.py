@@ -347,16 +347,7 @@ class A2AClient:
             status = result.get("status", {})
             state = status.get("state", "") if isinstance(status, dict) else ""
 
-            if state == "working":
-                event_type = "working"
-            elif state == "completed":
-                event_type = "completed"
-            elif state == "failed":
-                event_type = "failed"
-            elif state == "canceled":
-                event_type = "canceled"
-            else:
-                event_type = "status"
+            event_type = state if state in {"working", "completed", "failed", "canceled"} else "status"
 
         elif kind == "message":
             # Content message event
