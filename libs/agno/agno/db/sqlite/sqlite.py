@@ -1119,7 +1119,8 @@ class SqliteDb(BaseDb):
                 # Select topics from all results
                 stmt = select(table.c.topics)
                 result = sess.execute(stmt).fetchall()
-                return list(set([record[0] for record in result]))
+                result = result[0][0]
+                return list(set(result))
 
         except Exception as e:
             log_debug(f"Exception reading from memory table: {e}")

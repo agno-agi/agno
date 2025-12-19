@@ -15,7 +15,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from agno.exceptions import InputCheckError, OutputCheckError
-from agno.os.auth import get_authentication_dependency, require_resource_access, validate_websocket_token
+from agno.os.auth import (
+    get_auth_token_from_request,
+    get_authentication_dependency,
+    require_resource_access,
+    validate_websocket_token,
+)
 from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -33,6 +38,7 @@ from agno.os.utils import (
 )
 from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutput
 from agno.utils.log import log_warning, logger
+from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
 if TYPE_CHECKING:
@@ -153,6 +159,12 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
             return
 
+        if isinstance(workflow, RemoteWorkflow):
+            await websocket.send_text(
+                json.dumps({"event": "error", "error": "Remote workflows are not supported via WebSocket"})
+            )
+            return
+
         # Generate session_id if not provided
         # Use workflow's default session_id if not provided in message
         if not session_id:
@@ -201,11 +213,12 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
 
 
 async def workflow_response_streamer(
-    workflow: Workflow,
-    input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+    workflow: Union[Workflow, RemoteWorkflow],
+    input: Union[str, Dict[str, Any], List[Any], BaseModel],
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
+    auth_token: Optional[str] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     try:
@@ -213,12 +226,21 @@ async def workflow_response_streamer(
         if background_tasks is not None:
             kwargs["background_tasks"] = background_tasks
 
-        run_response = workflow.arun(
+        if "stream_events" in kwargs:
+            stream_events = kwargs.pop("stream_events")
+        else:
+            stream_events = True
+
+        # Pass auth_token for remote workflows
+        if auth_token and isinstance(workflow, RemoteWorkflow):
+            kwargs["auth_token"] = auth_token
+
+        run_response = workflow.arun(  # type: ignore
             input=input,
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_events=True,
+            stream_events=stream_events,
             **kwargs,
         )
 
@@ -479,8 +501,10 @@ def get_workflow_router(
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
-
-        return await WorkflowResponse.from_workflow(workflow)
+        if isinstance(workflow, RemoteWorkflow):
+            return await workflow.get_workflow_config()
+        else:
+            return await WorkflowResponse.from_workflow(workflow=workflow)
 
     @router.post(
         "/workflows/{workflow_id}/runs",
@@ -528,25 +552,25 @@ def get_workflow_router(
     ):
         kwargs = await get_request_kwargs(request, create_workflow_run)
 
-        if hasattr(request.state, "user_id"):
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
             if user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = request.state.user_id
-        if hasattr(request.state, "session_id"):
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
             session_id = request.state.session_id
-        if hasattr(request.state, "session_state"):
+        if hasattr(request.state, "session_state") and request.state.session_state is not None:
             session_state = request.state.session_state
             if "session_state" in kwargs:
                 log_warning("Session state parameter passed in both request state and kwargs, using request state")
             kwargs["session_state"] = session_state
-        if hasattr(request.state, "dependencies"):
+        if hasattr(request.state, "dependencies") and request.state.dependencies is not None:
             dependencies = request.state.dependencies
             if "dependencies" in kwargs:
                 log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
-        if hasattr(request.state, "metadata"):
+        if hasattr(request.state, "metadata") and request.state.metadata is not None:
             metadata = request.state.metadata
             if "metadata" in kwargs:
                 log_warning("Metadata parameter passed in both request state and kwargs, using request state")
@@ -563,6 +587,9 @@ def get_workflow_router(
             logger.debug("Creating new session")
             session_id = str(uuid4())
 
+        # Extract auth token for remote workflows
+        auth_token = get_auth_token_from_request(request)
+
         # Return based on stream parameter
         try:
             if stream:
@@ -573,11 +600,16 @@ def get_workflow_router(
                         session_id=session_id,
                         user_id=user_id,
                         background_tasks=background_tasks,
+                        auth_token=auth_token,
                         **kwargs,
                     ),
                     media_type="text/event-stream",
                 )
             else:
+                # Pass auth_token for remote workflows
+                if auth_token and isinstance(workflow, RemoteWorkflow):
+                    kwargs["auth_token"] = auth_token
+
                 run_response = await workflow.arun(
                     input=message,
                     session_id=session_id,
@@ -616,8 +648,7 @@ def get_workflow_router(
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        if not workflow.cancel_run(run_id=run_id):
-            raise HTTPException(status_code=500, detail="Failed to cancel run")
+        workflow.cancel_run(run_id=run_id)
 
         return JSONResponse(content={}, status_code=200)
 
