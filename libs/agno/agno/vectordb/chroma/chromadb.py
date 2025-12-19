@@ -578,7 +578,10 @@ class ChromaDb(VectorDb):
             return []
 
         if self.reranker and search_results:
-            search_results = self.reranker.rerank(query=query, documents=search_results)
+            try:
+                search_results = self.reranker.rerank(query=query, documents=search_results)
+            except Exception as e:
+                log_warning(f"Reranker failed, returning unranked results: {e}")
 
         log_info(f"Found {len(search_results)} documents")
         return search_results
