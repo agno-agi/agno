@@ -1,5 +1,5 @@
 """
-Agent with Storage - Finance Agent with Persistence
+Agent with Storage - Finance Agent with Storage
 ====================================================
 Building on the Finance Agent from 01, this example adds persistent storage.
 Your agent now remembers conversations across runs.
@@ -23,6 +23,14 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.google import Gemini
 from agno.tools.yfinance import YFinanceTools
+
+# ============================================================================
+# Storage Configuration
+# ============================================================================
+agent_db = SqliteDb(
+    db_file="tmp/agents.db",
+    session_table="finance_agent",
+)
 
 # ============================================================================
 # Agent Instructions
@@ -61,18 +69,10 @@ computes key ratios, and produces concise, decision-ready insights.
 """
 
 # ============================================================================
-# Storage Configuration
-# ============================================================================
-agent_db = SqliteDb(
-    db_file="tmp/agents.db",
-    session_table="finance_agent",
-)
-
-# ============================================================================
 # Create the Agent
 # ============================================================================
 agent = Agent(
-    name="Finance Agent with Persistence",
+    name="Finance Agent with Storage",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[YFinanceTools()],
