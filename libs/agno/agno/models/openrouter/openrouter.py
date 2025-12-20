@@ -77,8 +77,6 @@ class OpenRouter(OpenAILike):
         extra_body = request_params.get("extra_body") or {}
         if self.models:
             extra_body["models"] = self.models
-        if self._should_preserve_reasoning():
-            extra_body["transforms"] = ["preserve_reasoning"]
         if extra_body:
             request_params["extra_body"] = extra_body
         return request_params
