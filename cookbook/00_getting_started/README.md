@@ -2,13 +2,13 @@
 
 This guide walks through the basics of building Agents, the easy way. Follow along to learn how to build agents with tools, storage, memory, knowledge, and state. You'll also learn how to build multi-agent teams and step-based agentic workflows.
 
-We recommend running the examples in order, as each example builds on the previous, introducing new concepts and capabilities progressively. Examples contain detailed comments and example prompts to help you understand what's happening.
+Each example can be run independently and contains detailed comments + example prompts to help you understand what's happening behind the scenes.
 
-All examples use **Gemini 3 Flash** — fast, affordable, and excellent at tool calling. But Agno is model-agnostic and you can swap in any provider with a one line change.
+We'll use **Gemini 3 Flash** — fast, affordable, and excellent at tool calling. Agno is model-agnostic and you can swap in any provider with a one line change.
 
 ## Cookbooks
 
-| # | Cookbook | What You'll Learn | Key Features |
+| # | File | What You'll Learn | Key Features |
 |:--|:---------|:------------------|:-------------|
 | 01 | `agent_with_tools.py` | Give an agent tools to fetch real-time data | Tool Calling, Data Fetching |
 | 02 | `agent_with_storage.py` | Persist conversations across runs | Persistent Storage, Session Management |
@@ -89,7 +89,31 @@ python cookbook/00_getting_started/run.py
 
 Then visit [os.agno.com](https://os.agno.com) and add `http://localhost:7777` as an endpoint.
 
+Note: to test the agent-with-knowledge, remember to load the knowledge base first using:
+
+```bash
+python cookbook/00_getting_started/agent_search_over_knowledge.py
+```
+
 ---
+
+## Swap Models Anytime
+
+Agno is model-agnostic. Same code, different provider:
+
+```python
+# Gemini (default in these examples)
+from agno.models.google import Gemini
+model = Gemini(id="gemini-3-flash-preview")
+
+# OpenAI
+from agno.models.openai import OpenAIChat
+model = OpenAIChat(id="gpt-4o")
+
+# Anthropic
+from agno.models.anthropic import Claude
+model = Claude(id="claude-sonnet-4-5")
+```
 
 ## Run Cookbooks Individually
 
@@ -143,24 +167,6 @@ cookbook/00_getting_started/
 ├── run.py                              # Agent OS entrypoint
 ├── requirements.txt
 └── README.md
-```
-
-## Swap Models Anytime
-
-Agno is model-agnostic. Same code, different provider:
-
-```python
-# Gemini (default in these examples)
-from agno.models.google import Gemini
-model = Gemini(id="gemini-3-flash-preview")
-
-# OpenAI
-from agno.models.openai import OpenAIChat
-model = OpenAIChat(id="gpt-4o")
-
-# Anthropic
-from agno.models.anthropic import Claude
-model = Claude(id="claude-sonnet-4-5")
 ```
 
 ## Learn More
