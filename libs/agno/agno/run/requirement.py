@@ -71,19 +71,27 @@ class RunRequirement:
 
         return self.tool_execution.external_execution_required or False
 
-    def confirm(self):
+    def confirm(self, note: Optional[str] = None):
         if not self.needs_confirmation:
             raise ValueError("This requirement does not require confirmation")
         self.confirmation = True
+        if note is not None:
+            self.confirmation_note = note
         if self.tool_execution:
             self.tool_execution.confirmed = True
+            if note is not None:
+                self.tool_execution.confirmation_note = note
 
-    def reject(self):
+    def reject(self, note: Optional[str] = None):
         if not self.needs_confirmation:
             raise ValueError("This requirement does not require confirmation")
         self.confirmation = False
+        if note is not None:
+            self.confirmation_note = note
         if self.tool_execution:
             self.tool_execution.confirmed = False
+            if note is not None:
+                self.tool_execution.confirmation_note = note
 
     def set_external_execution_result(self, result: str):
         if not self.needs_external_execution:
@@ -95,6 +103,8 @@ class RunRequirement:
     def update_tool(self):
         if not self.tool_execution:
             return
+        if self.confirmation_note is not None:
+            self.tool_execution.confirmation_note = self.confirmation_note
         if self.confirmation is True:
             self.tool_execution.confirmed = True
         elif self.confirmation is False:
