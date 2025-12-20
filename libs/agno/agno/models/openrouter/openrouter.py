@@ -1,6 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Literal, Optional, Type, Union
 
 from pydantic import BaseModel
 
@@ -9,6 +9,53 @@ from agno.models.openai.like import OpenAILike
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+
+
+@dataclass
+class ReasoningConfig:
+    """
+    Configuration for reasoning tokens in OpenRouter API requests.
+
+    OpenRouter normalizes the different ways of customizing the amount of reasoning tokens
+    that the model will use, providing a unified interface across different providers.
+
+    Attributes:
+        effort: Reasoning effort level. Supported by OpenAI reasoning models (o1/o3/GPT-5 series)
+            and Grok models. Values: "xhigh" (~95%), "high" (~80%), "medium" (~50%),
+            "low" (~20%), "minimal" (~10%), "none" (disabled).
+        max_tokens: Maximum tokens for reasoning. Supported by Gemini thinking models,
+            Anthropic reasoning models, and some Alibaba Qwen thinking models.
+            For Anthropic: minimum 1024, maximum 32000 tokens.
+        exclude: If True, the model uses reasoning internally but doesn't return it in the response.
+            Useful when you want reasoning benefits without the output overhead.
+        enabled: Enable reasoning with default parameters (medium effort, no exclusions).
+            Typically inferred from effort or max_tokens if not set.
+
+    Note:
+        - Use either `effort` OR `max_tokens`, not both.
+        - For models that only support one parameter, OpenRouter maps to the other automatically.
+        - Reasoning tokens are counted as output tokens for billing purposes.
+
+    See: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
+    """
+
+    effort: Optional[Literal["xhigh", "high", "medium", "low", "minimal", "none"]] = None
+    max_tokens: Optional[int] = None
+    exclude: Optional[bool] = None
+    enabled: Optional[bool] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dict for API request, excluding None values."""
+        result = {}
+        if self.effort is not None:
+            result["effort"] = self.effort
+        if self.max_tokens is not None:
+            result["max_tokens"] = self.max_tokens
+        if self.exclude is not None:
+            result["exclude"] = self.exclude
+        if self.enabled is not None:
+            result["enabled"] = self.enabled
+        return result
 
 
 @dataclass
@@ -26,9 +73,10 @@ class OpenRouter(OpenAILike):
         models (Optional[List[str]]): List of fallback model IDs to use if the primary model
             fails due to rate limits, timeouts, or unavailability. OpenRouter will automatically try
             these models in order. Example: ["anthropic/claude-sonnet-4", "deepseek/deepseek-r1"]
-        preserve_reasoning (bool): Enable reasoning blocks preservation for models that require it.
-            Required for Gemini models with function calling. Defaults to False.
-            See: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#preserving-reasoning-blocks
+        reasoning (Optional[ReasoningConfig]): Configuration for reasoning tokens.
+            Controls reasoning effort/budget and whether to preserve reasoning blocks for tool calling.
+            Required for models like Gemini with function calling to maintain reasoning continuity.
+            See: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
     """
 
     id: str = "gpt-4o"
@@ -39,11 +87,11 @@ class OpenRouter(OpenAILike):
     base_url: str = "https://openrouter.ai/api/v1"
     max_tokens: int = 1024
     models: Optional[List[str]] = None  # Dynamic model routing https://openrouter.ai/docs/features/model-routing
-    preserve_reasoning: bool = False  # Enable for models requiring reasoning blocks preservation
+    reasoning: Optional[ReasoningConfig] = None  # Reasoning configuration
 
     def _should_preserve_reasoning(self) -> bool:
-        """Check if reasoning blocks should be preserved."""
-        return self.preserve_reasoning
+        """Check if reasoning blocks should be preserved (when reasoning is configured)."""
+        return self.reasoning is not None
 
     def _get_client_params(self) -> Dict[str, Any]:
         """
@@ -70,13 +118,15 @@ class OpenRouter(OpenAILike):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
     ) -> Dict[str, Any]:
-        """Returns request params with fallback models and reasoning preservation."""
+        """Returns request params with fallback models and reasoning configuration."""
         request_params = super().get_request_params(
             response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
         )
         extra_body = request_params.get("extra_body") or {}
         if self.models:
             extra_body["models"] = self.models
+        if self.reasoning:
+            extra_body["reasoning"] = self.reasoning.to_dict()
         if extra_body:
             request_params["extra_body"] = extra_body
         return request_params
