@@ -1,0 +1,91 @@
+chat:
+  quick_prompts:
+    finance-agent:
+      - "What's the current price of AAPL?"
+      - "Compare NVDA and AMD — which looks stronger?"
+      - "Give me a quick investment brief on Microsoft"
+      - "What's Tesla's P/E ratio and how does it compare to the industry?"
+      - "Show me the key metrics for the FAANG stocks"
+      - "Is Google overvalued right now?"
+      - "What are the top 3 semiconductor stocks by market cap?"
+
+    finance-agent-with-storage:
+      - "What's the current price of AAPL?"
+      - "Compare that to Microsoft"
+      - "Based on our discussion, which looks better?"
+      - "What stocks have we analyzed so far?"
+      - "Now add Tesla to the comparison"
+      - "Give me a summary of everything we've discussed"
+      - "Which of the stocks we analyzed has the best P/E ratio?"
+
+    agent-with-knowledge:
+      - "What is Agno?"
+      - "What is the AgentOS?"
+      - "How do I add memory to an Agno agent?"
+      - "What's the difference between storage and knowledge?"
+      - "How do I create a team of agents?"
+      - "What models does Agno support?"
+      - "How do I use session state?"
+
+    self-learning-finance-agent:
+      - "What's a good P/E ratio for tech stocks?"
+      - "Remember that NVDA's data center revenue is the key growth driver"
+      - "What learnings do we have saved?"
+      - "When should I consider a stock overvalued?"
+      - "Save a rule about semiconductor cyclicality"
+      - "What insights have we captured about tech stocks?"
+      - "Analyze AMD and save any useful patterns"
+
+    structured-output-finance-agent:
+      - "Analyze NVDA"
+      - "Give me a report on Tesla"
+      - "What's the investment case for Apple?"
+      - "Analyze AMD for me"
+      - "Give me a structured analysis of Microsoft"
+      - "What's the outlook for Google?"
+      - "Analyze Meta as an investment"
+
+    typed-finance-agent:
+      - "Analyze NVDA with deep analysis and include risks"
+      - "Give me a quick analysis of Tesla without risks"
+      - "Deep dive into Apple with full risk assessment"
+      - "Quick summary of AMD"
+      - "Analyze Microsoft — deep analysis, include risks"
+      - "Give me a quick take on Google"
+      - "Full analysis of Meta with all risks"
+
+    finance-agent-with-memory:
+      - "I'm interested in tech stocks, especially AI companies"
+      - "My risk tolerance is moderate"
+      - "What stocks would you recommend for me?"
+      - "I prefer dividend-paying stocks"
+      - "I'm bullish on semiconductors long-term"
+      - "Based on what you know about me, analyze NVDA"
+      - "What do you remember about my preferences?"
+
+    finance-agent-with-state:
+      - "Add NVDA and AMD to my watchlist"
+      - "What's on my watchlist?"
+      - "Remove AMD from the list"
+      - "How are my watched stocks doing today?"
+      - "Add Tesla and Apple to the watchlist"
+      - "Compare all stocks on my watchlist"
+      - "Which watchlist stock has the best performance today?"
+
+    investment-research-team:
+      - "Should I invest in NVIDIA?"
+      - "Analyze Tesla as a long-term investment"
+      - "Is Apple overvalued right now?"
+      - "Make the case for and against AMD"
+      - "Should I buy or sell Microsoft at current prices?"
+      - "Is Google a good investment for the next 5 years?"
+      - "Bull vs Bear case for the semiconductor sector"
+
+    stock-research-pipeline:
+      - "Analyze NVDA"
+      - "Research Tesla for investment"
+      - "Give me a report on Apple"
+      - "Compare NVDA and AMD for investment"
+      - "Full research report on Microsoft"
+      - "Analyze the top 3 AI stocks"
+      - "Research Google and Meta — which is better?"

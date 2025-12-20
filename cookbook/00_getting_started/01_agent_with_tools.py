@@ -57,7 +57,7 @@ computes key ratios, and produces concise, decision-ready insights.
 # ============================================================================
 # Create the Agent
 # ============================================================================
-agent = Agent(
+agent_with_tools = Agent(
     name="Finance Agent",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
@@ -70,7 +70,7 @@ agent = Agent(
 # Run the Agent
 # ============================================================================
 if __name__ == "__main__":
-    agent.print_response("Give me a quick investment brief on NVIDIA", stream=True)
+    agent_with_tools.print_response("Give me a quick investment brief on NVIDIA", stream=True)
 
 # ============================================================================
 # More Examples

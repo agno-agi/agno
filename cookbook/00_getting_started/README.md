@@ -1,246 +1,174 @@
-# Getting started with Agents, the easy way
+# Getting Started with Agents, The Easy Way
 
-This guide walks through the basics of building Agents with Agno.
+This guide walks through the basics of building Agents.
 
-Each example builds on the previous one, introducing new concepts and capabilities progressively. Examples contain detailed comments, example prompts, and required dependencies.
+Each example builds on the previous, introducing new concepts and capabilities progressively. Examples contain detailed comments and example prompts. By the end, you'll understand tools, storage, memory, knowledge, state, teams, and workflows.
 
-## Setup
+All examples use **Gemini 3 Flash** — fast, affordable, and excellent at tool calling. But Agno is model-agnostic — swap in any provider with one line.
 
-Create a virtual environment:
+## Cookbooks
+
+| # | Cookbook | What You'll Learn | Key Features |
+|:--|:---------|:------------------|:-------------|
+| 01 | Agent with Tools | Give an agent tools to fetch real-time data | Tool Calling |
+| 02 | Agent with Storage | Persist conversations across runs | Persistent Storage, Session Management |
+| 03 | Agentic Search over Knowledge | Load documents into a knowledge base and search with hybrid search | Chunking, Embedding, Hybrid Search, Agentic Retrieval |
+| 04 | Custom Tool for Self-Learning | How to write your own tools and use them in an agent | Custom Tools, Self-Learning |
+| 05 | Agent with Structured Output | Return typed Pydantic models | Structured Output, Type Safety |
+| 06 | Agent with Typed Input/Output | Full type safety on both ends | Input Schema, Output Schema |
+| 07 | Agent with Memory | Remember user preferences across sessions | Memory Manager, Personalization |
+| 08 | Agent with State Management | Track, modify, and persist structured state | Session State, State Management |
+| 09 | Multi-Agent Team | Coordinate multiple agents by organizing them into a team | Dynamic Collaboration, Multi-Agent Team |
+| 10 | Sequential Workflow | Chain agents in a pipeline | Agentic Workflow, Predictable Execution |
+
+## Key Concepts
+
+| Concept | What It Does | When to Use |
+|:--------|:-------------|:------------|
+| **Tools** | Let agents take actions | Fetch data, call APIs, run code |
+| **Storage** | Persist conversation history | Multi-turn conversations and state management |
+| **Knowledge** | Searchable document store | RAG, documentation Q&A |
+| **Memory** | Remember user preferences | Personalization |
+| **State** | Structured data the agent manages | Tracking progress, managing lists |
+| **Teams** | Multiple agents collaborating | Dynamic collaboration of specialized agents |
+| **Workflows** | Sequential agent pipelines | Predictable multi-step processes and data flow |
+
+## Why Gemini 3 Flash?
+
+- **Speed** — Sub-second responses make agent loops feel responsive
+- **Tool Calling** — Reliable function calling out of the box
+- **Affordable** — Cheap enough to experiment freely
+
+
+Agno is **Model-Agnostic** so you can swap to OpenAI, Anthropic, or any provider with one line.
+
+## Getting Started
+
+### 1. Clone the repo
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+git clone https://github.com/agno-agi/agno.git
+cd agno
 ```
 
-Install the required dependencies:
+### 2. Create and activate a virtual environment
 
 ```bash
-pip install openai ddgs yfinance lancedb tantivy pypdf requests exa-py newspaper4k lxml_html_clean sqlalchemy agno
+uv venv .getting-started --python 3.12
+source .getting-started/bin/activate
 ```
 
-Export your OpenAI API key:
+### 3. Install dependencies
 
 ```bash
-export OPENAI_API_KEY=your_api_key
+uv pip install -r cookbook/00_getting_started/requirements.txt
 ```
 
-Export your EXA_API_KEY:
+### 4. Set your API key
 
 ```bash
-export EXA_API_KEY=your_api_key
+export GOOGLE_API_KEY=your-google-api-key
 ```
 
-Export your ModelsLab API key (for video generation):
+### 5. Run any cookbook
 
 ```bash
-export MODELS_LAB_API_KEY=your_api_key
+python cookbook/00_getting_started/01_agent_with_tools.py
 ```
 
-## Learning Path - Logical Progression
+**That's it.** No Docker, no Postgres — just Python and an API key.
 
-### Foundation (Start Here)
-Learn the core concepts of agent creation and basic functionality.
+---
 
-#### 1. Basic Agent (`01_basic_agent.py`)
-- Creates a simple news reporter with a vibrant personality
-- Demonstrates basic agent configuration and responses
-- Shows how to customize agent instructions and style
+## Run via Agent OS
 
-Run this recipe using:
+Agent OS provides a web interface for interacting with your agents. Start the server:
+
 ```bash
-python cookbook/getting_started/01_basic_agent.py
+python cookbook/00_getting_started/run.py
 ```
 
-#### 2. Agent with Tools (`02_agent_with_tools.py`)
-- Enhances the news reporter with web search capabilities
-- Shows how to integrate DuckDuckGo search tool
-- Demonstrates real-time information gathering
+Then visit [os.agno.com](https://os.agno.com) and add `http://localhost:7777` as an endpoint.
 
-Run this recipe using:
+---
+
+## Run Cookbooks Individually
+
 ```bash
-python cookbook/getting_started/02_agent_with_tools.py
+# 01 - Tools: Fetch real market data
+python cookbook/00_getting_started/01_agent_with_tools.py
+
+# 02 - Storage: Remember conversations
+python cookbook/00_getting_started/02_agent_with_storage.py
+
+# 03 - Knowledge: Search your documents
+python cookbook/00_getting_started/03_agent_search_over_knowledge.py
+
+# 04 - Custom Tools: Write your own
+python cookbook/00_getting_started/04_custom_tool_for_self_learning.py
+
+# 05 - Structured Output: Get typed responses
+python cookbook/00_getting_started/05_agent_with_structured_output.py
+
+# 06 - Typed I/O: Full type safety
+python cookbook/00_getting_started/06_agent_with_typed_input_output.py
+
+# 07 - Memory: Remember user preferences
+python cookbook/00_getting_started/07_agent_with_memory.py
+
+# 08 - State: Manage watchlists
+python cookbook/00_getting_started/08_agent_with_state_management.py
+
+# 09 - Teams: Bull vs Bear analysis
+python cookbook/00_getting_started/09_multi_agent_team.py
+
+# 10 - Workflows: Research pipeline
+python cookbook/00_getting_started/10_sequential_workflow.py
 ```
 
-#### 3. Agent with Knowledge (`03_agent_with_knowledge.py`)
-- Creates a Thai cooking expert with a recipe knowledge base
-- Combines local knowledge with web searches
-- Shows vector database integration for information retrieval
+## File Structure
 
-Run this recipe using:
-```bash
-python cookbook/getting_started/03_agent_with_knowledge.py
+```
+cookbook/00_getting_started/
+├── 01_agent_with_tools.py              # Tools and data fetching
+├── 02_agent_with_storage.py            # Conversation persistence
+├── 03_agent_search_over_knowledge.py   # Knowledge base + hybrid search
+├── 04_custom_tool_for_self_learning.py # Custom tools
+├── 05_agent_with_structured_output.py  # Pydantic output
+├── 06_agent_with_typed_input_output.py # Full type safety
+├── 07_agent_with_memory.py             # User memory
+├── 08_agent_with_state_management.py   # Session state
+├── 09_multi_agent_team.py              # Multi-agent teams
+├── 10_sequential_workflow.py           # Agent workflows
+├── config.yaml                         # Agent OS quick prompts
+├── run.py                              # Agent OS entrypoint
+├── requirements.txt
+└── README.md
 ```
 
-### Tools & Data Handling
-Learn to create custom tools and handle structured data.
+## Swap Models Anytime
 
-#### 4. Custom Tools (`04_write_your_own_tool.py`)
-- Shows how to create custom tools
-- Gives the agent an example tool that queries the Hacker News API
+Agno is model-agnostic. Same code, different provider:
 
-Run this recipe using:
-```bash
-python cookbook/getting_started/04_write_your_own_tool.py
+```python
+# Gemini (default in these examples)
+from agno.models.google import Gemini
+model = Gemini(id="gemini-3-flash-preview")
+
+# OpenAI
+from agno.models.openai import OpenAIChat
+model = OpenAIChat(id="gpt-4o")
+
+# Anthropic
+from agno.models.anthropic import Claude
+model = Claude(id="claude-sonnet-4-5")
 ```
 
-#### 5. Structured Output (`05_structured_output.py`)
-- Creates a movie script generator with structured outputs
-- Shows how to use Pydantic models for response validation
-- Demonstrates both JSON mode and structured output formats
+## Learn More
 
-Run this recipe using:
-```bash
-python cookbook/getting_started/05_structured_output.py
-```
+- [Agno Documentation](https://docs.agno.com)
+- [Agent OS Overview](https://docs.agno.com/agent-os/overview)
 
-### Memory & State Management
-Build agents that remember and maintain context.
+---
 
-#### 6. Agent with Storage (`06_agent_with_storage.py`)
-- Updates the Thai cooking expert with persistent storage
-- Shows how to save and retrieve agent state
-- Demonstrates session management and history
-- Runs a CLI application for an interactive chat experience
-
-Run this recipe using:
-```bash
-python cookbook/getting_started/06_agent_with_storage.py
-```
-
-#### 7. Agent with State (`07_agent_state.py`)
-- Shows how to use session state
-- Demonstrates agent state management
-
-Run this recipe using:
-```bash
-python cookbook/getting_started/07_agent_state.py
-```
-
-#### 8. Agent with Context (`08_agent_context.py`)
-- Shows how to evaluate dependencies at agent.run and inject them into the instructions
-- Demonstrates how to use context variable
-
-Run this recipe using:
-```bash
-python cookbook/getting_started/08_agent_context.py
-```
-
-#### 9. Agent Session (`09_agent_session.py`)
-- Shows how to create an agent with session memory
-- Demonstrates how to resume a conversation from a previous session
-
-Run this recipe using:
-```bash
-python cookbook/getting_started/09_agent_session.py
-```
-
-#### 10. User Memories and Summaries (`10_user_memories_and_summaries.py`)
-- Shows how to create an agent which stores user memories and summaries
-- Demonstrates how to access the chat history and session summary
-
-Run this recipe using:
-```bash
-python cookbook/getting_started/10_user_memories_and_summaries.py
-```
-
-### Advanced Features
-Master error handling, safety, and advanced capabilities.
-
-#### 11. Retry function call (`11_retry_function_call.py`)
-- Shows how to retry a function call if it fails or you do not like the output
-
-Run this recipe using:
-```bash
-python cookbook/getting_started/11_retry_function_call.py
-```
-
-#### 12. Human-in-the-Loop (`12_human_in_the_loop.py`)
-- Adds user confirmation to tool execution
-- Shows how to implement safety checks
-- Demonstrates interactive agent control
-
-Run this recipe using:
-```bash
-python cookbook/getting_started/12_human_in_the_loop.py
-```
-
-### Multimedia & Creative
-Work with images, audio, and video generation.
-
-#### 13. Image Agent (`13_image_agent.py`)
-- Creates an image agent for image analysis
-- Combines image understanding with web searches
-- Shows how to process and analyze images
-
-Run this recipe using:
-```bash
-python cookbook/getting_started/13_image_agent.py
-```
-
-#### 14. Image Generation (`14_generate_image.py`)
-- Implements an image agent using DALL-E
-- Shows prompt engineering for image generation
-- Demonstrates handling generated image outputs
-
-Run this recipe using:
-```bash
-python cookbook/getting_started/14_generate_image.py
-```
-
-#### 15. Video Generation (`15_generate_video.py`)
-- Creates a video agent using ModelsLabs
-- Shows video prompt engineering techniques
-- Demonstrates video generation and handling
-- **Requires MODELS_LAB_API_KEY**
-
-Run this recipe using:
-```bash
-python cookbook/getting_started/15_generate_video.py
-```
-
-#### 16. Audio Input/Output (`16_audio_input_output.py`)
-- Creates an audio agent for voice interaction
-- Shows how to process audio input and generate responses
-- Demonstrates audio file handling capabilities
-
-Run this recipe using:
-```bash
-python cookbook/getting_started/16_audio_input_output.py
-```
-
-### Multi-Agent Systems
-Scale up to team-based agent architectures.
-
-#### 17. Agent Team (`17_agent_team.py`)
-- Implements an agent team with web and finance agents
-- Shows agent collaboration and role specialization
-- Combines market research with financial data analysis
-
-Run this recipe using:
-```bash
-python cookbook/getting_started/17_agent_team.py
-```
-
-### Research & Information
-Build powerful research and information gathering agents.
-
-#### 18. Research Agent (`18_research_agent_exa.py`)
-- Creates an AI research agent using Exa
-- Shows how to steer the expected output of the agent
-- **Requires EXA_API_KEY**
-
-Run this recipe using:
-```bash
-python cookbook/getting_started/18_research_agent_exa.py
-```
-
-#### 19. Research Workflow (`19_research_workflow.py`)
-- Creates an AI research workflow
-- Searches using DuckDuckGo and Scrapes web pages using Newspaper4k
-- Shows how to steer the expected output of the agent
-
-Run this recipe using:
-```bash
-python cookbook/getting_started/19_research_workflow.py
-```
+Built with 💜 by the Agno team
