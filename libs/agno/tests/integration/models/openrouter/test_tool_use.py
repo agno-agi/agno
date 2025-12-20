@@ -9,13 +9,16 @@ from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 
 # Test both OpenAI and Gemini models to verify reasoning blocks preservation
-MODEL_IDS = ["gpt-4o", "google/gemini-3-flash-preview"]
+MODEL_CONFIGS = [
+    {"id": "gpt-4o", "preserve_reasoning": False},
+    {"id": "google/gemini-3-flash-preview", "preserve_reasoning": True},
+]
 
 
-@pytest.mark.parametrize("model_id", MODEL_IDS)
-def test_tool_use(model_id):
+@pytest.mark.parametrize("model_config", MODEL_CONFIGS)
+def test_tool_use(model_config):
     agent = Agent(
-        model=OpenRouter(id=model_id),
+        model=OpenRouter(id=model_config["id"], preserve_reasoning=model_config["preserve_reasoning"]),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -30,10 +33,10 @@ def test_tool_use(model_id):
     assert "TSLA" in response.content
 
 
-@pytest.mark.parametrize("model_id", MODEL_IDS)
-def test_tool_use_stream(model_id):
+@pytest.mark.parametrize("model_config", MODEL_CONFIGS)
+def test_tool_use_stream(model_config):
     agent = Agent(
-        model=OpenRouter(id=model_id),
+        model=OpenRouter(id=model_config["id"], preserve_reasoning=model_config["preserve_reasoning"]),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -56,10 +59,10 @@ def test_tool_use_stream(model_id):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", MODEL_IDS)
-async def test_async_tool_use(model_id):
+@pytest.mark.parametrize("model_config", MODEL_CONFIGS)
+async def test_async_tool_use(model_config):
     agent = Agent(
-        model=OpenRouter(id=model_id),
+        model=OpenRouter(id=model_config["id"], preserve_reasoning=model_config["preserve_reasoning"]),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -75,10 +78,10 @@ async def test_async_tool_use(model_id):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("model_id", MODEL_IDS)
-async def test_async_tool_use_stream(model_id):
+@pytest.mark.parametrize("model_config", MODEL_CONFIGS)
+async def test_async_tool_use_stream(model_config):
     agent = Agent(
-        model=OpenRouter(id=model_id),
+        model=OpenRouter(id=model_config["id"], preserve_reasoning=model_config["preserve_reasoning"]),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -100,10 +103,10 @@ async def test_async_tool_use_stream(model_id):
         full_content += r.content or "" or ""
 
 
-@pytest.mark.parametrize("model_id", MODEL_IDS)
-def test_multiple_tool_calls(model_id):
+@pytest.mark.parametrize("model_config", MODEL_CONFIGS)
+def test_multiple_tool_calls(model_config):
     agent = Agent(
-        model=OpenRouter(id=model_id),
+        model=OpenRouter(id=model_config["id"], preserve_reasoning=model_config["preserve_reasoning"]),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -122,8 +125,8 @@ def test_multiple_tool_calls(model_id):
     assert "TSLA" in response.content and "latest news" in response.content.lower()
 
 
-@pytest.mark.parametrize("model_id", MODEL_IDS)
-def test_tool_call_custom_tool_no_parameters(model_id):
+@pytest.mark.parametrize("model_config", MODEL_CONFIGS)
+def test_tool_call_custom_tool_no_parameters(model_config):
     def get_the_weather_in_tokyo():
         """
         Get the weather in Tokyo
@@ -131,7 +134,7 @@ def test_tool_call_custom_tool_no_parameters(model_id):
         return "It is currently 70 degrees and cloudy in Tokyo"
 
     agent = Agent(
-        model=OpenRouter(id=model_id),
+        model=OpenRouter(id=model_config["id"], preserve_reasoning=model_config["preserve_reasoning"]),
         tools=[get_the_weather_in_tokyo],
         markdown=True,
         telemetry=False,
@@ -146,8 +149,8 @@ def test_tool_call_custom_tool_no_parameters(model_id):
     assert "70" in response.content
 
 
-@pytest.mark.parametrize("model_id", MODEL_IDS)
-def test_tool_call_custom_tool_optional_parameters(model_id):
+@pytest.mark.parametrize("model_config", MODEL_CONFIGS)
+def test_tool_call_custom_tool_optional_parameters(model_config):
     def get_the_weather(city: Optional[str] = None):
         """
         Get the weather in a city
@@ -161,7 +164,7 @@ def test_tool_call_custom_tool_optional_parameters(model_id):
             return f"It is currently 70 degrees and cloudy in {city}"
 
     agent = Agent(
-        model=OpenRouter(id=model_id),
+        model=OpenRouter(id=model_config["id"], preserve_reasoning=model_config["preserve_reasoning"]),
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,

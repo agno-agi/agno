@@ -26,7 +26,8 @@ class OpenRouter(OpenAILike):
         models (Optional[List[str]]): List of fallback model IDs to use if the primary model
             fails due to rate limits, timeouts, or unavailability. OpenRouter will automatically try
             these models in order. Example: ["anthropic/claude-sonnet-4", "deepseek/deepseek-r1"]
-        preserve_reasoning (Optional[bool]): Preserve reasoning blocks for Gemini models.
+        preserve_reasoning (bool): Enable reasoning blocks preservation for models that require it.
+            Required for Gemini models with function calling. Defaults to False.
             See: https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#preserving-reasoning-blocks
     """
 
@@ -38,13 +39,11 @@ class OpenRouter(OpenAILike):
     base_url: str = "https://openrouter.ai/api/v1"
     max_tokens: int = 1024
     models: Optional[List[str]] = None  # Dynamic model routing https://openrouter.ai/docs/features/model-routing
-    preserve_reasoning: Optional[bool] = None  # Auto-detect for Gemini models
+    preserve_reasoning: bool = False  # Enable for models requiring reasoning blocks preservation
 
     def _should_preserve_reasoning(self) -> bool:
-        """Check if reasoning blocks should be preserved (auto-detect for Gemini models)."""
-        if self.preserve_reasoning is not None:
-            return self.preserve_reasoning
-        return bool(self.id and "gemini" in self.id.lower())
+        """Check if reasoning blocks should be preserved."""
+        return self.preserve_reasoning
 
     def _get_client_params(self) -> Dict[str, Any]:
         """
