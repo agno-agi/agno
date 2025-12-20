@@ -10,14 +10,14 @@ Each example can be run independently and contains detailed comments + example p
 |:--|:---------|:------------------|:-------------|
 | 01 | `agent_with_tools.py` | Give an agent tools to fetch real-time data | Tool Calling, Data Fetching |
 | 02 | `agent_with_storage.py` | Persist conversations across runs | Persistent Storage, Session Management |
-| 03 | `agent_search_over_knowledge.py` | Load documents into a knowledge base and search with hybrid search | Chunking, Embedding, Hybrid Search, Agentic RAG |
-| 04 | `custom_tool_for_self_learning.py` | How to write your own tools and use them in an agent | Custom Tools, Self-Learning |
-| 05 | `agent_with_structured_output.py` | Return typed Pydantic models | Structured Output, Type Safety |
-| 06 | `agent_with_typed_input_output.py` | Full type safety on both ends | Input Schema, Output Schema |
+| 03 | `agent_search_over_knowledge.py` | Load documents into a knowledge base and search with hybrid search | Chunking, Embedding, Hybrid Search, Agentic Retrieval |
+| 04 | `custom_tool_for_self_learning.py` | How to write your own tools and add self-learning capabilities | Custom Tools, Self-Learning |
+| 05 | `agent_with_structured_output.py` | Return typed Pydantic objects | Structured Output, Type Safety |
+| 06 | `agent_with_typed_input_output.py` | Full type safety on input and output | Input Schema, Output Schema |
 | 07 | `agent_with_memory.py` | Remember user preferences across sessions | Memory Manager, Personalization, User Memory |
 | 08 | `agent_with_state_management.py` | Track, modify, and persist structured state | Session State, State Management |
 | 09 | `multi_agent_team.py` | Coordinate multiple agents by organizing them into a team | Dynamic Collaboration, Multi-Agent Team, Team Leader |
-| 10 | `sequential_workflow.py` | Chain agents in a pipeline | Agentic Workflow, Predictable Execution, Pipelines |
+| 10 | `sequential_workflow.py` | Sequentially execute agents/teams/functions | Agentic Workflow, Predictable Execution, Pipelines |
 
 ## Key Concepts
 
