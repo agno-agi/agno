@@ -35,6 +35,7 @@ agent_os = AgentOS(
     teams=[multi_agent_team],
     workflows=[sequential_workflow],
     config=config_path,
+    tracing=True,
 )
 app = agent_os.get_app()
 
