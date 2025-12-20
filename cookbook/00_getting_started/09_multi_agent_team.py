@@ -44,6 +44,7 @@ bull_agent = Agent(
     role="Make the investment case FOR a stock",
     model=Gemini(id="gemini-3-flash-preview"),
     tools=[YFinanceTools()],
+    db=team_db,
     instructions="""\
 You are a bull analyst. Your job is to make the strongest possible case
 FOR investing in a stock. Find the positives:
@@ -55,6 +56,8 @@ FOR investing in a stock. Find the positives:
 Be persuasive but grounded in data. Use the tools to get real numbers.\
 """,
     add_datetime_to_context=True,
+    add_history_to_context=True,
+    num_history_runs=5,
 )
 
 # ============================================================================
@@ -65,6 +68,7 @@ bear_agent = Agent(
     role="Make the investment case AGAINST a stock",
     model=Gemini(id="gemini-3-flash-preview"),
     tools=[YFinanceTools()],
+    db=team_db,
     instructions="""\
 You are a bear analyst. Your job is to make the strongest possible case
 AGAINST investing in a stock. Find the risks:
@@ -76,6 +80,8 @@ AGAINST investing in a stock. Find the risks:
 Be critical but fair. Use the tools to get real numbers to support your concerns.\
 """,
     add_datetime_to_context=True,
+    add_history_to_context=True,
+    num_history_runs=5,
 )
 
 # ============================================================================
