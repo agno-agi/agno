@@ -144,8 +144,8 @@ Don't save: Raw data, one-off facts, or obvious information.\
 # ============================================================================
 # Create the Agent
 # ============================================================================
-agent = Agent(
-    name="Self-Learning Finance Agent",
+self_learning_agent = Agent(
+    name="Self-Learning Agent",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[
@@ -166,19 +166,19 @@ agent = Agent(
 # ============================================================================
 if __name__ == "__main__":
     # Ask a question that might produce a learning
-    agent.print_response(
+    self_learning_agent.print_response(
         "What's a healthy P/E ratio for tech stocks?",
         stream=True,
     )
 
     # If the agent proposed a learning, approve it
-    agent.print_response(
+    self_learning_agent.print_response(
         "yes",
         stream=True,
     )
 
     # Later, the agent can recall the learning
-    agent.print_response(
+    self_learning_agent.print_response(
         "What learnings do we have saved?",
         stream=True,
     )

@@ -95,14 +95,14 @@ You receive structured requests with:
 # ============================================================================
 agent_db = SqliteDb(
     db_file="tmp/agents.db",
-    session_table="finance_agent_typed",
+    session_table="agent_with_typed_input_output",
 )
 
 # ============================================================================
 # Create the Agent
 # ============================================================================
-agent = Agent(
-    name="Typed Finance Agent",
+agent_with_typed_input_output = Agent(
+    name="Agent with Typed Input and Output",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[YFinanceTools()],
@@ -120,7 +120,7 @@ agent = Agent(
 # ============================================================================
 if __name__ == "__main__":
     # Option 1: Pass input as a dict
-    response_1 = agent.run(
+    response_1 = agent_with_typed_input_output.run(
         input={
             "ticker": "NVDA",
             "analysis_type": "deep",
@@ -153,7 +153,7 @@ if __name__ == "__main__":
         analysis_type="quick",
         include_risks=False,
     )
-    response_2 = agent.run(input=request)
+    response_2 = agent_with_typed_input_output.run(input=request)
 
     # Access the typed output
     analysis_2: StockAnalysis = response_2.content

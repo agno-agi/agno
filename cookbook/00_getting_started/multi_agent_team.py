@@ -87,8 +87,8 @@ Be critical but fair. Use the tools to get real numbers to support your concerns
 # ============================================================================
 # Team Leader — Synthesizes Both Views
 # ============================================================================
-investment_team = Team(
-    name="Investment Research Team",
+multi_agent_team = Team(
+    name="Multi-Agent Team",
     model=Gemini(id="gemini-3-flash-preview"),
     members=[bull_agent, bear_agent],
     instructions="""\
@@ -126,14 +126,14 @@ if __name__ == "__main__":
     session_id = "investment-research"
 
     # First analysis
-    investment_team.print_response(
+    multi_agent_team.print_response(
         "Should I invest in NVIDIA (NVDA)?",
         session_id=session_id,
         stream=True,
     )
 
     # Follow-up question — team remembers the previous analysis
-    investment_team.print_response(
+    multi_agent_team.print_response(
         "How does AMD compare to that?",
         session_id=session_id,
         stream=True,

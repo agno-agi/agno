@@ -29,7 +29,7 @@ from agno.workflow import Step, Workflow
 # ============================================================================
 workflow_db = SqliteDb(
     db_file="tmp/agents.db",
-    session_table="research_workflow",
+    session_table="sequential_workflow",
 )
 
 # ============================================================================
@@ -126,8 +126,8 @@ report_step = Step(
 # ============================================================================
 # Create the Workflow
 # ============================================================================
-research_workflow = Workflow(
-    name="Stock Research Pipeline",
+sequential_workflow = Workflow(
+    name="Sequential Workflow",
     description="Three-step research pipeline: Data → Analysis → Report",
     steps=[
         data_step,  # Step 1: Gather data
@@ -140,7 +140,7 @@ research_workflow = Workflow(
 # Run the Workflow
 # ============================================================================
 if __name__ == "__main__":
-    research_workflow.print_response(
+    sequential_workflow.print_response(
         "Analyze NVIDIA (NVDA) for investment",
         stream=True,
     )

@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 # ============================================================================
 agent_db = SqliteDb(
     db_file="tmp/agents.db",
-    session_table="finance_agent_structured",
+    session_table="agent_with_structured_output",
 )
 
 
@@ -88,8 +88,8 @@ computes key ratios, and produces concise, decision-ready insights.
 # ============================================================================
 # Create the Agent
 # ============================================================================
-agent = Agent(
-    name="Structured Output Finance Agent",
+agent_with_structured_output = Agent(
+    name="Agent with Structured Output",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[YFinanceTools()],
@@ -106,7 +106,7 @@ agent = Agent(
 # ============================================================================
 if __name__ == "__main__":
     # Get structured output
-    response = agent.run("Analyze NVIDIA")
+    response = agent_with_structured_output.run("Analyze NVIDIA")
 
     # Access the typed data
     analysis: StockAnalysis = response.content

@@ -71,7 +71,7 @@ computes key ratios, and produces concise, decision-ready insights.
 # ============================================================================
 # Create the Agent
 # ============================================================================
-agent = Agent(
+agent_with_storage = Agent(
     name="Finance Agent with Storage",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
@@ -92,21 +92,21 @@ if __name__ == "__main__":
     session_id = "finance-agent-session"
 
     # Turn 1: Analyze a stock
-    agent.print_response(
+    agent_with_storage.print_response(
         "Give me a quick investment brief on NVIDIA",
         session_id=session_id,
         stream=True,
     )
 
     # Turn 2: Compare — the agent remembers NVDA from turn 1
-    agent.print_response(
+    agent_with_storage.print_response(
         "Compare that to Tesla",
         session_id=session_id,
         stream=True,
     )
 
     # Turn 3: Ask for a recommendation based on the full conversation
-    agent.print_response(
+    agent_with_storage.print_response(
         "Based on our discussion, which looks like the better investment?",
         session_id=session_id,
         stream=True,

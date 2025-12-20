@@ -30,7 +30,7 @@ from agno.tools.yfinance import YFinanceTools
 # ============================================================================
 agent_db = SqliteDb(
     db_file="tmp/agents.db",
-    session_table="finance_agent_state",
+    session_table="agent_with_state_management",
 )
 
 
@@ -112,7 +112,7 @@ You are a Finance Agent that manages a stock watchlist.
 # ============================================================================
 # Create the Agent
 # ============================================================================
-agent = Agent(
+agent_with_state_management = Agent(
     name="Finance Agent with State",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
@@ -135,13 +135,13 @@ agent = Agent(
 # ============================================================================
 if __name__ == "__main__":
     # Add some stocks
-    agent.print_response(
+    agent_with_state_management.print_response(
         "Add NVDA, AAPL, and GOOGL to my watchlist",
         stream=True,
     )
 
     # Check the watchlist
-    agent.print_response(
+    agent_with_state_management.print_response(
         "How are my watched stocks doing today?",
         stream=True,
     )
@@ -149,7 +149,9 @@ if __name__ == "__main__":
     # View the state directly
     print("\n" + "=" * 60)
     print("Session State:")
-    print(f"  Watchlist: {agent.get_session_state().get('watchlist', [])}")
+    print(
+        f"  Watchlist: {agent_with_state_management.get_session_state().get('watchlist', [])}"
+    )
     print("=" * 60)
 
 # ============================================================================

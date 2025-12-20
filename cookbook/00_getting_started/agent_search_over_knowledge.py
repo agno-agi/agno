@@ -86,7 +86,7 @@ You are an expert on the Agno framework and building AI agents.
 # ============================================================================
 # Create the Agent
 # ============================================================================
-agent = Agent(
+agent_with_knowledge = Agent(
     name="Agent with Knowledge",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
@@ -107,7 +107,7 @@ if __name__ == "__main__":
     # We're only loading 1 file to keep this example simple.
     knowledge.add_content(url="https://docs.agno.com/introduction.md")
 
-    agent.print_response(
+    agent_with_knowledge.print_response(
         "What is Agno?",
         stream=True,
     )

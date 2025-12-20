@@ -31,7 +31,7 @@ from rich.pretty import pprint
 # ============================================================================
 agent_db = SqliteDb(
     db_file="tmp/agents.db",
-    session_table="finance_agent_memory",
+    session_table="agent_with_memory",
 )
 
 # ============================================================================
@@ -88,7 +88,7 @@ You have memory of user preferences (automatically provided in context). Use thi
 # ============================================================================
 user_id = "investor@example.com"
 
-agent = Agent(
+agent_with_memory = Agent(
     name="Finance Agent with Memory",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
@@ -110,21 +110,21 @@ if __name__ == "__main__":
     session_id = "memory-demo"
 
     # Tell the agent about yourself
-    agent.print_response(
+    agent_with_memory.print_response(
         "I'm interested in AI and semiconductor stocks. My risk tolerance is moderate.",
         session_id=session_id,
         stream=True,
     )
 
     # The agent now knows your preferences
-    agent.print_response(
+    agent_with_memory.print_response(
         "What stocks would you recommend for me?",
         session_id=session_id,
         stream=True,
     )
 
     # View stored memories
-    memories = agent.get_user_memories(user_id=user_id)
+    memories = agent_with_memory.get_user_memories(user_id=user_id)
     print("\n" + "=" * 60)
     print("Stored Memories:")
     print("=" * 60)
