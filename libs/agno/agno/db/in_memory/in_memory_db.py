@@ -17,6 +17,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.user_profile import UserProfile
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -36,6 +37,7 @@ class InMemoryDb(BaseDb):
         self._eval_runs: List[Dict[str, Any]] = []
         self._knowledge: List[Dict[str, Any]] = []
         self._cultural_knowledge: List[Dict[str, Any]] = []
+        self._user_profiles: Dict[str, Dict[str, Any]] = {}
 
     def table_exists(self, table_name: str) -> bool:
         """In-memory implementation, always returns True."""
@@ -1310,3 +1312,130 @@ class InMemoryDb(BaseDb):
             List[Span]: List of matching spans.
         """
         raise NotImplementedError
+
+    # -- User Profiles --
+
+    def get_user_profile(
+        self,
+        user_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        """Get a user profile from the database.
+
+        Args:
+            user_id: The unique user identifier
+            deserialize: Whether to deserialize to UserProfile object
+
+        Returns:
+            UserProfile or dict if found, None otherwise
+        """
+        try:
+            result = self._user_profiles.get(user_id)
+            if result is None:
+                return None
+
+            result_copy = deepcopy(result)
+
+            if not deserialize:
+                return result_copy
+
+            return UserProfile.from_dict(result_copy)
+
+        except Exception as e:
+            log_error(f"Error getting user profile: {e}")
+            raise e
+
+    def get_user_profiles(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[UserProfile], Tuple[List[Dict[str, Any]], int]]:
+        """Get all user profiles with pagination.
+
+        Args:
+            limit: Maximum number of profiles to return
+            page: Page number (1-indexed)
+            sort_by: Column to sort by
+            sort_order: 'asc' or 'desc'
+            deserialize: If True, return list of UserProfile; if False, return (list of dicts, count)
+
+        Returns:
+            List of UserProfile objects or (list of dicts, total count)
+        """
+        try:
+            profiles = list(self._user_profiles.values())
+            total_count = len(profiles)
+
+            # Apply sorting
+            profiles = apply_sorting(profiles, sort_by, sort_order)
+
+            # Apply pagination
+            if limit is not None:
+                offset = ((page or 1) - 1) * limit
+                profiles = profiles[offset : offset + limit]
+
+            profiles_copy = deepcopy(profiles)
+
+            if deserialize:
+                return [UserProfile.from_dict(profile) for profile in profiles_copy]
+
+            return (profiles_copy, total_count)
+
+        except Exception as e:
+            log_error(f"Error getting user profiles: {e}")
+            raise e
+
+    def upsert_user_profile(
+        self,
+        user_profile: UserProfile,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        """Upsert a user profile in the database.
+
+        Args:
+            user_profile: The user profile to upsert
+            deserialize: Whether to deserialize to UserProfile object
+
+        Returns:
+            UserProfile or dict if successful, None otherwise
+        """
+        try:
+            current_time = int(time.time())
+
+            item_data = {
+                "user_id": user_profile.user_id,
+                "user_profile": user_profile.user_profile,
+                "memory_layers": user_profile.memory_layers,
+                "metadata": user_profile.metadata,
+                "created_at": user_profile.created_at or current_time,
+                "updated_at": current_time,
+            }
+
+            self._user_profiles[user_profile.user_id] = item_data
+
+            if not deserialize:
+                return deepcopy(item_data)
+
+            return UserProfile.from_dict(deepcopy(item_data))
+
+        except Exception as e:
+            log_error(f"Error upserting user profile: {e}")
+            raise e
+
+    def delete_user_profile(self, user_id: str) -> None:
+        """Delete a user profile.
+
+        Args:
+            user_id: The unique user identifier to delete
+        """
+        try:
+            if user_id in self._user_profiles:
+                del self._user_profiles[user_id]
+            log_debug(f"Deleted user profile: {user_id}")
+
+        except Exception as e:
+            log_error(f"Error deleting user profile: {e}")
+            raise e

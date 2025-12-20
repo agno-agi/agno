@@ -1,3 +1,4 @@
+import time
 from datetime import date, datetime, timedelta, timezone
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
@@ -13,6 +14,7 @@ from agno.db.schemas import UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.schemas.user_profile import UserProfile
 from agno.db.surrealdb import utils
 from agno.db.surrealdb.metrics import (
     bulk_upsert_metrics,
@@ -69,6 +71,7 @@ class SurrealDb(BaseDb):
         culture_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
+        user_profiles_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -105,6 +108,7 @@ class SurrealDb(BaseDb):
             culture_table=culture_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            user_profiles_table=user_profiles_table,
         )
         self._client = client
         self._db_url = db_url
@@ -188,6 +192,8 @@ class SurrealDb(BaseDb):
             if create_table_if_not_found:
                 self._get_table("traces", create_table_if_not_found=True)
             table_name = self.span_table_name
+        elif table_type == "user_profiles":
+            table_name = self.user_profiles_table_name
         else:
             raise NotImplementedError(f"Unknown table type: {table_type}")
 
@@ -1906,3 +1912,183 @@ class SurrealDb(BaseDb):
                 span_data[field] = span_data[field].isoformat()
 
         return Span.from_dict(span_data)
+
+    # -- User Profiles --
+
+    def get_user_profile(
+        self,
+        user_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        """Get a user profile from the database.
+
+        Args:
+            user_id: The unique user identifier
+            deserialize: Whether to deserialize to UserProfile object
+
+        Returns:
+            UserProfile or dict if found, None otherwise
+        """
+        try:
+            table = self._get_table("user_profiles", create_table_if_not_found=False)
+            if table is None:
+                return None
+
+            query = f"SELECT * FROM {table} WHERE user_id = $user_id"
+            results = self._query(query, {"user_id": user_id}, dict)
+
+            if not results:
+                return None
+
+            result = results[0]
+
+            # Handle RecordID for id field
+            if isinstance(result.get("id"), RecordID):
+                del result["id"]
+
+            if not deserialize:
+                return result
+
+            return UserProfile.from_dict(result)
+
+        except Exception as e:
+            log_error(f"Error getting user profile: {e}")
+            raise e
+
+    def get_user_profiles(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[UserProfile], Tuple[List[Dict[str, Any]], int]]:
+        """Get all user profiles with pagination.
+
+        Args:
+            limit: Maximum number of profiles to return
+            page: Page number (1-indexed)
+            sort_by: Column to sort by
+            sort_order: 'asc' or 'desc'
+            deserialize: If True, return list of UserProfile; if False, return (list of dicts, count)
+
+        Returns:
+            List of UserProfile objects or (list of dicts, total count)
+        """
+        try:
+            table = self._get_table("user_profiles", create_table_if_not_found=False)
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            # Count total
+            count_query = f"SELECT count() FROM {table} GROUP ALL"
+            count_result = self._query(count_query, {}, dict)
+            total_count = count_result[0].get("count", 0) if count_result else 0
+
+            # Build query with ordering and pagination
+            order_clause = ""
+            if sort_by:
+                direction = "DESC" if sort_order and sort_order.lower() == "desc" else "ASC"
+                order_clause = f"ORDER BY {sort_by} {direction}"
+
+            limit_clause = ""
+            if limit is not None:
+                offset = ((page or 1) - 1) * limit
+                limit_clause = f"LIMIT {limit} START {offset}"
+
+            query = f"SELECT * FROM {table} {order_clause} {limit_clause}"
+            results = self._query(query, {}, dict)
+
+            profiles = []
+            for result in results:
+                # Handle RecordID for id field
+                if isinstance(result.get("id"), RecordID):
+                    del result["id"]
+
+                if deserialize:
+                    profiles.append(UserProfile.from_dict(result))
+                else:
+                    profiles.append(result)
+
+            if deserialize:
+                return profiles
+
+            return (profiles, total_count)
+
+        except Exception as e:
+            log_error(f"Error getting user profiles: {e}")
+            raise e
+
+    def upsert_user_profile(
+        self,
+        user_profile: UserProfile,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        """Upsert a user profile in the database.
+
+        Args:
+            user_profile: The user profile to upsert
+            deserialize: Whether to deserialize to UserProfile object
+
+        Returns:
+            UserProfile or dict if successful, None otherwise
+        """
+        try:
+            table = self._get_table("user_profiles", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            current_time = int(time.time())
+
+            item_data = {
+                "user_id": user_profile.user_id,
+                "user_profile": user_profile.user_profile,
+                "memory_layers": user_profile.memory_layers,
+                "metadata": user_profile.metadata,
+                "created_at": user_profile.created_at or current_time,
+                "updated_at": current_time,
+            }
+
+            # Use UPSERT with user_id as the unique identifier
+            query = dedent(f"""
+                UPSERT {table} CONTENT $data
+                WHERE user_id = $user_id
+            """)
+            results = self._query(query, {"data": item_data, "user_id": user_profile.user_id}, dict)
+
+            if not results:
+                return None
+
+            result = results[0] if isinstance(results, list) else results
+
+            # Handle RecordID for id field
+            if isinstance(result.get("id"), RecordID):
+                del result["id"]
+
+            if not deserialize:
+                return result
+
+            return UserProfile.from_dict(result)
+
+        except Exception as e:
+            log_error(f"Error upserting user profile: {e}")
+            raise e
+
+    def delete_user_profile(self, user_id: str) -> None:
+        """Delete a user profile.
+
+        Args:
+            user_id: The unique user identifier to delete
+        """
+        try:
+            table = self._get_table("user_profiles", create_table_if_not_found=False)
+            if table is None:
+                return
+
+            query = f"DELETE FROM {table} WHERE user_id = $user_id"
+            self._query(query, {"user_id": user_id}, dict)
+            log_debug(f"Deleted user profile: {user_id}")
+
+        except Exception as e:
+            log_error(f"Error deleting user profile: {e}")
+            raise e

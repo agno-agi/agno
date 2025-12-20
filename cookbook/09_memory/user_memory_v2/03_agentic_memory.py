@@ -37,7 +37,11 @@ agent.print_response(
 )
 
 print("\nMemory after conversation 1:")
-pprint(memory.get_user_profile(user_id).to_dict() if memory.get_user_profile(user_id) else {})
+pprint(
+    memory.get_user_profile(user_id).to_dict()
+    if memory.get_user_profile(user_id)
+    else {}
+)
 
 # Conversation 2: Agent uses update_user_policies tool
 print("\nConversation 2: User states preferences")
@@ -48,7 +52,11 @@ agent.print_response(
 )
 
 print("\nMemory after conversation 2:")
-pprint(memory.get_user_profile(user_id).to_dict() if memory.get_user_profile(user_id) else {})
+pprint(
+    memory.get_user_profile(user_id).to_dict()
+    if memory.get_user_profile(user_id)
+    else {}
+)
 
 # Conversation 3: Agent uses manage_user_memory tool to delete
 print("\nConversation 3: User asks to forget something")
@@ -59,7 +67,11 @@ agent.print_response(
 )
 
 print("\nMemory after conversation 2:")
-pprint(memory.get_user_profile(user_id).to_dict() if memory.get_user_profile(user_id) else {})
+pprint(
+    memory.get_user_profile(user_id).to_dict()
+    if memory.get_user_profile(user_id)
+    else {}
+)
 
 # Conversation 4: Agent uses add_user_knowledge tool to add knowledge
 print("\nConversation 4: User shares knowledge")
@@ -70,4 +82,8 @@ agent.print_response(
 )
 
 print("\nMemory after conversation 4:")
-pprint(memory.get_user_profile(user_id).to_dict() if memory.get_user_profile(user_id) else {})
+pprint(
+    memory.get_user_profile(user_id).to_dict()
+    if memory.get_user_profile(user_id)
+    else {}
+)

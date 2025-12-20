@@ -26,7 +26,7 @@ agent = Agent(
     markdown=True,
 )
 
-user_id = "alex"
+user_id="sarah"
 
 # Conversation 1: User shares profile info
 print("Conversation 1: User introduces themselves")

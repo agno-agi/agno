@@ -22,6 +22,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.user_profile import UserProfile
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -39,6 +40,7 @@ class JsonDb(BaseDb):
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
+        user_profiles_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -70,6 +72,7 @@ class JsonDb(BaseDb):
             knowledge_table=knowledge_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            user_profiles_table=user_profiles_table,
         )
 
         # Create the directory where the JSON files will be stored, if it doesn't exist
@@ -1775,3 +1778,151 @@ class JsonDb(BaseDb):
         except Exception as e:
             log_error(f"Error getting spans: {e}")
             return []
+
+    # -- User Profiles --
+
+    def get_user_profile(
+        self,
+        user_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        """Get a user profile from the database.
+
+        Args:
+            user_id: The unique user identifier
+            deserialize: Whether to deserialize to UserProfile object
+
+        Returns:
+            UserProfile or dict if found, None otherwise
+        """
+        try:
+            profiles = self._read_json_file("user_profiles", create_table_if_not_found=False)
+            if not profiles:
+                return None
+
+            for profile in profiles:
+                if profile.get("user_id") == user_id:
+                    if not deserialize:
+                        return profile
+                    return UserProfile.from_dict(profile)
+
+            return None
+
+        except Exception as e:
+            log_error(f"Error getting user profile: {e}")
+            raise e
+
+    def get_user_profiles(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[UserProfile], Tuple[List[Dict[str, Any]], int]]:
+        """Get all user profiles with pagination.
+
+        Args:
+            limit: Maximum number of profiles to return
+            page: Page number (1-indexed)
+            sort_by: Column to sort by
+            sort_order: 'asc' or 'desc'
+            deserialize: If True, return list of UserProfile; if False, return (list of dicts, count)
+
+        Returns:
+            List of UserProfile objects or (list of dicts, total count)
+        """
+        try:
+            profiles = self._read_json_file("user_profiles", create_table_if_not_found=False)
+            if not profiles:
+                return [] if deserialize else ([], 0)
+
+            total_count = len(profiles)
+
+            # Apply sorting
+            profiles = apply_sorting(profiles, sort_by, sort_order)
+
+            # Apply pagination
+            if limit is not None:
+                offset = ((page or 1) - 1) * limit
+                profiles = profiles[offset : offset + limit]
+
+            if deserialize:
+                return [UserProfile.from_dict(profile) for profile in profiles]
+
+            return (profiles, total_count)
+
+        except Exception as e:
+            log_error(f"Error getting user profiles: {e}")
+            raise e
+
+    def upsert_user_profile(
+        self,
+        user_profile: UserProfile,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        """Upsert a user profile in the database.
+
+        Args:
+            user_profile: The user profile to upsert
+            deserialize: Whether to deserialize to UserProfile object
+
+        Returns:
+            UserProfile or dict if successful, None otherwise
+        """
+        try:
+            current_time = int(time.time())
+
+            item_data = {
+                "user_id": user_profile.user_id,
+                "user_profile": user_profile.user_profile,
+                "memory_layers": user_profile.memory_layers,
+                "metadata": user_profile.metadata,
+                "created_at": user_profile.created_at or current_time,
+                "updated_at": current_time,
+            }
+
+            profiles = self._read_json_file("user_profiles", create_table_if_not_found=True)
+            if profiles is None:
+                profiles = []
+
+            # Find and update or append
+            found = False
+            for i, profile in enumerate(profiles):
+                if profile.get("user_id") == user_profile.user_id:
+                    profiles[i] = item_data
+                    found = True
+                    break
+
+            if not found:
+                profiles.append(item_data)
+
+            self._write_json_file("user_profiles", profiles)
+
+            if not deserialize:
+                return item_data
+
+            return UserProfile.from_dict(item_data)
+
+        except Exception as e:
+            log_error(f"Error upserting user profile: {e}")
+            raise e
+
+    def delete_user_profile(self, user_id: str) -> None:
+        """Delete a user profile.
+
+        Args:
+            user_id: The unique user identifier to delete
+        """
+        try:
+            profiles = self._read_json_file("user_profiles", create_table_if_not_found=False)
+            if not profiles:
+                return
+
+            profiles = [p for p in profiles if p.get("user_id") != user_id]
+            self._write_json_file("user_profiles", profiles)
+            log_debug(f"Deleted user profile: {user_id}")
+
+        except Exception as e:
+            log_error(f"Error deleting user profile: {e}")
+            raise e

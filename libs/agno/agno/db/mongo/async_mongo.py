@@ -23,6 +23,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.user_profile import UserProfile
 from agno.db.utils import deserialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
@@ -40,8 +41,8 @@ except ImportError:
 
 try:
     from pymongo import AsyncMongoClient  # type: ignore
-    from pymongo.collection import AsyncCollection  # type: ignore
-    from pymongo.database import AsyncDatabase  # type: ignore
+    from pymongo.asynchronous.collection import AsyncCollection  # type: ignore
+    from pymongo.asynchronous.database import AsyncDatabase  # type: ignore
 
     PYMONGO_ASYNC_AVAILABLE = True
 except ImportError:
@@ -149,6 +150,7 @@ class AsyncMongoDb(AsyncBaseDb):
         culture_collection: Optional[str] = None,
         traces_collection: Optional[str] = None,
         spans_collection: Optional[str] = None,
+        user_profiles_collection: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -172,6 +174,7 @@ class AsyncMongoDb(AsyncBaseDb):
             culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
+            user_profiles_collection (Optional[str]): Name of the collection to store user profiles.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -194,6 +197,7 @@ class AsyncMongoDb(AsyncBaseDb):
             culture_table=culture_collection,
             traces_table=traces_collection,
             spans_table=spans_collection,
+            user_profiles_table=user_profiles_collection,
         )
 
         # Detect client type if provided
@@ -451,6 +455,17 @@ class AsyncMongoDb(AsyncBaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.spans_collection
+
+        if table_type == "user_profiles":
+            if reset_cache or not hasattr(self, "user_profiles_collection"):
+                if self.user_profiles_table_name is None:
+                    raise ValueError("User profiles collection was not provided on initialization")
+                self.user_profiles_collection = await self._get_or_create_collection(
+                    collection_name=self.user_profiles_table_name,
+                    collection_type="user_profiles",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.user_profiles_collection
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -2769,3 +2784,169 @@ class AsyncMongoDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error getting spans: {e}")
             return []
+
+    # -- User Profiles --
+
+    async def get_user_profile(
+        self,
+        user_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        """Get a user profile from the database.
+
+        Args:
+            user_id: The unique user identifier
+            deserialize: Whether to deserialize to UserProfile object
+
+        Returns:
+            UserProfile or dict if found, None otherwise
+        """
+        try:
+            collection = await self._get_collection(table_type="user_profiles")
+            if collection is None:
+                return None
+
+            result = await collection.find_one({"user_id": user_id})
+            if result is None:
+                return None
+
+            # Remove MongoDB's _id field
+            result.pop("_id", None)
+
+            if not deserialize:
+                return result
+
+            return UserProfile.from_dict(result)
+
+        except Exception as e:
+            log_error(f"Error getting user profile: {e}")
+            raise e
+
+    async def get_user_profiles(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[UserProfile], Tuple[List[Dict[str, Any]], int]]:
+        """Get all user profiles with pagination.
+
+        Args:
+            limit: Maximum number of profiles to return
+            page: Page number (1-indexed)
+            sort_by: Column to sort by
+            sort_order: 'asc' or 'desc'
+            deserialize: If True, return list of UserProfile; if False, return (list of dicts, count)
+
+        Returns:
+            List of UserProfile objects or (list of dicts, total count)
+        """
+        try:
+            collection = await self._get_collection(table_type="user_profiles")
+            if collection is None:
+                return [] if deserialize else ([], 0)
+
+            # Count total
+            total_count = await collection.count_documents({})
+
+            # Apply sorting
+            sort_criteria = apply_sorting({}, sort_by, sort_order)
+
+            # Apply pagination
+            query_args = apply_pagination({}, limit, page)
+
+            cursor = collection.find({})
+            if sort_criteria:
+                cursor = cursor.sort(sort_criteria)
+            if query_args.get("skip"):
+                cursor = cursor.skip(query_args["skip"])
+            if query_args.get("limit"):
+                cursor = cursor.limit(query_args["limit"])
+
+            results = await cursor.to_list(length=None)
+            profiles = []
+            for row in results:
+                row.pop("_id", None)
+                if deserialize:
+                    profiles.append(UserProfile.from_dict(row))
+                else:
+                    profiles.append(row)
+
+            if deserialize:
+                return profiles
+
+            return (profiles, total_count)
+
+        except Exception as e:
+            log_error(f"Error getting user profiles: {e}")
+            raise e
+
+    async def upsert_user_profile(
+        self,
+        user_profile: UserProfile,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        """Upsert a user profile in the database.
+
+        Args:
+            user_profile: The user profile to upsert
+            deserialize: Whether to deserialize to UserProfile object
+
+        Returns:
+            UserProfile or dict if successful, None otherwise
+        """
+        try:
+            collection = await self._get_collection(table_type="user_profiles", create_collection_if_not_found=True)
+            if collection is None:
+                return None
+
+            current_time = int(time.time())
+
+            update_doc = {
+                "user_id": user_profile.user_id,
+                "user_profile": user_profile.user_profile,
+                "memory_layers": user_profile.memory_layers,
+                "metadata": user_profile.metadata,
+                "created_at": user_profile.created_at or current_time,
+                "updated_at": current_time,
+            }
+
+            result = await collection.find_one_and_replace(
+                {"user_id": user_profile.user_id},
+                update_doc,
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+
+            if not deserialize:
+                return result
+
+            return UserProfile.from_dict(result)
+
+        except Exception as e:
+            log_error(f"Error upserting user profile: {e}")
+            raise e
+
+    async def delete_user_profile(self, user_id: str) -> None:
+        """Delete a user profile.
+
+        Args:
+            user_id: The unique user identifier to delete
+        """
+        try:
+            collection = await self._get_collection(table_type="user_profiles")
+            if collection is None:
+                return
+
+            await collection.delete_one({"user_id": user_id})
+            log_debug(f"Deleted user profile: {user_id}")
+
+        except Exception as e:
+            log_error(f"Error deleting user profile: {e}")
+            raise e

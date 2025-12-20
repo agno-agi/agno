@@ -2446,6 +2446,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="user_profiles")
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.user_id == user_id)
@@ -2488,6 +2490,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="user_profiles")
+            if table is None:
+                return [] if deserialize else ([], 0)
 
             async with self.async_session_factory() as sess, sess.begin():
                 # Count total
@@ -2523,6 +2527,8 @@ class AsyncSqliteDb(AsyncBaseDb):
     ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
         try:
             table = await self._get_table(table_type="user_profiles", create_table_if_not_found=True)
+            if table is None:
+                return None
 
             current_time = int(time.time())
 
@@ -2571,6 +2577,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="user_profiles")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.user_id == user_id)

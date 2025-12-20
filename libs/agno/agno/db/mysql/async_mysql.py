@@ -25,6 +25,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.user_profile import UserProfile
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -55,6 +56,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        user_profiles_table: Optional[str] = None,
         create_schema: bool = True,
     ):
         """
@@ -103,6 +105,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
+            user_profiles_table=user_profiles_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -365,6 +368,15 @@ class AsyncMySQLDb(AsyncBaseDb):
                     create_table_if_not_found=create_table_if_not_found,
                 )
             return self.spans_table
+
+        if table_type == "user_profiles":
+            if not hasattr(self, "user_profiles_table"):
+                self.user_profiles_table = await self._get_or_create_table(
+                    table_name=self.user_profiles_table_name,
+                    table_type="user_profiles",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+            return self.user_profiles_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -2919,3 +2931,175 @@ class AsyncMySQLDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error getting spans: {e}")
             return []
+
+    # -- User Profiles --
+
+    async def get_user_profile(
+        self,
+        user_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        """Get a user profile from the database.
+
+        Args:
+            user_id: The unique user identifier
+            deserialize: Whether to deserialize to UserProfile object
+
+        Returns:
+            UserProfile or dict if found, None otherwise
+        """
+        try:
+            table = await self._get_table(table_type="user_profiles")
+            if table is None:
+                return None
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = select(table).where(table.c.user_id == user_id)
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+
+                if row is None:
+                    return None
+
+                db_row = dict(row._mapping)
+
+                if not deserialize:
+                    return db_row
+
+                return UserProfile.from_dict(db_row)
+
+        except Exception as e:
+            log_error(f"Error getting user profile: {e}")
+            raise e
+
+    async def get_user_profiles(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[UserProfile], Tuple[List[Dict[str, Any]], int]]:
+        """Get all user profiles with pagination.
+
+        Args:
+            limit: Maximum number of profiles to return
+            page: Page number (1-indexed)
+            sort_by: Column to sort by
+            sort_order: 'asc' or 'desc'
+            deserialize: If True, return list of UserProfile; if False, return (list of dicts, count)
+
+        Returns:
+            List of UserProfile objects or (list of dicts, total count)
+        """
+        try:
+            table = await self._get_table(table_type="user_profiles")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            async with self.async_session_factory() as sess, sess.begin():
+                # Count total
+                count_stmt = select(func.count()).select_from(table)
+                total_count = (await sess.execute(count_stmt)).scalar() or 0
+
+                # Build query
+                stmt = select(table)
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
+
+                # Apply pagination
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                if page is not None and limit is not None:
+                    stmt = stmt.offset((page - 1) * limit)
+
+                result = await sess.execute(stmt)
+                rows = result.fetchall()
+
+                if deserialize:
+                    return [UserProfile.from_dict(dict(row._mapping)) for row in rows]
+
+                return ([dict(row._mapping) for row in rows], total_count)
+
+        except Exception as e:
+            log_error(f"Error getting user profiles: {e}")
+            raise e
+
+    async def upsert_user_profile(
+        self,
+        user_profile: UserProfile,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        """Upsert a user profile in the database.
+
+        Args:
+            user_profile: The user profile to upsert
+            deserialize: Whether to deserialize to UserProfile object
+
+        Returns:
+            UserProfile or dict if successful, None otherwise
+        """
+        try:
+            table = await self._get_table(table_type="user_profiles", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            current_time = int(time.time())
+
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = mysql.insert(table).values(
+                        user_id=user_profile.user_id,
+                        user_profile=user_profile.user_profile,
+                        memory_layers=user_profile.memory_layers,
+                        metadata=user_profile.metadata,
+                        created_at=user_profile.created_at or current_time,
+                        updated_at=current_time,
+                    )
+
+                    stmt = stmt.on_duplicate_key_update(
+                        user_profile=user_profile.user_profile,
+                        memory_layers=user_profile.memory_layers,
+                        metadata=user_profile.metadata,
+                        updated_at=current_time,
+                    )
+
+                    await sess.execute(stmt)
+
+                    # Fetch the upserted row
+                    fetch_stmt = select(table).where(table.c.user_id == user_profile.user_id)
+                    result = await sess.execute(fetch_stmt)
+                    row = result.fetchone()
+
+                    if row is None:
+                        return None
+
+                    db_row = dict(row._mapping)
+
+                    if not deserialize:
+                        return db_row
+
+                    return UserProfile.from_dict(db_row)
+
+        except Exception as e:
+            log_error(f"Error upserting user profile: {e}")
+            raise e
+
+    async def delete_user_profile(self, user_id: str) -> None:
+        """Delete a user profile.
+
+        Args:
+            user_id: The unique user identifier to delete
+        """
+        try:
+            table = await self._get_table(table_type="user_profiles")
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = table.delete().where(table.c.user_id == user_id)
+                await sess.execute(stmt)
+                log_debug(f"Deleted user profile: {user_id}")
+
+        except Exception as e:
+            log_error(f"Error deleting user profile: {e}")
+            raise e

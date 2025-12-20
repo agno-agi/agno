@@ -36,6 +36,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.user_profile import UserProfile
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -65,6 +66,7 @@ class DynamoDb(BaseDb):
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
+        user_profiles_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -83,6 +85,7 @@ class DynamoDb(BaseDb):
             knowledge_table: The name of the knowledge table.
             traces_table: The name of the traces table.
             spans_table: The name of the spans table.
+            user_profiles_table: The name of the user profiles table.
             id: ID of the database.
         """
         if id is None:
@@ -99,6 +102,7 @@ class DynamoDb(BaseDb):
             knowledge_table=knowledge_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            user_profiles_table=user_profiles_table,
         )
 
         if db_client is not None:
@@ -186,6 +190,8 @@ class DynamoDb(BaseDb):
             # Ensure traces table exists first (spans reference traces)
             self._get_table("traces", create_table_if_not_found=True)
             table_name = self.span_table_name
+        elif table_type == "user_profiles":
+            table_name = self.user_profiles_table_name
         else:
             raise ValueError(f"Unknown table type: {table_type}")
 
@@ -2779,3 +2785,168 @@ class DynamoDb(BaseDb):
         except Exception as e:
             log_error(f"Error getting spans: {e}")
             return []
+
+    # -- User Profiles --
+
+    def get_user_profile(
+        self,
+        user_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        """Get a user profile from the database.
+
+        Args:
+            user_id: The unique user identifier
+            deserialize: Whether to deserialize to UserProfile object
+
+        Returns:
+            UserProfile or dict if found, None otherwise
+        """
+        try:
+            table_name = self._get_table(table_type="user_profiles", create_table_if_not_found=False)
+            if table_name is None:
+                return None
+
+            response = self.client.get_item(
+                TableName=table_name,
+                Key={"user_id": {"S": user_id}},
+            )
+
+            item = response.get("Item")
+            if item is None:
+                return None
+
+            result = deserialize_from_dynamodb_item(item)
+
+            if not deserialize:
+                return result
+
+            return UserProfile.from_dict(result)
+
+        except Exception as e:
+            log_error(f"Error getting user profile: {e}")
+            raise e
+
+    def get_user_profiles(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[UserProfile], Tuple[List[Dict[str, Any]], int]]:
+        """Get all user profiles with pagination.
+
+        Args:
+            limit: Maximum number of profiles to return
+            page: Page number (1-indexed)
+            sort_by: Column to sort by
+            sort_order: 'asc' or 'desc'
+            deserialize: If True, return list of UserProfile; if False, return (list of dicts, count)
+
+        Returns:
+            List of UserProfile objects or (list of dicts, total count)
+        """
+        try:
+            table_name = self._get_table(table_type="user_profiles", create_table_if_not_found=False)
+            if table_name is None:
+                return [] if deserialize else ([], 0)
+
+            # Scan all items
+            items = []
+            scan_kwargs: Dict[str, Any] = {"TableName": table_name}
+
+            response = self.client.scan(**scan_kwargs)
+            items.extend(response.get("Items", []))
+
+            while "LastEvaluatedKey" in response:
+                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.scan(**scan_kwargs)
+                items.extend(response.get("Items", []))
+
+            total_count = len(items)
+
+            # Deserialize items
+            records = [deserialize_from_dynamodb_item(item) for item in items]
+
+            # Apply sorting
+            records = apply_sorting(records, sort_by, sort_order)
+
+            # Apply pagination
+            records = apply_pagination(records, limit, page)
+
+            if deserialize:
+                return [UserProfile.from_dict(record) for record in records]
+
+            return (records, total_count)
+
+        except Exception as e:
+            log_error(f"Error getting user profiles: {e}")
+            raise e
+
+    def upsert_user_profile(
+        self,
+        user_profile: UserProfile,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        """Upsert a user profile in the database.
+
+        Args:
+            user_profile: The user profile to upsert
+            deserialize: Whether to deserialize to UserProfile object
+
+        Returns:
+            UserProfile or dict if successful, None otherwise
+        """
+        try:
+            table_name = self._get_table(table_type="user_profiles", create_table_if_not_found=True)
+            if table_name is None:
+                return None
+
+            current_time = int(time.time())
+
+            item_data = {
+                "user_id": user_profile.user_id,
+                "user_profile": user_profile.user_profile,
+                "memory_layers": user_profile.memory_layers,
+                "metadata": user_profile.metadata,
+                "created_at": user_profile.created_at or current_time,
+                "updated_at": current_time,
+            }
+
+            dynamo_item = serialize_to_dynamo_item(item_data)
+
+            self.client.put_item(
+                TableName=table_name,
+                Item=dynamo_item,
+            )
+
+            if not deserialize:
+                return item_data
+
+            return UserProfile.from_dict(item_data)
+
+        except Exception as e:
+            log_error(f"Error upserting user profile: {e}")
+            raise e
+
+    def delete_user_profile(self, user_id: str) -> None:
+        """Delete a user profile.
+
+        Args:
+            user_id: The unique user identifier to delete
+        """
+        try:
+            table_name = self._get_table(table_type="user_profiles", create_table_if_not_found=False)
+            if table_name is None:
+                return
+
+            self.client.delete_item(
+                TableName=table_name,
+                Key={"user_id": {"S": user_id}},
+            )
+            log_debug(f"Deleted user profile: {user_id}")
+
+        except Exception as e:
+            log_error(f"Error deleting user profile: {e}")
+            raise e

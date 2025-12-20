@@ -25,6 +25,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.user_profile import UserProfile
 from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
@@ -51,6 +52,7 @@ class FirestoreDb(BaseDb):
         culture_collection: Optional[str] = None,
         traces_collection: Optional[str] = None,
         spans_collection: Optional[str] = None,
+        user_profiles_collection: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -67,6 +69,7 @@ class FirestoreDb(BaseDb):
             culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
+            user_profiles_collection (Optional[str]): Name of the collection to store user profiles.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -86,6 +89,7 @@ class FirestoreDb(BaseDb):
             culture_table=culture_collection,
             traces_table=traces_collection,
             spans_table=spans_collection,
+            user_profiles_table=user_profiles_collection,
         )
 
         _client: Optional[Client] = db_client
@@ -209,6 +213,17 @@ class FirestoreDb(BaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.spans_collection
+
+        if table_type == "user_profiles":
+            if not hasattr(self, "user_profiles_collection"):
+                if self.user_profiles_table_name is None:
+                    raise ValueError("User profiles collection was not provided on initialization")
+                self.user_profiles_collection = self._get_or_create_collection(
+                    collection_name=self.user_profiles_table_name,
+                    collection_type="user_profiles",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.user_profiles_collection
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -2377,3 +2392,158 @@ class FirestoreDb(BaseDb):
         except Exception as e:
             log_error(f"Error getting spans: {e}")
             return []
+
+    # -- User Profiles --
+
+    def get_user_profile(
+        self,
+        user_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        """Get a user profile from the database.
+
+        Args:
+            user_id: The unique user identifier
+            deserialize: Whether to deserialize to UserProfile object
+
+        Returns:
+            UserProfile or dict if found, None otherwise
+        """
+        try:
+            collection_ref = self._get_collection(table_type="user_profiles")
+            if collection_ref is None:
+                return None
+
+            doc_ref = collection_ref.document(user_id)
+            doc = doc_ref.get()
+
+            if not doc.exists:
+                return None
+
+            result = doc.to_dict()
+            result["user_id"] = user_id
+
+            if not deserialize:
+                return result
+
+            return UserProfile.from_dict(result)
+
+        except Exception as e:
+            log_error(f"Error getting user profile: {e}")
+            raise e
+
+    def get_user_profiles(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[UserProfile], Tuple[List[Dict[str, Any]], int]]:
+        """Get all user profiles with pagination.
+
+        Args:
+            limit: Maximum number of profiles to return
+            page: Page number (1-indexed)
+            sort_by: Column to sort by
+            sort_order: 'asc' or 'desc'
+            deserialize: If True, return list of UserProfile; if False, return (list of dicts, count)
+
+        Returns:
+            List of UserProfile objects or (list of dicts, total count)
+        """
+        try:
+            collection_ref = self._get_collection(table_type="user_profiles")
+            if collection_ref is None:
+                return [] if deserialize else ([], 0)
+
+            # Get all documents for count
+            all_docs = list(collection_ref.stream())
+            total_count = len(all_docs)
+
+            # Convert to records
+            records = []
+            for doc in all_docs:
+                record = doc.to_dict()
+                record["user_id"] = doc.id
+                records.append(record)
+
+            # Apply sorting
+            records = apply_sorting_to_records(records, sort_by, sort_order)
+
+            # Apply pagination
+            records = apply_pagination_to_records(records, limit, page)
+
+            if deserialize:
+                return [UserProfile.from_dict(record) for record in records]
+
+            return (records, total_count)
+
+        except Exception as e:
+            log_error(f"Error getting user profiles: {e}")
+            raise e
+
+    def upsert_user_profile(
+        self,
+        user_profile: UserProfile,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        """Upsert a user profile in the database.
+
+        Args:
+            user_profile: The user profile to upsert
+            deserialize: Whether to deserialize to UserProfile object
+
+        Returns:
+            UserProfile or dict if successful, None otherwise
+        """
+        try:
+            collection_ref = self._get_collection(table_type="user_profiles", create_collection_if_not_found=True)
+            if collection_ref is None:
+                return None
+
+            current_time = int(time.time())
+
+            doc_data = {
+                "user_profile": user_profile.user_profile,
+                "memory_layers": user_profile.memory_layers,
+                "metadata": user_profile.metadata,
+                "created_at": user_profile.created_at or current_time,
+                "updated_at": current_time,
+            }
+
+            doc_ref = collection_ref.document(user_profile.user_id)
+            doc_ref.set(doc_data, merge=True)
+
+            # Fetch the upserted document
+            doc = doc_ref.get()
+            result = doc.to_dict()
+            result["user_id"] = user_profile.user_id
+
+            if not deserialize:
+                return result
+
+            return UserProfile.from_dict(result)
+
+        except Exception as e:
+            log_error(f"Error upserting user profile: {e}")
+            raise e
+
+    def delete_user_profile(self, user_id: str) -> None:
+        """Delete a user profile.
+
+        Args:
+            user_id: The unique user identifier to delete
+        """
+        try:
+            collection_ref = self._get_collection(table_type="user_profiles")
+            if collection_ref is None:
+                return
+
+            doc_ref = collection_ref.document(user_id)
+            doc_ref.delete()
+            log_debug(f"Deleted user profile: {user_id}")
+
+        except Exception as e:
+            log_error(f"Error deleting user profile: {e}")
+            raise e
