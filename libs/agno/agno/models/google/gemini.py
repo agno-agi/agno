@@ -25,6 +25,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.tokens import count_schema_tokens, count_text_tokens, count_tool_tokens
 
 try:
+    from google.oauth2.service_account import Credentials
     from google import genai
     from google.genai import Client as GeminiClient
     from google.genai.errors import ClientError, ServerError
@@ -66,6 +67,7 @@ class Gemini(Model):
     - Set `vertexai` to `True` to use the Vertex AI API.
     - Set your `project_id` (or set `GOOGLE_CLOUD_PROJECT` environment variable) and `location` (optional).
     - Set `http_options` (optional) to configure the HTTP options.
+    - Set `credentials` (optional) to use the Google Cloud credentials.
 
     Based on https://googleapis.github.io/python-genai/
     """
@@ -110,6 +112,7 @@ class Gemini(Model):
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
+    credentials: Optional[Credentials] = None
     api_key: Optional[str] = None
     vertexai: bool = False
     project_id: Optional[str] = None
@@ -158,6 +161,8 @@ class Gemini(Model):
                 log_error("GOOGLE_CLOUD_LOCATION not set. Please set the GOOGLE_CLOUD_LOCATION environment variable.")
             client_params["project"] = project_id
             client_params["location"] = location
+            if self.credentials:
+                client_params["credentials"] = self.credentials
 
         client_params = {k: v for k, v in client_params.items() if v is not None}
 
