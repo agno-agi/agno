@@ -1,8 +1,7 @@
 from pathlib import Path
 
-from agno.os import AgentOS
-
 from agent_with_tools import agent_with_tools
+from agno.os import AgentOS
 
 # ============================================================================
 # AgentOS Config
