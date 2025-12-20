@@ -27,10 +27,7 @@ from agno.workflow import Step, Workflow
 # ============================================================================
 # Storage Configuration
 # ============================================================================
-workflow_db = SqliteDb(
-    db_file="tmp/agents.db",
-    session_table="sequential_workflow",
-)
+workflow_db = SqliteDb(db_file="tmp/agents.db")
 
 # ============================================================================
 # Step 1: Data Gatherer — Fetches raw market data

@@ -21,7 +21,7 @@ config_path = str(Path(__file__).parent.joinpath("config.yaml"))
 # Create AgentOS
 # ============================================================================
 agent_os = AgentOS(
-    id="AgentOS Getting Started",
+    id="Getting Started AgentOS",
     agents=[
         agent_with_tools,
         agent_with_storage,

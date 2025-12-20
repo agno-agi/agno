@@ -31,10 +31,7 @@ from agno.tools.yfinance import YFinanceTools
 # ============================================================================
 # Storage Configuration
 # ============================================================================
-team_db = SqliteDb(
-    db_file="tmp/agents.db",
-    session_table="investment_team",
-)
+team_db = SqliteDb(db_file="tmp/agents.db")
 
 # ============================================================================
 # Bull Agent — Makes the Case FOR
@@ -123,19 +120,15 @@ Be decisive but acknowledge uncertainty.\
 # Run the Team
 # ============================================================================
 if __name__ == "__main__":
-    session_id = "investment-research"
-
     # First analysis
     multi_agent_team.print_response(
         "Should I invest in NVIDIA (NVDA)?",
-        session_id=session_id,
         stream=True,
     )
 
     # Follow-up question — team remembers the previous analysis
     multi_agent_team.print_response(
         "How does AMD compare to that?",
-        session_id=session_id,
         stream=True,
     )
 

@@ -25,6 +25,11 @@ from agno.models.google import Gemini
 from agno.tools.yfinance import YFinanceTools
 from pydantic import BaseModel, Field
 
+# ============================================================================
+# Storage Configuration
+# ============================================================================
+agent_db = SqliteDb(db_file="tmp/agents.db")
+
 
 # ============================================================================
 # Input Schema — what the agent accepts
@@ -91,14 +96,6 @@ You receive structured requests with:
 """
 
 # ============================================================================
-# Storage Configuration
-# ============================================================================
-agent_db = SqliteDb(
-    db_file="tmp/agents.db",
-    session_table="agent_with_typed_input_output",
-)
-
-# ============================================================================
 # Create the Agent
 # ============================================================================
 agent_with_typed_input_output = Agent(
@@ -137,11 +134,11 @@ if __name__ == "__main__":
     print(f"Price: ${analysis_1.current_price:.2f}")
     print(f"Summary: {analysis_1.summary}")
     if analysis_1.key_drivers:
-        print(f"\nKey Drivers:")
+        print("\nKey Drivers:")
         for driver in analysis_1.key_drivers:
             print(f"  • {driver}")
     if analysis_1.key_risks:
-        print(f"\nKey Risks:")
+        print("\nKey Risks:")
         for risk in analysis_1.key_risks:
             print(f"  • {risk}")
     print(f"\nRecommendation: {analysis_1.recommendation}")
@@ -164,11 +161,11 @@ if __name__ == "__main__":
     print(f"Price: ${analysis_2.current_price:.2f}")
     print(f"Summary: {analysis_2.summary}")
     if analysis_2.key_drivers:
-        print(f"\nKey Drivers:")
+        print("\nKey Drivers:")
         for driver in analysis_2.key_drivers:
             print(f"  • {driver}")
     if analysis_2.key_risks:
-        print(f"\nKey Risks:")
+        print("\nKey Risks:")
         for risk in analysis_2.key_risks:
             print(f"  • {risk}")
     print(f"\nRecommendation: {analysis_2.recommendation}")

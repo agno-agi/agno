@@ -29,10 +29,7 @@ from rich.pretty import pprint
 # ============================================================================
 # Storage Configuration
 # ============================================================================
-agent_db = SqliteDb(
-    db_file="tmp/agents.db",
-    session_table="agent_with_memory",
-)
+agent_db = SqliteDb(db_file="tmp/agents.db")
 
 # ============================================================================
 # Memory Manager Configuration
@@ -89,7 +86,7 @@ You have memory of user preferences (automatically provided in context). Use thi
 user_id = "investor@example.com"
 
 agent_with_memory = Agent(
-    name="Finance Agent with Memory",
+    name="Agent with Memory",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[YFinanceTools()],
@@ -107,19 +104,15 @@ agent_with_memory = Agent(
 # Run the Agent
 # ============================================================================
 if __name__ == "__main__":
-    session_id = "memory-demo"
-
     # Tell the agent about yourself
     agent_with_memory.print_response(
         "I'm interested in AI and semiconductor stocks. My risk tolerance is moderate.",
-        session_id=session_id,
         stream=True,
     )
 
     # The agent now knows your preferences
     agent_with_memory.print_response(
         "What stocks would you recommend for me?",
-        session_id=session_id,
         stream=True,
     )
 

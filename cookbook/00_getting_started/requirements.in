@@ -7,7 +7,6 @@ nest_asyncio
 openinference-instrumentation-agno
 opentelemetry-api
 opentelemetry-sdk
-parallel-web
 pgvector
 pillow
 psycopg[binary]

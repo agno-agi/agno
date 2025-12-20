@@ -29,10 +29,7 @@ from pydantic import BaseModel, Field
 # ============================================================================
 # Storage Configuration
 # ============================================================================
-agent_db = SqliteDb(
-    db_file="tmp/agents.db",
-    session_table="agent_with_structured_output",
-)
+agent_db = SqliteDb(db_file="tmp/agents.db")
 
 
 # ============================================================================
@@ -120,10 +117,10 @@ if __name__ == "__main__":
     print(f"P/E Ratio: {analysis.pe_ratio or 'N/A'}")
     print(f"52-Week Range: ${analysis.week_52_low:.2f} - ${analysis.week_52_high:.2f}")
     print(f"\nSummary: {analysis.summary}")
-    print(f"\nKey Drivers:")
+    print("\nKey Drivers:")
     for driver in analysis.key_drivers:
         print(f"  • {driver}")
-    print(f"\nKey Risks:")
+    print("\nKey Risks:")
     for risk in analysis.key_risks:
         print(f"  • {risk}")
     print(f"\nRecommendation: {analysis.recommendation}")

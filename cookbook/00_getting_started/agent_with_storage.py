@@ -27,10 +27,7 @@ from agno.tools.yfinance import YFinanceTools
 # ============================================================================
 # Storage Configuration
 # ============================================================================
-agent_db = SqliteDb(
-    db_file="tmp/agents.db",
-    session_table="finance_agent",
-)
+agent_db = SqliteDb(db_file="tmp/agents.db")
 
 # ============================================================================
 # Agent Instructions
@@ -72,7 +69,7 @@ computes key ratios, and produces concise, decision-ready insights.
 # Create the Agent
 # ============================================================================
 agent_with_storage = Agent(
-    name="Finance Agent with Storage",
+    name="Agent with Storage",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[YFinanceTools()],

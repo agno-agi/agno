@@ -28,10 +28,7 @@ from agno.tools.yfinance import YFinanceTools
 # ============================================================================
 # Storage Configuration
 # ============================================================================
-agent_db = SqliteDb(
-    db_file="tmp/agents.db",
-    session_table="agent_with_state_management",
-)
+agent_db = SqliteDb(db_file="tmp/agents.db")
 
 
 # ============================================================================
@@ -113,7 +110,7 @@ You are a Finance Agent that manages a stock watchlist.
 # Create the Agent
 # ============================================================================
 agent_with_state_management = Agent(
-    name="Finance Agent with State",
+    name="Agent with State Management",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[

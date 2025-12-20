@@ -34,10 +34,7 @@ from agno.vectordb.search import SearchType
 # ============================================================================
 # Storage Configuration
 # ============================================================================
-agent_db = SqliteDb(
-    db_file="tmp/agents.db",
-    session_table="self_learning_agent",
-)
+agent_db = SqliteDb(db_file="tmp/agents.db")
 
 # ============================================================================
 # Knowledge Base for Learnings
