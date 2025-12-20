@@ -1,10 +1,8 @@
 # Getting Started with Agents, The Easy Way
 
-This guide walks through the basics of building Agents, the easy way. Follow along to learn how to build agents with tools, storage, memory, knowledge, and state. You'll also learn how to build multi-agent teams and step-based agentic workflows.
+This guide walks through the basics of building Agents, the easy way. Follow along to learn how to build agents with tools, storage, memory, knowledge, and state. We'll also build multi-agent teams and step-based agentic workflows.
 
-Each example can be run independently and contains detailed comments + example prompts to help you understand what's happening behind the scenes.
-
-We'll use **Gemini 3 Flash** — fast, affordable, and excellent at tool calling. Agno is model-agnostic and you can swap in any provider with a one line change.
+Each example can be run independently and contains detailed comments + example prompts to help you understand what's happening behind the scenes. We'll use **Gemini 3 Flash** — fast, affordable, and excellent at tool calling but you can swap in any model with a one line change.
 
 ## Cookbooks
 
