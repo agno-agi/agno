@@ -51,8 +51,11 @@ class TeamRunInput:
             return self.input_content.model_dump_json(exclude_none=True)
         elif isinstance(self.input_content, Message):
             return json.dumps(self.input_content.to_dict())
-        elif isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], Message):
-            return json.dumps([m.to_dict() for m in self.input_content])
+        elif isinstance(self.input_content, list):
+            try:
+                return json.dumps(self.to_dict().get("input_content"))
+            except Exception:
+                return str(self.input_content)
         else:
             return str(self.input_content)
 

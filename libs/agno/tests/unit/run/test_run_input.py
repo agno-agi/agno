@@ -98,3 +98,31 @@ def test_mixed_dict_and_message_input_is_json_serializable_for_team():
     team_run_input_dict = team_run_input.to_dict()
     json.dumps(team_run_input_dict)
     assert isinstance(team_run_input_dict["input_content"][1], dict)
+
+
+def test_mixed_list_input_content_string_is_json():
+    run_input = RunInput(
+        input_content=[
+            Message(role="user", content="Hello, world!"),
+            {"role": "assistant", "content": "Hi!"},
+        ]
+    )
+
+    data = json.loads(run_input.input_content_string())
+    assert isinstance(data, list)
+    assert isinstance(data[0], dict)
+    assert isinstance(data[1], dict)
+
+
+def test_mixed_list_input_content_string_is_json_for_team():
+    team_run_input = TeamRunInput(
+        input_content=[
+            Message(role="user", content="Hello, world!"),
+            {"role": "assistant", "content": "Hi!"},
+        ]
+    )
+
+    data = json.loads(team_run_input.input_content_string())
+    assert isinstance(data, list)
+    assert isinstance(data[0], dict)
+    assert isinstance(data[1], dict)
