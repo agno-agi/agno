@@ -85,12 +85,11 @@ async def _async_extract_and_update_metadata(knowledge: Knowledge, content_id: s
 
     try:
         log_info(f"[MetadataExtraction] Starting async metadata extraction for {content_id}")
-        # Use a non-empty query and vector search to avoid hybrid empty-text errors
-        # Use filter-only search to fetch chunks by content_id without needing a real query
-        # Use a broad query to get documents, then filter by content_id
-        # This is needed because LanceDB applies filters after search results
+        # Use a generic query to satisfy hybrid search requirements
+        # The content_id filter will narrow results to the specific document
+        # Empty queries fail with hybrid search, so we use a broad term
         docs = knowledge.search(
-            query="",  # Empty query for filter-only search
+            query="document content data",  # Generic query for hybrid search compatibility
             filters={"content_id": content_id},
             max_results=50,
         )
@@ -1205,19 +1204,13 @@ async def process_content(
         log_info(f"Content {content.id} processed successfully")
 
         # Trigger async metadata extraction if reader supports it
+        # Only trigger async if the reader has extract_metadata_inline=False
+        # Readers with extract_metadata_inline=True (like ExcelIntelReader, OCRFluxPDFReader)
+        # already handle metadata extraction and TB ingestion synchronously in their read() method
         if content.reader and hasattr(content.reader, 'extract_metadata_inline'):
-            should_trigger_async = False
-
-            # Special case: ExcelIntelReader needs async processing for Trial Balance ingestion
-            if content.reader.__class__.__name__ == 'ExcelIntelReader':
-                should_trigger_async = True
-                log_info(f"Queueing async metadata extraction for ExcelIntelReader {content.id} (needed for Trial Balance ingestion)")
-            elif not content.reader.extract_metadata_inline:
-                should_trigger_async = True
+            if not content.reader.extract_metadata_inline:
+                # Reader wants async extraction
                 log_info(f"Queueing async metadata extraction for {content.id}")
-
-            if should_trigger_async:
-                # Import and queue the async metadata extraction
                 try:
                     import asyncio
                     task = asyncio.create_task(_async_extract_and_update_metadata(knowledge, content.id))
@@ -1225,7 +1218,7 @@ async def process_content(
                 except Exception as meta_e:
                     log_info(f"Could not queue metadata extraction for {content.id}: {meta_e}")
             else:
-                log_debug(f"Skipping async metadata extraction for {content.id} - reader has extract_metadata_inline=True and is not ExcelIntelReader")
+                log_debug(f"Skipping async metadata extraction for {content.id} - reader has extract_metadata_inline=True")
         else:
             log_debug(f"Skipping async metadata extraction for {content.id} - no reader or no extract_metadata_inline attribute")
 
