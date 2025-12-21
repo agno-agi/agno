@@ -1,4 +1,4 @@
-﻿from dataclasses import dataclass
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Dict, Optional
 

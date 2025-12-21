@@ -239,22 +239,22 @@ class MultiMCPTools(Toolkit):
                 # Handle Streamable HTTP connections
                 elif isinstance(server_params, StreamableHTTPClientParams):
                     # Temporarily remove http_client to avoid pickle issues with asdict
-                    http_client = getattr(server_params, 'http_client', None)
+                    http_client = getattr(server_params, "http_client", None)
                     if http_client is not None:
                         server_params.http_client = None
-                    
+
                     streamable_http_params = asdict(server_params)
-                    
+
                     # Restore and add http_client
                     if http_client is not None:
                         server_params.http_client = http_client
                         streamable_http_params["http_client"] = http_client
-                    
+
                     # Remove deprecated parameters not accepted by streamable_http_client
                     streamable_http_params.pop("headers", None)
                     streamable_http_params.pop("timeout", None)
                     streamable_http_params.pop("sse_read_timeout", None)
-                    
+
                     client_connection = await self._async_exit_stack.enter_async_context(
                         streamable_http_client(**streamable_http_params)
                     )
