@@ -50,9 +50,9 @@ class UserProfile:
         return self.memory_layers.get("knowledge", [])
 
     @property
-    def feedback(self) -> List[Dict[str, Any]]:
-        """Get user feedback from memory_layers."""
-        return self.memory_layers.get("feedback", [])
+    def feedback(self) -> Dict[str, Any]:
+        """Get user feedback from memory_layers (dict with 'positive' and 'negative' lists)."""
+        return self.memory_layers.get("feedback", {})
 
     def preview(self) -> Dict[str, Any]:
         """Return a preview of the user profile."""
@@ -60,7 +60,6 @@ class UserProfile:
             "user_id": self.user_id,
         }
         if self.user_profile:
-            # Include basic profile info
             for key in ["name", "company", "role"]:
                 if key in self.user_profile:
                     _preview[key] = self.user_profile[key]
@@ -69,7 +68,10 @@ class UserProfile:
         if self.knowledge:
             _preview["knowledge_count"] = len(self.knowledge)
         if self.feedback:
-            _preview["feedback_count"] = len(self.feedback)
+            feedback_count = 0
+            if isinstance(self.feedback, dict):
+                feedback_count = len(self.feedback.get("positive", [])) + len(self.feedback.get("negative", []))
+            _preview["feedback_count"] = feedback_count
         return _preview
 
     def to_dict(self) -> Dict[str, Any]:

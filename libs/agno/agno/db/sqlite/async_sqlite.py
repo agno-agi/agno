@@ -80,7 +80,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
-            user_profiles_table (Optional[str]): Name of the table to store user profiles.
+            user_profiles_table (Optional[str]): Name of the table to store user memory profiles.
             id (Optional[str]): ID of the database.
 
         Raises:

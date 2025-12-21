@@ -174,7 +174,7 @@ class AsyncMongoDb(AsyncBaseDb):
             culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
-            user_profiles_collection (Optional[str]): Name of the collection to store user profiles.
+            user_profiles_collection (Optional[str]): Name of the collection to store user memory profiles.
             id (Optional[str]): ID of the database.
 
         Raises:

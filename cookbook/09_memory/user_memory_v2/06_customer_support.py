@@ -214,5 +214,5 @@ SATISFACTION JOURNEY:
 - End: Satisfied, will recommend to others
 
 All extracted automatically from natural conversation!
-No save_user_info() tool calls - just background extraction.
+No update_user_memory() tool calls - just background extraction.
 """)

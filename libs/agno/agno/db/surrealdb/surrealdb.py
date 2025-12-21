@@ -1,7 +1,7 @@
 import time
 from datetime import date, datetime, timedelta, timezone
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
@@ -1940,7 +1940,8 @@ class SurrealDb(BaseDb):
             if not results:
                 return None
 
-            result = results[0]
+            raw_result = results[0] if isinstance(results, list) else results
+            result = cast(Dict[str, Any], raw_result)
 
             # Handle RecordID for id field
             if isinstance(result.get("id"), RecordID):
@@ -1995,7 +1996,8 @@ class SurrealDb(BaseDb):
             if not results:
                 return None
 
-            result = results[0] if isinstance(results, list) else results
+            raw_result = results[0] if isinstance(results, list) else results
+            result = cast(Dict[str, Any], raw_result)
 
             # Handle RecordID for id field
             if isinstance(result.get("id"), RecordID):

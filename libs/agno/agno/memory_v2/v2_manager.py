@@ -1,7 +1,7 @@
 from copy import deepcopy
 from dataclasses import dataclass, is_dataclass
 from dataclasses import fields as dataclass_fields
-from typing import Any, Callable, List, Optional, Type, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Type, Union, cast
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.user_profile import UserProfile
@@ -45,14 +45,16 @@ class MemoryCompiler:
             log_warning("Database not provided")
             return None
         self.db = cast(BaseDb, self.db)
-        return self.db.get_user_profile(user_id=user_id)
+        result = self.db.get_user_profile(user_id=user_id)
+        return cast(Optional[UserProfile], result)
 
     def upsert_user_profile(self, user_profile: UserProfile) -> Optional[UserProfile]:
         if not self.db:
             log_warning("Database not provided")
             return None
         self.db = cast(BaseDb, self.db)
-        return self.db.upsert_user_profile(user_profile=user_profile)
+        result = self.db.upsert_user_profile(user_profile=user_profile)
+        return cast(Optional[UserProfile], result)
 
     def delete_user_profile(self, user_id: str) -> None:
         if not self.db:
@@ -170,6 +172,11 @@ class MemoryCompiler:
             log_error(f"Error during memory extraction: {e}")
             return False
 
+    async def aextract_from_conversation(self, messages: List[Message], user_id: str) -> bool:
+        import asyncio
+
+        return await asyncio.to_thread(self.extract_from_conversation, messages, user_id)
+
     def get_user_memory_tools(self, user_id: str) -> List[Callable]:
         if not self.db:
             log_warning("No database configured for agentic memory tools")
@@ -177,13 +184,13 @@ class MemoryCompiler:
 
         manager = self
 
-        def update_user_memory(info_type: str, key: str, value: Any = None) -> str:
+        def update_user_memory(info_type: str, key: str, value: Any) -> str:
             """Update or delete user memory.
 
             Args:
                 info_type: One of "profile", "policy", "knowledge", or "feedback"
                 key: The key/label to update or delete
-                value: The value to save. Pass None to delete the key.
+                value: The value to save, or None to delete the key.
 
             Returns:
                 Confirmation message
@@ -255,7 +262,7 @@ class MemoryCompiler:
 
         return "".join(parts)
 
-    def _get_extraction_tools(self, user_id: str) -> List[Function]:
+    def _get_extraction_tools(self, user_id: str) -> List[Union[Function, Dict[str, Any]]]:
         tools = self.get_user_memory_tools(user_id)
         if not tools:
             return []
@@ -347,13 +354,13 @@ class MemoryCompiler:
                     log_debug(f"Deleted knowledge {key} for {user_id}")
 
         elif info_type == "feedback":
+            if key not in ["positive", "negative"]:
+                return f"For feedback, key must be 'positive' or 'negative', got '{key}'"
             if user_profile.memory_layers and "feedback" in user_profile.memory_layers:
-                if key in ["positive", "negative"] and key in user_profile.memory_layers["feedback"]:
+                if key in user_profile.memory_layers["feedback"]:
                     user_profile.memory_layers["feedback"][key] = []
                     deleted = True
                     log_debug(f"Cleared {key} feedback for {user_id}")
-                else:
-                    return f"For feedback, key must be 'positive' or 'negative', got '{key}'"
 
         else:
             return f"Unknown info_type: {info_type}. Use 'profile', 'policy', 'knowledge', or 'feedback'"

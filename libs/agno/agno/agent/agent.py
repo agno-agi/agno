@@ -813,6 +813,8 @@ class Agent:
             )
 
     def _set_memory_compiler(self) -> None:
+        if self.memory_compiler is None:
+            return
         if self.memory_compiler.model is None:
             self.memory_compiler.model = self.model
         if self.memory_compiler.db is None:
@@ -865,6 +867,13 @@ class Agent:
         self._set_default_model()
         self._set_debug(debug_mode=debug_mode)
         self.set_id()
+
+        if self.enable_agentic_memory and self.enable_agentic_memory_v2:
+            raise ValueError(
+                "Cannot enable both 'enable_agentic_memory' (v1) and 'enable_agentic_memory_v2' (v2) at the same time. "
+                "Please choose one memory system. Use 'enable_agentic_memory_v2=True' for the new structured memory system."
+            )
+
         if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
             self._set_memory_manager()
         if self.update_memory_on_run or self.enable_agentic_memory_v2 or self.memory_compiler is not None:
@@ -5927,7 +5936,7 @@ class Agent:
                 log_warning("Unable to add messages to memory")
 
         # MemoryCompiler extraction (async, automatic mode)
-        if self.memory_compiler is not None and user_id is not None and self.memory_compiler.update_memory_on_run:
+        if self.memory_compiler is not None and user_id is not None and self.update_memory_on_run:
             # Build list of messages to extract from
             messages_to_extract: List[Message] = []
             if run_messages.user_message is not None:

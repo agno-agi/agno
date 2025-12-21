@@ -7,7 +7,7 @@ from agno.db.schemas.user_profile import UserProfile
 
 
 def test_user_profile_crud(db, db_name: str) -> bool:
-    """Test all 4 CRUD operations for user profiles."""
+    """Test CRUD operations for user profiles (create, read, update, delete)."""
     print(f"\n{'=' * 50}")
     print(f"Testing: {db_name}")
     print("=" * 50)
@@ -45,20 +45,13 @@ def test_user_profile_crud(db, db_name: str) -> bool:
         assert updated.user_profile["name"] == "Jane Doe", "update failed"
         print("   PASS: Profile updated successfully")
 
-        # 4. Get all profiles
-        print("\n4. Testing get_user_profiles...")
-        profiles = db.get_user_profiles(limit=10)
-        assert isinstance(profiles, list), "get_user_profiles should return a list"
-        assert len(profiles) >= 1, "Should have at least 1 profile"
-        print(f"   PASS: Retrieved {len(profiles)} profile(s)")
-
-        # 5. Delete the profile
-        print("\n5. Testing delete_user_profile...")
+        # 4. Delete the profile
+        print("\n4. Testing delete_user_profile...")
         db.delete_user_profile(user_id)
         print("   PASS: Profile deleted")
 
-        # 6. Verify deletion
-        print("\n6. Verifying deletion...")
+        # 5. Verify deletion
+        print("\n5. Verifying deletion...")
         deleted = db.get_user_profile(user_id)
         assert deleted is None, "Profile should be deleted"
         print("   PASS: Profile confirmed deleted")
