@@ -814,7 +814,7 @@ class Agent:
 
     def _set_memory_compiler(self) -> None:
         if self.memory_compiler is None:
-            return
+            self.memory_compiler = MemoryCompiler()
         if self.memory_compiler.model is None:
             self.memory_compiler.model = self.model
         if self.memory_compiler.db is None:
@@ -877,8 +877,6 @@ class Agent:
         if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
             self._set_memory_manager()
         if self.update_memory_on_run or self.enable_agentic_memory_v2 or self.memory_compiler is not None:
-            if self.memory_compiler is None:
-                self.memory_compiler = MemoryCompiler()
             self._set_memory_compiler()
         if (
             self.add_culture_to_context
@@ -1089,16 +1087,29 @@ class Agent:
 
             # Start memory creation on a separate thread (runs concurrently with the main execution loop)
             memory_future = None
-            should_create_memories = run_messages.user_message is not None and (
-                # V1 memory manager with automatic extraction
-                (self.memory_manager is not None and self.enable_user_memories and not self.enable_agentic_memory)
-                # V2 memory manager with automatic extraction
-                or (self.memory_compiler is not None and self.update_memory_on_run)
-            )
-            if should_create_memories:
-                log_debug("Starting memory creation in background thread.")
+
+            # 4. Start memory creation in background thread if memory manager is enabled and agentic memory is disabled
+            if (
+                run_messages.user_message is not None
+                and self.memory_manager is not None
+                and self.enable_user_memories
+                and not self.enable_agentic_memory
+            ):
+                log_debug("Starting V1 memory creation in background thread.")
                 memory_future = self.background_executor.submit(
                     self._make_memories, run_messages=run_messages, user_id=user_id
+                )
+
+            # Memory (v2)
+            if (
+                run_messages.user_message is not None
+                and self.memory_compiler is not None
+                and self.update_memory_on_run
+                and not self.enable_agentic_memory_v2
+            ):
+                log_debug("Starting memory (v2) creation in background thread.")
+                memory_future = self.background_executor.submit(
+                    self._make_memories_v2, run_messages=run_messages, user_id=user_id
                 )
 
             # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
@@ -1302,16 +1313,29 @@ class Agent:
 
             # Start memory creation on a separate thread (runs concurrently with the main execution loop)
             memory_future = None
-            should_create_memories = run_messages.user_message is not None and (
-                # V1 memory manager with automatic extraction
-                (self.memory_manager is not None and self.enable_user_memories and not self.enable_agentic_memory)
-                # V2 memory manager with automatic extraction
-                or (self.memory_compiler is not None and self.update_memory_on_run)
-            )
-            if should_create_memories:
-                log_debug("Starting memory creation in background thread.")
+
+            # 4. Start memory creation in background thread if memory manager is enabled and agentic memory is disabled
+            if (
+                run_messages.user_message is not None
+                and self.memory_manager is not None
+                and self.enable_user_memories
+                and not self.enable_agentic_memory
+            ):
+                log_debug("Starting V1 memory creation in background thread.")
                 memory_future = self.background_executor.submit(
                     self._make_memories, run_messages=run_messages, user_id=user_id
+                )
+
+            # Memory (v2)
+            if (
+                run_messages.user_message is not None
+                and self.memory_compiler is not None
+                and self.update_memory_on_run
+                and not self.enable_agentic_memory_v2
+            ):
+                log_debug("Starting memory (v2) creation in background thread.")
+                memory_future = self.background_executor.submit(
+                    self._make_memories_v2, run_messages=run_messages, user_id=user_id
                 )
 
             # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
@@ -2027,14 +2051,26 @@ class Agent:
 
                 # 7. Start memory creation as a background task (runs concurrently with the main execution)
                 memory_task = None
+
+                # V1 memory manager with automatic extraction
                 if (
                     run_messages.user_message is not None
                     and self.memory_manager is not None
                     and self.enable_user_memories
                     and not self.enable_agentic_memory
                 ):
-                    log_debug("Starting memory creation in background task.")
+                    log_debug("Starting V1 memory creation in background task.")
                     memory_task = create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
+
+                # Memory (v2)
+                if (
+                    run_messages.user_message is not None
+                    and self.memory_compiler is not None
+                    and self.update_memory_on_run
+                    and not self.enable_agentic_memory_v2
+                ):
+                    log_debug("Starting memory (v2) extraction in background task.")
+                    memory_task = create_task(self._amake_memories_v2(run_messages=run_messages, user_id=user_id))
 
                 # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
                 if (
@@ -2386,14 +2422,26 @@ class Agent:
 
                 # 7. Start memory creation as a background task (runs concurrently with the main execution)
                 memory_task = None
+
+                # V1 memory manager with automatic extraction
                 if (
                     run_messages.user_message is not None
                     and self.memory_manager is not None
                     and self.enable_user_memories
                     and not self.enable_agentic_memory
                 ):
-                    log_debug("Starting memory creation in background task.")
+                    log_debug("Starting V1 memory creation in background task.")
                     memory_task = create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
+
+                # Memory (v2)
+                if (
+                    run_messages.user_message is not None
+                    and self.memory_compiler is not None
+                    and self.update_memory_on_run
+                    and not self.enable_agentic_memory_v2
+                ):
+                    log_debug("Starting memory (v2) extraction in background task.")
+                    memory_task = create_task(self._amake_memories_v2(run_messages=run_messages, user_id=user_id))
 
                 # Start cultural knowledge creation on a separate thread (runs concurrently with the main execution loop)
                 if (
@@ -5864,26 +5912,20 @@ class Agent:
             else:
                 log_warning("Unable to add messages to memory")
 
-        # Background extraction of user memory
-        if self.memory_compiler is not None and user_id is not None and self.update_memory_on_run:
-            # Build list of messages to extract from
-            messages_to_extract: List[Message] = []
-            if run_messages.user_message is not None:
-                messages_to_extract.append(run_messages.user_message)
-            if run_messages.extra_messages is not None:
-                for msg in run_messages.extra_messages:
-                    if isinstance(msg, Message):
-                        messages_to_extract.append(msg)
-                    elif isinstance(msg, dict):
-                        try:
-                            messages_to_extract.append(Message(**msg))
-                        except Exception:
-                            pass
+    def _make_memories_v2(
+        self,
+        run_messages: RunMessages,
+        user_id: Optional[str] = None,
+    ):
+        if self.memory_compiler is None or user_id is None:
+            return
 
-            if messages_to_extract:
-                log_debug("Extracting user memory via MemoryCompiler (automatic mode)")
+        if run_messages.user_message is not None:
+            user_message_str = run_messages.user_message.get_content_string()
+            if user_message_str and user_message_str.strip():
+                log_debug("Extracting user memory via MemoryCompiler")
                 self.memory_compiler.extract_from_conversation(
-                    messages=messages_to_extract,
+                    messages=[run_messages.user_message],
                     user_id=user_id,
                 )
 
@@ -5935,26 +5977,20 @@ class Agent:
             else:
                 log_warning("Unable to add messages to memory")
 
-        # MemoryCompiler extraction (async, automatic mode)
-        if self.memory_compiler is not None and user_id is not None and self.update_memory_on_run:
-            # Build list of messages to extract from
-            messages_to_extract: List[Message] = []
-            if run_messages.user_message is not None:
-                messages_to_extract.append(run_messages.user_message)
-            if run_messages.extra_messages is not None:
-                for msg in run_messages.extra_messages:
-                    if isinstance(msg, Message):
-                        messages_to_extract.append(msg)
-                    elif isinstance(msg, dict):
-                        try:
-                            messages_to_extract.append(Message(**msg))
-                        except Exception:
-                            pass
+    async def _amake_memories_v2(
+        self,
+        run_messages: RunMessages,
+        user_id: Optional[str] = None,
+    ):
+        if self.memory_compiler is None or user_id is None:
+            return
 
-            if messages_to_extract:
-                log_debug("Extracting user memory via MemoryCompiler (automatic mode)")
+        if run_messages.user_message is not None:
+            user_message_str = run_messages.user_message.get_content_string()
+            if user_message_str and user_message_str.strip():
+                log_debug("Extracting user memory via MemoryCompiler")
                 await self.memory_compiler.aextract_from_conversation(
-                    messages=messages_to_extract,
+                    messages=[run_messages.user_message],
                     user_id=user_id,
                 )
 
@@ -6019,8 +6055,8 @@ class Agent:
         if self.enable_agentic_memory:
             agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=False))
 
-        # Add MemoryCompiler agentic tools
-        if self.memory_compiler is not None and self.enable_agentic_memory_v2 and user_id:
+        # Add Memory (v2) agentic tools
+        if self.enable_agentic_memory_v2 and user_id:
             v2_tools = self.memory_compiler.get_user_memory_tools(user_id=user_id)
             agent_tools.extend(v2_tools)
 
@@ -6130,7 +6166,7 @@ class Agent:
             agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=True))
 
         # Add MemoryCompiler agentic tools
-        if self.memory_compiler is not None and self.enable_agentic_memory_v2 and user_id:
+        if self.enable_agentic_memory_v2 and user_id:
             v2_tools = self.memory_compiler.get_user_memory_tools(user_id=user_id)
             agent_tools.extend(v2_tools)
 
@@ -7351,10 +7387,10 @@ class Agent:
         return await self.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
 
     def get_user_profile(self, user_id: Optional[str] = None) -> Optional[UserProfile]:
-        """Get user profile for V2 memory system.
+        """Get user profile for a given user ID.
 
         Args:
-            user_id: The user ID to get the profile for. If not provided, uses self.user_id.
+            user_id: The user ID to get the profile for. If not provided, the current cached user ID is used.
         Returns:
             Optional[UserProfile]: The user profile, or None if not found.
         """
@@ -7362,7 +7398,6 @@ class Agent:
             if self.db is None:
                 log_warning("Database not provided.")
                 return None
-            self.memory_compiler = MemoryCompiler()
             self._set_memory_compiler()
 
         user_id = user_id if user_id is not None else self.user_id
@@ -7750,16 +7785,54 @@ class Agent:
             user_context = self.memory_compiler.compile_user_memory(user_id)
             if user_context:
                 system_message_content += (
-                    "The following is personalized context about the user you are interacting with. "
-                    "Use this information to personalize your responses and follow any specified policies.\n\n"
+                    "You have access to stored information about this user from previous interactions, organized into 4 layers:\n\n"
+                    "**POLICIES** (Highest Authority)\n"
+                    "Rules and preferences the user has explicitly stated. You MUST follow these.\n"
+                    "Examples: be concise, no emojis, always include code examples\n\n"
+                    "**PROFILE**\n"
+                    "Stable identity information about the user.\n"
+                    "Examples: name, role, company, location, experience level\n\n"
+                    "**KNOWLEDGE**\n"
+                    "Context about the user's situation and projects.\n"
+                    "Examples: current project, tech stack, goals, challenges\n\n"
+                    "**FEEDBACK** (Lowest Authority)\n"
+                    "Signals about what has worked or not worked in past interactions.\n"
+                    "Examples: detailed explanations helped, too verbose\n\n"
+                    "**How to use this information:**\n"
+                    "- Always follow policies - they represent explicit user preferences\n"
+                    "- Use profile to personalize (e.g., address by name, adjust technical depth)\n"
+                    "- Reference knowledge to provide relevant context\n"
+                    "- Consider feedback to adjust your communication style\n\n"
+                    "**Important:** Information from the current conversation takes precedence over stored data.\n"
+                    "If the user says something that contradicts stored information, follow the current conversation.\n\n"
                 )
                 system_message_content += user_context
                 system_message_content += "\n"
+            else:
+                system_message_content += (
+                    "You have the capability to remember information about users across interactions, "
+                    "but have not learned anything about this user yet.\n\n"
+                )
 
             # Add agentic memory instructions if enabled
             if self.enable_agentic_memory_v2:
-                system_message_content += self.memory_compiler.get_agentic_memory_instructions()
-                system_message_content += "\n"
+                system_message_content += (
+                    "<updating_user_memory>\n"
+                    "You have access to a memory tool to remember information about the user.\n\n"
+                    "TOOL: update_user_memory(info_type, key, value)\n"
+                    "- To delete/forget information, pass value=None\n\n"
+                    "THE 4 MEMORY LAYERS:\n"
+                    "1. 'policy' (HIGHEST) - User preferences that override other context\n"
+                    "2. 'profile' - Stable identity info (name, role, company)\n"
+                    "3. 'knowledge' - Context about user's situation and projects\n"
+                    "4. 'feedback' (LOWEST) - What worked or didn't (key='positive' or 'negative')\n\n"
+                    "GUIDELINES:\n"
+                    "- Save information useful in future conversations\n"
+                    "- Policies override other layers\n"
+                    "- Don't save trivial or temporary information\n"
+                    "- When user says 'forget X', pass value=None to remove it\n"
+                    "</updating_user_memory>\n\n"
+                )
 
         # 3.3.12 Add the system message from the Model
         system_message_from_model = self.model.get_system_message_for_model(tools)
@@ -8113,16 +8186,54 @@ class Agent:
             user_context = self.memory_compiler.compile_user_memory(user_id)
             if user_context:
                 system_message_content += (
-                    "The following is personalized context about the user you are interacting with. "
-                    "Use this information to personalize your responses and follow any specified policies.\n\n"
+                    "You have access to stored information about this user from previous interactions, organized into 4 layers:\n\n"
+                    "**POLICIES** (Highest Authority)\n"
+                    "Rules and preferences the user has explicitly stated. You MUST follow these.\n"
+                    "Examples: be concise, no emojis, always include code examples\n\n"
+                    "**PROFILE**\n"
+                    "Stable identity information about the user.\n"
+                    "Examples: name, role, company, location, experience level\n\n"
+                    "**KNOWLEDGE**\n"
+                    "Context about the user's situation and projects.\n"
+                    "Examples: current project, tech stack, goals, challenges\n\n"
+                    "**FEEDBACK** (Lowest Authority)\n"
+                    "Signals about what has worked or not worked in past interactions.\n"
+                    "Examples: detailed explanations helped, too verbose\n\n"
+                    "**How to use this information:**\n"
+                    "- Always follow policies - they represent explicit user preferences\n"
+                    "- Use profile to personalize (e.g., address by name, adjust technical depth)\n"
+                    "- Reference knowledge to provide relevant context\n"
+                    "- Consider feedback to adjust your communication style\n\n"
+                    "**Important:** Information from the current conversation takes precedence over stored data.\n"
+                    "If the user says something that contradicts stored information, follow the current conversation.\n\n"
                 )
                 system_message_content += user_context
                 system_message_content += "\n"
+            else:
+                system_message_content += (
+                    "You have the capability to remember information about users across interactions, "
+                    "but have not learned anything about this user yet.\n\n"
+                )
 
             # Add agentic memory instructions if enabled
             if self.enable_agentic_memory_v2:
-                system_message_content += self.memory_compiler.get_agentic_memory_instructions()
-                system_message_content += "\n"
+                system_message_content += (
+                    "<updating_user_memory>\n"
+                    "You have access to a memory tool to remember information about the user.\n\n"
+                    "TOOL: update_user_memory(info_type, key, value)\n"
+                    "- To delete/forget information, pass value=None\n\n"
+                    "THE 4 MEMORY LAYERS:\n"
+                    "1. 'policy' (HIGHEST) - User preferences that override other context\n"
+                    "2. 'profile' - Stable identity info (name, role, company)\n"
+                    "3. 'knowledge' - Context about user's situation and projects\n"
+                    "4. 'feedback' (LOWEST) - What worked or didn't (key='positive' or 'negative')\n\n"
+                    "GUIDELINES:\n"
+                    "- Save information useful in future conversations\n"
+                    "- Policies override other layers\n"
+                    "- Don't save trivial or temporary information\n"
+                    "- When user says 'forget X', pass value=None to remove it\n"
+                    "</updating_user_memory>\n\n"
+                )
 
         # 3.3.12 Add the system message from the Model
         system_message_from_model = self.model.get_system_message_for_model(tools)

@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Optional, Type, Union, cast
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.user_profile import UserProfile
-from agno.memory_v2.v2_prompts import AGENTIC_INSTRUCTIONS, EXTRACTION_PROMPT
+from agno.memory_v2.v2_prompts import USER_MEMORY_EXTRACTION_PROMPT
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
@@ -18,7 +18,7 @@ class MemoryCompiler:
     model: Optional[Model] = None
     db: Optional[Union[AsyncBaseDb, BaseDb]] = None
 
-    # Optional schema
+    # Allow schema overrides
     profile_schema: Optional[Type] = None
     policies_schema: Optional[Type] = None
     knowledge_schema: Optional[Type] = None
@@ -127,6 +127,31 @@ class MemoryCompiler:
 
         return "<user_memory>\n" + "\n\n".join(sections) + "\n</user_memory>"
 
+    def get_user_memory_tools(self, user_id: str) -> List[Callable]:
+        if not self.db:
+            log_warning("No database configured for agentic memory tools")
+            return []
+
+        manager = self
+
+        def update_user_memory(info_type: str, key: str, value: Any) -> str:
+            """Update or delete user memory.
+
+            Args:
+                info_type: One of "profile", "policy", "knowledge", or "feedback"
+                key: The key/label to update or delete
+                value: The value to save, or None to delete the key.
+
+            Returns:
+                Confirmation message
+            """
+            result = manager._save_to_user_memory_layer(user_id, info_type, key, value)
+            if result.startswith("Saved "):
+                return "Remembered " + result[6:]
+            return result
+
+        return [update_user_memory]
+
     def extract_from_conversation(self, messages: List[Message], user_id: str) -> bool:
         if not messages:
             log_debug("No messages to extract from")
@@ -173,52 +198,52 @@ class MemoryCompiler:
             return False
 
     async def aextract_from_conversation(self, messages: List[Message], user_id: str) -> bool:
-        import asyncio
+        if not messages:
+            log_debug("No messages to extract from")
+            return False
 
-        return await asyncio.to_thread(self.extract_from_conversation, messages, user_id)
-
-    def get_user_memory_tools(self, user_id: str) -> List[Callable]:
         if not self.db:
-            log_warning("No database configured for agentic memory tools")
-            return []
+            log_warning("Database not provided, cannot save extracted memory")
+            return False
 
-        manager = self
+        log_debug(f"Extracting memory for user_id={user_id} from {len(messages)} messages")
 
-        def update_user_memory(info_type: str, key: str, value: Any) -> str:
-            """Update or delete user memory.
+        existing_profile = self.get_user_profile(user_id)
+        system_message = self._get_extraction_prompt(existing_profile)
 
-            Args:
-                info_type: One of "profile", "policy", "knowledge", or "feedback"
-                key: The key/label to update or delete
-                value: The value to save, or None to delete the key.
+        conversation_text = "\n".join(
+            [f"{m.role}: {m.get_content_string()}" for m in messages if m.role in ("user", "assistant") and m.content]
+        )
 
-            Returns:
-                Confirmation message
-            """
-            result = manager._save_to_user_memory_layer(user_id, info_type, key, value)
-            if result.startswith("Saved "):
-                return "Remembered " + result[6:]
-            return result
+        messages_for_model: List[Message] = [
+            Message(role="system", content=system_message),
+            Message(
+                role="user",
+                content=f"Review this conversation and save any useful user information using the update_user_memory tool:\n\n{conversation_text}",
+            ),
+        ]
 
-        return [update_user_memory]
+        if self.model is None:
+            log_error("No model provided for memory extraction")
+            return False
 
-    def get_agentic_memory_instructions(self) -> str:
-        return AGENTIC_INSTRUCTIONS
+        extraction_tools = self._get_extraction_tools(user_id)
+        model_copy = deepcopy(self.model)
 
-    def _get_schema_hints(self, schema: Optional[Type]) -> str:
-        if schema is None:
-            return ""
-        if is_dataclass(schema):
-            field_info = []
-            for field in dataclass_fields(schema):
-                field_type = getattr(field.type, "__name__", str(field.type))
-                field_info.append(f"{field.name}: {field_type}")
-            if field_info:
-                return f"\nExpected fields: {', '.join(field_info)}"
-        return ""
+        try:
+            response = await model_copy.aresponse(messages=messages_for_model, tools=extraction_tools)
+            tool_calls_made = response.tool_calls is not None and len(response.tool_calls) > 0
+            if tool_calls_made:
+                log_info(f"Extracted and saved memory for user {user_id}")
+            else:
+                log_debug(f"No new information extracted for user {user_id}")
+            return True
+        except Exception as e:
+            log_error(f"Error during memory extraction: {e}")
+            return False
 
     def _get_extraction_prompt(self, existing_profile: Optional[UserProfile] = None) -> str:
-        parts = [EXTRACTION_PROMPT]
+        parts = [USER_MEMORY_EXTRACTION_PROMPT]
 
         schema_hints = []
         if self.profile_schema:
@@ -370,3 +395,15 @@ class MemoryCompiler:
             return f"Forgot {info_type}: {key}"
         else:
             return f"Key '{key}' not found in {info_type}"
+
+    def _get_schema_hints(self, schema: Optional[Type]) -> str:
+        if schema is None:
+            return ""
+        if is_dataclass(schema):
+            field_info = []
+            for field in dataclass_fields(schema):
+                field_type = getattr(field.type, "__name__", str(field.type))
+                field_info.append(f"{field.name}: {field_type}")
+            if field_info:
+                return f"\nExpected fields: {', '.join(field_info)}"
+        return ""

@@ -1,6 +1,6 @@
 from textwrap import dedent
 
-EXTRACTION_PROMPT = dedent("""\
+USER_MEMORY_EXTRACTION_PROMPT = dedent("""\
    You are a User Memory Curator. Your task is to extract LONG-TERM valuable information about the user that will be useful in FUTURE conversations.
 
    ## Core Principle: Quality Over Quantity
@@ -70,38 +70,4 @@ EXTRACTION_PROMPT = dedent("""\
    4. Is this a long-term trait or a temporary state? If temporary, skip.
 
    If there is no long-term valuable information to extract, don't call any tools.
-""")
-
-AGENTIC_INSTRUCTIONS = dedent("""\
-   You have access to a memory tool to remember information about the user across 4 layers:
-
-   TOOL:
-   - update_user_memory(info_type, key, value): Save or update user information
-   - To delete/forget information, pass value=None
-
-   THE 4 MEMORY LAYERS (in order of authority):
-   1. "policy" (HIGHEST) - User preferences and constraints that override other context
-      Examples: "response_style"="concise", "no_emojis"="true", "always_show_code"="true"
-      Use when: User explicitly states how they want you to respond
-
-   2. "profile" - Stable identity information about the user
-      Examples: "name"="Sarah", "role"="Data Scientist", "company"="TechCorp"
-      Use when: User shares who they are
-
-   3. "knowledge" - Learned patterns and context about the user's situation
-      Examples: "current_project"="fraud detection", "tech_stack"="Python and Spark"
-      Use when: User shares context about their work or situation
-
-   4. "feedback" (LOWEST) - Signals about what works or doesn't work
-      Use key="positive" or key="negative" with value describing what worked/didn't
-      Examples: ("positive", "detailed code examples"), ("negative", "too verbose")
-      Use when: User reacts to your responses (praise, criticism, suggestions)
-
-   GUIDELINES:
-   - Save information that will be useful in future conversations
-   - Policies override other layers - if user says "be concise", follow it even if feedback suggests otherwise
-   - Use clear, descriptive keys
-   - Don't save trivial or temporary information
-   - Check existing <user_memory> above - don't save duplicate or similar information
-   - When user says "forget X", call update_user_memory with value=None to remove it
 """)
