@@ -6057,8 +6057,7 @@ class Agent:
 
         # Add Memory (v2) agentic tools
         if self.enable_agentic_memory_v2 and user_id:
-            v2_tools = self.memory_compiler.get_user_memory_tools(user_id=user_id)
-            agent_tools.extend(v2_tools)
+            agent_tools.append(self._get_update_user_memory_v2_function(user_id))
 
         if self.enable_agentic_culture:
             agent_tools.append(self._get_update_cultural_knowledge_function(async_mode=False))
@@ -6167,8 +6166,7 @@ class Agent:
 
         # Add MemoryCompiler agentic tools
         if self.enable_agentic_memory_v2 and user_id:
-            v2_tools = self.memory_compiler.get_user_memory_tools(user_id=user_id)
-            agent_tools.extend(v2_tools)
+            agent_tools.append(self._get_update_user_memory_v2_function(user_id))
 
         if self.enable_agentic_state:
             agent_tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
@@ -10096,6 +10094,13 @@ class Agent:
             update_user_memory_function = update_user_memory  # type: ignore
 
         return Function.from_callable(update_user_memory_function, name="update_user_memory")
+
+    def _get_update_user_memory_v2_function(self, user_id: str) -> Function:
+        def update_user_memory(info_type: str, key: str, value: Any) -> str:
+            """Update user memory. info_type: profile/policy/knowledge/feedback. Pass value=None to delete."""
+            return self.memory_compiler._save_to_user_memory_layer(user_id, info_type, key, value)
+
+        return Function.from_callable(update_user_memory)
 
     def _get_update_cultural_knowledge_function(self, async_mode: bool = False) -> Function:
         def update_cultural_knowledge(task: str) -> str:
