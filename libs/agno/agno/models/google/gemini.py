@@ -25,7 +25,6 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.tokens import count_schema_tokens, count_text_tokens, count_tool_tokens
 
 try:
-    from google.oauth2.service_account import Credentials
     from google import genai
     from google.genai import Client as GeminiClient
     from google.genai.errors import ClientError, ServerError
@@ -51,6 +50,7 @@ try:
     from google.genai.types import (
         File as GeminiFile,
     )
+    from google.oauth2.service_account import Credentials
 except ImportError:
     raise ImportError(
         "`google-genai` not installed or not at the latest version. Please install it using `pip install -U google-genai`"
