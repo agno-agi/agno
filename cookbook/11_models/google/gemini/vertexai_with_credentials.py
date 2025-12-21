@@ -24,4 +24,6 @@ model = Gemini(
 agent = Agent(model=model, markdown=True)
 
 # 4. Use the Agent
-agent.print_response("Explain how explicit credentials help in production environments.")
+agent.print_response(
+    "Explain how explicit credentials help in production environments."
+)
