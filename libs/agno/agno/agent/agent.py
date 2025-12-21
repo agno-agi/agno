@@ -1780,6 +1780,7 @@ class Agent:
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
         # Set the id for the run
         run_id = run_id or str(uuid4())
+        register_run(run_id)
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
             log_warning(

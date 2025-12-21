@@ -26,14 +26,13 @@ Usage:
 import threading
 import time
 
-from redis import Redis
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.run.agent import RunEvent
 from agno.run.base import RunStatus
 from agno.run.cancel import set_cancellation_manager
 from agno.run.cancellation_management import RedisRunCancellationManager
+from redis import Redis
 
 
 def setup_redis_cancellation_manager():
@@ -171,9 +170,7 @@ def cancel_after_delay(agent: Agent, run_id_container: dict, delay_seconds: int 
         if success:
             print(f"Run {run_id} marked for cancellation in Redis")
         else:
-            print(
-                f"Failed to cancel run {run_id} (may not exist or already completed)"
-            )
+            print(f"Failed to cancel run {run_id} (may not exist or already completed)")
     else:
         print("No run_id found to cancel")
 
@@ -262,4 +259,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

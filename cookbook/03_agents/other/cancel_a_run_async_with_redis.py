@@ -25,14 +25,13 @@ Usage:
 
 import asyncio
 
-from redis.asyncio import Redis as AsyncRedis
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.run.agent import RunEvent
 from agno.run.base import RunStatus
 from agno.run.cancel import set_cancellation_manager
 from agno.run.cancellation_management import RedisRunCancellationManager
+from redis.asyncio import Redis as AsyncRedis
 
 
 async def setup_async_redis_cancellation_manager():
@@ -122,7 +121,9 @@ async def run_agent_task(agent: Agent, run_id_container: dict):
         }
 
 
-async def cancel_after_delay(agent: Agent, run_id_container: dict, delay_seconds: int = 5):
+async def cancel_after_delay(
+    agent: Agent, run_id_container: dict, delay_seconds: int = 5
+):
     """
     Cancel the agent run after a specified delay using async operations.
 
@@ -216,4 +217,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
