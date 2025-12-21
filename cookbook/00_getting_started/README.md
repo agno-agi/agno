@@ -1,4 +1,4 @@
-# Getting Started with Agents, The Easy Way
+# Get Started with Agents, The Easy Way
 
 This guide walks through the basics of building Agents, the easy way. Follow along to learn how to build agents with tools, storage, memory, knowledge, state, guardrails, and human in the loop. We'll also build multi-agent teams and step-based agentic workflows.
 
