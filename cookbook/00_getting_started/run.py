@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from agent_search_over_knowledge import agent_with_knowledge
+from agent_with_guardrails import agent_with_guardrails
 from agent_with_memory import agent_with_memory
 from agent_with_state_management import agent_with_state_management
 from agent_with_storage import agent_with_storage
@@ -9,6 +10,7 @@ from agent_with_tools import agent_with_tools
 from agent_with_typed_input_output import agent_with_typed_input_output
 from agno.os import AgentOS
 from custom_tool_for_self_learning import self_learning_agent
+from human_in_the_loop import human_in_the_loop
 from multi_agent_team import multi_agent_team
 from sequential_workflow import sequential_workflow
 
@@ -31,6 +33,8 @@ agent_os = AgentOS(
         agent_with_typed_input_output,
         agent_with_memory,
         agent_with_state_management,
+        human_in_the_loop,
+        agent_with_guardrails,
     ],
     teams=[multi_agent_team],
     workflows=[sequential_workflow],
