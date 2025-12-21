@@ -102,7 +102,9 @@ agent_with_knowledge = Agent(
 if __name__ == "__main__":
     # Load the introduction from the Agno documentation into the knowledge base
     # We're only loading 1 file to keep this example simple.
-    knowledge.add_content(url="https://docs.agno.com/introduction.md")
+    knowledge.add_content(
+        name="Agno Introduction", url="https://docs.agno.com/introduction.md"
+    )
 
     agent_with_knowledge.print_response(
         "What is Agno?",

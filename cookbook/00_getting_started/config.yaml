@@ -13,7 +13,7 @@ chat:
     agent-with-knowledge:
       - "What is Agno?"
       - "What is the AgentOS?"
-      - "Give me an example of an Agent"
+      - "Summarize your knowledge"
 
     self-learning-agent:
       - "What's a good P/E ratio for tech stocks?"
