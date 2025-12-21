@@ -1,3 +1,5 @@
+import json
+
 from agno.media import Image
 from agno.models.message import Message
 from agno.run.agent import RunInput
@@ -70,3 +72,29 @@ def test_media_in_message_input_for_team():
     team_run_input_dict = team_run_input.to_dict()
     assert team_run_input_dict["input_content"][0].get("images") is not None
     assert team_run_input_dict["input_content"][0].get("images")[0]["filepath"] == "test.png"
+
+
+def test_mixed_dict_and_message_input_is_json_serializable():
+    run_input = RunInput(
+        input_content=[
+            {"role": "user", "content": "Hello, world!"},
+            Message(role="assistant", content="Hi!"),
+        ]
+    )
+
+    run_input_dict = run_input.to_dict()
+    json.dumps(run_input_dict)
+    assert isinstance(run_input_dict["input_content"][1], dict)
+
+
+def test_mixed_dict_and_message_input_is_json_serializable_for_team():
+    team_run_input = TeamRunInput(
+        input_content=[
+            {"role": "user", "content": "Hello, world!"},
+            Message(role="assistant", content="Hi!"),
+        ]
+    )
+
+    team_run_input_dict = team_run_input.to_dict()
+    json.dumps(team_run_input_dict)
+    assert isinstance(team_run_input_dict["input_content"][1], dict)
