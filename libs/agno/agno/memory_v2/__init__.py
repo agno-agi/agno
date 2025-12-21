@@ -1,3 +1,3 @@
-from agno.memory_v2.v2_manager import MemoryManagerV2
+from agno.memory_v2.v2_manager import MemoryCompiler
 
-__all__ = ["MemoryManagerV2"]
+__all__ = ["MemoryCompiler"]

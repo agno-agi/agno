@@ -10,7 +10,7 @@ from typing import List, Optional
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.memory_v2 import MemoryManagerV2
+from agno.memory_v2 import MemoryCompiler
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
@@ -36,15 +36,15 @@ def example_schema_override():
     db = SqliteDb(db_file="tmp/custom_memory.db")
 
     # Use custom schema to guide extraction
-    memory = MemoryManagerV2(
-        db=db,
+    memory = MemoryCompiler(
         model=OpenAIChat(id="gpt-4o-mini"),
         profile_schema=EngineerProfile,
     )
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
-        memory_manager_v2=memory,
+        db=db,
+        memory_compiler=memory,
         update_memory_on_run=True,
         markdown=True,
     )
@@ -73,7 +73,8 @@ def example_nested_categories():
     print("=" * 60)
 
     db = SqliteDb(db_file="tmp/custom_memory.db")
-    memory = MemoryManagerV2(db=db)
+    memory = MemoryCompiler()
+    memory.db = db
 
     user_id = "dev_nested"
 

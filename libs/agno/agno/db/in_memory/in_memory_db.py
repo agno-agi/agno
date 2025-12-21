@@ -1345,49 +1345,6 @@ class InMemoryDb(BaseDb):
             log_error(f"Error getting user profile: {e}")
             raise e
 
-    def get_user_profiles(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[UserProfile], Tuple[List[Dict[str, Any]], int]]:
-        """Get all user profiles with pagination.
-
-        Args:
-            limit: Maximum number of profiles to return
-            page: Page number (1-indexed)
-            sort_by: Column to sort by
-            sort_order: 'asc' or 'desc'
-            deserialize: If True, return list of UserProfile; if False, return (list of dicts, count)
-
-        Returns:
-            List of UserProfile objects or (list of dicts, total count)
-        """
-        try:
-            profiles = list(self._user_profiles.values())
-            total_count = len(profiles)
-
-            # Apply sorting
-            profiles = apply_sorting(profiles, sort_by, sort_order)
-
-            # Apply pagination
-            if limit is not None:
-                offset = ((page or 1) - 1) * limit
-                profiles = profiles[offset : offset + limit]
-
-            profiles_copy = deepcopy(profiles)
-
-            if deserialize:
-                return [UserProfile.from_dict(profile) for profile in profiles_copy]
-
-            return (profiles_copy, total_count)
-
-        except Exception as e:
-            log_error(f"Error getting user profiles: {e}")
-            raise e
-
     def upsert_user_profile(
         self,
         user_profile: UserProfile,

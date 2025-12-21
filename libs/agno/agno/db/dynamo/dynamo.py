@@ -2827,63 +2827,6 @@ class DynamoDb(BaseDb):
             log_error(f"Error getting user profile: {e}")
             raise e
 
-    def get_user_profiles(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[UserProfile], Tuple[List[Dict[str, Any]], int]]:
-        """Get all user profiles with pagination.
-
-        Args:
-            limit: Maximum number of profiles to return
-            page: Page number (1-indexed)
-            sort_by: Column to sort by
-            sort_order: 'asc' or 'desc'
-            deserialize: If True, return list of UserProfile; if False, return (list of dicts, count)
-
-        Returns:
-            List of UserProfile objects or (list of dicts, total count)
-        """
-        try:
-            table_name = self._get_table(table_type="user_profiles", create_table_if_not_found=False)
-            if table_name is None:
-                return [] if deserialize else ([], 0)
-
-            # Scan all items
-            items = []
-            scan_kwargs: Dict[str, Any] = {"TableName": table_name}
-
-            response = self.client.scan(**scan_kwargs)
-            items.extend(response.get("Items", []))
-
-            while "LastEvaluatedKey" in response:
-                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-                response = self.client.scan(**scan_kwargs)
-                items.extend(response.get("Items", []))
-
-            total_count = len(items)
-
-            # Deserialize items
-            records = [deserialize_from_dynamodb_item(item) for item in items]
-
-            # Apply sorting
-            records = apply_sorting(records, sort_by, sort_order)
-
-            # Apply pagination
-            records = apply_pagination(records, limit, page)
-
-            if deserialize:
-                return [UserProfile.from_dict(record) for record in records]
-
-            return (records, total_count)
-
-        except Exception as e:
-            log_error(f"Error getting user profiles: {e}")
-            raise e
-
     def upsert_user_profile(
         self,
         user_profile: UserProfile,

@@ -510,17 +510,6 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_user_profiles(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[UserProfile], Tuple[List[Dict[str, Any]], int]]:
-        raise NotImplementedError
-
-    @abstractmethod
     def upsert_user_profile(
         self,
         user_profile: UserProfile,
@@ -1009,17 +998,6 @@ class AsyncBaseDb(ABC):
         user_id: str,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def get_user_profiles(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[UserProfile], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
     @abstractmethod

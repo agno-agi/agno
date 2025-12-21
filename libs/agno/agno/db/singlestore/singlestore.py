@@ -2927,58 +2927,6 @@ class SingleStoreDb(BaseDb):
             log_error(f"Error getting user profile: {e}")
             raise e
 
-    def get_user_profiles(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[UserProfile], Tuple[List[Dict[str, Any]], int]]:
-        """Get all user profiles with pagination.
-
-        Args:
-            limit: Maximum number of profiles to return
-            page: Page number (1-indexed)
-            sort_by: Column to sort by
-            sort_order: 'asc' or 'desc'
-            deserialize: If True, return list of UserProfile; if False, return (list of dicts, count)
-
-        Returns:
-            List of UserProfile objects or (list of dicts, total count)
-        """
-        try:
-            table = self._get_table(table_type="user_profiles")
-            if table is None:
-                return [] if deserialize else ([], 0)
-
-            with self.Session() as sess, sess.begin():
-                # Count total
-                count_stmt = select(func.count()).select_from(table)
-                total_count = sess.execute(count_stmt).scalar() or 0
-
-                # Build query
-                stmt = select(table)
-                stmt = apply_sorting(stmt, table, sort_by, sort_order)
-
-                # Apply pagination
-                if limit is not None:
-                    stmt = stmt.limit(limit)
-                if page is not None and limit is not None:
-                    stmt = stmt.offset((page - 1) * limit)
-
-                result = sess.execute(stmt)
-                rows = result.fetchall()
-
-                if deserialize:
-                    return [UserProfile.from_dict(dict(row._mapping)) for row in rows]
-
-                return ([dict(row._mapping) for row in rows], total_count)
-
-        except Exception as e:
-            log_error(f"Error getting user profiles: {e}")
-            raise e
-
     def upsert_user_profile(
         self,
         user_profile: UserProfile,

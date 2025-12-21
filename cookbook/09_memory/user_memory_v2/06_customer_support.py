@@ -13,23 +13,21 @@ Memory layers populated automatically:
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.memory import MemoryManagerV2
+from agno.memory_v2 import MemoryCompiler
 from agno.models.openai import OpenAIChat
 
 # Database for customer profiles
 db = SqliteDb(db_file="tmp/support_memory.db")
 
 # AUTOMATIC memory extraction - no tools, extracts in background
-memory = MemoryManagerV2(
-    db=db,
-    model=OpenAIChat(id="gpt-4o-mini"),  # Extraction model
-    update_memory_on_run=True,  # Auto-extract after each message
-)
+memory = MemoryCompiler(model=OpenAIChat(id="gpt-4o-mini"))
 
 # Support agent
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    memory_manager_v2=memory,
+    db=db,
+    memory_compiler=memory,
+    update_memory_on_run=True,  # Auto-extract after each message
     instructions=(
         "You are a customer support agent for CloudSync, a file synchronization "
         "SaaS product. Be helpful, empathetic, and professional. Ask clarifying "
@@ -47,7 +45,7 @@ def show_customer_profile():
     print("CUSTOMER PROFILE (Auto-Extracted)")
     print("=" * 70)
 
-    user = memory.get_user(USER_ID)
+    user = memory.get_user_profile(USER_ID)
     if not user:
         print("(no data yet)")
         return
@@ -89,7 +87,7 @@ def show_customer_profile():
     print("\n" + "-" * 70)
     print("INJECTED INTO AGENT CONTEXT:")
     print("-" * 70)
-    context = memory.compile_user_context(USER_ID)
+    context = memory.compile_user_memory(USER_ID)
     print(context if context else "(nothing yet)")
 
 

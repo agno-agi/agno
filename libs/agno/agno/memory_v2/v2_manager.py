@@ -14,7 +14,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 
 @dataclass
-class MemoryManagerV2:
+class MemoryCompiler:
     model: Optional[Model] = None
     db: Optional[Union[AsyncBaseDb, BaseDb]] = None
 
@@ -147,7 +147,7 @@ class MemoryManagerV2:
             Message(role="system", content=system_message),
             Message(
                 role="user",
-                content=f"Review this conversation and save any useful user information using the save_user_info tool:\n\n{conversation_text}",
+                content=f"Review this conversation and save any useful user information using the update_user_memory tool:\n\n{conversation_text}",
             ),
         ]
 
@@ -177,25 +177,23 @@ class MemoryManagerV2:
 
         manager = self
 
-        def save_user_info(info_type: str, key: str, value: Any) -> str:
+        def update_user_memory(info_type: str, key: str, value: Any = None) -> str:
+            """Update or delete user memory.
+
+            Args:
+                info_type: One of "profile", "policy", "knowledge", or "feedback"
+                key: The key/label to update or delete
+                value: The value to save. Pass None to delete the key.
+
+            Returns:
+                Confirmation message
+            """
             result = manager._save_to_user_memory_layer(user_id, info_type, key, value)
             if result.startswith("Saved "):
                 return "Remembered " + result[6:]
             return result
 
-        def forget_user_info(info_type: str, key: str) -> str:
-            """Forget specific information about the user.
-
-            Args:
-                info_type: One of "profile", "policy", "knowledge", or "feedback"
-                key: The key/label to forget. For feedback, use "positive" or "negative".
-
-            Returns:
-                Confirmation message
-            """
-            return manager._delete_from_user_memory_layer(user_id, info_type, key)
-
-        return [save_user_info, forget_user_info]
+        return [update_user_memory]
 
     def get_agentic_memory_instructions(self) -> str:
         return AGENTIC_INSTRUCTIONS
@@ -269,6 +267,10 @@ class MemoryManagerV2:
             if user_profile is None:
                 user_profile = UserProfile(user_id=user_id)
 
+            # Handle deletion when value is None
+            if value is None:
+                return self._delete_key_from_layer(user_profile, user_id, info_type, key)
+
             if info_type == "profile":
                 if user_profile.user_profile is None:
                     user_profile.user_profile = {}
@@ -318,43 +320,46 @@ class MemoryManagerV2:
             log_error(f"Error saving to layer: {e}")
             return f"Error: {e}"
 
-    def _delete_from_user_memory_layer(self, user_id: str, info_type: str, key: str) -> str:
-        try:
-            user_profile = self.get_user_profile(user_id)
-            if user_profile is None:
-                return "No memory found for user"
+    def _delete_key_from_layer(self, user_profile: UserProfile, user_id: str, info_type: str, key: str) -> str:
+        """Delete a key from a memory layer (called when value=None)."""
+        deleted = False
 
-            if info_type == "profile":
-                if user_profile.user_profile and key in user_profile.user_profile:
-                    del user_profile.user_profile[key]
-                    log_debug(f"Forgot profile {key} for {user_id}")
+        if info_type == "profile":
+            if user_profile.user_profile and key in user_profile.user_profile:
+                del user_profile.user_profile[key]
+                deleted = True
+                log_debug(f"Deleted profile {key} for {user_id}")
 
-            elif info_type == "policy":
-                if user_profile.memory_layers and "policies" in user_profile.memory_layers:
-                    if key in user_profile.memory_layers["policies"]:
-                        del user_profile.memory_layers["policies"][key]
-                        log_debug(f"Forgot policy {key} for {user_id}")
+        elif info_type == "policy":
+            if user_profile.memory_layers and "policies" in user_profile.memory_layers:
+                if key in user_profile.memory_layers["policies"]:
+                    del user_profile.memory_layers["policies"][key]
+                    deleted = True
+                    log_debug(f"Deleted policy {key} for {user_id}")
 
-            elif info_type == "knowledge":
-                if user_profile.memory_layers and "knowledge" in user_profile.memory_layers:
-                    existing = user_profile.memory_layers["knowledge"]
-                    user_profile.memory_layers["knowledge"] = [f for f in existing if f.get("key") != key]
-                    log_debug(f"Forgot knowledge {key} for {user_id}")
+        elif info_type == "knowledge":
+            if user_profile.memory_layers and "knowledge" in user_profile.memory_layers:
+                existing = user_profile.memory_layers["knowledge"]
+                new_list = [f for f in existing if f.get("key") != key]
+                if len(new_list) < len(existing):
+                    user_profile.memory_layers["knowledge"] = new_list
+                    deleted = True
+                    log_debug(f"Deleted knowledge {key} for {user_id}")
 
-            elif info_type == "feedback":
-                if user_profile.memory_layers and "feedback" in user_profile.memory_layers:
-                    if key in ["positive", "negative"]:
-                        user_profile.memory_layers["feedback"][key] = []
-                        log_debug(f"Cleared {key} feedback for {user_id}")
-                    else:
-                        return f"For feedback, key must be 'positive' or 'negative', got '{key}'"
+        elif info_type == "feedback":
+            if user_profile.memory_layers and "feedback" in user_profile.memory_layers:
+                if key in ["positive", "negative"] and key in user_profile.memory_layers["feedback"]:
+                    user_profile.memory_layers["feedback"][key] = []
+                    deleted = True
+                    log_debug(f"Cleared {key} feedback for {user_id}")
+                else:
+                    return f"For feedback, key must be 'positive' or 'negative', got '{key}'"
 
-            else:
-                return f"Unknown info_type: {info_type}. Use 'profile', 'policy', 'knowledge', or 'feedback'"
+        else:
+            return f"Unknown info_type: {info_type}. Use 'profile', 'policy', 'knowledge', or 'feedback'"
 
+        if deleted:
             self.upsert_user_profile(user_profile)
             return f"Forgot {info_type}: {key}"
-
-        except Exception as e:
-            log_error(f"Error deleting from layer: {e}")
-            return f"Error: {e}"
+        else:
+            return f"Key '{key}' not found in {info_type}"

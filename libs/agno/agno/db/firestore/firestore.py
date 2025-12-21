@@ -2432,57 +2432,6 @@ class FirestoreDb(BaseDb):
             log_error(f"Error getting user profile: {e}")
             raise e
 
-    def get_user_profiles(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[UserProfile], Tuple[List[Dict[str, Any]], int]]:
-        """Get all user profiles with pagination.
-
-        Args:
-            limit: Maximum number of profiles to return
-            page: Page number (1-indexed)
-            sort_by: Column to sort by
-            sort_order: 'asc' or 'desc'
-            deserialize: If True, return list of UserProfile; if False, return (list of dicts, count)
-
-        Returns:
-            List of UserProfile objects or (list of dicts, total count)
-        """
-        try:
-            collection_ref = self._get_collection(table_type="user_profiles")
-            if collection_ref is None:
-                return [] if deserialize else ([], 0)
-
-            # Get all documents for count
-            all_docs = list(collection_ref.stream())
-            total_count = len(all_docs)
-
-            # Convert to records
-            records = []
-            for doc in all_docs:
-                record = doc.to_dict()
-                record["user_id"] = doc.id
-                records.append(record)
-
-            # Apply sorting
-            records = apply_sorting_to_records(records, sort_by, sort_order)
-
-            # Apply pagination
-            records = apply_pagination_to_records(records, limit, page)
-
-            if deserialize:
-                return [UserProfile.from_dict(record) for record in records]
-
-            return (records, total_count)
-
-        except Exception as e:
-            log_error(f"Error getting user profiles: {e}")
-            raise e
-
     def upsert_user_profile(
         self,
         user_profile: UserProfile,

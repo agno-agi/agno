@@ -26,8 +26,8 @@ EXTRACTION_PROMPT = dedent("""\
 
    ## Tool Usage
 
-   Use save_user_info(info_type, key, value) to save information.
-   Always use explicit keyword arguments: save_user_info(info_type="...", key="...", value="...")
+   Use update_user_memory(info_type, key, value) to save information.
+   Always use explicit keyword arguments: update_user_memory(info_type="...", key="...", value="...")
 
    ## Memory Layers
 
@@ -35,30 +35,30 @@ EXTRACTION_PROMPT = dedent("""\
    Stable identity information about the user.
    Common keys: name, role, company, location, timezone, experience_level, languages, frameworks
    Examples:
-   - save_user_info(info_type="profile", key="name", value="Sarah")
-   - save_user_info(info_type="profile", key="role", value="Senior Engineer")
+   - update_user_memory(info_type="profile", key="name", value="Sarah")
+   - update_user_memory(info_type="profile", key="role", value="Senior Engineer")
 
    ### POLICY (info_type="policy") - How the user wants to be helped
    Explicit preferences and constraints. These have HIGH authority.
    Common keys: response_style, tone, format_preference, include_code_examples
    Examples:
-   - save_user_info(info_type="policy", key="response_style", value="concise")
-   - save_user_info(info_type="policy", key="tone", value="direct")
+   - update_user_memory(info_type="policy", key="response_style", value="concise")
+   - update_user_memory(info_type="policy", key="tone", value="direct")
    Only save policies when user EXPLICITLY states preferences. Do NOT infer from behavior.
 
    ### KNOWLEDGE (info_type="knowledge") - What user is working on
    Long-term context about user's situation.
    Common keys: current_project, tech_stack, goal, interest, challenge
    Examples:
-   - save_user_info(info_type="knowledge", key="current_project", value="building payment API")
-   - save_user_info(info_type="knowledge", key="tech_stack", value="Python and Kafka")
+   - update_user_memory(info_type="knowledge", key="current_project", value="building payment API")
+   - update_user_memory(info_type="knowledge", key="tech_stack", value="Python and Kafka")
    Only save knowledge with long-term relevance.
 
    ### FEEDBACK (info_type="feedback") - What works for this user
    Signals about response quality. Use key="positive" or key="negative".
    Examples:
-   - save_user_info(info_type="feedback", key="positive", value="detailed code examples are helpful")
-   - save_user_info(info_type="feedback", key="negative", value="too much explanation, prefers brevity")
+   - update_user_memory(info_type="feedback", key="positive", value="detailed code examples are helpful")
+   - update_user_memory(info_type="feedback", key="negative", value="too much explanation, prefers brevity")
    Only save feedback that reveals GENERALIZABLE preferences.
 
    ## Decision Framework
@@ -73,11 +73,11 @@ EXTRACTION_PROMPT = dedent("""\
 """)
 
 AGENTIC_INSTRUCTIONS = dedent("""\
-   You have access to memory tools to remember information about the user across 4 layers:
+   You have access to a memory tool to remember information about the user across 4 layers:
 
-   TOOLS:
-   - save_user_info(info_type, key, value): Save user information
-   - forget_user_info(info_type, key): Remove previously saved information
+   TOOL:
+   - update_user_memory(info_type, key, value): Save or update user information
+   - To delete/forget information, pass value=None
 
    THE 4 MEMORY LAYERS (in order of authority):
    1. "policy" (HIGHEST) - User preferences and constraints that override other context
@@ -103,5 +103,5 @@ AGENTIC_INSTRUCTIONS = dedent("""\
    - Use clear, descriptive keys
    - Don't save trivial or temporary information
    - Check existing <user_memory> above - don't save duplicate or similar information
-   - When user says "forget X", use forget_user_info to remove it
+   - When user says "forget X", call update_user_memory with value=None to remove it
 """)

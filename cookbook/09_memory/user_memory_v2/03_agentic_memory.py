@@ -1,89 +1,115 @@
-"""Agentic Memory - Agent uses tools to manage memory.
+"""Agentic Memory - Sarah explicitly manages her memory.
 
-In agentic mode, the agent has tools to:
-- update_user_profile: Save identity/background
-- update_user_policies: Save preferences/rules
-- add_user_knowledge: Save context/facts
-- add_user_feedback: Save feedback
-- manage_user_memory: Delete/clear memory
+This continues Sarah's story from 02_automatic_learning.py.
+The agent has TOOLS to save, update, and delete memory on request.
 
-The agent decides when and what to remember.
+Run after 02_automatic_learning.py to see memory accumulate.
 """
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.memory_v2 import MemoryManagerV2
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
-db = SqliteDb(db_file="tmp/user_memory.db")
-memory = MemoryManagerV2(db=db)
+# Same database as previous cookbooks
+DB_FILE = "tmp/user_memory.db"
+USER_ID = "sarah"
+
+db = SqliteDb(db_file=DB_FILE)
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    memory_manager_v2=memory,
-    enable_agentic_memory_v2=True,  # Agent has tools to manage memory
+    db=db,
+    enable_agentic_memory_v2=True,  # Auto-creates MemoryCompiler with tools
     markdown=True,
 )
 
-user_id = "jordan"
+# Show what we already know about Sarah
+print("=" * 60)
+print("EXISTING MEMORY (from previous cookbooks)")
+print("=" * 60)
+existing = agent.get_user_profile(USER_ID)
+if existing:
+    print("\nProfile:", existing.user_profile)
+    print("Knowledge:", existing.memory_layers.get("knowledge", []))
+else:
+    print("\n(No existing memory - run 01 and 02 first for full experience)")
 
-# Conversation 1: Agent uses update_user_profile tool
-print("Conversation 1: User introduces themselves")
+# Conversation 1: Sarah asks agent to remember something
+print("\n" + "=" * 60)
+print("Conversation 1: Explicit save request")
 agent.print_response(
-    "Hi! I'm Jordan, a ML engineer working on computer vision.",
-    user_id=user_id,
+    "Please remember that I prefer using Pydantic for data validation in all my APIs.",
+    user_id=USER_ID,
     stream=True,
 )
 
-print("\nMemory after conversation 1:")
-pprint(
-    memory.get_user_profile(user_id).to_dict()
-    if memory.get_user_profile(user_id)
-    else {}
-)
-
-# Conversation 2: Agent uses update_user_policies tool
-print("\nConversation 2: User states preferences")
+# Conversation 2: Sarah asks to update/correct information
+print("\nConversation 2: Update existing information")
 agent.print_response(
-    "I prefer concise answers. Always include code examples.",
-    user_id=user_id,
+    "Actually, I've been promoted. Update my role - I'm now a Staff Engineer, not just tech lead.",
+    user_id=USER_ID,
     stream=True,
 )
 
-print("\nMemory after conversation 2:")
-pprint(
-    memory.get_user_profile(user_id).to_dict()
-    if memory.get_user_profile(user_id)
-    else {}
-)
-
-# Conversation 3: Agent uses manage_user_memory tool to delete
-print("\nConversation 3: User asks to forget something")
+# Conversation 3: Sarah asks to forget something
+print("\nConversation 3: Forget request")
 agent.print_response(
-    "Actually, forget that I work on computer vision - I'm switching to NLP.",
-    user_id=user_id,
+    "Forget that I work on the payment service. I've moved to the authentication team now.",
+    user_id=USER_ID,
     stream=True,
 )
 
-print("\nMemory after conversation 2:")
-pprint(
-    memory.get_user_profile(user_id).to_dict()
-    if memory.get_user_profile(user_id)
-    else {}
-)
-
-# Conversation 4: Agent uses add_user_knowledge tool to add knowledge
-print("\nConversation 4: User shares knowledge")
+# Conversation 4: Add new context
+print("\nConversation 4: Add new project context")
 agent.print_response(
-    "Actually my full name is Jordan Smith. I now moved away from Computer Vision to NLP.",
-    user_id=user_id,
+    "Add to my context: I'm now implementing OAuth2 and OpenID Connect for our platform. "
+    "We're using authlib as the main library.",
+    user_id=USER_ID,
     stream=True,
 )
 
-print("\nMemory after conversation 4:")
-pprint(
-    memory.get_user_profile(user_id).to_dict()
-    if memory.get_user_profile(user_id)
-    else {}
+# Conversation 5: Test recall with updated memory
+print("\nConversation 5: Verify updates")
+agent.print_response(
+    "What's my current role and what project am I working on now?",
+    user_id=USER_ID,
+    stream=True,
 )
+
+# Conversation 6: Add a policy
+print("\nConversation 6: Add a preference")
+agent.print_response(
+    "From now on, always include security considerations when discussing auth code.",
+    user_id=USER_ID,
+    stream=True,
+)
+
+# Show final memory state
+print("\n" + "=" * 60)
+print("FINAL MEMORY STATE (after agentic updates)")
+print("=" * 60)
+
+user = agent.get_user_profile(USER_ID)
+if user:
+    print("\nProfile:")
+    pprint(user.user_profile)
+
+    print("\nPolicies:")
+    pprint(user.memory_layers.get("policies", {}))
+
+    print("\nKnowledge:")
+    pprint(user.memory_layers.get("knowledge", []))
+
+    print("\nFeedback:")
+    pprint(user.memory_layers.get("feedback", {}))
+
+# Show compiled context
+print("\n" + "=" * 60)
+print("COMPILED CONTEXT (what agent sees)")
+print("=" * 60)
+print(agent.memory_compiler.compile_user_memory(USER_ID))
+
+print("\n" + "=" * 60)
+print("Run 05_persistence.py to see memory survive app restart!")
+print("=" * 60)

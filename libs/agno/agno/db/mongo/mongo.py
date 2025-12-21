@@ -2658,66 +2658,6 @@ class MongoDb(BaseDb):
             log_error(f"Error getting user profile: {e}")
             raise e
 
-    def get_user_profiles(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[UserProfile], Tuple[List[Dict[str, Any]], int]]:
-        """Get all user profiles with pagination.
-
-        Args:
-            limit: Maximum number of profiles to return
-            page: Page number (1-indexed)
-            sort_by: Column to sort by
-            sort_order: 'asc' or 'desc'
-            deserialize: If True, return list of UserProfile; if False, return (list of dicts, count)
-
-        Returns:
-            List of UserProfile objects or (list of dicts, total count)
-        """
-        try:
-            collection = self._get_collection(table_type="user_profiles")
-            if collection is None:
-                return [] if deserialize else ([], 0)
-
-            # Count total
-            total_count = collection.count_documents({})
-
-            # Apply sorting
-            sort_criteria = apply_sorting({}, sort_by, sort_order)
-
-            # Apply pagination
-            query_args = apply_pagination({}, limit, page)
-
-            cursor = collection.find({})
-            if sort_criteria:
-                cursor = cursor.sort(sort_criteria)
-            if query_args.get("skip"):
-                cursor = cursor.skip(query_args["skip"])
-            if query_args.get("limit"):
-                cursor = cursor.limit(query_args["limit"])
-
-            results = list(cursor)
-            profiles = []
-            for row in results:
-                row.pop("_id", None)
-                if deserialize:
-                    profiles.append(UserProfile.from_dict(row))
-                else:
-                    profiles.append(row)
-
-            if deserialize:
-                return profiles
-
-            return (profiles, total_count)
-
-        except Exception as e:
-            log_error(f"Error getting user profiles: {e}")
-            raise e
-
     def upsert_user_profile(
         self,
         user_profile: UserProfile,

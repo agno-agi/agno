@@ -34,6 +34,7 @@ from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
+from agno.db.schemas.user_profile import UserProfile
 from agno.eval.base import BaseEval
 from agno.exceptions import (
     InputCheckError,
@@ -46,7 +47,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.types import KnowledgeFilter
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
-from agno.memory_v2 import MemoryManagerV2
+from agno.memory_v2 import MemoryCompiler
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
 from agno.models.metrics import Metrics
@@ -233,7 +234,7 @@ class Agent:
     add_memories_to_context: Optional[bool] = None
     # --- Memory Manager V2 (new user memory system) ---
     # Memory Manager V2 for structured user memory layers
-    memory_manager_v2: Optional[MemoryManagerV2] = None
+    memory_compiler: Optional[MemoryCompiler] = None
     # If True, automatically extracts user memory after each run (V2)
     update_memory_on_run: bool = False
     # If True, enables agentic memory tools for V2 memory system
@@ -474,7 +475,7 @@ class Agent:
         enable_agentic_memory: bool = False,
         enable_user_memories: bool = False,
         add_memories_to_context: Optional[bool] = None,
-        memory_manager_v2: Optional[MemoryManagerV2] = None,
+        memory_compiler: Optional[MemoryCompiler] = None,
         update_memory_on_run: bool = False,
         enable_agentic_memory_v2: bool = False,
         enable_session_summaries: bool = False,
@@ -581,7 +582,7 @@ class Agent:
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
         self.add_memories_to_context = add_memories_to_context
-        self.memory_manager_v2 = memory_manager_v2
+        self.memory_compiler = memory_compiler
         self.update_memory_on_run = update_memory_on_run
         self.enable_agentic_memory_v2 = enable_agentic_memory_v2
 
@@ -811,11 +812,11 @@ class Agent:
                 self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None
             )
 
-    def _set_memory_manager_v2(self) -> None:
-        if self.memory_manager_v2.model is None:
-            self.memory_manager_v2.model = self.model
-        if self.memory_manager_v2.db is None:
-            self.memory_manager_v2.db = self.db
+    def _set_memory_compiler(self) -> None:
+        if self.memory_compiler.model is None:
+            self.memory_compiler.model = self.model
+        if self.memory_compiler.db is None:
+            self.memory_compiler.db = self.db
 
     def _set_session_summary_manager(self) -> None:
         if self.enable_session_summaries and self.session_summary_manager is None:
@@ -866,8 +867,10 @@ class Agent:
         self.set_id()
         if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
             self._set_memory_manager()
-        if self.memory_manager_v2 is not None:
-            self._set_memory_manager_v2()
+        if self.update_memory_on_run or self.enable_agentic_memory_v2 or self.memory_compiler is not None:
+            if self.memory_compiler is None:
+                self.memory_compiler = MemoryCompiler()
+            self._set_memory_compiler()
         if (
             self.add_culture_to_context
             or self.update_cultural_knowledge
@@ -1081,7 +1084,7 @@ class Agent:
                 # V1 memory manager with automatic extraction
                 (self.memory_manager is not None and self.enable_user_memories and not self.enable_agentic_memory)
                 # V2 memory manager with automatic extraction
-                or (self.memory_manager_v2 is not None and self.update_memory_on_run)
+                or (self.memory_compiler is not None and self.update_memory_on_run)
             )
             if should_create_memories:
                 log_debug("Starting memory creation in background thread.")
@@ -1294,7 +1297,7 @@ class Agent:
                 # V1 memory manager with automatic extraction
                 (self.memory_manager is not None and self.enable_user_memories and not self.enable_agentic_memory)
                 # V2 memory manager with automatic extraction
-                or (self.memory_manager_v2 is not None and self.update_memory_on_run)
+                or (self.memory_compiler is not None and self.update_memory_on_run)
             )
             if should_create_memories:
                 log_debug("Starting memory creation in background thread.")
@@ -5853,7 +5856,7 @@ class Agent:
                 log_warning("Unable to add messages to memory")
 
         # Background extraction of user memory
-        if self.memory_manager_v2 is not None and user_id is not None and self.update_memory_on_run:
+        if self.memory_compiler is not None and user_id is not None and self.update_memory_on_run:
             # Build list of messages to extract from
             messages_to_extract: List[Message] = []
             if run_messages.user_message is not None:
@@ -5869,8 +5872,8 @@ class Agent:
                             pass
 
             if messages_to_extract:
-                log_debug("Extracting user memory via MemoryManagerV2 (automatic mode)")
-                self.memory_manager_v2.extract_from_conversation(
+                log_debug("Extracting user memory via MemoryCompiler (automatic mode)")
+                self.memory_compiler.extract_from_conversation(
                     messages=messages_to_extract,
                     user_id=user_id,
                 )
@@ -5923,8 +5926,8 @@ class Agent:
             else:
                 log_warning("Unable to add messages to memory")
 
-        # MemoryManagerV2 extraction (async, automatic mode)
-        if self.memory_manager_v2 is not None and user_id is not None and self.memory_manager_v2.update_memory_on_run:
+        # MemoryCompiler extraction (async, automatic mode)
+        if self.memory_compiler is not None and user_id is not None and self.memory_compiler.update_memory_on_run:
             # Build list of messages to extract from
             messages_to_extract: List[Message] = []
             if run_messages.user_message is not None:
@@ -5940,8 +5943,8 @@ class Agent:
                             pass
 
             if messages_to_extract:
-                log_debug("Extracting user memory via MemoryManagerV2 (automatic mode)")
-                await self.memory_manager_v2.aextract_from_conversation(
+                log_debug("Extracting user memory via MemoryCompiler (automatic mode)")
+                await self.memory_compiler.aextract_from_conversation(
                     messages=messages_to_extract,
                     user_id=user_id,
                 )
@@ -6007,9 +6010,9 @@ class Agent:
         if self.enable_agentic_memory:
             agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=False))
 
-        # Add MemoryManagerV2 agentic tools
-        if self.memory_manager_v2 is not None and self.enable_agentic_memory_v2 and user_id:
-            v2_tools = self.memory_manager_v2.get_user_memory_tools(user_id=user_id)
+        # Add MemoryCompiler agentic tools
+        if self.memory_compiler is not None and self.enable_agentic_memory_v2 and user_id:
+            v2_tools = self.memory_compiler.get_user_memory_tools(user_id=user_id)
             agent_tools.extend(v2_tools)
 
         if self.enable_agentic_culture:
@@ -6117,9 +6120,9 @@ class Agent:
         if self.enable_agentic_memory:
             agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=True))
 
-        # Add MemoryManagerV2 agentic tools
-        if self.memory_manager_v2 is not None and self.enable_agentic_memory_v2 and user_id:
-            v2_tools = self.memory_manager_v2.get_user_memory_tools(user_id=user_id)
+        # Add MemoryCompiler agentic tools
+        if self.memory_compiler is not None and self.enable_agentic_memory_v2 and user_id:
+            v2_tools = self.memory_compiler.get_user_memory_tools(user_id=user_id)
             agent_tools.extend(v2_tools)
 
         if self.enable_agentic_state:
@@ -7338,6 +7341,27 @@ class Agent:
 
         return await self.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
 
+    def get_user_profile(self, user_id: Optional[str] = None) -> Optional[UserProfile]:
+        """Get user profile for V2 memory system.
+
+        Args:
+            user_id: The user ID to get the profile for. If not provided, uses self.user_id.
+        Returns:
+            Optional[UserProfile]: The user profile, or None if not found.
+        """
+        if self.memory_compiler is None:
+            if self.db is None:
+                log_warning("Database not provided.")
+                return None
+            self.memory_compiler = MemoryCompiler()
+            self._set_memory_compiler()
+
+        user_id = user_id if user_id is not None else self.user_id
+        if user_id is None:
+            user_id = "default"
+
+        return self.memory_compiler.get_user_profile(user_id=user_id)
+
     def get_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
         """Get the cultural knowledge the agent has access to
 
@@ -7713,8 +7737,8 @@ class Agent:
             )
 
         # 3.3.12 Add user memory layers to the system prompt
-        if self.memory_manager_v2 is not None and user_id is not None:
-            user_context = self.memory_manager_v2.compile_user_memory(user_id)
+        if self.memory_compiler is not None and user_id is not None:
+            user_context = self.memory_compiler.compile_user_memory(user_id)
             if user_context:
                 system_message_content += (
                     "The following is personalized context about the user you are interacting with. "
@@ -7725,7 +7749,7 @@ class Agent:
 
             # Add agentic memory instructions if enabled
             if self.enable_agentic_memory_v2:
-                system_message_content += self.memory_manager_v2.get_agentic_memory_instructions()
+                system_message_content += self.memory_compiler.get_agentic_memory_instructions()
                 system_message_content += "\n"
 
         # 3.3.12 Add the system message from the Model
@@ -8076,8 +8100,8 @@ class Agent:
             )
 
         # 3.3.12 Add user memory layers to the system message
-        if self.memory_manager_v2 is not None and user_id is not None:
-            user_context = self.memory_manager_v2.compile_user_memory(user_id)
+        if self.memory_compiler is not None and user_id is not None:
+            user_context = self.memory_compiler.compile_user_memory(user_id)
             if user_context:
                 system_message_content += (
                     "The following is personalized context about the user you are interacting with. "
@@ -8088,7 +8112,7 @@ class Agent:
 
             # Add agentic memory instructions if enabled
             if self.enable_agentic_memory_v2:
-                system_message_content += self.memory_manager_v2.get_agentic_memory_instructions()
+                system_message_content += self.memory_compiler.get_agentic_memory_instructions()
                 system_message_content += "\n"
 
         # 3.3.12 Add the system message from the Model
