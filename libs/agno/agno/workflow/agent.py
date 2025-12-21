@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from agno.agent import Agent
 from agno.models.base import Model
+from agno.os.managers import WebSocketHandler
 from agno.run import RunContext
-from agno.workflow.types import WebSocketHandler
 
 if TYPE_CHECKING:
     from agno.session.workflow import WorkflowSession
