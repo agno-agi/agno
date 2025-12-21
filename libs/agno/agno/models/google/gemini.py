@@ -50,6 +50,7 @@ try:
     from google.genai.types import (
         File as GeminiFile,
     )
+    from google.oauth2.service_account import Credentials
 except ImportError:
     raise ImportError(
         "`google-genai` not installed or not at the latest version. Please install it using `pip install -U google-genai`"
@@ -66,6 +67,7 @@ class Gemini(Model):
     - Set `vertexai` to `True` to use the Vertex AI API.
     - Set your `project_id` (or set `GOOGLE_CLOUD_PROJECT` environment variable) and `location` (optional).
     - Set `http_options` (optional) to configure the HTTP options.
+    - Set `credentials` (optional) to use the Google Cloud credentials.
 
     Based on https://googleapis.github.io/python-genai/
     """
@@ -110,6 +112,7 @@ class Gemini(Model):
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
+    credentials: Optional[Credentials] = None
     api_key: Optional[str] = None
     vertexai: bool = False
     project_id: Optional[str] = None
@@ -158,6 +161,8 @@ class Gemini(Model):
                 log_error("GOOGLE_CLOUD_LOCATION not set. Please set the GOOGLE_CLOUD_LOCATION environment variable.")
             client_params["project"] = project_id
             client_params["location"] = location
+            if self.credentials:
+                client_params["credentials"] = self.credentials
 
         client_params = {k: v for k, v in client_params.items() if v is not None}
 
