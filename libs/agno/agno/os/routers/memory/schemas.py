@@ -26,8 +26,8 @@ class UserMemorySchema(BaseModel):
             return None
 
         # Handle nested memory content (relevant for some memories migrated from v1)
-        if memory_dict["memory"].get("memory") is not None:
-            memory_content = str(memory_dict["memory"].get("memory"))
+        if (memory := memory_dict["memory"].get("memory")) is not None:
+            memory_content = str(memory) if isinstance(memory, dict) else memory
         else:
             memory_content = str(memory_dict["memory"])
 
