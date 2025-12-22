@@ -349,10 +349,7 @@ def attach_routes(
             sessions_list = cast(list, sessions)
             for session_dict in sessions_list:
                 runs = cast(dict, session_dict).get("runs", [])
-                
-
-        # Convert runs to A2A tasks
-        a2a_tasks = [map_run_schema_to_a2a_task(run) for run in runs]
+                a2a_tasks.extend([map_run_schema_to_a2a_task(run) for run in runs])
         return {
             "jsonrpc": "2.0",
             "id": request_id,
@@ -741,7 +738,7 @@ def attach_routes(
         if session_type is None:
             session_type = SessionType.TEAM
 
-        all_runs = []
+        a2a_tasks = []
 
         if session_id:
             # Load specific session
@@ -765,7 +762,7 @@ def attach_routes(
 
             session_dict = cast(dict, session)
             runs = session_dict.get("runs", [])
-            all_runs.extend(runs)
+            a2a_tasks.extend([map_run_output_to_a2a_task(run) for run in runs])
         else:
             # Load all sessions for this team
             if isinstance(db, AsyncBaseDb):
@@ -786,10 +783,7 @@ def attach_routes(
             sessions_list = cast(list, sessions)
             for session_dict in sessions_list:
                 runs = cast(dict, session_dict).get("runs", [])
-                all_runs.extend(runs)
-
-        # Convert runs to A2A tasks
-        a2a_tasks = [map_run_output_to_a2a_task(run) for run in all_runs]
+                a2a_tasks.extend([map_run_output_to_a2a_task(run) for run in runs])
         return {
             "jsonrpc": "2.0",
             "id": request_id,
@@ -865,7 +859,7 @@ def attach_routes(
                 deserialize=False,
             )
         else:
-            session = db.get_session(  # type: ignore
+            session = db.get_session(
                 session_id=session_id,
                 session_type=session_type,
                 user_id=user_id,
@@ -1180,7 +1174,7 @@ def attach_routes(
         if session_type is None:
             session_type = SessionType.WORKFLOW
 
-        all_runs = []
+        a2a_tasks = []
 
         if session_id:
             # Load specific session
@@ -1192,7 +1186,7 @@ def attach_routes(
                     deserialize=False,
                 )
             else:
-                session = db.get_session(  # type: ignore
+                session = db.get_session(
                     session_id=session_id,
                     session_type=session_type,
                     user_id=user_id,
@@ -1204,7 +1198,7 @@ def attach_routes(
 
             session_dict = cast(dict, session)
             runs = session_dict.get("runs", [])
-            all_runs.extend(runs)
+            a2a_tasks.extend([map_run_output_to_a2a_task(run) for run in runs])
         else:
             # Load all sessions for this workflow
             if isinstance(db, AsyncBaseDb):
@@ -1225,10 +1219,7 @@ def attach_routes(
             sessions_list = cast(list, sessions)
             for session_dict in sessions_list:
                 runs = cast(dict, session_dict).get("runs", [])
-                all_runs.extend(runs)
-
-        # Convert runs to A2A tasks
-        a2a_tasks = [map_run_output_to_a2a_task(run) for run in all_runs]
+                a2a_tasks.extend([map_run_output_to_a2a_task(run) for run in runs])
         return {
             "jsonrpc": "2.0",
             "id": request_id,
@@ -1304,7 +1295,7 @@ def attach_routes(
                 deserialize=False,
             )
         else:
-            session = db.get_session(  # type: ignore
+            session = db.get_session(
                 session_id=session_id,
                 session_type=session_type,
                 user_id=user_id,
