@@ -401,7 +401,7 @@ def attach_routes(
     ):
         """Retrieve a specific task by ID for an Agent. Requires session_id in request body."""
         request_body = await request.json()
-        request_id = request_body.get("id", "unknown")
+        request_id = request_body.get("id")
         session_id = request_body.get("params", {}).get("session_id")
 
         if not session_id:

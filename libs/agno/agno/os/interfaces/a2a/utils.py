@@ -334,6 +334,8 @@ def map_run_schema_to_a2a_task(run_schema: Union[RunSchema, TeamRunSchema, Workf
                     role = Role.agent 
                 elif msg.get("role")==("user"):
                     role = Role.user
+                else:
+                    continue #skip system instructions
                 parts: List[Part] = []
 
                 if msg.get("content"):
