@@ -24,9 +24,7 @@ def apply_sorting(
         The sorted list
 
     Note:
-        For 'updated_at' sorting, falls back to 'created_at' when 'updated_at' is None.
-        This ensures pre-2.0 records (which may have NULL updated_at) are sorted
-        correctly by their creation time.
+        If sorting by "updated_at", will fallback to "created_at" in case of None.
     """
     if sort_by is None or not data:
         return data
