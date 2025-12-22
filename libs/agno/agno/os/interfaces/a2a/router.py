@@ -24,7 +24,7 @@ except ImportError as e:
 import warnings
 
 from agno.agent import Agent, RemoteAgent
-from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.db.base import AsyncBaseDb, SessionType
 from agno.os.interfaces.a2a.utils import (
     map_a2a_request_to_run_input,
     map_run_output_to_a2a_task,
