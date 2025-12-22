@@ -9,6 +9,7 @@ Run cookbooks in order (01 -> 02 -> 03 -> 05) to see memory accumulate.
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
+from rich.pretty import pprint
 
 DB_FILE = "tmp/user_memory.db"
 USER_ID = "sarah"
@@ -57,52 +58,6 @@ print("=" * 60)
 
 user = agent.get_user_profile(USER_ID)
 if user:
-    print("\n1. POLICIES:")
-    policies = user.memory_layers.get("policies", {})
-    if policies:
-        for key, value in policies.items():
-            print(f"   {key}: {value}")
-    else:
-        print("   (none)")
-
-    print("\n2. PROFILE:")
-    if user.user_profile:
-        for key, value in user.user_profile.items():
-            print(f"   {key}: {value}")
-    else:
-        print("   (none)")
-
-    print("\n3. KNOWLEDGE:")
-    knowledge = user.memory_layers.get("knowledge", [])
-    if knowledge:
-        for item in knowledge:
-            if isinstance(item, dict):
-                print(f"   {item.get('key', 'unknown')}: {item.get('value', item)}")
-            else:
-                print(f"   - {item}")
-    else:
-        print("   (none)")
-
-    print("\n4. FEEDBACK:")
-    feedback = user.memory_layers.get("feedback", {})
-    if feedback:
-        if isinstance(feedback, dict):
-            positive = feedback.get("positive", [])
-            negative = feedback.get("negative", [])
-            if positive:
-                print("   positive:")
-                for item in positive:
-                    print(f"     - {item}")
-            if negative:
-                print("   negative:")
-                for item in negative:
-                    print(f"     - {item}")
-            if not positive and not negative:
-                print("   (none)")
-        else:
-            for item in feedback:
-                print(f"   - {item}")
-    else:
-        print("   (none)")
+    pprint(user.to_dict())
 else:
     print("No user memory found")
