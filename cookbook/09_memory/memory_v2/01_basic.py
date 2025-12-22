@@ -1,6 +1,5 @@
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.groq import Groq
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
@@ -10,7 +9,7 @@ USER_ID = "sarah"
 db = SqliteDb(db_file=DB_FILE)
 
 agent = Agent(
-    model=Groq(id="llama-3.3-70b-versatile"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     db=db,
     enable_agentic_memory_v2=True,
     markdown=True,

@@ -1,6 +1,7 @@
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.os import AgentOS
+from agno.tools.duckduckgo import DuckDuckGoTools
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
@@ -12,6 +13,7 @@ agent = Agent(
     num_history_runs=3,
     markdown=True,
     debug_mode=True,
+    tools=[DuckDuckGoTools(verify_ssl=False)],
 )
 
 agent_os = AgentOS(

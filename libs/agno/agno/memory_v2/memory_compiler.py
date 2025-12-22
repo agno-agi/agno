@@ -2,7 +2,7 @@ import json
 from copy import deepcopy
 from dataclasses import dataclass
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Type, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Union, cast
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.user_profile import UserProfile
@@ -37,12 +37,6 @@ class MemoryCompiler:
     # The database to store user profiles
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
-    # Schema definitions for structured extraction
-    profile_schema: Optional[Type] = None
-    policies_schema: Optional[Type] = None
-    knowledge_schema: Optional[Type] = None
-    feedback_schema: Optional[Type] = None
-
     def __init__(
         self,
         model: Optional[Union[Model, str]] = None,
@@ -50,10 +44,6 @@ class MemoryCompiler:
         profile_capture_instructions: Optional[str] = None,
         additional_instructions: Optional[str] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-        profile_schema: Optional[Type] = None,
-        policies_schema: Optional[Type] = None,
-        knowledge_schema: Optional[Type] = None,
-        feedback_schema: Optional[Type] = None,
         delete_profile: bool = True,
         update_profile: bool = True,
     ):
@@ -62,10 +52,6 @@ class MemoryCompiler:
         self.profile_capture_instructions = profile_capture_instructions
         self.additional_instructions = additional_instructions
         self.db = db
-        self.profile_schema = profile_schema
-        self.policies_schema = policies_schema
-        self.knowledge_schema = knowledge_schema
-        self.feedback_schema = feedback_schema
         self.delete_profile = delete_profile
         self.update_profile = update_profile
         self.profile_updated = False
@@ -73,7 +59,7 @@ class MemoryCompiler:
         if self.model is not None:
             self.model = get_model(self.model)
 
-    def get_user_profile(self, user_id: Optional[str] = None) -> Optional[UserProfile]:
+    def get_user_profile(self, user_id: Optional[str] = None) -> Optional[Union[UserProfile, Dict[str, Any]]]:
         if not self.db:
             log_warning("Database not provided")
             return None
@@ -82,7 +68,7 @@ class MemoryCompiler:
         self.db = cast(BaseDb, self.db)
         return self.db.get_user_profile(user_id=user_id)
 
-    def save_user_profile(self, user_profile: UserProfile) -> Optional[UserProfile]:
+    def save_user_profile(self, user_profile: UserProfile) -> Optional[Union[UserProfile, Dict[str, Any]]]:
         if not self.db:
             log_warning("Database not provided")
             return None
@@ -98,7 +84,7 @@ class MemoryCompiler:
         self.db = cast(BaseDb, self.db)
         self.db.delete_user_profile(user_id=user_id)
 
-    async def aget_user_profile(self, user_id: Optional[str] = None) -> Optional[UserProfile]:
+    async def aget_user_profile(self, user_id: Optional[str] = None) -> Optional[Union[UserProfile, Dict[str, Any]]]:
         if not self.db:
             log_warning("Database not provided")
             return None
@@ -108,7 +94,7 @@ class MemoryCompiler:
             return await self.db.get_user_profile(user_id=user_id)
         return self.db.get_user_profile(user_id=user_id)
 
-    async def asave_user_profile(self, user_profile: UserProfile) -> Optional[UserProfile]:
+    async def asave_user_profile(self, user_profile: UserProfile) -> Optional[Union[UserProfile, Dict[str, Any]]]:
         if not self.db:
             log_warning("Database not provided")
             return None
@@ -174,13 +160,7 @@ class MemoryCompiler:
             user_id = "default"
 
         log_debug("MemoryCompiler Start", center=True)
-
-        # Use schema-based extraction if profile_schema is provided
-        if self.profile_schema:
-            result = self._extract_with_schema(message, user_id)
-        else:
-            result = self._extract_with_tools(message, user_id)
-
+        result = self._extract_with_tools(message, user_id)
         log_debug("MemoryCompiler End", center=True)
         return result
 
@@ -201,100 +181,19 @@ class MemoryCompiler:
             user_id = "default"
 
         log_debug("MemoryCompiler Start", center=True)
-
-        # Use schema-based extraction if profile_schema is provided
-        if self.profile_schema:
-            result = await self._aextract_with_schema(message, user_id)
-        else:
-            result = await self._aextract_with_tools(message, user_id)
-
+        result = await self._aextract_with_tools(message, user_id)
         log_debug("MemoryCompiler End", center=True)
         return result
 
-    def _extract_with_schema(self, message: str, user_id: str) -> str:
-        """Extract profile using fixed Pydantic schema (structured output)."""
-        model_copy = deepcopy(self.model)
-
-        existing_profile = self.get_user_profile(user_id)
-        existing_context = ""
-        if existing_profile and existing_profile.user_profile:
-            existing_context = f"\n\nExisting profile (update/merge with new info):\n{json.dumps(existing_profile.user_profile, indent=2)}"
-
-        system_content = dedent(
-            f"""\
-            Extract user profile information from the message.
-            Return the extracted information matching the schema.
-            Only extract information that is explicitly mentioned.
-            Leave fields as null if not mentioned.{existing_context}
-            """
-        )
-
-        messages_for_model: List[Message] = [
-            Message(role="system", content=system_content),
-            Message(role="user", content=message),
-        ]
-
-        response = model_copy.response(
-            messages=messages_for_model,
-            response_format=self.profile_schema,
-        )
-
-        # Merge extracted data into profile
-        if response.parsed:
-            profile = self.get_user_profile(user_id) or UserProfile(user_id=user_id)
-            extracted = response.parsed.model_dump(exclude_none=True)
-            if extracted:
-                if profile.user_profile is None:
-                    profile.user_profile = {}
-                profile.user_profile.update(extracted)
-                self.save_user_profile(profile)
-                self.profile_updated = True
-
-        return response.content or "Extraction complete"
-
-    async def _aextract_with_schema(self, message: str, user_id: str) -> str:
-        """Extract profile using fixed Pydantic schema (structured output) - async."""
-        model_copy = deepcopy(self.model)
-
-        existing_profile = await self.aget_user_profile(user_id)
-        existing_context = ""
-        if existing_profile and existing_profile.user_profile:
-            existing_context = f"\n\nExisting profile (update/merge with new info):\n{json.dumps(existing_profile.user_profile, indent=2)}"
-
-        system_content = dedent(
-            f"""\
-            Extract user profile information from the message.
-            Return the extracted information matching the schema.
-            Only extract information that is explicitly mentioned.
-            Leave fields as null if not mentioned.{existing_context}
-            """
-        )
-
-        messages_for_model: List[Message] = [
-            Message(role="system", content=system_content),
-            Message(role="user", content=message),
-        ]
-
-        response = await model_copy.aresponse(
-            messages=messages_for_model,
-            response_format=self.profile_schema,
-        )
-
-        # Merge extracted data into profile
-        if response.parsed:
-            profile = await self.aget_user_profile(user_id) or UserProfile(user_id=user_id)
-            extracted = response.parsed.model_dump(exclude_none=True)
-            if extracted:
-                if profile.user_profile is None:
-                    profile.user_profile = {}
-                profile.user_profile.update(extracted)
-                await self.asave_user_profile(profile)
-                self.profile_updated = True
-
-        return response.content or "Extraction complete"
-
     def _extract_with_tools(self, message: str, user_id: str) -> str:
         """Extract profile using flexible tool-based approach."""
+        if self.model is None:
+            log_warning("Model not configured")
+            return "Model not configured"
+        if self.db is None:
+            log_warning("Database not configured")
+            return "Database not configured"
+
         existing_profile = self.get_user_profile(user_id)
 
         model_copy = deepcopy(self.model)
@@ -332,6 +231,13 @@ class MemoryCompiler:
 
     async def _aextract_with_tools(self, message: str, user_id: str) -> str:
         """Extract profile using flexible tool-based approach - async."""
+        if self.model is None:
+            log_warning("Model not configured")
+            return "Model not configured"
+        if self.db is None:
+            log_warning("Database not configured")
+            return "Database not configured"
+
         existing_profile = await self.aget_user_profile(user_id)
 
         model_copy = deepcopy(self.model)
@@ -396,101 +302,82 @@ class MemoryCompiler:
         )
 
         # -*- Return a system message for the memory compiler
-        system_prompt_lines = [
-            "You are a Profile Manager that is responsible for managing information and preferences about the user. "
-            "You will be provided with a criteria for profile information to capture in the <profile_to_capture> section and a list of existing profile data in the <existing_profile> section.",
-            "",
-            "## When to add or update profile",
-            "- Your first task is to decide if profile information needs to be added, updated, or deleted based on the user's message OR if no changes are needed.",
-            "- If the user's message meets the criteria in the <profile_to_capture> section and that information is not already captured in the <existing_profile> section, you should capture it.",
-            "- If the users messages does not meet the criteria in the <profile_to_capture> section, no profile updates are needed.",
-            "- If the existing profile in the <existing_profile> section captures all relevant information, no updates are needed.",
-            "",
-            "## Categorization Rules",
-            "IMPORTANT: Use the correct info_type for each piece of information:",
-            "",
-            "info_type='profile' - ONLY for identity:",
-            "  - name, preferred_name, company, role, location, tone_preference",
-            "",
-            "info_type='knowledge' - For learned facts about the user:",
-            "  - interests, hobbies, habits, plans, preferences, personal facts",
-            "",
-            "info_type='policy' - For behavior rules:",
-            "  - constraints, preferences about AI behavior (no emojis, be concise)",
-            "",
-            "info_type='feedback' - For evaluative signals:",
-            "  - key='positive': what the user liked",
-            "  - key='negative': what the user disliked",
-            "",
-            "## How to save information",
-            "- Capture key details as brief, third-person statements.",
-            "- Examples:",
-            "  - 'My name is John Doe' -> info_type='profile', key='name', value='John Doe'",
-            "  - 'I work at Acme Corp' -> info_type='profile', key='company', value='Acme Corp'",
-            "  - 'I like anime and video games' -> info_type='knowledge', key='interests', value='enjoys anime and video games'",
-            "  - 'I go to the gym every day' -> info_type='knowledge', key='habit', value='goes to the gym daily'",
-            "  - 'Please be concise' -> info_type='policy', key='response_style', value='prefers concise responses'",
-            "  - 'That was really helpful' -> info_type='feedback', key='positive', value='found explanation helpful'",
-            "- Create multiple entries if needed. Don't repeat information.",
-            "- If user asks to forget something, delete the relevant entry.",
-            "",
-            "## Criteria for capturing profile information",
-            "Use the following criteria to determine if a user's message should be captured:",
-            "",
-            "<profile_to_capture>",
-            profile_capture_instructions,
-            "</profile_to_capture>",
-            "",
-            "## Updating profile",
-            "You will also be provided with existing profile data in the <existing_profile> section. You can:",
-            "  - Decide to make no changes.",
-        ]
+        system_prompt_lines = dedent(f"""\
+            You are a Profile Manager that is responsible for managing information and preferences about the user. "
+            You will be provided with a criteria for profile information to capture in the <profile_to_capture> section and a list of existing profile data in the <existing_profile> section.,
+            ,
+            
+            ## When to add or update profile,
+            
+            - Your first task is to decide if profile information needs to be added, updated, or deleted based on the user's message OR if no changes are needed.,
+            - If the user's message meets the criteria in the <profile_to_capture> section and that information is not already captured in the <existing_profile> section, you should capture it,
+            - If the users messages does not meet the criteria in the <profile_to_capture> section, no profile updates are needed,
+            - If the existing profile in the <existing_profile> section captures all relevant information, no updates are needed.,
+            
+            ## Categorization Rules,
+            IMPORTANT: Use the correct info_type for each piece of information:,
+            ,
+            info_type='profile' - ONLY for identity:,
+            - name, preferred_name, company, role, location, tone_preference,
+            ,
+            info_type='knowledge' - For learned facts about the user:,
+            - interests, hobbies, habits, plans, preferences, personal facts,
+            ,
+            info_type='policy' - For behavior rules:,
+            - constraints, preferences about AI behavior (no emojis, be concise),
+            ,
+            info_type='feedback' - For SPECIFIC response preferences:,
+            - key='positive': specific format/style/content the user liked,
+            - key='negative': specific format/style/content the user disliked,
+            - SKIP vague praise ("great job", "thanks") - not actionable,
+            - Only save if it tells you HOW to improve future responses,
+            ,
+            
+            ## How to save information,
+            - Capture key details as brief, third-person statements.,
+            - Examples:,
+            - 'My name is John Doe' -> info_type='profile', key='name', value='John Doe',
+            - 'I work at Acme Corp' -> info_type='profile', key='company', value='Acme Corp',
+            - 'I like anime and video games' -> info_type='knowledge', key='interests', value='enjoys anime and video games',
+            - 'I go to the gym every day' -> info_type='knowledge', key='habit', value='goes to the gym daily',
+            - 'Please be concise' -> info_type='policy', key='response_style', value='prefers concise responses',
+            - 'I love how you used bullet points' -> info_type='feedback', key='positive', value='prefers bullet point format',
+            - 'That was too long' -> info_type='feedback', key='negative', value='prefers shorter responses',
+            - 'Great!' -> DO NOT SAVE (too vague, not actionable),
+            - Create multiple entries if needed. Don't repeat information.,
+            - If user asks to forget something, delete the relevant entry.,
+            ,
+            ## Criteria for capturing profile information,
+            Use the following criteria to determine if a user's message should be captured:,
+            
+            <profile_to_capture>,
+            {profile_capture_instructions},
+            </profile_to_capture>,
+            ,
+            ## Updating profile,
+            You will also be provided with existing profile data in the <existing_profile> section. You can:,
+            - Decide to make no changes.,
+        """)
+
         if enable_update_profile:
-            system_prompt_lines.append(
-                "  - Decide to add or update profile information, using the `save_profile_field` tool."
-            )
+            system_prompt_lines += "- Decide to add or update profile information, using the `save_profile_field` tool."
         if enable_delete_profile:
-            system_prompt_lines.append(
-                "  - Decide to delete profile information, using the `delete_profile_field` tool."
-            )
+            system_prompt_lines += "- Decide to delete profile information, using the `delete_profile_field` tool."
 
-        system_prompt_lines += [
-            "You can call multiple tools in a single response if needed. ",
-            "Only add or update profile information if it is necessary to capture key information provided by the user.",
-        ]
-
-        # Add schema hints
-        schemas = [
-            ("profile", self.profile_schema),
-            ("policy", self.policies_schema),
-            ("knowledge", self.knowledge_schema),
-            ("feedback", self.feedback_schema),
-        ]
-        schema_parts = []
-        for layer_name, schema in schemas:
-            if schema:
-                hints = self._get_schema_hints(schema)
-                if hints:
-                    schema_parts.append(f"Prioritized {layer_name} fields:\n{hints}")
-
-        if schema_parts:
-            system_prompt_lines.append("\n## Schema Hints")
-            system_prompt_lines.append("\n\n".join(schema_parts))
-            system_prompt_lines.append("You may also save other relevant information.")
-
+        system_prompt_lines += "You can call multiple tools in a single response if needed. Only add or update profile information if it is necessary to capture key information provided by the user."
         if existing_profile:
             existing = self._format_profile_as_context(existing_profile)
             if existing:
-                system_prompt_lines.append(f"\n<existing_profile>\n{existing}\n</existing_profile>")
+                system_prompt_lines += f"\n<existing_profile>\n{existing}\n</existing_profile>"
 
         if self.additional_instructions:
-            system_prompt_lines.append(self.additional_instructions)
+            system_prompt_lines += self.additional_instructions
 
-        return Message(role="system", content="\n".join(system_prompt_lines))
+        return Message(role="system", content=system_prompt_lines)
 
-    def determine_tools_for_model(self, tools: List[Callable]) -> List[Function]:
+    def determine_tools_for_model(self, tools: List[Callable]) -> List[Union[Function, Dict[Any, Any]]]:
         """Convert callable tools to Function objects for the model."""
-        _functions: List[Function] = []
+        _functions: List[Union[Function, Dict[Any, Any]]] = []
         for tool in tools:
             func = Function.from_callable(tool, strict=True)
             func.strict = True
@@ -678,23 +565,3 @@ class MemoryCompiler:
 
         log_debug(f"Deleted {info_type} {key} for {profile.user_id}")
         return f"Forgot {info_type}: {key}"
-
-    def _get_schema_hints(self, schema: Optional[Type]) -> str:
-        """Extract field hints from a Pydantic schema."""
-        if schema is None:
-            return ""
-
-        # Only support Pydantic models
-        if not hasattr(schema, "model_fields"):
-            return ""
-
-        lines = []
-        for name, info in schema.model_fields.items():
-            type_name = getattr(info.annotation, "__name__", str(info.annotation))
-            desc = getattr(info, "description", None) or ""
-            if desc:
-                lines.append(f"  - {name} ({type_name}): {desc}")
-            else:
-                lines.append(f"  - {name} ({type_name})")
-
-        return "\n".join(lines)

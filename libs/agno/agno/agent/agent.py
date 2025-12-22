@@ -10438,28 +10438,28 @@ class Agent:
     def _get_update_user_memory_v2_function(self, user_id: str, async_mode: bool = False) -> Function:
         if async_mode:
 
-            async def aupdate_user_memory(info_type: str, key: str, value: str) -> str:
+            async def aupdate_user_memory(info_type: str, key: str, value: Any) -> str:
                 """Save user information to memory.
 
                 Args:
                     info_type: One of 'profile', 'policy', 'knowledge', 'feedback'
                     key: The key to save
-                    value: The value to save
+                    value: The value to save (string, boolean, or number)
                 """
-                return await self.memory_compiler._asave_to_user_memory_layer(user_id, info_type, key, value)  # type: ignore
+                return await self.memory_compiler._asave_to_user_memory_layer(user_id, info_type, key, str(value))  # type: ignore
 
             return Function.from_callable(aupdate_user_memory, name="update_user_memory")
         else:
 
-            def update_user_memory(info_type: str, key: str, value: str) -> str:
+            def update_user_memory(info_type: str, key: str, value: Any) -> str:
                 """Save user information to memory.
 
                 Args:
                     info_type: One of 'profile', 'policy', 'knowledge', 'feedback'
                     key: The key to save
-                    value: The value to save
+                    value: The value to save (string, boolean, or number)
                 """
-                return self.memory_compiler._save_to_user_memory_layer(user_id, info_type, key, value)  # type: ignore
+                return self.memory_compiler._save_to_user_memory_layer(user_id, info_type, key, str(value))  # type: ignore
 
             return Function.from_callable(update_user_memory, name="update_user_memory")
 
