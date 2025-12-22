@@ -5,7 +5,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from typing_extensions import AsyncIterator, List, Union
 
-from agno.os.schema import RunSchema, TeamRunSchema, WorkflowRunSchema
+from agno.os.schema import RunSchema, TeamRunSchema, WorkflowRunSchema, SessionSchema
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
@@ -284,7 +284,7 @@ def map_run_output_to_a2a_task(run_output: Union[RunOutput, WorkflowRunOutput]) 
     )
 
 
-def map_run_schema_to_a2a_task(run_schema: Union[RunSchema, TeamRunSchema, WorkflowRunSchema]) -> Task:
+def map_run_schema_to_a2a_task(run_schema: Dict) -> Task:
     """Map a RunSchema, TeamRunSchema, or WorkflowRunSchema to an A2A Task.
 
     This function converts run data from the API layer schema format into an A2A Task
@@ -297,31 +297,17 @@ def map_run_schema_to_a2a_task(run_schema: Union[RunSchema, TeamRunSchema, Workf
         Task: The A2A Task representation of the run
     """
 
-    # Extract basic run information - handle both dict and object access
-    if isinstance(run_schema, dict):
-        run_id = run_schema.get("run_id")
-        session_id = run_schema.get("session_id") 
-        messages = run_schema.get("messages")
-        content = run_schema.get("content")
-        images = run_schema.get("images")
-        videos = run_schema.get("videos")
-        audio = run_schema.get("audio")
-        files = run_schema.get("files")
-        response_audio = run_schema.get("response_audio")
-        status = run_schema.get("status")
-        metrics = run_schema.get("metrics")
-    else:
-        run_id = getattr(run_schema, "run_id", None) 
-        session_id = getattr(run_schema, "session_id", None)
-        messages = getattr(run_schema, "messages", None)
-        content = getattr(run_schema, "content", None)
-        images = getattr(run_schema, "images", None)
-        videos = getattr(run_schema, "videos", None)
-        audio = getattr(run_schema, "audio", None)
-        files = getattr(run_schema, "files", None)
-        response_audio = getattr(run_schema, "response_audio", None)
-        status = getattr(run_schema, "status", None)
-        metrics = getattr(run_schema, "metrics", None)
+    run_id = run_schema.get("run_id")
+    session_id = run_schema.get("session_id") 
+    messages = run_schema.get("messages")
+    content = run_schema.get("content")
+    images = run_schema.get("images")
+    videos = run_schema.get("videos")
+    audio = run_schema.get("audio")
+    files = run_schema.get("files")
+    response_audio = run_schema.get("response_audio")
+    status = run_schema.get("status")
+    metrics = run_schema.get("metrics")
 
     # Build message history from run messages
     message_history: List[A2AMessage] = []
