@@ -859,7 +859,7 @@ def attach_routes(
                 deserialize=False,
             )
         else:
-            session = db.get_session(
+            session = db.get_session(  # type: ignore
                 session_id=session_id,
                 session_type=session_type,
                 user_id=user_id,
@@ -1186,7 +1186,7 @@ def attach_routes(
                     deserialize=False,
                 )
             else:
-                session = db.get_session(
+                session = db.get_session(  # type: ignore
                     session_id=session_id,
                     session_type=session_type,
                     user_id=user_id,
@@ -1295,7 +1295,7 @@ def attach_routes(
                 deserialize=False,
             )
         else:
-            session = db.get_session(
+            session = db.get_session(  # type: ignore
                 session_id=session_id,
                 session_type=session_type,
                 user_id=user_id,
