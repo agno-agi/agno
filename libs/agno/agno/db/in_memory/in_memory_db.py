@@ -1313,8 +1313,6 @@ class InMemoryDb(BaseDb):
         """
         raise NotImplementedError
 
-    # -- User Profiles --
-
     def get_user_profile(
         self,
         user_id: str,

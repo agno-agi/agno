@@ -1,14 +1,8 @@
 """Customer Support - A realistic frustrated customer journey.
 
 This example shows a single customer with a complex sync issue.
-The conversation evolves from confusion to frustration to resolution
-over ~15 messages. Uses AUTOMATIC memory extraction (no explicit tools).
-
-Memory layers populated automatically:
-- Profile: company, role, plan type, technical level
-- Policy: wants quick escalation, prefers technical details
-- Knowledge: issue details, file types, usage patterns
-- Feedback: frustration signals -> satisfaction at resolution
+The conversation evolves from confusion to frustration to resolution.
+Uses AUTOMATIC memory extraction (no explicit tools).
 """
 
 from agno.agent import Agent
@@ -16,22 +10,17 @@ from agno.db.sqlite import SqliteDb
 from agno.memory_v2 import MemoryCompiler
 from agno.models.openai import OpenAIChat
 
-# Database for customer profiles
 db = SqliteDb(db_file="tmp/support_memory.db")
-
-# AUTOMATIC memory extraction - no tools, extracts in background
 memory = MemoryCompiler(model=OpenAIChat(id="gpt-4o-mini"))
 
-# Support agent
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     db=db,
     memory_compiler=memory,
-    update_memory_on_run=True,  # Auto-extract after each message
+    update_memory_on_run=True,
     instructions=(
         "You are a customer support agent for CloudSync, a file synchronization "
-        "SaaS product. Be helpful, empathetic, and professional. Ask clarifying "
-        "questions when needed. Escalate complex issues appropriately."
+        "SaaS product. Be helpful, empathetic, and professional."
     ),
     markdown=True,
 )
@@ -39,180 +28,60 @@ agent = Agent(
 USER_ID = "marcus_techflow"
 
 
-def show_customer_profile():
-    """Show what automatic extraction has learned about this customer."""
-    print("\n" + "=" * 70)
-    print("CUSTOMER PROFILE (Auto-Extracted)")
-    print("=" * 70)
-
+def show_profile():
     user = memory.get_user_profile(USER_ID)
     if not user:
-        print("(no data yet)")
         return
 
-    # Profile
     if user.user_profile:
-        print("\n[CUSTOMER INFO]")
+        print("\n[CUSTOMER]")
         for k, v in user.user_profile.items():
             print(f"  {k}: {v}")
 
-    # Policies/Preferences
     policies = user.memory_layers.get("policies", {})
     if policies:
         print("\n[PREFERENCES]")
         for k, v in policies.items():
             print(f"  {k}: {v}")
 
-    # Knowledge/Context
     knowledge = user.memory_layers.get("knowledge", [])
     if knowledge:
-        print("\n[ISSUE CONTEXT]")
+        print("\n[CONTEXT]")
         for item in knowledge:
             if isinstance(item, dict):
                 print(f"  {item.get('key', '?')}: {item.get('value', item)}")
 
-    # Feedback signals
-    feedback = user.memory_layers.get("feedback", {})
-    if feedback and isinstance(feedback, dict):
-        pos = feedback.get("positive", [])
-        neg = feedback.get("negative", [])
-        if pos or neg:
-            print("\n[SATISFACTION SIGNALS]")
-            for item in pos:
-                print(f"  + {item}")
-            for item in neg:
-                print(f"  - {item}")
-
-    # Show what gets injected
-    print("\n" + "-" * 70)
-    print("INJECTED INTO AGENT CONTEXT:")
-    print("-" * 70)
-    context = memory.compile_user_memory(USER_ID)
-    print(context if context else "(nothing yet)")
-
 
 def chat(message: str):
-    """Customer sends a message."""
-    print(f"\n{'>' * 3} CUSTOMER: {message}")
     agent.print_response(message, user_id=USER_ID, stream=True)
 
 
-# ============================================================
-# THE SUPPORT TICKET - A realistic frustrated customer journey
-# ============================================================
-
-print("\n" + "#" * 70)
-print("# SUPPORT TICKET: File Sync Issues")
-print("#" * 70)
-
-# --- Initial contact ---
-
+# Initial contact
 chat("hi my files arent syncing. getting some kind of error")
-
 chat("it says SYNC_TIMEOUT_504. what does that even mean")
-
 chat(
     "im on the business plan i think? my company is TechFlow Inc. im the IT manager here"
 )
 
-# Check early extraction
-print("\n" + "=" * 70)
-print("CHECKPOINT: After initial contact")
-show_customer_profile()
+show_profile()
 
-# --- Troubleshooting ---
+# Troubleshooting
+chat("yeah i tried restarting the app. still broken")
+chat("the files that fail are around 80-100MB each. theyre video files")
+chat("we upload maybe 30-40 files a day. mostly in the morning")
+chat("ok i tried that chunked upload setting. still failing on bigger files")
 
-chat(
-    "yeah i tried restarting the app. still broken. this is blocking our whole team from accessing shared files"
-)
+# Frustration
+chat("look this is really frustrating. weve been customers for 2 years")
+chat("can you escalate this? i need to talk to an actual engineer")
 
-chat(
-    "you need more info? ok so the files that fail are around 80-100MB each. theyre video files from our marketing team"
-)
+show_profile()
 
-chat(
-    "we upload maybe 30-40 files a day. mostly in the morning when everyone syncs their work. is that too many?"
-)
+# Resolution
+chat("[next day] the engineer's fix worked! smaller chunk sizes solved everything")
+chat("thanks for escalating quickly. thats refreshing for support")
+chat("can you explain WHY this was happening? i need to document it")
+chat("perfect. large files hitting the timeout threshold. got it")
+chat("ill definitely recommend CloudSync. you guys handled this well")
 
-chat(
-    "ok i tried that chunked upload setting you mentioned. its still failing on the bigger files. the small ones work fine"
-)
-
-# --- Frustration building ---
-
-chat(
-    "look this is really frustrating. weve been CloudSync customers for 2 years and never had issues like this before"
-)
-
-chat(
-    "i dont want more troubleshooting steps. can you escalate this? i need to talk to an actual engineer who understands whats happening on the backend"
-)
-
-# Check mid-conversation extraction
-print("\n" + "=" * 70)
-print("CHECKPOINT: Customer frustration peak")
-show_customer_profile()
-
-# --- Resolution ---
-
-chat(
-    "[next day] hey so the engineer you connected me with yesterday - their fix worked! the new chunked upload mode with smaller chunk sizes solved everything"
-)
-
-chat(
-    "yeah much better now. thanks for escalating quickly and not making me repeat myself 10 times. thats refreshing for support honestly"
-)
-
-chat(
-    "one more thing before i go - can you explain WHY this was happening? i need to document it for my team so we know what to do if it happens again"
-)
-
-chat(
-    "perfect that makes sense. large files hitting the timeout threshold. ill add that to our internal docs"
-)
-
-chat(
-    "yeah ill definitely recommend CloudSync to other IT folks i know. you guys handled this way better than most support teams. have a good one"
-)
-
-
-# ============================================================
-# FINAL: Complete customer profile
-# ============================================================
-
-print("\n" + "#" * 70)
-print("# FINAL CUSTOMER PROFILE")
-print("#" * 70)
-
-show_customer_profile()
-
-print("\n" + "=" * 70)
-print("WHAT AUTOMATIC EXTRACTION LEARNED")
-print("=" * 70)
-print("""
-Over 15 messages, the system AUTOMATICALLY extracted:
-
-PROFILE:
-- Company: TechFlow Inc
-- Role: IT Manager  
-- Plan: Business
-- Customer tenure: 2 years
-
-PREFERENCES:
-- Wants quick escalation for complex issues
-- Appreciates not repeating information
-- Values technical explanations
-
-CONTEXT:
-- Issue: Large file sync timeouts (80-100MB video files)
-- Usage: 30-40 files/day, morning peak
-- Resolution: Smaller chunk sizes in chunked upload mode
-
-SATISFACTION JOURNEY:
-- Started: Confused about error
-- Middle: Frustrated, wanted escalation
-- End: Satisfied, will recommend to others
-
-All extracted automatically from natural conversation!
-No update_user_memory() tool calls - just background extraction.
-""")
+show_profile()

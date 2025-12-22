@@ -15,7 +15,6 @@ from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
 
-# Define a custom schema for user profiles
 @dataclass
 class EngineerProfile:
     name: str
@@ -28,14 +27,8 @@ class EngineerProfile:
 
 
 def example_schema_override():
-    """Demonstrate custom schema for structured extraction."""
-    print("=" * 60)
-    print("Example 1: Schema Override for Structured Extraction")
-    print("=" * 60)
-
     db = SqliteDb(db_file="tmp/custom_memory.db")
 
-    # Use custom schema to guide extraction
     memory = MemoryCompiler(
         model=OpenAIChat(id="gpt-4o-mini"),
         profile_schema=EngineerProfile,
@@ -51,7 +44,6 @@ def example_schema_override():
 
     user_id = "dev_marcus"
 
-    print("\nUser shares detailed background:")
     agent.print_response(
         "I'm Marcus, a staff engineer at CloudScale with 8 years of experience. "
         "I primarily work with Python and Go, using FastAPI and gRPC frameworks. "
@@ -60,25 +52,19 @@ def example_schema_override():
         stream=True,
     )
 
-    print("\n--- Extracted Profile (guided by schema) ---")
+    print("\nExtracted profile:")
     pprint(memory.get_user_profile(user_id).user_profile)
 
     memory.delete_user_profile(user_id)
 
 
 def example_nested_categories():
-    """Demonstrate nested category organization in context."""
-    print("\n" + "=" * 60)
-    print("Example 2: Nested Category Organization")
-    print("=" * 60)
-
     db = SqliteDb(db_file="tmp/custom_memory.db")
     memory = MemoryCompiler()
     memory.db = db
 
     user_id = "dev_nested"
 
-    # Manually set up nested category structure
     from agno.db.schemas.user_profile import UserProfile
 
     user_profile = UserProfile(
@@ -109,7 +95,7 @@ def example_nested_categories():
     )
     memory.upsert_user_profile(user_profile)
 
-    print("\n--- Compiled Context (with nested structure) ---")
+    print("\nCompiled context:")
     print(memory.compile_user_memory(user_id))
 
     memory.delete_user_profile(user_id)

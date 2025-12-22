@@ -2929,8 +2929,6 @@ class SqliteDb(BaseDb):
             log_error(f"Error upserting cultural knowledge: {e}")
             raise e
 
-    # -- User Profiles --
-
     def get_user_profile(
         self,
         user_id: str,

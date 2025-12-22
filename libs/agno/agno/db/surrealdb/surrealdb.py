@@ -1913,8 +1913,6 @@ class SurrealDb(BaseDb):
 
         return Span.from_dict(span_data)
 
-    # -- User Profiles --
-
     def get_user_profile(
         self,
         user_id: str,

@@ -2599,8 +2599,6 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Error getting spans: {e}")
             return []
 
-    # -- User Profiles --
-
     async def get_user_profile(
         self,
         user_id: str,

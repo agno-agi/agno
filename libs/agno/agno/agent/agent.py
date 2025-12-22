@@ -6057,7 +6057,8 @@ class Agent:
 
         # Add Memory (v2) agentic tools
         if self.enable_agentic_memory_v2 and user_id:
-            agent_tools.append(self._get_update_user_memory_v2_function(user_id))
+            agent_tools.append(self._get_update_user_memory_v2_function(user_id, async_mode=False))
+            agent_tools.append(self._get_delete_user_memory_v2_function(user_id, async_mode=False))
 
         if self.enable_agentic_culture:
             agent_tools.append(self._get_update_cultural_knowledge_function(async_mode=False))
@@ -6166,7 +6167,8 @@ class Agent:
 
         # Add MemoryCompiler agentic tools
         if self.enable_agentic_memory_v2 and user_id:
-            agent_tools.append(self._get_update_user_memory_v2_function(user_id))
+            agent_tools.append(self._get_update_user_memory_v2_function(user_id, async_mode=True))
+            agent_tools.append(self._get_delete_user_memory_v2_function(user_id, async_mode=True))
 
         if self.enable_agentic_state:
             agent_tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
@@ -8181,7 +8183,7 @@ class Agent:
 
         # 3.3.12 Add user memory layers to the system message
         if self.memory_compiler is not None and user_id is not None:
-            user_context = self.memory_compiler.compile_user_memory(user_id)
+            user_context = await self.memory_compiler.acompile_user_memory(user_id)
             if user_context:
                 system_message_content += (
                     "You have access to stored information about this user from previous interactions, organized into 4 layers:\n\n"
@@ -10095,12 +10097,37 @@ class Agent:
 
         return Function.from_callable(update_user_memory_function, name="update_user_memory")
 
-    def _get_update_user_memory_v2_function(self, user_id: str) -> Function:
-        def update_user_memory(info_type: str, key: str, value: Any) -> str:
-            """Update user memory. info_type: profile/policy/knowledge/feedback. Pass value=None to delete."""
-            return self.memory_compiler._save_to_user_memory_layer(user_id, info_type, key, value)
+    def _get_update_user_memory_v2_function(self, user_id: str, async_mode: bool = False) -> Function:
+        if async_mode:
 
-        return Function.from_callable(update_user_memory)
+            async def aupdate_user_memory(info_type: str, key: str, value: str) -> str:
+                """Save user information. info_type: profile/policy/knowledge/feedback."""
+                return await self.memory_compiler._asave_to_user_memory_layer(user_id, info_type, key, value)
+
+            return Function.from_callable(aupdate_user_memory, name="update_user_memory")
+        else:
+
+            def update_user_memory(info_type: str, key: str, value: str) -> str:
+                """Save user information. info_type: profile/policy/knowledge/feedback."""
+                return self.memory_compiler._save_to_user_memory_layer(user_id, info_type, key, value)
+
+            return Function.from_callable(update_user_memory)
+
+    def _get_delete_user_memory_v2_function(self, user_id: str, async_mode: bool = False) -> Function:
+        if async_mode:
+
+            async def adelete_user_memory(info_type: str, key: str) -> str:
+                """Delete/forget user information. info_type: profile/policy/knowledge/feedback."""
+                return await self.memory_compiler._adelete_from_user_memory_layer(user_id, info_type, key)
+
+            return Function.from_callable(adelete_user_memory, name="delete_user_memory")
+        else:
+
+            def delete_user_memory(info_type: str, key: str) -> str:
+                """Delete/forget user information. info_type: profile/policy/knowledge/feedback."""
+                return self.memory_compiler._delete_from_user_memory_layer(user_id, info_type, key)
+
+            return Function.from_callable(delete_user_memory)
 
     def _get_update_cultural_knowledge_function(self, async_mode: bool = False) -> Function:
         def update_cultural_knowledge(task: str) -> str:

@@ -2889,8 +2889,6 @@ class PostgresDb(BaseDb):
             log_error(f"Error getting spans: {e}")
             return []
 
-    # -- User Profiles --
-
     def get_user_profile(
         self,
         user_id: str,
