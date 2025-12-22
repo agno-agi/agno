@@ -6447,6 +6447,7 @@ class Agent:
 
         if self.enable_agentic_memory_v2 and user_id:
             agent_tools.append(self._get_update_user_memory_v2_function(user_id=user_id, async_mode=False))
+            agent_tools.append(self._get_delete_user_memory_v2_function(user_id=user_id, async_mode=False))
 
         if self.enable_agentic_culture:
             agent_tools.append(self._get_update_cultural_knowledge_function(async_mode=False))
@@ -6555,6 +6556,7 @@ class Agent:
 
         if self.enable_agentic_memory_v2 and user_id:
             agent_tools.append(self._get_update_user_memory_v2_function(user_id=user_id, async_mode=True))
+            agent_tools.append(self._get_delete_user_memory_v2_function(user_id=user_id, async_mode=True))
 
         if self.enable_agentic_state:
             agent_tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
@@ -8110,12 +8112,12 @@ class Agent:
             if self.enable_agentic_memory_v2:
                 system_message_content += (
                     "<updating_user_memory>\n"
-                    "You have access to the `update_user_memory` tool to save information about the user.\n\n"
-                    "Usage: update_user_memory(info_type, key, value)\n"
-                    "- info_type: 'profile', 'policy', 'knowledge', or 'feedback'\n"
-                    "- key: A descriptive key for the information\n"
-                    "- value: The information to save (or None to delete)\n\n"
-                    "Save information that will be useful in future conversations.\n"
+                    "You have access to memory tools:\n\n"
+                    "1. update_user_memory(info_type, key, value) - Save information\n"
+                    "2. delete_user_memory(info_type, key) - Delete/forget information\n\n"
+                    "info_type options: 'profile', 'policy', 'knowledge', 'feedback'\n\n"
+                    "Save information useful in future conversations.\n"
+                    "Use delete when user asks to forget something.\n"
                     "</updating_user_memory>\n\n"
                 )
 
@@ -8482,12 +8484,12 @@ class Agent:
             if self.enable_agentic_memory_v2:
                 system_message_content += (
                     "<updating_user_memory>\n"
-                    "You have access to the `update_user_memory` tool to save information about the user.\n\n"
-                    "Usage: update_user_memory(info_type, key, value)\n"
-                    "- info_type: 'profile', 'policy', 'knowledge', or 'feedback'\n"
-                    "- key: A descriptive key for the information\n"
-                    "- value: The information to save (or None to delete)\n\n"
-                    "Save information that will be useful in future conversations.\n"
+                    "You have access to memory tools:\n\n"
+                    "1. update_user_memory(info_type, key, value) - Save information\n"
+                    "2. delete_user_memory(info_type, key) - Delete/forget information\n\n"
+                    "info_type options: 'profile', 'policy', 'knowledge', 'feedback'\n\n"
+                    "Save information useful in future conversations.\n"
+                    "Use delete when user asks to forget something.\n"
                     "</updating_user_memory>\n\n"
                 )
 
@@ -10428,34 +10430,56 @@ class Agent:
     def _get_update_user_memory_v2_function(self, user_id: str, async_mode: bool = False) -> Function:
         if async_mode:
 
-            async def aupdate_user_memory(info_type: str, key: str, value: Optional[str] = None) -> str:
-                """Save or delete user information.
+            async def aupdate_user_memory(info_type: str, key: str, value: str) -> str:
+                """Save user information to memory.
 
                 Args:
                     info_type: One of 'profile', 'policy', 'knowledge', 'feedback'
-                    key: The key to save/delete
-                    value: The value to save. Pass None to delete.
+                    key: The key to save
+                    value: The value to save
                 """
-                if value is None:
-                    return await self.memory_compiler._adelete_from_user_memory_layer(user_id, info_type, key)  # type: ignore
                 return await self.memory_compiler._asave_to_user_memory_layer(user_id, info_type, key, value)  # type: ignore
 
             return Function.from_callable(aupdate_user_memory, name="update_user_memory")
         else:
 
-            def update_user_memory(info_type: str, key: str, value: Optional[str] = None) -> str:
-                """Save or delete user information.
+            def update_user_memory(info_type: str, key: str, value: str) -> str:
+                """Save user information to memory.
 
                 Args:
                     info_type: One of 'profile', 'policy', 'knowledge', 'feedback'
-                    key: The key to save/delete
-                    value: The value to save. Pass None to delete.
+                    key: The key to save
+                    value: The value to save
                 """
-                if value is None:
-                    return self.memory_compiler._delete_from_user_memory_layer(user_id, info_type, key)  # type: ignore
                 return self.memory_compiler._save_to_user_memory_layer(user_id, info_type, key, value)  # type: ignore
 
             return Function.from_callable(update_user_memory, name="update_user_memory")
+
+    def _get_delete_user_memory_v2_function(self, user_id: str, async_mode: bool = False) -> Function:
+        if async_mode:
+
+            async def adelete_user_memory(info_type: str, key: str) -> str:
+                """Delete/forget user information from memory.
+
+                Args:
+                    info_type: One of 'profile', 'policy', 'knowledge', 'feedback'
+                    key: The key to delete
+                """
+                return await self.memory_compiler._adelete_from_user_memory_layer(user_id, info_type, key)  # type: ignore
+
+            return Function.from_callable(adelete_user_memory, name="delete_user_memory")
+        else:
+
+            def delete_user_memory(info_type: str, key: str) -> str:
+                """Delete/forget user information from memory.
+
+                Args:
+                    info_type: One of 'profile', 'policy', 'knowledge', 'feedback'
+                    key: The key to delete
+                """
+                return self.memory_compiler._delete_from_user_memory_layer(user_id, info_type, key)  # type: ignore
+
+            return Function.from_callable(delete_user_memory, name="delete_user_memory")
 
     def _get_update_cultural_knowledge_function(self, async_mode: bool = False) -> Function:
         def update_cultural_knowledge(task: str) -> str:
