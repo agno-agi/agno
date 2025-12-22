@@ -14,7 +14,6 @@ import time
 from unittest.mock import patch
 
 import pytest
-from libs.agno.agno.run.cancel import acancel_run
 from libs.agno.agno.run.cancellation_management.base import BaseRunCancellationManager
 
 from agno.agent.agent import Agent
@@ -483,6 +482,8 @@ async def test_cancel_preserves_partial_structured_output(shared_db):
 # ============================================================================
 # REDIS CANCELLATION TESTS
 # ============================================================================
+
+
 @pytest.fixture
 def fakeredis_clients():
     """Create in-memory Redis clients using fakeredis for testing."""

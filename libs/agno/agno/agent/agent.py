@@ -906,7 +906,7 @@ class Agent:
             for tool in self.tools:
                 if (
                     hasattr(tool, "requires_connect")
-                    and tool.requires_connect
+                    and tool.requires_connect  # type: ignore
                     and hasattr(tool, "connect")
                     and tool not in self._connectable_tools_initialized_on_run
                 ):
@@ -1431,7 +1431,7 @@ class Agent:
                     raise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 7. Parse response with parser model if provided
-                    yield from self._parse_response_with_parser_model_stream(
+                    yield from self._parse_response_with_parser_model_stream(  # type: ignore
                         session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
                     )
 
@@ -1541,6 +1541,7 @@ class Agent:
 
                     log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
+                    break
                 except RunCancelledException as e:
                     # Handle run cancellation during streaming
                     log_info(f"Run {run_response.run_id} was cancelled during streaming")
@@ -1593,7 +1594,6 @@ class Agent:
                         store_events=self.store_events,
                     )
                     break
-
                 except Exception as e:
                     if attempt < num_attempts - 1:
                         # Calculate delay with exponential backoff if enabled
@@ -1752,7 +1752,7 @@ class Agent:
             background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         # Validate input against input_schema if provided
-        validated_input = self._validate_input(input)
+        validated_input = validate_input(input, self.input_schema)
 
         # Normalise hook & guardails
         if not self._hooks_normalised:
@@ -2460,7 +2460,7 @@ class Agent:
                             stream_events=stream_events,
                         ):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            yield event
+                            yield event  # type: ignore
 
                     # Check for cancellation after model processing
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2472,7 +2472,7 @@ class Agent:
                         stream_events=stream_events,
                         run_context=run_context,
                     ):
-                        yield event
+                        yield event  # type: ignore
 
                     if stream_events:
                         yield handle_event(  # type: ignore
@@ -2584,7 +2584,10 @@ class Agent:
                     await self._alog_agent_telemetry(session_id=agent_session.session_id, run_id=run_response.run_id)
 
                     log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
+
+                    # Break out of the run function
                     break
+
                 except RunCancelledException as e:
                     # Handle run cancellation during async streaming
                     log_info(f"Run {run_response.run_id} was cancelled during async streaming")
@@ -2710,7 +2713,7 @@ class Agent:
                     pass
 
             # Always clean up the run tracking
-            await acleanup_run(run_response.run_id)  # type: ignore
+            cleanup_run(run_response.run_id)  # type: ignore
 
     @overload
     async def arun(
@@ -3475,7 +3478,7 @@ class Agent:
                         yield event
 
                     # Parse response with parser model if provided
-                    yield from self._parse_response_with_parser_model_stream(
+                    yield from self._parse_response_with_parser_model_stream(  # type: ignore
                         session=session, run_response=run_response, stream_events=stream_events
                     )
 
@@ -3571,6 +3574,7 @@ class Agent:
 
                     log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
+                    break
                 except RunCancelledException as e:
                     run_response = cast(RunOutput, run_response)
                     # Handle run cancellation during async streaming
@@ -4332,7 +4336,7 @@ class Agent:
                             stream_events=stream_events,
                             run_context=run_context,
                         ):
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
                             if isinstance(event, RunContentEvent):
                                 if stream_events:
                                     yield IntermediateRunContentEvent(
@@ -4350,7 +4354,7 @@ class Agent:
                             stream_events=stream_events,
                         ):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            yield event
+                            yield event  # type: ignore
 
                     # Check for cancellation after model processing
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -4362,7 +4366,7 @@ class Agent:
                         stream_events=stream_events,
                         run_context=run_context,
                     ):
-                        yield event
+                        yield event  # type: ignore
 
                     # Yield RunContentCompletedEvent
                     if stream_events:
@@ -4395,6 +4399,7 @@ class Agent:
                             **kwargs,
                         ):
                             yield event
+
                     # Check for cancellation before model call
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -4455,6 +4460,8 @@ class Agent:
                     await self._alog_agent_telemetry(session_id=agent_session.session_id, run_id=run_response.run_id)
 
                     log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
+
+                    break
                 except RunCancelledException as e:
                     run_response = cast(RunOutput, run_response)
                     # Handle run cancellation during streaming
@@ -5500,6 +5507,8 @@ class Agent:
         """Calculate session metrics"""
         session_metrics = self._get_session_metrics(session=session)
         # Add the metrics for the current run to the session metrics
+        if session_metrics is None:
+            return
         if run_response.metrics is not None:
             session_metrics += run_response.metrics
         session_metrics.time_to_first_token = None
@@ -7088,7 +7097,7 @@ class Agent:
 
             # Cache the session if relevant
             if loaded_session is not None and self.cache_session:
-                self._cached_session = loaded_session
+                self._cached_session = loaded_session  # type: ignore
 
             return loaded_session
 
@@ -7146,7 +7155,7 @@ class Agent:
 
             # Cache the session if relevant
             if loaded_session is not None and self.cache_session:
-                self._cached_session = loaded_session
+                self._cached_session = loaded_session  # type: ignore
 
             return loaded_session
 
@@ -9672,7 +9681,7 @@ class Agent:
         if self.reasoning or self.reasoning_model is not None:
             reason_generator = self._areason(run_response=run_response, run_messages=run_messages, stream_events=False)
             # Consume the generator without yielding
-            async for _ in reason_generator:
+            async for _ in reason_generator:  # type: ignore
                 pass
 
     async def _ahandle_reasoning_stream(
@@ -9684,7 +9693,7 @@ class Agent:
                 run_messages=run_messages,
                 stream_events=stream_events,
             )
-            async for item in reason_generator:
+            async for item in reason_generator:  # type: ignore
                 yield item
 
     def _format_reasoning_step_content(self, run_response: RunOutput, reasoning_step: ReasoningStep) -> str:
@@ -10652,7 +10661,7 @@ class Agent:
             all_messages = []
             seen_message_pairs = set()
 
-            for session in selected_sessions:
+            for session in selected_sessions:  # type: ignore
                 if isinstance(session, AgentSession) and session.runs:
                     message_count = 0
                     for run in session.runs:
@@ -10912,6 +10921,7 @@ class Agent:
                 action=action,
                 next_action=NextAction.CONTINUE,
                 confidence=confidence,
+                result=None,
             )
 
             # Add the step to the run response
@@ -10949,6 +10959,7 @@ class Agent:
                 reasoning=analysis,
                 next_action=next_action_enum,
                 confidence=confidence,
+                action=None,
             )
 
             # Add the step to the run response
@@ -10971,7 +10982,7 @@ class Agent:
         # Case 3: ReasoningTool.think (simple format, just has 'thought')
         elif tool_name.lower() == "think" and "thought" in tool_args:
             thought = tool_args["thought"]
-            reasoning_step = ReasoningStep(
+            reasoning_step = ReasoningStep(  # type: ignore
                 title="Thinking",
                 reasoning=thought,
                 confidence=None,

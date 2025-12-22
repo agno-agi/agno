@@ -1043,7 +1043,7 @@ class Team:
             for tool in self.tools:
                 if (
                     hasattr(tool, "requires_connect")
-                    and tool.requires_connect
+                    and tool.requires_connect  # type: ignore
                     and hasattr(tool, "connect")
                     and tool not in self._connectable_tools_initialized_on_run
                 ):
@@ -1959,6 +1959,8 @@ class Team:
                     self._log_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
                     log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
+
+                    break
                 except RunCancelledException as e:
                     # Handle run cancellation during streaming
                     log_info(f"Team run {run_response.run_id} was cancelled during streaming")
@@ -2154,7 +2156,7 @@ class Team:
             background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
         # Validate input against input_schema if provided
-        validated_input = self._validate_input(input)
+        validated_input = validate_input(input, self.input_schema)
 
         # Normalise hook & guardails
         if not self._hooks_normalised:
@@ -2163,6 +2165,7 @@ class Team:
             if self.post_hooks:
                 self.post_hooks = normalize_post_hooks(self.post_hooks)  # type: ignore
             self._hooks_normalised = True
+
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
@@ -2274,6 +2277,7 @@ class Team:
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
+
         # Start the run metrics timer, to calculate the run duration
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
@@ -2594,7 +2598,6 @@ class Team:
                     await self._acleanup_and_store(run_response=run_response, session=team_session)
 
                     return run_response
-
         finally:
             # Always disconnect connectable tools
             self._disconnect_connectable_tools()
