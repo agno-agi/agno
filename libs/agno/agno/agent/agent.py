@@ -2716,7 +2716,7 @@ class Agent:
                     pass
 
             # Always clean up the run tracking
-            cleanup_run(run_response.run_id)  # type: ignore
+            await acleanup_run(run_response.run_id)  # type: ignore
 
     @overload
     async def arun(
