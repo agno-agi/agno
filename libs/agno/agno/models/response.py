@@ -16,6 +16,8 @@ class ModelResponseEvent(str, Enum):
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     assistant_response = "AssistantResponse"
+    compression_started = "CompressionStarted"
+    compression_completed = "CompressionCompleted"
 
 
 @dataclass
@@ -123,6 +125,9 @@ class ModelResponse:
     extra: Optional[Dict[str, Any]] = None
 
     updated_session_state: Optional[Dict[str, Any]] = None
+
+    # Compression stats
+    compression_stats: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize ModelResponse to dictionary for caching."""

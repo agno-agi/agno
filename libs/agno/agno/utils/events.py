@@ -5,6 +5,8 @@ from agno.models.message import Citations
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import (
+    CompressionCompletedEvent,
+    CompressionStartedEvent,
     LLMRequestCompletedEvent,
     LLMRequestStartedEvent,
     MemoryUpdateCompletedEvent,
@@ -40,6 +42,8 @@ from agno.run.agent import (
     ToolCallStartedEvent,
 )
 from agno.run.requirement import RunRequirement
+from agno.run.team import CompressionCompletedEvent as TeamCompressionCompletedEvent
+from agno.run.team import CompressionStartedEvent as TeamCompressionStartedEvent
 from agno.run.team import LLMRequestCompletedEvent as TeamLLMRequestCompletedEvent
 from agno.run.team import LLMRequestStartedEvent as TeamLLMRequestStartedEvent
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
@@ -838,6 +842,62 @@ def create_team_llm_request_completed_event(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
+    )
+
+
+def create_compression_started_event(
+    from_run_response: RunOutput,
+) -> CompressionStartedEvent:
+    return CompressionStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_compression_completed_event(
+    from_run_response: RunOutput,
+    tool_results_compressed: Optional[int] = None,
+    original_size: Optional[int] = None,
+    compressed_size: Optional[int] = None,
+) -> CompressionCompletedEvent:
+    return CompressionCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool_results_compressed=tool_results_compressed,
+        original_size=original_size,
+        compressed_size=compressed_size,
+    )
+
+
+def create_team_compression_started_event(
+    from_run_response: TeamRunOutput,
+) -> TeamCompressionStartedEvent:
+    return TeamCompressionStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_compression_completed_event(
+    from_run_response: TeamRunOutput,
+    tool_results_compressed: Optional[int] = None,
+    original_size: Optional[int] = None,
+    compressed_size: Optional[int] = None,
+) -> TeamCompressionCompletedEvent:
+    return TeamCompressionCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool_results_compressed=tool_results_compressed,
+        original_size=original_size,
+        compressed_size=compressed_size,
     )
 
 

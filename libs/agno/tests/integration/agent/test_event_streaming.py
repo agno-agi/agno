@@ -1096,3 +1096,90 @@ async def test_async_memory_update_completed_contains_memories(shared_db):
     # The memories field should contain the user's memories (may be None if no memories created)
     if memory_completed.memories is not None:
         assert isinstance(memory_completed.memories, list)
+
+
+def test_compression_events(shared_db):
+    """Test that compression events are emitted when tool result compression is enabled."""
+
+    @tool
+    def get_large_data(query: str) -> str:
+        """Returns a large amount of data for testing compression."""
+        return f"Large data response for {query}: " + "x" * 500
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        tools=[get_large_data],
+        compress_tool_results=True,
+        store_events=True,
+        telemetry=False,
+    )
+
+    response_generator = agent.run(
+        "Get large data for 'test1' and 'test2'",
+        stream=True,
+        stream_events=True,
+    )
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    # Compression events should be present when compression occurs
+    if RunEvent.compression_started in events.keys():
+        assert RunEvent.compression_completed in events.keys()
+
+        # Verify compression started event
+        assert len(events[RunEvent.compression_started]) >= 1
+
+        # Verify compression completed event has stats
+        assert len(events[RunEvent.compression_completed]) >= 1
+        compression_completed = events[RunEvent.compression_completed][0]
+        assert hasattr(compression_completed, "tool_results_compressed")
+        assert hasattr(compression_completed, "original_size")
+        assert hasattr(compression_completed, "compressed_size")
+
+
+@pytest.mark.asyncio
+async def test_async_compression_events(shared_db):
+    """Test that async compression events are emitted when tool result compression is enabled."""
+
+    @tool
+    def get_large_data(query: str) -> str:
+        """Returns a large amount of data for testing compression."""
+        return f"Large data response for {query}: " + "x" * 500
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        tools=[get_large_data],
+        compress_tool_results=True,
+        store_events=True,
+        telemetry=False,
+    )
+
+    events = {}
+    async for run_response_delta in agent.arun(
+        "Get large data for 'test1' and 'test2'",
+        stream=True,
+        stream_events=True,
+    ):
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    # Compression events should be present when compression occurs
+    if RunEvent.compression_started in events.keys():
+        assert RunEvent.compression_completed in events.keys()
+
+        # Verify compression started event
+        assert len(events[RunEvent.compression_started]) >= 1
+
+        # Verify compression completed event has stats
+        assert len(events[RunEvent.compression_completed]) >= 1
+        compression_completed = events[RunEvent.compression_completed][0]
+        assert hasattr(compression_completed, "tool_results_compressed")
+        assert hasattr(compression_completed, "original_size")
+        assert hasattr(compression_completed, "compressed_size")

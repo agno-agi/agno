@@ -1230,7 +1230,14 @@ class Model(ABC):
                 if _compression_manager is not None and _compression_manager.should_compress(
                     messages, tools, model=self, response_format=response_format
                 ):
+                    # Emit compression started event
+                    yield ModelResponse(event=ModelResponseEvent.compression_started.value)
                     _compression_manager.compress(messages)
+                    # Emit compression completed event with stats
+                    yield ModelResponse(
+                        event=ModelResponseEvent.compression_completed.value,
+                        compression_stats=_compression_manager.stats.copy(),
+                    )
 
                 assistant_message = Message(role=self.assistant_message_role)
                 # Create assistant message and stream data
@@ -1450,7 +1457,14 @@ class Model(ABC):
                 if _compression_manager is not None and await _compression_manager.ashould_compress(
                     messages, tools, model=self, response_format=response_format
                 ):
+                    # Emit compression started event
+                    yield ModelResponse(event=ModelResponseEvent.compression_started.value)
                     await _compression_manager.acompress(messages)
+                    # Emit compression completed event with stats
+                    yield ModelResponse(
+                        event=ModelResponseEvent.compression_completed.value,
+                        compression_stats=_compression_manager.stats.copy(),
+                    )
 
                 # Create assistant message and stream data
                 assistant_message = Message(role=self.assistant_message_role)

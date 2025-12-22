@@ -168,6 +168,9 @@ class TeamRunEvent(str, Enum):
     llm_request_started = "TeamLLMRequestStarted"
     llm_request_completed = "TeamLLMRequestCompleted"
 
+    compression_started = "TeamCompressionStarted"
+    compression_completed = "TeamCompressionCompleted"
+
     custom_event = "CustomEvent"
 
 
@@ -432,6 +435,23 @@ class LLMRequestCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class CompressionStartedEvent(BaseTeamRunEvent):
+    """Event sent when tool result compression is about to start"""
+
+    event: str = TeamRunEvent.compression_started.value
+
+
+@dataclass
+class CompressionCompletedEvent(BaseTeamRunEvent):
+    """Event sent when tool result compression has completed"""
+
+    event: str = TeamRunEvent.compression_completed.value
+    tool_results_compressed: Optional[int] = None
+    original_size: Optional[int] = None
+    compressed_size: Optional[int] = None
+
+
+@dataclass
 class CustomEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.custom_event.value
 
@@ -468,6 +488,8 @@ TeamRunOutputEvent = Union[
     OutputModelResponseCompletedEvent,
     LLMRequestStartedEvent,
     LLMRequestCompletedEvent,
+    CompressionStartedEvent,
+    CompressionCompletedEvent,
     CustomEvent,
 ]
 
@@ -501,6 +523,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
     TeamRunEvent.llm_request_started.value: LLMRequestStartedEvent,
     TeamRunEvent.llm_request_completed.value: LLMRequestCompletedEvent,
+    TeamRunEvent.compression_started.value: CompressionStartedEvent,
+    TeamRunEvent.compression_completed.value: CompressionCompletedEvent,
     TeamRunEvent.custom_event.value: CustomEvent,
 }
 

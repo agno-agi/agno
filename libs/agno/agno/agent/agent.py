@@ -111,6 +111,8 @@ from agno.utils.agent import (
 from agno.utils.common import is_typed_dict
 from agno.utils.events import (
     add_error_event,
+    create_compression_completed_event,
+    create_compression_started_event,
     create_llm_request_completed_event,
     create_llm_request_started_event,
     create_parser_model_response_completed_event,
@@ -5292,6 +5294,32 @@ class Agent:
             send_media_to_model=self.send_media_to_model,
             compression_manager=self.compression_manager if self.compress_tool_results else None,
         ):
+            # Handle compression events
+            if model_response_event.event == ModelResponseEvent.compression_started.value:
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_compression_started_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
+                continue
+            if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                if stream_events:
+                    stats = getattr(model_response_event, "compression_stats", None) or {}
+                    yield handle_event(  # type: ignore
+                        create_compression_completed_event(
+                            from_run_response=run_response,
+                            tool_results_compressed=stats.get("tool_results_compressed"),
+                            original_size=stats.get("original_size"),
+                            compressed_size=stats.get("compressed_size"),
+                        ),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
+                continue
+
             yield from self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
@@ -5410,6 +5438,32 @@ class Agent:
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
+            # Handle compression events
+            if model_response_event.event == ModelResponseEvent.compression_started.value:
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_compression_started_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
+                continue
+            if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                if stream_events:
+                    stats = getattr(model_response_event, "compression_stats", None) or {}
+                    yield handle_event(  # type: ignore
+                        create_compression_completed_event(
+                            from_run_response=run_response,
+                            tool_results_compressed=stats.get("tool_results_compressed"),
+                            original_size=stats.get("original_size"),
+                            compressed_size=stats.get("compressed_size"),
+                        ),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
+                continue
+
             for event in self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
