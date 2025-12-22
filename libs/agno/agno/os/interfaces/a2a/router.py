@@ -32,8 +32,8 @@ from agno.os.interfaces.a2a.utils import (
     stream_a2a_response_with_error_handling,
 )
 from agno.os.utils import get_agent_by_id, get_request_kwargs, get_team_by_id, get_workflow_by_id
-from agno.team import Team
-from agno.workflow import Workflow
+from agno.team import RemoteTeam, Team
+from agno.workflow import RemoteWorkflow, Workflow
 
 
 def attach_routes(
@@ -1417,7 +1417,7 @@ def attach_routes(
                 status_code=400,
                 detail="Entity ID required. Provide it via 'agentId' in params.message or 'X-Agent-ID' header.",
             )
-        entity: Optional[Union[Agent, Team, Workflow]] = None
+        entity: Optional[Union[Agent, RemoteAgent, Team, RemoteTeam, Workflow, RemoteWorkflow]] = None
         if agents:
             entity = get_agent_by_id(agent_id, agents)
         if not entity and teams:
@@ -1450,10 +1450,10 @@ def attach_routes(
             else:
                 response = entity.arun(
                     input=run_input.input_content,
-                    images=run_input.images,
-                    videos=run_input.videos,
-                    audio=run_input.audios,
-                    files=run_input.files,
+                    images=run_input.images,  # type: ignore
+                    videos=run_input.videos,  # type: ignore
+                    audio=run_input.audios,  # type: ignore
+                    files=run_input.files,  # type: ignore
                     session_id=context_id,
                     user_id=user_id,
                     **kwargs,
@@ -1531,7 +1531,7 @@ def attach_routes(
                 status_code=400,
                 detail="Entity ID required. Provide 'agentId' in params.message or 'X-Agent-ID' header.",
             )
-        entity: Optional[Union[Agent, Team, Workflow]] = None
+        entity: Optional[Union[Agent, RemoteAgent, Team, RemoteTeam, Workflow, RemoteWorkflow]] = None
         if agents:
             entity = get_agent_by_id(agent_id, agents)
         if not entity and teams:
@@ -1564,7 +1564,7 @@ def attach_routes(
                     **kwargs,
                 )
             else:
-                event_stream = entity.arun(  # type: ignore[assignment]
+                event_stream = entity.arun(  # type: ignore
                     input=run_input.input_content,
                     images=run_input.images,
                     videos=run_input.videos,

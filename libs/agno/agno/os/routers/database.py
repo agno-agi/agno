@@ -22,6 +22,8 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     get_db,
 )
+from agno.remote.base import RemoteDb
+from agno.utils.log import log_info
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -45,6 +47,9 @@ def get_database_router(
 
     async def _migrate_single_db(db, target_version: Optional[str] = None) -> None:
         """Migrate a single database."""
+        if isinstance(db, RemoteDb):
+            log_info("Skipping logs for remote DB")
+
         if target_version:
             # Use the session table as proxy for the database schema version
             if isinstance(db, AsyncBaseDb):
