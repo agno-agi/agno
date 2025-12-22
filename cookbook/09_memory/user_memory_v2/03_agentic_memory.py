@@ -25,8 +25,8 @@ agent = Agent(
 
 existing = agent.get_user_profile(USER_ID)
 if existing:
-    print("Existing profile:", existing.user_profile)
-    print("Existing knowledge:", existing.memory_layers.get("knowledge", []))
+    print("Existing profile:")
+    pprint(existing.to_dict())
 
 agent.print_response(
     "Please remember that I prefer using Pydantic for data validation in all my APIs.",
@@ -71,17 +71,4 @@ print("=" * 60)
 
 user = agent.get_user_profile(USER_ID)
 if user:
-    print("\nProfile:")
-    pprint(user.user_profile)
-
-    print("\nPolicies:")
-    pprint(user.memory_layers.get("policies", {}))
-
-    print("\nKnowledge:")
-    pprint(user.memory_layers.get("knowledge", []))
-
-    print("\nFeedback:")
-    pprint(user.memory_layers.get("feedback", {}))
-
-print("\nCompiled context:")
-print(agent.memory_compiler.compile_user_profile(USER_ID))
+    pprint(user.to_dict())

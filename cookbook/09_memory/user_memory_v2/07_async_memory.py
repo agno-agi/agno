@@ -15,7 +15,7 @@ from agno.db.sqlite import AsyncSqliteDb
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
-DB_FILE = "tmp/async_user_memory.db"
+DB_FILE = "tmp/async_user_memory2.db"
 ALEX_ID = "alex"
 JORDAN_ID = "jordan"
 
@@ -73,22 +73,12 @@ async def main():
     print("\n[Alex's Memory]")
     alex_profile = await agent.memory_compiler.aget_user_profile(ALEX_ID)
     if alex_profile:
-        pprint(alex_profile.user_profile)
-        pprint(
-            alex_profile.memory_layers.get("policies", {})
-            if alex_profile.memory_layers
-            else {}
-        )
+        pprint(alex_profile.to_dict())
 
     print("\n[Jordan's Memory]")
     jordan_profile = await agent.memory_compiler.aget_user_profile(JORDAN_ID)
     if jordan_profile:
-        pprint(jordan_profile.user_profile)
-        pprint(
-            jordan_profile.memory_layers.get("policies", {})
-            if jordan_profile.memory_layers
-            else {}
-        )
+        pprint(jordan_profile.to_dict())
 
     print("\n[Personalized responses]")
     await agent.aprint_response(

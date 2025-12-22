@@ -1,11 +1,3 @@
-"""Basic Memory V2 - First meeting with Sarah.
-
-This is the first cookbook in the memory evolution series.
-Sarah introduces herself as a backend engineer and states her preferences.
-
-Run cookbooks in order (01 -> 02 -> 03 -> 05) to see memory accumulate.
-"""
-
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
