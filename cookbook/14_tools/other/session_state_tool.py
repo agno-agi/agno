@@ -4,7 +4,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.run import RunContext
 from agno.tools import tool
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel
 
 
@@ -51,7 +51,7 @@ def answer_from_known_questions(question: str, run_context: RunContext) -> str:
 q_and_a_agent = Agent(
     name="Q & A Agent",
     db=SqliteDb(db_file="tmp/q_and_a_agent.db"),
-    tools=[answer_from_known_questions, DuckDuckGoTools()],
+    tools=[answer_from_known_questions, WebSearchTools()],
     markdown=True,
     instructions="You are a Q & A agent that can answer questions from a list of known questions. If you don't know the answer, you can search the web.",
 )

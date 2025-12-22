@@ -6,7 +6,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.knowledge import KnowledgeTools
 from agno.tools.reasoning import ReasoningTools
 from agno.vectordb.lancedb import LanceDb, SearchType
@@ -76,7 +76,7 @@ web_agent = Agent(
     role="Handle web search requests",
     model=OpenAIChat(id="gpt-4o-mini"),
     id="web_agent",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="Always include sources",
     add_datetime_to_context=True,
     db=db,

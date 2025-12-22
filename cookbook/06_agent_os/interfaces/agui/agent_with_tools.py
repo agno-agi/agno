@@ -5,7 +5,7 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
 from agno.tools import tool
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 
 # Frontend Tools
@@ -20,7 +20,7 @@ def generate_haiku(
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[
-        DuckDuckGoTools(),
+        WebSearchTools(),
         generate_haiku,
     ],
     description="You are a helpful AI assistant with both backend and frontend capabilities. You can search the web, create beautiful haikus, modify the UI, ask for user confirmations, and create visualizations.",

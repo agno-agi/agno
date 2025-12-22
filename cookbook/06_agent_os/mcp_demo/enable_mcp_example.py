@@ -8,7 +8,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 from agno.os import AgentOS
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 # Setup the database
 db = SqliteDb(db_file="tmp/agentos.db")
@@ -19,7 +19,7 @@ web_research_agent = Agent(
     name="Web Research Agent",
     model=Claude(id="claude-sonnet-4-0"),
     db=db,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
     num_history_runs=3,
     add_datetime_to_context=True,

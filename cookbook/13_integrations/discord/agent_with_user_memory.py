@@ -4,14 +4,14 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.integrations.discord import DiscordClient
 from agno.models.google import Gemini
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 db = SqliteDb(db_file="tmp/discord_client_cookbook.db")
 
 personal_agent = Agent(
     name="Basic Agent",
     model=Gemini(id="gemini-2.0-flash"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
     num_history_runs=3,
     add_datetime_to_context=True,

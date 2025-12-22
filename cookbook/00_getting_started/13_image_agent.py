@@ -23,7 +23,7 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
@@ -62,7 +62,7 @@ agent = Agent(
 
         Transform every image into a compelling news story that informs and inspires!\
     """),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

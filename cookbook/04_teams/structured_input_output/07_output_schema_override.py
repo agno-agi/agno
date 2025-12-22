@@ -11,7 +11,7 @@ import asyncio
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel
 from rich.pretty import pprint
 
@@ -31,7 +31,7 @@ researcher = Agent(
     name="Researcher",
     model=OpenAIChat("gpt-4o"),
     role="Researches information.",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
 )
 
 team = Team(

@@ -2,11 +2,11 @@ import asyncio
 
 from agno.agent import Agent
 from agno.models.portkey import Portkey
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=Portkey(id="@first-integrati-707071/gpt-5-nano"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

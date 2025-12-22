@@ -7,7 +7,7 @@ from typing import Optional
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.groq import Groq
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.exa import ExaTools
 from agno.tools.file import FileTools
 from agno.utils.streamlit import get_model_from_id
@@ -53,7 +53,7 @@ def get_llama_tutor_agent(
             num_results=5,
             show_results=True,
         ),
-        DuckDuckGoTools(
+        WebSearchTools(
             timeout=20,
             fixed_max_results=5,
         ),
@@ -85,7 +85,7 @@ def get_llama_tutor_agent(
         1. Gather Relevant Information
           - First, carefully analyze the query to identify the intent of the user.
           - Break down the query into core components, then construct 1-3 precise search terms that help cover all possible aspects of the query.
-          - Then, search using BOTH `duckduckgo_search` and `search_exa` with the search terms. Remember to search both tools.
+          - Then, search using BOTH `web_search` and `search_exa` with the search terms. Remember to search both tools.
           - Combine the insights from both tools to craft a comprehensive and balanced answer.
           - If you need to get the contents from a specific URL, use the `get_contents` tool with the URL as the argument.
           - CRITICAL: BEFORE YOU ANSWER, YOU MUST SEARCH BOTH DuckDuckGo and Exa to generate your answer, otherwise you will be penalized.

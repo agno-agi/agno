@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.utils.pprint import pprint_run_response
 from pydantic import BaseModel
 
@@ -22,7 +22,7 @@ stock_searcher = Agent(
     model=OpenAIChat("gpt-4o"),
     output_schema=StockAnalysis,
     role="Searches for information on stocks and provides price analysis.",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
 )
 
 company_info_agent = Agent(
@@ -30,7 +30,7 @@ company_info_agent = Agent(
     model=OpenAIChat("gpt-4o"),
     role="Searches for information about companies and recent news.",
     output_schema=CompanyAnalysis,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
 )
 
 

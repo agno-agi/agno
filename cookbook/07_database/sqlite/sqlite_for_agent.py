@@ -5,7 +5,7 @@ Run `pip install ddgs sqlalchemy openai` to install dependencies.
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 # Setup the SQLite database
 db = SqliteDb(db_file="tmp/data.db")
@@ -13,7 +13,7 @@ db = SqliteDb(db_file="tmp/data.db")
 # Setup a basic agent with the SQLite database
 agent = Agent(
     db=db,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
     add_datetime_to_context=True,
 )

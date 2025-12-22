@@ -13,7 +13,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 # Create specialized research agents
 tech_researcher = Agent(
@@ -43,7 +43,7 @@ research_team = Team(
     name="Research Team",
     model=OpenAIChat("gpt-4o"),
     members=[tech_researcher, business_analyst],
-    tools=[DuckDuckGoTools()],  # Team uses DuckDuckGo for research
+    tools=[WebSearchTools()],  # Team uses DuckDuckGo for research
     description="Research team that investigates topics and provides analysis.",
     instructions=dedent("""
         You are a research coordinator that investigates topics comprehensively.

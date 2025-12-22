@@ -1,13 +1,13 @@
 from agno.agent import Agent
 from agno.models.google.gemini import Gemini
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 # Create individual specialized agents
 researcher = Agent(
     name="Researcher",
     role="Expert at finding information",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     model=Gemini("gemini-2.0-flash-001"),
 )
 

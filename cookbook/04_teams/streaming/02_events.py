@@ -8,7 +8,7 @@ from agno.models.anthropic.claude import Claude
 # from agno.models.mistral.mistral import MistralChat
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team, TeamRunEvent
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.hackernews import HackerNewsTools
 
 wikipedia_agent = Agent(
@@ -27,7 +27,7 @@ website_agent = Agent(
     name="Website Agent",
     role="Search the website for information",
     model=OpenAIChat(id="o3-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions=[
         "Search the website for information",
     ],

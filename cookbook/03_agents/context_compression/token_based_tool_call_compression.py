@@ -7,7 +7,7 @@ from agno.agent import Agent
 from agno.compression.manager import CompressionManager
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 compression_prompt = """
     You are a compression expert. Your goal is to compress web search results for a competitive intelligence analyst.
@@ -47,7 +47,7 @@ compression_manager = CompressionManager(
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     description="Specialized in tracking competitor activities",
     instructions="Use the search tools and always use the latest information and data.",
     db=SqliteDb(db_file="tmp/token_based_tool_call_compression.db"),

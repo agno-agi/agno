@@ -4,11 +4,11 @@ import asyncio
 
 from agno.agent import Agent  # noqa
 from agno.models.deepinfra import DeepInfra  # noqa
-from agno.tools.duckduckgo import DuckDuckGoTools  # noqa
+from agno.tools.websearch import WebSearchTools  # noqa
 
 agent = Agent(
     model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

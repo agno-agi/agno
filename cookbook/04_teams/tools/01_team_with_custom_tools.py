@@ -8,7 +8,7 @@ and fall back to web search when needed.
 from agno.agent import Agent
 from agno.team.team import Team
 from agno.tools import tool
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 
 @tool()
@@ -44,7 +44,7 @@ def answer_from_known_questions(question: str) -> str:
 web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

@@ -1,12 +1,12 @@
 from agno.agent.agent import Agent
 from agno.models.cerebras.cerebras import Cerebras
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=Cerebras(
         id="gpt-oss-120b",
     ),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

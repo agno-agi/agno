@@ -3,7 +3,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.website_reader import WebsiteReader
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.exa import ExaTools
 from agno.tools.slack import SlackTools
 from agno.vectordb.pgvector.pgvector import PgVector
@@ -31,7 +31,7 @@ doc_researcher_agent = Agent(
     name="Doc researcher Agent",
     role="Search the knowledge base for information",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools(), ExaTools()],
+    tools=[WebSearchTools(), ExaTools()],
     knowledge=knowledge,
     search_knowledge=True,
     instructions=[

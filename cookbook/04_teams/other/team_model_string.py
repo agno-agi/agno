@@ -1,6 +1,6 @@
 from agno.agent import Agent
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 # Model strings follow the format "{provider}:{model_id}", for example:
 model_string = "openai:gpt-4o-mini"
@@ -13,7 +13,7 @@ team = Team(
             model=model_string,
             name="Sarah",
             role="Data Researcher",
-            tools=[DuckDuckGoTools()],
+            tools=[WebSearchTools()],
             instructions="Focus on gathering and analyzing data",
         ),
         Agent(

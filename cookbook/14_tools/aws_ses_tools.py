@@ -46,7 +46,7 @@ AWS SES (Simple Email Service) Setup Instructions:
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.aws_ses import AWSSESTool
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 # Configure email settings
 sender_email = "coolmusta@gmail.com"  # Your verified SES email
@@ -75,7 +75,7 @@ agent = Agent(
         AWSSESTool(
             sender_email=sender_email, sender_name=sender_name, region_name=region_name
         ),
-        DuckDuckGoTools(),
+        WebSearchTools(),
     ],
     markdown=True,
 )

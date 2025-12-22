@@ -2,11 +2,11 @@
 
 from agno.agent import Agent
 from agno.models.mistral import MistralChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=MistralChat(id="mistral-small-latest"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 agent.print_response("Tell me about mistrall small, any news", stream=True)

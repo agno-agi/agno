@@ -26,7 +26,7 @@ from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.session import AgentSession
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 from rich import print
 
@@ -111,7 +111,7 @@ def recipe_agent(user: str = "user"):
         """),
         db=db,
         knowledge=agent_knowledge,
-        tools=[DuckDuckGoTools()],
+        tools=[WebSearchTools()],
         # To provide the agent with the chat history
         # We can either:
         # 1. Provide the agent with a tool to read the chat history

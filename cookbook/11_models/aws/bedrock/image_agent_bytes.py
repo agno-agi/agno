@@ -3,12 +3,12 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.aws import AwsBedrock
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.utils.media import download_image
 
 agent = Agent(
     model=AwsBedrock(id="amazon.nova-pro-v1:0"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

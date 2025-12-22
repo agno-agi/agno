@@ -1,10 +1,10 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=OpenAIChat(id="o3-mini", reasoning_effort="high"),
-    tools=[DuckDuckGoTools(enable_search=True)],
+    tools=[WebSearchTools(enable_news=False)],
     instructions="Use tables to display data.",
     markdown=True,
 )
