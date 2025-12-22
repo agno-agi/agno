@@ -262,8 +262,6 @@ class Agent:
     knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None
     references_format: Literal["json", "yaml"] = "json"
 
-    # --- Skills ---
-    # Skills provide structured instructions, reference docs, and scripts for agents
     skills: Optional[Skills] = None
 
     # --- Agent Tools ---
@@ -1096,6 +1094,16 @@ class Agent:
 
             # 6. Generate a response from the Model (includes running function calls)
             self.model = cast(Model, self.model)
+            import pdb; pdb.set_trace()
+
+            # Debug: Print the full prompt being sent to the model
+            print("\n" + "=" * 60)
+            print("FULL PROMPT BEING SENT TO MODEL")
+            print("=" * 60)
+            for i, msg in enumerate(run_messages.messages):
+                print(f"\n--- Message {i + 1} ({msg.role}) ---")
+                print(msg.content if hasattr(msg, 'content') else msg)
+            print("\n" + "=" * 60)
 
             model_response: ModelResponse = self.model.response(
                 messages=run_messages.messages,
@@ -2029,6 +2037,16 @@ class Agent:
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 9. Generate a response from the Model (includes running function calls)
+                # Debug: Print the full prompt being sent to the model
+                import pdb; pdb.set_trace()
+                print("\n" + "=" * 60)
+                print("FULL PROMPT BEING SENT TO MODEL")
+                print("=" * 60)
+                for i, msg in enumerate(run_messages.messages):
+                    print(f"\n--- Message {i + 1} ({msg.role}) ---")
+                    print(msg.content if hasattr(msg, 'content') else msg)
+                print("\n" + "=" * 60)
+
                 model_response: ModelResponse = await self.model.aresponse(
                     messages=run_messages.messages,
                     tools=_tools,
@@ -7680,6 +7698,7 @@ class Agent:
         if add_session_state_to_context and session_state is not None:
             system_message_content += f"\n<session_state>\n{session_state}\n</session_state>\n\n"
 
+
         # Return the system message
         return (
             Message(role=self.system_message_role, content=system_message_content.strip())  # type: ignore
@@ -8031,6 +8050,8 @@ class Agent:
         # 3.3.15 Add the session state to the system message
         if add_session_state_to_context and session_state is not None:
             system_message_content += self._get_formatted_session_state_for_system_message(session_state)
+        
+        import pdb; pdb.set_trace()
 
         # Return the system message
         return (
