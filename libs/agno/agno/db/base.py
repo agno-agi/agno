@@ -525,6 +525,10 @@ class AsyncBaseDb(ABC):
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
 
+    async def _create_all_tables(self) -> None:
+        """Create all tables for this database. Override in subclasses."""
+        pass
+
     async def close(self) -> None:
         """Close database connections and release resources.
 

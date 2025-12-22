@@ -100,8 +100,6 @@ def test_team_keyboard_interrupt_stops_retries():
 @pytest.mark.asyncio
 async def test_team_async_retry():
     """Test that async team retries on failure and eventually succeeds."""
-    import types
-
     member = Agent(model=OpenAIChat(id="gpt-4o-mini"))
     team = Team(
         members=[member],
@@ -112,17 +110,16 @@ async def test_team_async_retry():
     )
 
     attempt_count = {"count": 0}
-    original_arun = team._arun
+    original_aresponse = team.model.aresponse  # type: ignore
 
-    def mock_arun(self, *args, **kwargs):
+    async def mock_aresponse(*args, **kwargs):
         attempt_count["count"] += 1
         if attempt_count["count"] < 2:
             raise Exception(f"Simulated failure on attempt {attempt_count['count']}")
-        return original_arun(*args, **kwargs)
+        return await original_aresponse(*args, **kwargs)
 
-    # Properly bind the async method
-    team._arun = types.MethodType(mock_arun, team)
-    response = await team.arun("Test message")
+    with patch.object(team.model, "aresponse", side_effect=mock_aresponse):
+        response = await team.arun("Test message")
 
     # Should succeed on the 2nd attempt
     assert attempt_count["count"] == 2
