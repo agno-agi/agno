@@ -25,12 +25,18 @@ class UserMemorySchema(BaseModel):
         if memory_dict["memory"] == "":
             return None
 
+        # Handle nested memory content (relevant for some memories migrated from v1)
+        if memory_dict["memory"].get("memory") is not None:
+            memory_content = memory_dict["memory"].get("memory")
+        else:
+            memory_content = str(memory_dict["memory"])
+
         return cls(
             memory_id=memory_dict["memory_id"],
             user_id=str(memory_dict["user_id"]),
             agent_id=memory_dict.get("agent_id"),
             team_id=memory_dict.get("team_id"),
-            memory=str(memory_dict["memory"]),
+            memory=memory_content,
             topics=memory_dict.get("topics", []),
             updated_at=memory_dict["updated_at"],
         )
