@@ -5920,14 +5920,15 @@ class Agent:
         if self.memory_compiler is None or user_id is None:
             return
 
-        if run_messages.user_message is not None:
-            user_message_str = run_messages.user_message.get_content_string()
-            if user_message_str and user_message_str.strip():
-                log_debug("Extracting user memory via MemoryCompiler")
-                self.memory_compiler.extract_from_conversation(
-                    messages=[run_messages.user_message],
-                    user_id=user_id,
-                )
+        user_message_str = (
+            run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
+        )
+        if user_message_str and user_message_str.strip():
+            log_debug("Updating user profile via MemoryCompiler")
+            self.memory_compiler.create_user_profile(
+                message=user_message_str,
+                user_id=user_id,
+            )
 
     async def _amake_memories(
         self,
@@ -5985,14 +5986,15 @@ class Agent:
         if self.memory_compiler is None or user_id is None:
             return
 
-        if run_messages.user_message is not None:
-            user_message_str = run_messages.user_message.get_content_string()
-            if user_message_str and user_message_str.strip():
-                log_debug("Extracting user memory via MemoryCompiler")
-                await self.memory_compiler.aextract_from_conversation(
-                    messages=[run_messages.user_message],
-                    user_id=user_id,
-                )
+        user_message_str = (
+            run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
+        )
+        if user_message_str and user_message_str.strip():
+            log_debug("Updating user profile via MemoryCompiler")
+            await self.memory_compiler.acreate_user_profile(
+                message=user_message_str,
+                user_id=user_id,
+            )
 
     def _raise_if_async_tools(self) -> None:
         """Raise an exception if any tools contain async functions"""
@@ -7782,7 +7784,7 @@ class Agent:
 
         # 3.3.12 Add user memory layers to the system prompt
         if self.memory_compiler is not None and user_id is not None:
-            user_context = self.memory_compiler.compile_user_memory(user_id)
+            user_context = self.memory_compiler.compile_user_profile(user_id)
             if user_context:
                 system_message_content += (
                     "You have access to stored information about this user from previous interactions, organized into 4 layers:\n\n"
@@ -8183,7 +8185,7 @@ class Agent:
 
         # 3.3.12 Add user memory layers to the system message
         if self.memory_compiler is not None and user_id is not None:
-            user_context = await self.memory_compiler.acompile_user_memory(user_id)
+            user_context = await self.memory_compiler.acompile_user_profile(user_id)
             if user_context:
                 system_message_content += (
                     "You have access to stored information about this user from previous interactions, organized into 4 layers:\n\n"

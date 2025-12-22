@@ -81,4 +81,4 @@ if user:
     pprint(user.memory_layers.get("feedback", {}))
 
 print("\nCompiled context:")
-print(agent.memory_compiler.compile_user_memory(USER_ID))
+print(agent.memory_compiler.compile_user_profile(USER_ID))

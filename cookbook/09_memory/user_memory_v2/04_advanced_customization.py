@@ -93,10 +93,10 @@ def example_nested_categories():
             },
         },
     )
-    memory.upsert_user_profile(user_profile)
+    memory.save_user_profile(user_profile)
 
     print("\nCompiled context:")
-    print(memory.compile_user_memory(user_id))
+    print(memory.compile_user_profile(user_id))
 
     memory.delete_user_profile(user_id)
 
