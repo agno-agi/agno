@@ -21,7 +21,7 @@
 
 Agno is an incredibly fast multi-agent framework, runtime and control plane.
 
-Companies want to build AI products, run them as a secure containerized service in their cloud, and monitor, test, and manage their agentic system with a beautiful UI. Doing this takes far more than calling an LLM API in a loop, it requires a thoughtfully designed agentic platform.
+Companies want to build AI products, run them securely in their cloud, and manage their agents with a beautiful UI. This takes more than calling an LLM API, it requires a thoughtfully designed agentic platform.
 
 Agno provides the unified stack for building, running and managing multi-agent systems:
 
