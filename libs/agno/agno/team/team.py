@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import json
 import time
-import warnings
 from collections import ChainMap, deque
 from copy import copy
 from dataclasses import dataclass
@@ -433,8 +432,6 @@ class Team:
     stream: Optional[bool] = None
     # Stream the intermediate steps from the Agent
     stream_events: Optional[bool] = None
-    # [Deprecated] Stream the intermediate steps from the Agent
-    stream_intermediate_steps: Optional[bool] = None
     # Stream the member events from the Team
     stream_member_events: bool = True
 
@@ -466,9 +463,6 @@ class Team:
     # This helps us improve the Teams implementation and provide better support
     telemetry: bool = True
 
-    # Deprecated. Use delegate_to_all_members instead.
-    delegate_task_to_all_members: bool = False
-
     def __init__(
         self,
         members: List[Union[Agent, "Team"]],
@@ -478,7 +472,6 @@ class Team:
         role: Optional[str] = None,
         respond_directly: bool = False,
         determine_input_for_members: bool = True,
-        delegate_task_to_all_members: bool = False,
         delegate_to_all_members: bool = False,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -559,7 +552,6 @@ class Team:
         reasoning_max_steps: int = 10,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         store_events: bool = False,
         events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
         store_member_responses: bool = False,
@@ -572,13 +564,6 @@ class Team:
         exponential_backoff: bool = False,
         telemetry: bool = True,
     ):
-        if delegate_task_to_all_members:
-            warnings.warn(
-                "The 'delegate_task_to_all_members' parameter is deprecated and will be removed in future versions. Use 'delegate_to_all_members' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         self.members = members
 
         self.model = model  # type: ignore[assignment]
@@ -589,7 +574,7 @@ class Team:
 
         self.respond_directly = respond_directly
         self.determine_input_for_members = determine_input_for_members
-        self.delegate_to_all_members = delegate_to_all_members or delegate_task_to_all_members
+        self.delegate_to_all_members = delegate_to_all_members
 
         self.user_id = user_id
         self.session_id = session_id
@@ -695,7 +680,7 @@ class Team:
         self.reasoning_max_steps = reasoning_max_steps
 
         self.stream = stream
-        self.stream_events = stream_events or stream_intermediate_steps
+        self.stream_events = stream_events
         self.store_events = store_events
         self.store_member_responses = store_member_responses
 
@@ -1948,7 +1933,6 @@ class Team:
         *,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
@@ -1975,7 +1959,6 @@ class Team:
         *,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
@@ -1992,7 +1975,6 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
@@ -2004,7 +1986,6 @@ class Team:
         *,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
@@ -2021,7 +2002,6 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
@@ -2040,14 +2020,6 @@ class Team:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
             )
-
-        if yield_run_response is not None:
-            warnings.warn(
-                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         # Set up retry logic
         num_attempts = self.retries + 1
@@ -2150,9 +2122,6 @@ class Team:
                 # Use stream override value when necessary
                 if stream is None:
                     stream = False if self.stream is None else self.stream
-
-                # Considering both stream_events and stream_intermediate_steps (deprecated)
-                stream_events = stream_events or stream_intermediate_steps
 
                 # Can't stream events if streaming is disabled
                 if stream is False:
@@ -2631,7 +2600,6 @@ class Team:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         yield_run_output: bool = False,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -2766,9 +2734,6 @@ class Team:
                 ):
                     log_debug("Starting memory creation in background task.")
                     memory_task = asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
-
-                # Considering both stream_events and stream_intermediate_steps (deprecated)
-                stream_events = stream_events or stream_intermediate_steps
 
                 # Yield the run started event
                 if stream_events:
@@ -3025,7 +2990,6 @@ class Team:
         *,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_id: Optional[str] = None,
@@ -3053,7 +3017,6 @@ class Team:
         *,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_id: Optional[str] = None,
@@ -3070,7 +3033,6 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
@@ -3082,7 +3044,6 @@ class Team:
         *,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_id: Optional[str] = None,
@@ -3099,7 +3060,6 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
@@ -3114,15 +3074,6 @@ class Team:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
             )
-
-        if yield_run_response is not None:
-            warnings.warn(
-                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-            yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
@@ -3174,15 +3125,6 @@ class Team:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
         if stream is False:
@@ -3246,7 +3188,7 @@ class Team:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        yield_run_output = bool(yield_run_output or yield_run_response)  # For backwards compatibility
+        yield_run_output = yield_run_output
 
         if stream:
             return self._arun_stream(  # type: ignore
@@ -4422,8 +4364,6 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -4433,20 +4373,6 @@ class Team:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
-        if stream_events is not None:
-            warnings.warn(
-                "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the print_response function.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the print_response function.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         if self._has_async_db():
             raise Exception(
                 "This method is not supported with an async DB. Please use the async version of this method."
@@ -4548,8 +4474,6 @@ class Team:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -4559,20 +4483,6 @@ class Team:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
-        if stream_events is not None:
-            warnings.warn(
-                "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the aprint_response function.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the aprint_response function.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
