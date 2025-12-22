@@ -362,7 +362,7 @@ def map_run_schema_to_a2a_task(run_schema: Dict) -> Task:
     if images:
         for img in images:
             artifact_parts = []
-            img_url = img.get("url") if isinstance(img, dict) else getattr(img, "url", None)
+            img_url = img.get("url") 
             if img_url:
                 artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=img_url, mime_type="image/*"))))
             artifacts.append(
@@ -377,7 +377,7 @@ def map_run_schema_to_a2a_task(run_schema: Dict) -> Task:
     if videos:
         for vid in videos:
             artifact_parts = []
-            vid_url = vid.get("url") if isinstance(vid, dict) else getattr(vid, "url", None)
+            vid_url = vid.get("url") 
             if vid_url:
                 artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=vid_url, mime_type="video/*"))))
             artifacts.append(
@@ -392,7 +392,7 @@ def map_run_schema_to_a2a_task(run_schema: Dict) -> Task:
     if audio:
         for aud in audio:
             artifact_parts = []
-            aud_url = aud.get("url") if isinstance(aud, dict) else getattr(aud, "url", None)
+            aud_url = aud.get("url") 
             if aud_url:
                 artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=aud_url, mime_type="audio/*"))))
             artifacts.append(
@@ -407,8 +407,8 @@ def map_run_schema_to_a2a_task(run_schema: Dict) -> Task:
     if files:
         for file in files:
             artifact_parts = []
-            file_url = file.get("url") if isinstance(file, dict) else getattr(file, "url", None)
-            file_mime = file.get("mime_type") if isinstance(file, dict) else getattr(file, "mime_type", None)
+            file_url = file.get("url") 
+            file_mime = file.get("mime_type") 
             if file_url:
                 artifact_parts.append(
                     Part(
@@ -432,10 +432,10 @@ def map_run_schema_to_a2a_task(run_schema: Dict) -> Task:
     # Handle response_audio for agent runs
     if response_audio:
         aud_url = (
-            response_audio.get("url") if isinstance(response_audio, dict) else getattr(response_audio, "url", None)
+            response_audio.get("url") 
         )
         aud_name = (
-            response_audio.get("name") if isinstance(response_audio, dict) else getattr(response_audio, "name", None)
+            response_audio.get("name") 
         )
         if aud_url:
             artifact_parts = []
