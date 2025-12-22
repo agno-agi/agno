@@ -213,7 +213,7 @@ class SessionSchema(BaseModel):
             return None
 
         created_at = parse_datetime(session.get("created_at", 0))
-        updated_at = parse_datetime(session.get("updated_at", 0))
+        updated_at = parse_datetime(session.get("updated_at", created_at))
         return cls(
             session_id=session.get("session_id", ""),
             session_name=session_name,
