@@ -165,6 +165,9 @@ class TeamRunEvent(str, Enum):
     output_model_response_started = "TeamOutputModelResponseStarted"
     output_model_response_completed = "TeamOutputModelResponseCompleted"
 
+    llm_request_started = "TeamLLMRequestStarted"
+    llm_request_completed = "TeamLLMRequestCompleted"
+
     custom_event = "CustomEvent"
 
 
@@ -322,6 +325,7 @@ class MemoryUpdateStartedEvent(BaseTeamRunEvent):
 @dataclass
 class MemoryUpdateCompletedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.memory_update_completed.value
+    memories: Optional[List[Any]] = None
 
 
 @dataclass
@@ -407,6 +411,27 @@ class OutputModelResponseCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class LLMRequestStartedEvent(BaseTeamRunEvent):
+    """Event sent when an LLM request is about to be made"""
+
+    event: str = TeamRunEvent.llm_request_started.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+
+
+@dataclass
+class LLMRequestCompletedEvent(BaseTeamRunEvent):
+    """Event sent when an LLM request has completed"""
+
+    event: str = TeamRunEvent.llm_request_completed.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+
+
+@dataclass
 class CustomEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.custom_event.value
 
@@ -441,6 +466,8 @@ TeamRunOutputEvent = Union[
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     OutputModelResponseCompletedEvent,
+    LLMRequestStartedEvent,
+    LLMRequestCompletedEvent,
     CustomEvent,
 ]
 
@@ -472,6 +499,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     TeamRunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
     TeamRunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
+    TeamRunEvent.llm_request_started.value: LLMRequestStartedEvent,
+    TeamRunEvent.llm_request_completed.value: LLMRequestCompletedEvent,
     TeamRunEvent.custom_event.value: CustomEvent,
 }
 

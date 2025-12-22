@@ -5,6 +5,8 @@ from agno.models.message import Citations
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import (
+    LLMRequestCompletedEvent,
+    LLMRequestStartedEvent,
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
     OutputModelResponseCompletedEvent,
@@ -38,6 +40,8 @@ from agno.run.agent import (
     ToolCallStartedEvent,
 )
 from agno.run.requirement import RunRequirement
+from agno.run.team import LLMRequestCompletedEvent as TeamLLMRequestCompletedEvent
+from agno.run.team import LLMRequestStartedEvent as TeamLLMRequestStartedEvent
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
 from agno.run.team import OutputModelResponseCompletedEvent as TeamOutputModelResponseCompletedEvent
@@ -349,21 +353,27 @@ def create_team_memory_update_started_event(from_run_response: TeamRunOutput) ->
     )
 
 
-def create_memory_update_completed_event(from_run_response: RunOutput) -> MemoryUpdateCompletedEvent:
+def create_memory_update_completed_event(
+    from_run_response: RunOutput, memories: Optional[List[Any]] = None
+) -> MemoryUpdateCompletedEvent:
     return MemoryUpdateCompletedEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
+        memories=memories,
     )
 
 
-def create_team_memory_update_completed_event(from_run_response: TeamRunOutput) -> TeamMemoryUpdateCompletedEvent:
+def create_team_memory_update_completed_event(
+    from_run_response: TeamRunOutput, memories: Optional[List[Any]] = None
+) -> TeamMemoryUpdateCompletedEvent:
     return TeamMemoryUpdateCompletedEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
+        memories=memories,
     )
 
 
@@ -756,6 +766,78 @@ def create_team_output_model_response_completed_event(
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
+    )
+
+
+def create_llm_request_started_event(
+    from_run_response: RunOutput,
+    model: Optional[str] = None,
+    model_provider: Optional[str] = None,
+) -> LLMRequestStartedEvent:
+    return LLMRequestStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model=model,
+        model_provider=model_provider,
+    )
+
+
+def create_llm_request_completed_event(
+    from_run_response: RunOutput,
+    model: Optional[str] = None,
+    model_provider: Optional[str] = None,
+    input_tokens: Optional[int] = None,
+    output_tokens: Optional[int] = None,
+    total_tokens: Optional[int] = None,
+) -> LLMRequestCompletedEvent:
+    return LLMRequestCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model=model,
+        model_provider=model_provider,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+    )
+
+
+def create_team_llm_request_started_event(
+    from_run_response: TeamRunOutput,
+    model: Optional[str] = None,
+    model_provider: Optional[str] = None,
+) -> TeamLLMRequestStartedEvent:
+    return TeamLLMRequestStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model=model,
+        model_provider=model_provider,
+    )
+
+
+def create_team_llm_request_completed_event(
+    from_run_response: TeamRunOutput,
+    model: Optional[str] = None,
+    model_provider: Optional[str] = None,
+    input_tokens: Optional[int] = None,
+    output_tokens: Optional[int] = None,
+    total_tokens: Optional[int] = None,
+) -> TeamLLMRequestCompletedEvent:
+    return TeamLLMRequestCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model=model,
+        model_provider=model_provider,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
     )
 
 

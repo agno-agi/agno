@@ -172,6 +172,9 @@ class RunEvent(str, Enum):
     output_model_response_started = "OutputModelResponseStarted"
     output_model_response_completed = "OutputModelResponseCompleted"
 
+    llm_request_started = "LLMRequestStarted"
+    llm_request_completed = "LLMRequestCompleted"
+
     custom_event = "CustomEvent"
 
 
@@ -349,6 +352,7 @@ class MemoryUpdateStartedEvent(BaseAgentRunEvent):
 @dataclass
 class MemoryUpdateCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.memory_update_completed.value
+    memories: Optional[List[Any]] = None
 
 
 @dataclass
@@ -434,6 +438,27 @@ class OutputModelResponseCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class LLMRequestStartedEvent(BaseAgentRunEvent):
+    """Event sent when an LLM request is about to be made"""
+
+    event: str = RunEvent.llm_request_started.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+
+
+@dataclass
+class LLMRequestCompletedEvent(BaseAgentRunEvent):
+    """Event sent when an LLM request has completed"""
+
+    event: str = RunEvent.llm_request_completed.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+
+
+@dataclass
 class CustomEvent(BaseAgentRunEvent):
     event: str = RunEvent.custom_event.value
 
@@ -472,6 +497,8 @@ RunOutputEvent = Union[
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     OutputModelResponseCompletedEvent,
+    LLMRequestStartedEvent,
+    LLMRequestCompletedEvent,
     CustomEvent,
 ]
 
@@ -506,6 +533,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     RunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
     RunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
+    RunEvent.llm_request_started.value: LLMRequestStartedEvent,
+    RunEvent.llm_request_completed.value: LLMRequestCompletedEvent,
     RunEvent.custom_event.value: CustomEvent,
 }
 

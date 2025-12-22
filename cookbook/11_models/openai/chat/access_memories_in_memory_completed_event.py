@@ -1,0 +1,82 @@
+"""
+Test script to verify memory events are working correctly.
+Steps:
+1. Run: `./cookbook/scripts/run_pgvector.sh` to start a postgres container with pgvector
+2. Run: `pip install openai sqlalchemy 'psycopg[binary]' pgvector` to install the dependencies
+3. Run: `python libs/agno/agno/test.py` to run the agent
+"""
+
+from agno.agent import Agent
+from agno.db.postgres import PostgresDb
+from agno.models.openai import OpenAIChat
+from agno.run.agent import RunEvent
+
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-5-mini"),
+    user_id="test_user",
+    session_id="test_session",
+    db=db,
+    enable_user_memories=True,
+    enable_session_summaries=True,
+)
+
+
+def run_with_events(message: str):
+    print(f"\n--- Query: {message} ---\n")
+
+    stream = agent.run(message, stream=True, stream_events=True)
+
+    for chunk in stream:
+        if chunk.event == RunEvent.run_started.value:
+            print(f"[RunStarted] model={chunk.model}")
+
+        elif chunk.event == RunEvent.run_completed.value:
+            print(f"[RunCompleted]")
+
+        elif chunk.event == RunEvent.llm_request_started.value:
+            print(f"[LLMRequestStarted] model={chunk.model}")
+
+        elif chunk.event == RunEvent.llm_request_completed.value:
+            print(
+                f"[LLMRequestCompleted] input={chunk.input_tokens}, output={chunk.output_tokens}, total={chunk.total_tokens}"
+            )
+
+        elif chunk.event == RunEvent.memory_update_started.value:
+            print(f"[MemoryUpdateStarted]")
+
+        elif chunk.event == RunEvent.memory_update_completed.value:
+            print(f"[MemoryUpdateCompleted]")
+            if chunk.memories:
+                print(f"  Memories ({len(chunk.memories)}):")
+                for mem in chunk.memories:
+                    print(f"    - {mem.memory}")
+            else:
+                print(f"  No memories returned")
+
+        elif chunk.event == RunEvent.session_summary_started.value:
+            print(f"[SessionSummaryStarted]")
+
+        elif chunk.event == RunEvent.session_summary_completed.value:
+            print(f"[SessionSummaryCompleted]")
+            if hasattr(chunk, "session_summary") and chunk.session_summary:
+                print(f"  Summary: {chunk.session_summary.summary}")
+
+        elif chunk.event == RunEvent.run_content_completed.value:
+            print(f"[RunContentCompleted]")
+
+
+if __name__ == "__main__":
+    run_with_events("My name is John Billings")
+    run_with_events("I live in NYC")
+    run_with_events("What is my name?")
+
+    print("\n--- Final Memories ---")
+    memories = agent.get_user_memories(user_id="test_user")
+    if memories:
+        for mem in memories:
+            print(f"  - {mem.memory}")
+    else:
+        print("  No memories found")
