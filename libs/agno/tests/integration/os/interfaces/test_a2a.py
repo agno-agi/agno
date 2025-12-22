@@ -827,19 +827,19 @@ def test_a2a_streaming_team(test_team: Team, test_team_client: TestClient):
 
 def test_team_list_tasks_unknown_team_returns_404(test_team_client: TestClient):
     body = {"jsonrpc": "2.0", "id": "req-4", "params": {"session_id": "context-1"}}
-    resp = test_team_client.request("GET", f"/a2a/teams/unknown-team-id/v1/tasks", json=body)
+    resp = test_team_client.request("GET", "/a2a/teams/unknown-team-id/v1/tasks", json=body)
     assert resp.status_code == 404
 
 
 def test_team_get_task_unknown_team_returns_404(test_team_client: TestClient):
     body = {"jsonrpc": "2.0", "id": "req-5", "params": {"session_id": "context-1"}}
-    resp = test_team_client.request("GET", f"/a2a/teams/unknown-team-id/v1/tasks/t-123", json=body)
+    resp = test_team_client.request("GET", "/a2a/teams/unknown-team-id/v1/tasks/t-123", json=body)
     assert resp.status_code == 404
 
 
 def test_team_cancel_task_unknown_team_returns_404(test_team_client: TestClient):
     body = {"jsonrpc": "2.0", "id": "req-6", "params": {"task_id": "t-123", "session_id": "context-1"}}
-    resp = test_team_client.post(f"/a2a/teams/unknown-team-id/v1/tasks:cancel", json=body)
+    resp = test_team_client.post("/a2a/teams/unknown-team-id/v1/tasks:cancel", json=body)
     assert resp.status_code == 404
 
 
@@ -1164,19 +1164,19 @@ def test_a2a_user_id_in_response_metadata(test_agent: Agent, test_client: TestCl
 
 def test_agent_list_tasks_unknown_agent_returns_404(test_client: TestClient):
     body = {"jsonrpc": "2.0", "id": "req-1", "params": {"session_id": "context-1"}}
-    resp = test_client.request("GET", f"/a2a/agents/unknown-agent-id/v1/tasks", json=body)
+    resp = test_client.request("GET", "/a2a/agents/unknown-agent-id/v1/tasks", json=body)
     assert resp.status_code == 404
 
 
 def test_agent_get_task_unknown_agent_returns_404(test_client: TestClient):
     body = {"jsonrpc": "2.0", "id": "req-2", "params": {"session_id": "context-1"}}
-    resp = test_client.request("GET", f"/a2a/agents/unknown-agent-id/v1/tasks/t-123", json=body)
+    resp = test_client.request("GET", "/a2a/agents/unknown-agent-id/v1/tasks/t-123", json=body)
     assert resp.status_code == 404
 
 
 def test_agent_cancel_task_unknown_agent_returns_404(test_client: TestClient):
     body = {"jsonrpc": "2.0", "id": "req-3", "params": {"task_id": "t-123", "session_id": "context-1"}}
-    resp = test_client.post(f"/a2a/agents/unknown-agent-id/v1/tasks:cancel", json=body)
+    resp = test_client.post("/a2a/agents/unknown-agent-id/v1/tasks:cancel", json=body)
     assert resp.status_code == 404
 
 
@@ -1330,17 +1330,17 @@ def test_a2a_streaming_workflow(test_workflow: Workflow, test_workflow_client: T
 
 def test_workflow_list_tasks_unknown_workflow_returns_404(test_workflow_client: TestClient):
     body = {"jsonrpc": "2.0", "id": "req-7", "params": {"session_id": "context-1"}}
-    resp = test_workflow_client.request("GET", f"/a2a/workflows/unknown-workflow-id/v1/tasks", json=body)
+    resp = test_workflow_client.request("GET", "/a2a/workflows/unknown-workflow-id/v1/tasks", json=body)
     assert resp.status_code == 404
 
 
 def test_workflow_get_task_unknown_workflow_returns_404(test_workflow_client: TestClient):
     body = {"jsonrpc": "2.0", "id": "req-8", "params": {"session_id": "context-1"}}
-    resp = test_workflow_client.request("GET", f"/a2a/workflows/unknown-workflow-id/v1/tasks/t-123", json=body)
+    resp = test_workflow_client.request("GET", "/a2a/workflows/unknown-workflow-id/v1/tasks/t-123", json=body)
     assert resp.status_code == 404
 
 
 def test_workflow_cancel_task_unknown_workflow_returns_404(test_workflow_client: TestClient):
     body = {"jsonrpc": "2.0", "id": "req-9", "params": {"task_id": "t-123", "session_id": "context-1"}}
-    resp = test_workflow_client.post(f"/a2a/workflows/unknown-workflow-id/v1/tasks:cancel", json=body)
+    resp = test_workflow_client.post("/a2a/workflows/unknown-workflow-id/v1/tasks:cancel", json=body)
     assert resp.status_code == 404
