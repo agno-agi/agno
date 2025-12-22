@@ -57,12 +57,15 @@ from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from agno.run.cancel import (
-    cancel_run as cancel_run_global,
-)
-from agno.run.cancel import (
+    acleanup_run,
+    araise_if_cancelled,
+    aregister_run,
     cleanup_run,
     raise_if_cancelled,
     register_run,
+)
+from agno.run.cancel import (
+    cancel_run as cancel_run_global,
 )
 from agno.run.messages import RunMessages
 from agno.run.team import (
@@ -1040,7 +1043,7 @@ class Team:
             for tool in self.tools:
                 if (
                     hasattr(tool, "requires_connect")
-                    and tool.requires_connect
+                    and tool.requires_connect  # type: ignore
                     and hasattr(tool, "connect")
                     and tool not in self._connectable_tools_initialized_on_run
                 ):
@@ -2344,6 +2347,7 @@ class Team:
         14. Create session summary
         15. Cleanup and store (scrub, add to session, calculate metrics, save session)
         """
+        await aregister_run(run_context.run_id)
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
         memory_task = None
 
@@ -2451,12 +2455,12 @@ class Team:
                         existing_task=memory_task,
                     )
 
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
                     # 7. Reason about the task if reasoning is enabled
                     await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
 
                     # Check for cancellation before model call
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 8. Get the model response for the team leader
                     model_response = await self.model.aresponse(
@@ -2471,7 +2475,7 @@ class Team:
                     )  # type: ignore
 
                     # Check for cancellation after model call
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # If an output model is provided, generate output using the output model
                     await self._agenerate_response_with_output_model(
@@ -2512,12 +2516,12 @@ class Team:
                         ):
                             pass
 
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 13. Wait for background memory creation
                     await await_for_open_threads(memory_task=memory_task)
 
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
                     # 14. Create session summary
                     if self.session_summary_manager is not None:
                         # Upsert the RunOutput to Team Session before creating the session summary
@@ -2527,7 +2531,7 @@ class Team:
                         except Exception as e:
                             log_warning(f"Error in session summary creation: {str(e)}")
 
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
                     run_response.status = RunStatus.completed
 
                     # 15. Cleanup and store the run response and session
@@ -2594,7 +2598,6 @@ class Team:
                     await self._acleanup_and_store(run_response=run_response, session=team_session)
 
                     return run_response
-
         finally:
             # Always disconnect connectable tools
             self._disconnect_connectable_tools()
@@ -2609,7 +2612,7 @@ class Team:
                     pass
 
             # Always clean up the run tracking
-            cleanup_run(run_response.run_id)  # type: ignore
+            await acleanup_run(run_response.run_id)  # type: ignore
 
         return run_response
 
@@ -2771,11 +2774,11 @@ class Team:
                         run_messages=run_messages,
                         stream_events=stream_events,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield item
 
                     # Check for cancellation before model processing
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 9. Get a response from the model
                     if self.output_model is None:
@@ -2789,7 +2792,7 @@ class Team:
                             session_state=run_context.session_state,
                             run_context=run_context,
                         ):
-                            raise_if_cancelled(run_response.run_id)  # type: ignore
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event
                     else:
                         async for event in self._ahandle_model_response_stream(
@@ -2802,7 +2805,7 @@ class Team:
                             session_state=run_context.session_state,
                             run_context=run_context,
                         ):
-                            raise_if_cancelled(run_response.run_id)  # type: ignore
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                             from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
                             if isinstance(event, RunContentEvent):
@@ -2820,11 +2823,11 @@ class Team:
                             run_messages=run_messages,
                             stream_events=stream_events,
                         ):
-                            raise_if_cancelled(run_response.run_id)  # type: ignore
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event
 
                     # Check for cancellation after model processing
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 10. Parse response with parser model if provided
                     async for event in self._aparse_response_with_parser_model_stream(
@@ -2859,7 +2862,7 @@ class Team:
                         ):
                             yield event
 
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
                     # 11. Wait for background memory creation
                     async for event in await_for_thread_tasks_stream(
                         run_response=run_response,
@@ -2870,7 +2873,7 @@ class Team:
                     ):
                         yield event
 
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 12. Create session summary
                     if self.session_summary_manager is not None:
@@ -2898,7 +2901,7 @@ class Team:
                                 store_events=self.store_events,
                             )
 
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # Create the run completed event
                     completed_event = handle_event(
@@ -2924,9 +2927,7 @@ class Team:
                     await self._alog_team_telemetry(session_id=team_session.session_id, run_id=run_response.run_id)
 
                     log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
-
                     break
-
                 except RunCancelledException as e:
                     # Handle run cancellation during async streaming
                     log_info(f"Team run {run_response.run_id} was cancelled during async streaming")
@@ -3004,7 +3005,7 @@ class Team:
                     pass
 
             # Always clean up the run tracking
-            cleanup_run(run_response.run_id)  # type: ignore
+            await acleanup_run(run_response.run_id)  # type: ignore
 
     @overload
     async def arun(
@@ -3096,7 +3097,6 @@ class Team:
 
         # Set the id for the run and register it immediately for cancellation tracking
         run_id = run_id or str(uuid4())
-        register_run(run_id)
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.parent_team_id:
             log_warning(
