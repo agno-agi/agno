@@ -36,6 +36,7 @@ from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
+from agno.db.schemas.user_profile import UserProfile
 from agno.eval.base import BaseEval
 from agno.exceptions import (
     InputCheckError,
@@ -225,17 +226,23 @@ class Agent:
     # If True, add the dependencies to the user prompt
     add_dependencies_to_context: bool = False
 
-    # --- Agent Memory ---
+    # --- Agent Memory (v1) ---
     # Memory manager to use for this agent
     memory_manager: Optional[MemoryManager] = None
-    # Memory compiler for user profile extraction (v2)
-    memory_compiler: Optional[MemoryCompiler] = None
     # Enable the agent to manage memories of the user
     enable_agentic_memory: bool = False
     # If True, the agent creates/updates user memories at the end of runs
     enable_user_memories: bool = False
     # If True, the agent adds a reference to the user memories in the response
     add_memories_to_context: Optional[bool] = None
+
+    # --- Agent Memory (v2) ---
+    # Memory compiler for structured user profile extraction
+    memory_compiler: Optional[MemoryCompiler] = None
+    # If True, automatically extracts user memory after each run
+    update_memory_on_run: bool = False
+    # If True, enables agentic memory tools for v2 memory system
+    enable_agentic_memory_v2: bool = False
 
     # --- Database ---
     # Database to use for this agent
@@ -470,6 +477,8 @@ class Agent:
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         memory_manager: Optional[MemoryManager] = None,
         memory_compiler: Optional[MemoryCompiler] = None,
+        update_memory_on_run: bool = False,
+        enable_agentic_memory_v2: bool = False,
         enable_agentic_memory: bool = False,
         enable_user_memories: bool = False,
         add_memories_to_context: Optional[bool] = None,
@@ -575,6 +584,8 @@ class Agent:
 
         self.memory_manager = memory_manager
         self.memory_compiler = memory_compiler
+        self.update_memory_on_run = update_memory_on_run
+        self.enable_agentic_memory_v2 = enable_agentic_memory_v2
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
         self.add_memories_to_context = add_memories_to_context
@@ -805,6 +816,14 @@ class Agent:
                 self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None
             )
 
+    def _set_memory_compiler(self) -> None:
+        if self.memory_compiler is None:
+            self.memory_compiler = MemoryCompiler()
+        if self.memory_compiler.model is None:
+            self.memory_compiler.model = self.model
+        if self.memory_compiler.db is None:
+            self.memory_compiler.db = self.db
+
     def _set_session_summary_manager(self) -> None:
         if self.enable_session_summaries and self.session_summary_manager is None:
             self.session_summary_manager = SessionSummaryManager(model=self.model)
@@ -852,8 +871,18 @@ class Agent:
         self._set_default_model()
         self._set_debug(debug_mode=debug_mode)
         self.set_id()
+
+        # Validate: can't enable both v1 and v2 agentic memory
+        if self.enable_agentic_memory and self.enable_agentic_memory_v2:
+            raise ValueError(
+                "Cannot enable both 'enable_agentic_memory' (v1) and 'enable_agentic_memory_v2' (v2). "
+                "Please choose one memory system."
+            )
+
         if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
             self._set_memory_manager()
+        if self.update_memory_on_run or self.enable_agentic_memory_v2 or self.memory_compiler is not None:
+            self._set_memory_compiler()
         if (
             self.add_culture_to_context
             or self.update_cultural_knowledge
@@ -6238,7 +6267,12 @@ class Agent:
             return create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
         # Create new task if conditions are met (memory_compiler v2)
-        if run_messages.user_message is not None and self.memory_compiler is not None:
+        if (
+            run_messages.user_message is not None
+            and self.memory_compiler is not None
+            and self.update_memory_on_run
+            and not self.enable_agentic_memory_v2
+        ):
             log_debug("Starting memory_v2 creation in background task.")
             return create_task(self._amake_memories_v2(run_messages=run_messages, user_id=user_id))
 
@@ -6309,7 +6343,12 @@ class Agent:
             return self.background_executor.submit(self._make_memories, run_messages=run_messages, user_id=user_id)
 
         # Create new future if conditions are met (memory_compiler v2)
-        if run_messages.user_message is not None and self.memory_compiler is not None:
+        if (
+            run_messages.user_message is not None
+            and self.memory_compiler is not None
+            and self.update_memory_on_run
+            and not self.enable_agentic_memory_v2
+        ):
             log_debug("Starting memory_v2 creation in background thread.")
             return self.background_executor.submit(self._make_memories_v2, run_messages=run_messages, user_id=user_id)
 
@@ -6405,6 +6444,9 @@ class Agent:
 
         if self.enable_agentic_memory:
             agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=False))
+
+        if self.enable_agentic_memory_v2 and user_id:
+            agent_tools.append(self._get_update_user_memory_v2_function(user_id=user_id, async_mode=False))
 
         if self.enable_agentic_culture:
             agent_tools.append(self._get_update_cultural_knowledge_function(async_mode=False))
@@ -6510,6 +6552,9 @@ class Agent:
 
         if self.enable_agentic_memory:
             agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=True))
+
+        if self.enable_agentic_memory_v2 and user_id:
+            agent_tools.append(self._get_update_user_memory_v2_function(user_id=user_id, async_mode=True))
 
         if self.enable_agentic_state:
             agent_tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
@@ -7727,6 +7772,26 @@ class Agent:
 
         return await self.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
 
+    def get_user_profile(self, user_id: Optional[str] = None) -> Optional[UserProfile]:
+        """Get user profile for a given user ID.
+
+        Args:
+            user_id: The user ID to get the profile for. If not provided, the current cached user ID is used.
+        Returns:
+            Optional[UserProfile]: The user profile, or None if not found.
+        """
+        if self.memory_compiler is None:
+            if self.db is None:
+                log_warning("Database not provided.")
+                return None
+            self._set_memory_compiler()
+
+        user_id = user_id if user_id is not None else self.user_id
+        if user_id is None:
+            user_id = "default"
+
+        return self.memory_compiler.get_user_profile(user_id=user_id)  # type: ignore
+
     def get_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
         """Get the cultural knowledge the agent has access to
 
@@ -8027,6 +8092,31 @@ class Agent:
                     "- Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
                     "- If you use the `update_user_memory` tool, remember to pass on the response to the user.\n"
                     "</updating_user_memories>\n\n"
+                )
+
+        # 3.3.9b Add user profile (v2) to the system prompt
+        if self.memory_compiler is not None and user_id is not None:
+            user_context = self.memory_compiler.compile_user_profile(user_id)
+            if user_context:
+                system_message_content += (
+                    "You have access to stored information about this user from previous interactions:\n\n"
+                )
+                system_message_content += user_context
+                system_message_content += "\n"
+                system_message_content += (
+                    "Note: Information from the current conversation takes precedence over stored data.\n\n"
+                )
+
+            if self.enable_agentic_memory_v2:
+                system_message_content += (
+                    "<updating_user_memory>\n"
+                    "You have access to the `update_user_memory` tool to save information about the user.\n\n"
+                    "Usage: update_user_memory(info_type, key, value)\n"
+                    "- info_type: 'profile', 'policy', 'knowledge', or 'feedback'\n"
+                    "- key: A descriptive key for the information\n"
+                    "- value: The information to save (or None to delete)\n\n"
+                    "Save information that will be useful in future conversations.\n"
+                    "</updating_user_memory>\n\n"
                 )
 
         # 3.3.10 Then add cultural knowledge to the system prompt
@@ -8374,6 +8464,31 @@ class Agent:
                     "- Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
                     "- If you use the `update_user_memory` tool, remember to pass on the response to the user.\n"
                     "</updating_user_memories>\n\n"
+                )
+
+        # 3.3.9b Add user profile (v2) to the system prompt
+        if self.memory_compiler is not None and user_id is not None:
+            user_context = await self.memory_compiler.acompile_user_profile(user_id)
+            if user_context:
+                system_message_content += (
+                    "You have access to stored information about this user from previous interactions:\n\n"
+                )
+                system_message_content += user_context
+                system_message_content += "\n"
+                system_message_content += (
+                    "Note: Information from the current conversation takes precedence over stored data.\n\n"
+                )
+
+            if self.enable_agentic_memory_v2:
+                system_message_content += (
+                    "<updating_user_memory>\n"
+                    "You have access to the `update_user_memory` tool to save information about the user.\n\n"
+                    "Usage: update_user_memory(info_type, key, value)\n"
+                    "- info_type: 'profile', 'policy', 'knowledge', or 'feedback'\n"
+                    "- key: A descriptive key for the information\n"
+                    "- value: The information to save (or None to delete)\n\n"
+                    "Save information that will be useful in future conversations.\n"
+                    "</updating_user_memory>\n\n"
                 )
 
         # 3.3.10 Then add cultural knowledge to the system prompt
@@ -10309,6 +10424,38 @@ class Agent:
             update_user_memory_function = update_user_memory  # type: ignore
 
         return Function.from_callable(update_user_memory_function, name="update_user_memory")
+
+    def _get_update_user_memory_v2_function(self, user_id: str, async_mode: bool = False) -> Function:
+        if async_mode:
+
+            async def aupdate_user_memory(info_type: str, key: str, value: Optional[str] = None) -> str:
+                """Save or delete user information.
+
+                Args:
+                    info_type: One of 'profile', 'policy', 'knowledge', 'feedback'
+                    key: The key to save/delete
+                    value: The value to save. Pass None to delete.
+                """
+                if value is None:
+                    return await self.memory_compiler._adelete_from_user_memory_layer(user_id, info_type, key)  # type: ignore
+                return await self.memory_compiler._asave_to_user_memory_layer(user_id, info_type, key, value)  # type: ignore
+
+            return Function.from_callable(aupdate_user_memory, name="update_user_memory")
+        else:
+
+            def update_user_memory(info_type: str, key: str, value: Optional[str] = None) -> str:
+                """Save or delete user information.
+
+                Args:
+                    info_type: One of 'profile', 'policy', 'knowledge', 'feedback'
+                    key: The key to save/delete
+                    value: The value to save. Pass None to delete.
+                """
+                if value is None:
+                    return self.memory_compiler._delete_from_user_memory_layer(user_id, info_type, key)  # type: ignore
+                return self.memory_compiler._save_to_user_memory_layer(user_id, info_type, key, value)  # type: ignore
+
+            return Function.from_callable(update_user_memory, name="update_user_memory")
 
     def _get_update_cultural_knowledge_function(self, async_mode: bool = False) -> Function:
         def update_cultural_knowledge(task: str) -> str:
