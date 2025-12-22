@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from agno.db.schemas.culture import CulturalKnowledge
+from agno.db.utils import get_sort_value
 from agno.utils.log import log_debug
 
 
@@ -21,6 +22,11 @@ def apply_sorting(
 
     Returns:
         The sorted list
+
+    Note:
+        For 'updated_at' sorting, falls back to 'created_at' when 'updated_at' is None.
+        This ensures pre-2.0 records (which may have NULL updated_at) are sorted
+        correctly by their creation time.
     """
     if sort_by is None or not data:
         return data
@@ -31,8 +37,16 @@ def apply_sorting(
         return data
 
     try:
-        reverse_order = sort_order != "asc" if sort_order else True
-        return sorted(data, key=lambda x: x.get(sort_by, 0), reverse=reverse_order)
+        is_descending = sort_order != "asc" if sort_order else True
+
+        # Sort using the helper function that handles updated_at -> created_at fallback
+        sorted_records = sorted(
+            data,
+            key=lambda x: (get_sort_value(x, sort_by) is None, get_sort_value(x, sort_by)),
+            reverse=is_descending,
+        )
+
+        return sorted_records
     except Exception as e:
         log_debug(f"Error sorting data by '{sort_by}': {e}")
         return data
