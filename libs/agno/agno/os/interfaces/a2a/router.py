@@ -44,7 +44,7 @@ def attach_routes(
         raise ValueError("Agents, Teams, or Workflows are required to setup the A2A interface.")
 
     # ============= AGENTS =============
-    @router.get("/agents/{id}/.well-known/agent-card.json")
+    @router.get("/agents/{id:path}/.well-known/agent-card.json")
     async def get_agent_card(request: Request, id: str):
         agent = get_agent_by_id(id, agents)
         if not agent:
@@ -73,7 +73,7 @@ def attach_routes(
         )
 
     @router.post(
-        "/agents/{id}/v1/message:send",
+        "/agents/{id:path}/v1/message:send",
         operation_id="run_message_agent",
         name="run_message_agent",
         description="Send a message to an Agno Agent (non-streaming). The Agent is identified via the path parameter '{id}'. "
@@ -174,7 +174,7 @@ def attach_routes(
             )
 
     @router.post(
-        "/agents/{id}/v1/message:stream",
+        "/agents/{id:path}/v1/message:stream",
         operation_id="stream_message_agent",
         name="stream_message_agent",
         description="Stream a message to an Agno Agent (streaming). The Agent is identified via the path parameter '{id}'. "
@@ -240,7 +240,7 @@ def attach_routes(
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
 
     # ============= TEAMS =============
-    @router.get("/teams/{id}/.well-known/agent-card.json")
+    @router.get("/teams/{id:path}/.well-known/agent-card.json")
     async def get_team_card(request: Request, id: str):
         team = get_team_by_id(id, teams)
         if not team:
@@ -268,7 +268,7 @@ def attach_routes(
         )
 
     @router.post(
-        "/teams/{id}/v1/message:send",
+        "/teams/{id:path}/v1/message:send",
         operation_id="run_message_team",
         name="run_message_team",
         description="Send a message to an Agno Team (non-streaming). The Team is identified via the path parameter '{id}'. "
@@ -369,7 +369,7 @@ def attach_routes(
             )
 
     @router.post(
-        "/teams/{id}/v1/message:stream",
+        "/teams/{id:path}/v1/message:stream",
         operation_id="stream_message_team",
         name="stream_message_team",
         description="Stream a message to an Agno Team (streaming). The Team is identified via the path parameter '{id}'. "
@@ -435,7 +435,7 @@ def attach_routes(
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
 
     # ============= WORKFLOWS =============
-    @router.get("/workflows/{id}/.well-known/agent-card.json")
+    @router.get("/workflows/{id:path}/.well-known/agent-card.json")
     async def get_workflow_card(request: Request, id: str):
         workflow = get_workflow_by_id(id, workflows)
         if not workflow:
@@ -463,7 +463,7 @@ def attach_routes(
         )
 
     @router.post(
-        "/workflows/{id}/v1/message:send",
+        "/workflows/{id:path}/v1/message:send",
         operation_id="run_message_workflow",
         name="run_message_workflow",
         description="Send a message to an Agno Workflow (non-streaming). The Workflow is identified via the path parameter '{id}'. "
@@ -564,7 +564,7 @@ def attach_routes(
             )
 
     @router.post(
-        "/workflows/{id}/v1/message:stream",
+        "/workflows/{id:path}/v1/message:stream",
         operation_id="stream_message_workflow",
         name="stream_message_workflow",
         description="Stream a message to an Agno Workflow (streaming). The Workflow is identified via the path parameter '{id}'. "

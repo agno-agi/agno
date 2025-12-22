@@ -545,7 +545,7 @@ def get_workflow_router(
         return [WorkflowSummaryResponse.from_workflow(workflow) for workflow in accessible_workflows]
 
     @router.get(
-        "/workflows/{workflow_id}",
+        "/workflows/{workflow_id:path}",
         response_model=WorkflowResponse,
         response_model_exclude_none=True,
         tags=["Workflows"],
@@ -580,7 +580,7 @@ def get_workflow_router(
             return await WorkflowResponse.from_workflow(workflow=workflow)
 
     @router.post(
-        "/workflows/{workflow_id}/runs",
+        "/workflows/{workflow_id:path}/runs",
         tags=["Workflows"],
         operation_id="create_workflow_run",
         response_model_exclude_none=True,
@@ -700,7 +700,7 @@ def get_workflow_router(
             raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
 
     @router.post(
-        "/workflows/{workflow_id}/runs/{run_id}/cancel",
+        "/workflows/{workflow_id:path}/runs/{run_id}/cancel",
         tags=["Workflows"],
         operation_id="cancel_workflow_run",
         summary="Cancel Workflow Run",

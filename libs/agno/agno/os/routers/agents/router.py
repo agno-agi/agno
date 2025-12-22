@@ -172,7 +172,7 @@ def get_agent_router(
     )
 
     @router.post(
-        "/agents/{agent_id}/runs",
+        "/agents/{agent_id:path}/runs",
         tags=["Agents"],
         operation_id="create_agent_run",
         response_model_exclude_none=True,
@@ -385,7 +385,7 @@ def get_agent_router(
                 raise HTTPException(status_code=400, detail=str(e))
 
     @router.post(
-        "/agents/{agent_id}/runs/{run_id}/cancel",
+        "/agents/{agent_id:path}/runs/{run_id}/cancel",
         tags=["Agents"],
         operation_id="cancel_agent_run",
         response_model_exclude_none=True,
@@ -416,7 +416,7 @@ def get_agent_router(
         return JSONResponse(content={}, status_code=200)
 
     @router.post(
-        "/agents/{agent_id}/runs/{run_id}/continue",
+        "/agents/{agent_id:path}/runs/{run_id}/continue",
         tags=["Agents"],
         operation_id="continue_agent_run",
         response_model_exclude_none=True,
@@ -591,7 +591,7 @@ def get_agent_router(
         return agents
 
     @router.get(
-        "/agents/{agent_id}",
+        "/agents/{agent_id:path}",
         response_model=AgentResponse,
         response_model_exclude_none=True,
         tags=["Agents"],

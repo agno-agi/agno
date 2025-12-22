@@ -125,7 +125,7 @@ def get_team_router(
     )
 
     @router.post(
-        "/teams/{team_id}/runs",
+        "/teams/{team_id:path}/runs",
         tags=["Teams"],
         operation_id="create_team_run",
         response_model_exclude_none=True,
@@ -301,7 +301,7 @@ def get_team_router(
                 raise HTTPException(status_code=400, detail=str(e))
 
     @router.post(
-        "/teams/{team_id}/runs/{run_id}/cancel",
+        "/teams/{team_id:path}/runs/{run_id}/cancel",
         tags=["Teams"],
         operation_id="cancel_team_run",
         response_model_exclude_none=True,
@@ -441,7 +441,7 @@ def get_team_router(
         return teams
 
     @router.get(
-        "/teams/{team_id}",
+        "/teams/{team_id:path}",
         response_model=TeamResponse,
         response_model_exclude_none=True,
         tags=["Teams"],
