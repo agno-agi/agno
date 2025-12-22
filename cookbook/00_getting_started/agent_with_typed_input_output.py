@@ -99,7 +99,7 @@ You receive structured requests with:
 # Create the Agent
 # ============================================================================
 agent_with_typed_input_output = Agent(
-    name="Agent with Typed Input/Output",
+    name="Agent with Typed Input Output",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
     tools=[YFinanceTools()],
