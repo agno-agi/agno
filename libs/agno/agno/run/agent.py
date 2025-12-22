@@ -172,6 +172,12 @@ class RunEvent(str, Enum):
     output_model_response_started = "OutputModelResponseStarted"
     output_model_response_completed = "OutputModelResponseCompleted"
 
+    llm_request_started = "LLMRequestStarted"
+    llm_request_completed = "LLMRequestCompleted"
+
+    compression_started = "CompressionStarted"
+    compression_completed = "CompressionCompleted"
+
     custom_event = "CustomEvent"
 
 
@@ -349,6 +355,7 @@ class MemoryUpdateStartedEvent(BaseAgentRunEvent):
 @dataclass
 class MemoryUpdateCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.memory_update_completed.value
+    memories: Optional[List[Any]] = None
 
 
 @dataclass
@@ -434,6 +441,44 @@ class OutputModelResponseCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class LLMRequestStartedEvent(BaseAgentRunEvent):
+    """Event sent when an LLM request is about to be made"""
+
+    event: str = RunEvent.llm_request_started.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+
+
+@dataclass
+class LLMRequestCompletedEvent(BaseAgentRunEvent):
+    """Event sent when an LLM request has completed"""
+
+    event: str = RunEvent.llm_request_completed.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+
+
+@dataclass
+class CompressionStartedEvent(BaseAgentRunEvent):
+    """Event sent when tool result compression is about to start"""
+
+    event: str = RunEvent.compression_started.value
+
+
+@dataclass
+class CompressionCompletedEvent(BaseAgentRunEvent):
+    """Event sent when tool result compression has completed"""
+
+    event: str = RunEvent.compression_completed.value
+    tool_results_compressed: Optional[int] = None
+    original_size: Optional[int] = None
+    compressed_size: Optional[int] = None
+
+
+@dataclass
 class CustomEvent(BaseAgentRunEvent):
     event: str = RunEvent.custom_event.value
 
@@ -472,6 +517,10 @@ RunOutputEvent = Union[
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     OutputModelResponseCompletedEvent,
+    LLMRequestStartedEvent,
+    LLMRequestCompletedEvent,
+    CompressionStartedEvent,
+    CompressionCompletedEvent,
     CustomEvent,
 ]
 
@@ -506,6 +555,10 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     RunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
     RunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
+    RunEvent.llm_request_started.value: LLMRequestStartedEvent,
+    RunEvent.llm_request_completed.value: LLMRequestCompletedEvent,
+    RunEvent.compression_started.value: CompressionStartedEvent,
+    RunEvent.compression_completed.value: CompressionCompletedEvent,
     RunEvent.custom_event.value: CustomEvent,
 }
 
