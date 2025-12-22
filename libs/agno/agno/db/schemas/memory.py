@@ -28,12 +28,14 @@ class UserMemory:
             self.updated_at = to_epoch_s(self.updated_at)
 
     def to_dict(self) -> Dict[str, Any]:
+        created_at = datetime.fromtimestamp(self.created_at).isoformat() if self.created_at is not None else None
+        updated_at = datetime.fromtimestamp(self.updated_at).isoformat() if self.updated_at is not None else created_at
         _dict = {
             "memory_id": self.memory_id,
             "memory": self.memory,
             "topics": self.topics,
-            "created_at": datetime.fromtimestamp(self.created_at).isoformat() if self.created_at is not None else None,
-            "updated_at": datetime.fromtimestamp(self.updated_at).isoformat() if self.updated_at is not None else None,
+            "created_at": created_at,
+            "updated_at": updated_at,
             "input": self.input,
             "user_id": self.user_id,
             "agent_id": self.agent_id,
