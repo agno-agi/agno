@@ -192,6 +192,7 @@ class SingleStoreDb(BaseDb):
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
+            (self.user_profiles_table_name, "user_profiles"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -2902,7 +2903,7 @@ class SingleStoreDb(BaseDb):
             UserProfile or dict if found, None otherwise
         """
         try:
-            table = self._get_table(table_type="user_profiles")
+            table = self._get_table(table_type="user_profiles", create_table_if_not_found=True)
             if table is None:
                 return None
 

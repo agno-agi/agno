@@ -1928,7 +1928,7 @@ class SurrealDb(BaseDb):
             UserProfile or dict if found, None otherwise
         """
         try:
-            table = self._get_table("user_profiles", create_table_if_not_found=False)
+            table = self._get_table("user_profiles", create_table_if_not_found=True)
             if table is None:
                 return None
 

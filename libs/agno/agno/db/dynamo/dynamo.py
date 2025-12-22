@@ -149,6 +149,7 @@ class DynamoDb(BaseDb):
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
             ("culture", self.culture_table_name),
+            ("user_profiles", self.user_profiles_table_name),
         ]
 
         for table_type, table_name in tables_to_create:
@@ -2801,7 +2802,7 @@ class DynamoDb(BaseDb):
             UserProfile or dict if found, None otherwise
         """
         try:
-            table_name = self._get_table(table_type="user_profiles", create_table_if_not_found=False)
+            table_name = self._get_table(table_type="user_profiles", create_table_if_not_found=True)
             if table_name is None:
                 return None
 

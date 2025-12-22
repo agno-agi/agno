@@ -1,10 +1,3 @@
-"""Multi-User Memory - Separate memory profiles for different users.
-
-Demonstrates how the same agent maintains separate memory profiles
-for different users. Each user's preferences, context, and feedback
-are isolated and personalized.
-"""
-
 import asyncio
 
 from agno.agent import Agent
@@ -87,4 +80,3 @@ if __name__ == "__main__":
     user_3 = agent.get_user_profile(USER_3)
     if user_3:
         pprint(user_3.to_dict())
-

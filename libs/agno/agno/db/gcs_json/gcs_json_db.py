@@ -1808,7 +1808,7 @@ class GcsJsonDb(BaseDb):
             UserProfile or dict if found, None otherwise
         """
         try:
-            profiles = self._read_json_file("user_profiles", create_table_if_not_found=False)
+            profiles = self._read_json_file("user_profiles", create_table_if_not_found=True)
             if not profiles:
                 return None
 

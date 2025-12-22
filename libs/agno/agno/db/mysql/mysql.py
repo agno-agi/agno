@@ -271,6 +271,7 @@ class MySQLDb(BaseDb):
             (self.trace_table_name, "traces"),
             (self.span_table_name, "spans"),
             (self.versions_table_name, "versions"),
+            (self.user_profiles_table_name, "user_profiles"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -2957,7 +2958,7 @@ class MySQLDb(BaseDb):
             UserProfile or dict if found, None otherwise
         """
         try:
-            table = self._get_table(table_type="user_profiles")
+            table = self._get_table(table_type="user_profiles", create_table_if_not_found=True)
             if table is None:
                 return None
 

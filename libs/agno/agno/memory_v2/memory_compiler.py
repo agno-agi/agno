@@ -9,13 +9,12 @@ from agno.db.schemas.user_profile import UserProfile
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
+from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
 
 
 @dataclass
 class MemoryCompiler:
-    """Memory Compiler for User Profiles"""
-
     # Model used for profile extraction
     model: Optional[Model] = None
 
@@ -300,14 +299,15 @@ class MemoryCompiler:
 
         model_copy = deepcopy(self.model)
 
-        # Prepare tools
-        _tools = self._get_db_tools(
+        # Prepare tools and wrap them as Function objects
+        raw_tools = self._get_db_tools(
             user_id=user_id,
             db=cast(BaseDb, self.db),
             input_string=message,
             enable_update_profile=self.update_profile,
             enable_delete_profile=self.delete_profile,
         )
+        _tools = self.determine_tools_for_model(raw_tools)
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [
@@ -336,9 +336,9 @@ class MemoryCompiler:
 
         model_copy = deepcopy(self.model)
 
-        # Prepare tools
+        # Prepare tools and wrap them as Function objects
         if isinstance(self.db, AsyncBaseDb):
-            _tools = await self._aget_db_tools(
+            raw_tools = await self._aget_db_tools(
                 user_id=user_id,
                 db=self.db,
                 input_string=message,
@@ -346,13 +346,14 @@ class MemoryCompiler:
                 enable_delete_profile=self.delete_profile,
             )
         else:
-            _tools = self._get_db_tools(
+            raw_tools = self._get_db_tools(
                 user_id=user_id,
                 db=self.db,
                 input_string=message,
                 enable_update_profile=self.update_profile,
                 enable_delete_profile=self.delete_profile,
             )
+        _tools = self.determine_tools_for_model(raw_tools)
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [
@@ -386,14 +387,11 @@ class MemoryCompiler:
 
         profile_capture_instructions = self.profile_capture_instructions or dedent(
             """\
-            Profile information should capture personal details about the user that are relevant to the current conversation, such as:
-            - Personal facts: name, age, occupation, location, interests, and preferences
-            - Opinions and preferences: what the user likes, dislikes, enjoys, or finds frustrating
-            - Significant life events or experiences shared by the user
-            - Important context about the user's current situation, challenges, or goals
-            - Policies: user-defined rules or constraints for AI behavior
-            - Knowledge: factual information the user wants remembered
-            - Feedback: positive or negative feedback about AI responses
+            Capture user information into the appropriate memory layer:
+            - Profile: identity info (name, company, role, location, tone preference)
+            - Knowledge: personal facts (interests, hobbies, habits, plans, preferences)
+            - Policies: behavior rules (no emojis, be concise, avoid buzzwords)
+            - Feedback: evaluative signals (what user liked/disliked about responses)
         """
         )
 
@@ -408,15 +406,33 @@ class MemoryCompiler:
             "- If the users messages does not meet the criteria in the <profile_to_capture> section, no profile updates are needed.",
             "- If the existing profile in the <existing_profile> section captures all relevant information, no updates are needed.",
             "",
-            "## How to add or update profile",
-            "- If you decide to add new profile information, capture key details as if you were storing them for future reference.",
-            "- Profile entries should be brief, third-person statements that encapsulate the most important aspect of the user's input.",
-            "  - Example: If the user's message is 'I'm going to the gym', save: profile='goes_to_gym', key='habit', value='goes to the gym regularly'",
-            "  - Example: If the user's message is 'My name is John Doe', save: profile='name', key='name', value='John Doe'",
-            "- Don't make a single entry too long or complex, create multiple entries if needed to capture all the information.",
-            "- Don't repeat the same information in multiple entries. Rather update existing entries if needed.",
-            "- If a user asks for information to be forgotten, remove all reference to that information.",
-            "- When updating an entry, preserve important existing information while adding new details.",
+            "## Categorization Rules",
+            "IMPORTANT: Use the correct info_type for each piece of information:",
+            "",
+            "info_type='profile' - ONLY for identity:",
+            "  - name, preferred_name, company, role, location, tone_preference",
+            "",
+            "info_type='knowledge' - For learned facts about the user:",
+            "  - interests, hobbies, habits, plans, preferences, personal facts",
+            "",
+            "info_type='policy' - For behavior rules:",
+            "  - constraints, preferences about AI behavior (no emojis, be concise)",
+            "",
+            "info_type='feedback' - For evaluative signals:",
+            "  - key='positive': what the user liked",
+            "  - key='negative': what the user disliked",
+            "",
+            "## How to save information",
+            "- Capture key details as brief, third-person statements.",
+            "- Examples:",
+            "  - 'My name is John Doe' -> info_type='profile', key='name', value='John Doe'",
+            "  - 'I work at Acme Corp' -> info_type='profile', key='company', value='Acme Corp'",
+            "  - 'I like anime and video games' -> info_type='knowledge', key='interests', value='enjoys anime and video games'",
+            "  - 'I go to the gym every day' -> info_type='knowledge', key='habit', value='goes to the gym daily'",
+            "  - 'Please be concise' -> info_type='policy', key='response_style', value='prefers concise responses'",
+            "  - 'That was really helpful' -> info_type='feedback', key='positive', value='found explanation helpful'",
+            "- Create multiple entries if needed. Don't repeat information.",
+            "- If user asks to forget something, delete the relevant entry.",
             "",
             "## Criteria for capturing profile information",
             "Use the following criteria to determine if a user's message should be captured:",
@@ -471,6 +487,15 @@ class MemoryCompiler:
             system_prompt_lines.append(self.additional_instructions)
 
         return Message(role="system", content="\n".join(system_prompt_lines))
+
+    def determine_tools_for_model(self, tools: List[Callable]) -> List[Function]:
+        """Convert callable tools to Function objects for the model."""
+        _functions: List[Function] = []
+        for tool in tools:
+            func = Function.from_callable(tool, strict=True)
+            func.strict = True
+            _functions.append(func)
+        return _functions
 
     def _save_to_user_memory_layer(self, user_id: str, info_type: str, key: str, value: str) -> str:
         """Save to user memory layer."""

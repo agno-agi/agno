@@ -247,6 +247,7 @@ class AsyncMongoDb(AsyncBaseDb):
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
             ("culture", self.culture_table_name),
+            ("user_profiles", self.user_profiles_table_name),
         ]
 
         for collection_type, collection_name in collections_to_create:
@@ -2800,7 +2801,7 @@ class AsyncMongoDb(AsyncBaseDb):
             UserProfile or dict if found, None otherwise
         """
         try:
-            collection = await self._get_collection(table_type="user_profiles")
+            collection = await self._get_collection(table_type="user_profiles", create_collection_if_not_found=True)
             if collection is None:
                 return None
 

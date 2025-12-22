@@ -61,4 +61,3 @@ if user:
 user_from_research = research_agent.get_user_profile(USER_ID)
 if user_from_research:
     print("\nResearch agent sees same memory:", user_from_research.user_id == USER_ID)
-
