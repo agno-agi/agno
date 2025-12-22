@@ -62,12 +62,15 @@ from agno.run.agent import (
     RunOutputEvent,
 )
 from agno.run.cancel import (
-    cancel_run as cancel_run_global,
-)
-from agno.run.cancel import (
+    acleanup_run,
+    araise_if_cancelled,
+    aregister_run,
     cleanup_run,
     raise_if_cancelled,
     register_run,
+)
+from agno.run.cancel import (
+    cancel_run as cancel_run_global,
 )
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
@@ -903,7 +906,7 @@ class Agent:
             for tool in self.tools:
                 if (
                     hasattr(tool, "requires_connect")
-                    and tool.requires_connect
+                    and tool.requires_connect  # type: ignore
                     and hasattr(tool, "connect")
                     and tool not in self._connectable_tools_initialized_on_run
                 ):
@@ -1431,7 +1434,7 @@ class Agent:
                     raise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 7. Parse response with parser model if provided
-                    yield from self._parse_response_with_parser_model_stream(
+                    yield from self._parse_response_with_parser_model_stream(  # type: ignore
                         session=session, run_response=run_response, stream_events=stream_events, run_context=run_context
                     )
 
@@ -1542,7 +1545,6 @@ class Agent:
                     log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
                     break
-
                 except RunCancelledException as e:
                     # Handle run cancellation during streaming
                     log_info(f"Run {run_response.run_id} was cancelled during streaming")
@@ -1595,7 +1597,6 @@ class Agent:
                         store_events=self.store_events,
                     )
                     break
-
                 except Exception as e:
                     if attempt < num_attempts - 1:
                         # Calculate delay with exponential backoff if enabled
@@ -1733,6 +1734,7 @@ class Agent:
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
         # Set the id for the run
         run_id = run_id or str(uuid4())
+        register_run(run_id)
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
             log_warning(
@@ -1948,6 +1950,7 @@ class Agent:
         15. Create session summary
         16. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
         """
+        await aregister_run(run_context.run_id)
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         cultural_knowledge_task = None
@@ -2055,13 +2058,13 @@ class Agent:
                     )
 
                     # Check for cancellation before model call
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 8. Reason about the task if reasoning is enabled
                     await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
 
                     # Check for cancellation before model call
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 9. Generate a response from the Model (includes running function calls)
                     model_response: ModelResponse = await self.model.aresponse(
@@ -2076,7 +2079,7 @@ class Agent:
                     )
 
                     # Check for cancellation after model call
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # If an output model is provided, generate output using the output model
                     await self._agenerate_response_with_output_model(
@@ -2127,7 +2130,7 @@ class Agent:
                             pass
 
                     # Check for cancellation
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 14. Wait for background memory creation
                     await await_for_open_threads(
@@ -2249,7 +2252,7 @@ class Agent:
                     pass
 
             # Always clean up the run tracking
-            cleanup_run(run_response.run_id)  # type: ignore
+            await acleanup_run(run_response.run_id)  # type: ignore
 
         return run_response
 
@@ -2286,6 +2289,7 @@ class Agent:
         12. Create session summary
         13. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
         """
+        await aregister_run(run_context.run_id)
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         memory_task = None
@@ -2347,6 +2351,7 @@ class Agent:
                             **kwargs,
                         )
                         async for event in pre_hook_iterator:
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event
 
                     # 5. Determine tools for model
@@ -2405,10 +2410,10 @@ class Agent:
                         run_messages=run_messages,
                         stream_events=stream_events,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield item
 
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 9. Generate a response from the Model
                     if self.output_model is None:
@@ -2422,7 +2427,7 @@ class Agent:
                             session_state=run_context.session_state,
                             run_context=run_context,
                         ):
-                            raise_if_cancelled(run_response.run_id)  # type: ignore
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event
                     else:
                         from agno.run.agent import (
@@ -2440,7 +2445,7 @@ class Agent:
                             session_state=run_context.session_state,
                             run_context=run_context,
                         ):
-                            raise_if_cancelled(run_response.run_id)  # type: ignore
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                             if isinstance(event, RunContentEvent):
                                 if stream_events:
                                     yield IntermediateRunContentEvent(
@@ -2457,11 +2462,11 @@ class Agent:
                             run_messages=run_messages,
                             stream_events=stream_events,
                         ):
-                            raise_if_cancelled(run_response.run_id)  # type: ignore
-                            yield event
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            yield event  # type: ignore
 
                     # Check for cancellation after model processing
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 10. Parse response with parser model if provided
                     async for event in self._aparse_response_with_parser_model_stream(
@@ -2470,7 +2475,7 @@ class Agent:
                         stream_events=stream_events,
                         run_context=run_context,
                     ):
-                        yield event
+                        yield event  # type: ignore
 
                     if stream_events:
                         yield handle_event(  # type: ignore
@@ -2802,7 +2807,6 @@ class Agent:
 
         # Set the id for the run and register it immediately for cancellation tracking
         run_id = run_id or str(uuid4())
-        register_run(run_id)
 
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
             log_warning(
@@ -3477,7 +3481,7 @@ class Agent:
                         yield event
 
                     # Parse response with parser model if provided
-                    yield from self._parse_response_with_parser_model_stream(
+                    yield from self._parse_response_with_parser_model_stream(  # type: ignore
                         session=session, run_response=run_response, stream_events=stream_events
                     )
 
@@ -3573,6 +3577,7 @@ class Agent:
 
                     log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
+                    break
                 except RunCancelledException as e:
                     run_response = cast(RunOutput, run_response)
                     # Handle run cancellation during async streaming
@@ -3998,7 +4003,7 @@ class Agent:
                         tool_call_limit=self.tool_call_limit,
                     )
                     # Check for cancellation after model call
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # If an output model is provided, generate output using the output model
                     await self._agenerate_response_with_output_model(
@@ -4031,7 +4036,7 @@ class Agent:
                     if self.store_media:
                         store_media_util(run_response, model_response)
 
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 12. Execute post-hooks
                     if self.post_hooks is not None:
@@ -4048,7 +4053,7 @@ class Agent:
                             pass
 
                     # Check for cancellation
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 13. Create session summary
                     if self.session_summary_manager is not None and self.enable_session_summaries:
@@ -4303,7 +4308,7 @@ class Agent:
                     async for event in self._ahandle_tool_call_updates_stream(
                         run_response=run_response, run_messages=run_messages, tools=_tools, stream_events=stream_events
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
 
                     # 8. Process model response
@@ -4317,7 +4322,7 @@ class Agent:
                             stream_events=stream_events,
                             run_context=run_context,
                         ):
-                            raise_if_cancelled(run_response.run_id)  # type: ignore
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event
                     else:
                         from agno.run.agent import (
@@ -4351,11 +4356,11 @@ class Agent:
                             run_messages=run_messages,
                             stream_events=stream_events,
                         ):
-                            raise_if_cancelled(run_response.run_id)  # type: ignore
-                            yield event
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            yield event  # type: ignore
 
                     # Check for cancellation after model processing
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # Parse response with parser model if provided
                     async for event in self._aparse_response_with_parser_model_stream(
@@ -4364,7 +4369,7 @@ class Agent:
                         stream_events=stream_events,
                         run_context=run_context,
                     ):
-                        yield event
+                        yield event  # type: ignore
 
                     # Yield RunContentCompletedEvent
                     if stream_events:
@@ -4397,8 +4402,9 @@ class Agent:
                             **kwargs,
                         ):
                             yield event
+
                     # Check for cancellation before model call
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 9. Create session summary
                     if self.session_summary_manager is not None and self.enable_session_summaries:
@@ -4572,7 +4578,7 @@ class Agent:
             await self._disconnect_mcp_tools()
 
             # Always clean up the run tracking
-            cleanup_run(run_response.run_id)  # type: ignore
+            await acleanup_run(run_response.run_id)  # type: ignore
 
     def _execute_pre_hooks(
         self,
@@ -5504,6 +5510,8 @@ class Agent:
         """Calculate session metrics"""
         session_metrics = self._get_session_metrics(session=session)
         # Add the metrics for the current run to the session metrics
+        if session_metrics is None:
+            return
         if run_response.metrics is not None:
             session_metrics += run_response.metrics
         session_metrics.time_to_first_token = None
@@ -7092,7 +7100,7 @@ class Agent:
 
             # Cache the session if relevant
             if loaded_session is not None and self.cache_session:
-                self._cached_session = loaded_session
+                self._cached_session = loaded_session  # type: ignore
 
             return loaded_session
 
@@ -7150,7 +7158,7 @@ class Agent:
 
             # Cache the session if relevant
             if loaded_session is not None and self.cache_session:
-                self._cached_session = loaded_session
+                self._cached_session = loaded_session  # type: ignore
 
             return loaded_session
 
@@ -9676,7 +9684,7 @@ class Agent:
         if self.reasoning or self.reasoning_model is not None:
             reason_generator = self._areason(run_response=run_response, run_messages=run_messages, stream_events=False)
             # Consume the generator without yielding
-            async for _ in reason_generator:
+            async for _ in reason_generator:  # type: ignore
                 pass
 
     async def _ahandle_reasoning_stream(
@@ -9688,7 +9696,7 @@ class Agent:
                 run_messages=run_messages,
                 stream_events=stream_events,
             )
-            async for item in reason_generator:
+            async for item in reason_generator:  # type: ignore
                 yield item
 
     def _format_reasoning_step_content(self, run_response: RunOutput, reasoning_step: ReasoningStep) -> str:
@@ -10656,7 +10664,7 @@ class Agent:
             all_messages = []
             seen_message_pairs = set()
 
-            for session in selected_sessions:
+            for session in selected_sessions:  # type: ignore
                 if isinstance(session, AgentSession) and session.runs:
                     message_count = 0
                     for run in session.runs:
@@ -10916,6 +10924,7 @@ class Agent:
                 action=action,
                 next_action=NextAction.CONTINUE,
                 confidence=confidence,
+                result=None,
             )
 
             # Add the step to the run response
@@ -10953,6 +10962,7 @@ class Agent:
                 reasoning=analysis,
                 next_action=next_action_enum,
                 confidence=confidence,
+                action=None,
             )
 
             # Add the step to the run response
@@ -10975,7 +10985,7 @@ class Agent:
         # Case 3: ReasoningTool.think (simple format, just has 'thought')
         elif tool_name.lower() == "think" and "thought" in tool_args:
             thought = tool_args["thought"]
-            reasoning_step = ReasoningStep(
+            reasoning_step = ReasoningStep(  # type: ignore
                 title="Thinking",
                 reasoning=thought,
                 confidence=None,
