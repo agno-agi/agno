@@ -309,7 +309,11 @@ class OpenAIResponses(Model):
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
-    def _upload_file_with_purpose(self, file: File, purpose: str) -> Optional[str]:
+    def _upload_file_with_purpose(
+        self,
+        file: File,
+        purpose: Literal["assistants", "batch", "fine-tune", "vision", "user_data", "evals"],
+    ) -> Optional[str]:
         """Upload a file to OpenAI with the specified purpose.
 
         Args:
@@ -333,11 +337,11 @@ class OpenAIResponses(Model):
             file_path = file.filepath if isinstance(file.filepath, Path) else Path(file.filepath)
             if file_path.exists() and file_path.is_file():
                 file_name = file_path.name
-                file_content = file_path.read_bytes()  # type: ignore
+                file_content = file_path.read_bytes()
                 content_type = mimetypes.guess_type(file_path)[0]
                 result = self.get_client().files.create(
                     file=(file_name, file_content, content_type),
-                    purpose=purpose,  # type: ignore
+                    purpose=purpose,
                 )
                 return result.id
             else:
