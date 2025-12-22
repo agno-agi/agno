@@ -311,8 +311,8 @@ def map_run_schema_to_a2a_task(run_schema: Union[RunSchema, TeamRunSchema, Workf
         status = run_schema.get("status")
         metrics = run_schema.get("metrics")
     else:
-        run_id = getattr(run_schema, "run_id", None) or str(uuid4())
-        session_id = getattr(run_schema, "session_id", None) or str(uuid4())
+        run_id = getattr(run_schema, "run_id", None) 
+        session_id = getattr(run_schema, "session_id", None)
         messages = getattr(run_schema, "messages", None)
         content = getattr(run_schema, "content", None)
         images = getattr(run_schema, "images", None)
