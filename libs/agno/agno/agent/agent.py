@@ -1282,6 +1282,9 @@ class Agent:
         cultural_knowledge_future = None
 
         try:
+            # Register run for cancellation tracking
+            register_run(run_response.run_id)  # type: ignore
+
             # Set up retry logic
             num_attempts = self.retries + 1
             for attempt in range(num_attempts):
@@ -2713,7 +2716,7 @@ class Agent:
                     pass
 
             # Always clean up the run tracking
-            cleanup_run(run_response.run_id)  # type: ignore
+            await acleanup_run(run_response.run_id)  # type: ignore
 
     @overload
     async def arun(

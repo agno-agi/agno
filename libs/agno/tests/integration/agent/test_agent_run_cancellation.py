@@ -30,7 +30,7 @@ def test_cancel_agent_during_sync_streaming(shared_db):
     """Test cancelling an agent during synchronous streaming execution.
 
     Verifies:
-    - Cancellation exception is raised
+    - Cancellation event is received
     - Partial content is collected before cancellation
     - Resources are cleaned up (run removed from tracking)
     """
@@ -47,7 +47,7 @@ def test_cancel_agent_during_sync_streaming(shared_db):
     events_collected = []
     content_chunks = []
     run_id = None
-    cancellation_raised = False
+    cancelled = False
 
     # Start streaming agent
     event_stream = agent.run(
@@ -58,28 +58,26 @@ def test_cancel_agent_during_sync_streaming(shared_db):
     )
 
     # Collect events and cancel mid-stream
-    try:
-        for event in event_stream:
-            events_collected.append(event)
+    for event in event_stream:
+        events_collected.append(event)
 
-            # Extract run_id from the first event
-            if run_id is None and hasattr(event, "run_id"):
-                run_id = event.run_id
+        # Extract run_id from the first event
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
 
-            # Track content
-            if hasattr(event, "content") and event.content and isinstance(event.content, str):
-                content_chunks.append(event.content)
+        # Track content
+        if hasattr(event, "content") and event.content and isinstance(event.content, str):
+            content_chunks.append(event.content)
 
-            # Cancel after collecting some content
-            if len(content_chunks) >= 5 and run_id:
-                agent.cancel_run(run_id)
-                # In sync streaming, the exception will be raised on next iteration
-    except RunCancelledException:
-        # Cancellation exception is expected when iterating after cancel_run
-        cancellation_raised = True
+        # Cancel after collecting some content (but continue consuming events)
+        if len(content_chunks) >= 5 and run_id and not cancelled:
+            agent.cancel_run(run_id)
+            cancelled = True
+            # Don't break - let the generator complete naturally
 
-    # Verify cancellation was triggered
-    assert cancellation_raised, "RunCancelledException should have been raised"
+    # Verify cancellation event was received
+    cancelled_events = [e for e in events_collected if isinstance(e, RunCancelledEvent)]
+    assert len(cancelled_events) == 1, "Should have exactly one RunCancelledEvent"
 
     # Verify we collected content before cancellation
     assert len(content_chunks) >= 5, "Should have collected at least 5 content chunks before cancellation"
@@ -174,7 +172,7 @@ async def test_cancel_agent_during_async_streaming(shared_db):
 def test_cancel_agent_immediately(shared_db):
     """Test cancelling an agent immediately after it starts.
 
-    Note: In sync streaming, RunCancelledException is raised when cancel_run is called.
+    Note: In sync streaming, a RunCancelledEvent is yielded when the run is cancelled.
     """
     agent = Agent(
         name="Quick Cancel Agent",
@@ -186,7 +184,7 @@ def test_cancel_agent_immediately(shared_db):
     session_id = "test_immediate_cancel"
     events_collected = []
     run_id = None
-    cancellation_raised = False
+    cancelled = False
 
     event_stream = agent.run(
         input="Tell me about AI",
@@ -195,21 +193,20 @@ def test_cancel_agent_immediately(shared_db):
         stream_events=True,
     )
 
-    try:
-        for event in event_stream:
-            events_collected.append(event)
+    for event in event_stream:
+        events_collected.append(event)
 
-            # Extract run_id and cancel immediately
-            if run_id is None and hasattr(event, "run_id"):
-                run_id = event.run_id
+        # Extract run_id and cancel immediately
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
+            if not cancelled:
                 agent.cancel_run(run_id)
-                # In sync streaming, the exception will be raised on next iteration
-    except RunCancelledException:
-        # Cancellation exception is expected when iterating after cancel_run
-        cancellation_raised = True
+                cancelled = True
+                # Don't break - let the generator complete naturally
 
-    # Verify cancellation was triggered
-    assert cancellation_raised, "RunCancelledException should have been raised"
+    # Verify cancellation event was received
+    cancelled_events = [e for e in events_collected if isinstance(e, RunCancelledEvent)]
+    assert len(cancelled_events) == 1, "Should have exactly one RunCancelledEvent"
     assert run_id is not None, "Should have received at least one event with run_id"
 
 
@@ -233,7 +230,7 @@ async def test_cancel_non_existent_agent_run():
 def test_cancel_agent_with_tool_calls(shared_db):
     """Test cancelling an agent that uses tools during execution.
 
-    Note: In sync streaming, RunCancelledException is raised when cancel_run is called.
+    Note: In sync streaming, a RunCancelledEvent is yielded when the run is cancelled.
     We verify that events were collected before cancellation.
     """
     from agno.tools.duckduckgo import DuckDuckGoTools
@@ -251,7 +248,7 @@ def test_cancel_agent_with_tool_calls(shared_db):
     content_chunks = []
     run_id = None
     tool_calls_executed = 0
-    cancellation_raised = False
+    cancelled = False
 
     event_stream = agent.run(
         input="Search for information about artificial intelligence and write a long essay",
@@ -260,32 +257,29 @@ def test_cancel_agent_with_tool_calls(shared_db):
         stream_events=True,
     )
 
-    try:
-        for event in event_stream:
-            events_collected.append(event)
+    for event in event_stream:
+        events_collected.append(event)
 
-            if run_id is None and hasattr(event, "run_id"):
-                run_id = event.run_id
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
 
-            # Track tool calls
-            if hasattr(event, "tool_name"):
-                tool_calls_executed += 1
+        # Track tool calls
+        if hasattr(event, "tool_name"):
+            tool_calls_executed += 1
 
-            # Track content
-            if hasattr(event, "content") and event.content and isinstance(event.content, str):
-                content_chunks.append(event.content)
+        # Track content
+        if hasattr(event, "content") and event.content and isinstance(event.content, str):
+            content_chunks.append(event.content)
 
-            # Cancel after some content
-            if len(content_chunks) >= 3 and run_id:
-                agent.cancel_run(run_id)
-                # In sync streaming, the exception will be raised on next iteration
+        # Cancel after some content (but continue consuming events)
+        if len(content_chunks) >= 3 and run_id and not cancelled:
+            agent.cancel_run(run_id)
+            cancelled = True
+            # Don't break - let the generator complete naturally
 
-    except RunCancelledException:
-        # Cancellation exception is expected when iterating after cancel_run
-        cancellation_raised = True
-
-    # Verify cancellation was triggered
-    assert cancellation_raised, "RunCancelledException should have been raised"
+    # Verify cancellation event was received
+    cancelled_events = [e for e in events_collected if isinstance(e, RunCancelledEvent)]
+    assert len(cancelled_events) == 1, "Should have exactly one RunCancelledEvent"
 
     # Verify we collected content before cancellation
     assert len(content_chunks) >= 3, "Should have collected at least 3 content chunks before cancellation"
@@ -403,7 +397,8 @@ def test_multiple_cancel_calls_sync(shared_db):
 
     session_id = "test_multiple_cancel"
     run_id = None
-    cancellation_raised = False
+    cancelled = False
+    events_collected = []
 
     event_stream = agent.run(
         input="Tell me about AI",
@@ -412,18 +407,20 @@ def test_multiple_cancel_calls_sync(shared_db):
         stream_events=True,
     )
 
-    try:
-        for event in event_stream:
-            if run_id is None and hasattr(event, "run_id"):
-                run_id = event.run_id
+    for event in event_stream:
+        events_collected.append(event)
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
+            if not cancelled:
                 # Call cancel multiple times
                 agent.cancel_run(run_id)
                 agent.cancel_run(run_id)
                 agent.cancel_run(run_id)
-    except RunCancelledException:
-        cancellation_raised = True
+                cancelled = True
 
-    assert cancellation_raised, "RunCancelledException should have been raised"
+    # Verify cancellation event was received
+    cancelled_events = [e for e in events_collected if isinstance(e, RunCancelledEvent)]
+    assert len(cancelled_events) == 1, "Should have exactly one RunCancelledEvent"
 
 
 @pytest.mark.asyncio
