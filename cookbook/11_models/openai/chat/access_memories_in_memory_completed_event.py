@@ -34,7 +34,7 @@ def run_with_events(message: str):
             print(f"[RunStarted] model={chunk.model}")
 
         elif chunk.event == RunEvent.run_completed.value:
-            print(f"[RunCompleted]")
+            print("[RunCompleted]")
 
         elif chunk.event == RunEvent.llm_request_started.value:
             print(f"[LLMRequestStarted] model={chunk.model}")
@@ -45,27 +45,27 @@ def run_with_events(message: str):
             )
 
         elif chunk.event == RunEvent.memory_update_started.value:
-            print(f"[MemoryUpdateStarted]")
+            print("[MemoryUpdateStarted]")
 
         elif chunk.event == RunEvent.memory_update_completed.value:
-            print(f"[MemoryUpdateCompleted]")
+            print("[MemoryUpdateCompleted]")
             if chunk.memories:
                 print(f"  Memories ({len(chunk.memories)}):")
                 for mem in chunk.memories:
                     print(f"    - {mem.memory}")
             else:
-                print(f"  No memories returned")
+                print("  No memories returned")
 
         elif chunk.event == RunEvent.session_summary_started.value:
-            print(f"[SessionSummaryStarted]")
+            print("[SessionSummaryStarted]")
 
         elif chunk.event == RunEvent.session_summary_completed.value:
-            print(f"[SessionSummaryCompleted]")
+            print("[SessionSummaryCompleted]")
             if hasattr(chunk, "session_summary") and chunk.session_summary:
                 print(f"  Summary: {chunk.session_summary.summary}")
 
         elif chunk.event == RunEvent.run_content_completed.value:
-            print(f"[RunContentCompleted]")
+            print("[RunContentCompleted]")
 
 
 if __name__ == "__main__":
@@ -77,6 +77,6 @@ if __name__ == "__main__":
     memories = agent.get_user_memories(user_id="test_user")
     if memories:
         for mem in memories:
-            print(f"  - {mem.memory}")
+            print("  - {mem.memory}")
     else:
         print("  No memories found")
