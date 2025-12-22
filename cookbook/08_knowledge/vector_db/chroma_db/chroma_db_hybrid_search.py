@@ -14,8 +14,8 @@ The RRF algorithm fuses rankings from both search methods using:
     RRF(d) = sum(1 / (k + rank_i(d))) for each ranking i
 """
 
-from textwrap import dedent
 import asyncio
+from textwrap import dedent
 
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
