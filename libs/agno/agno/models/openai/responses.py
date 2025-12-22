@@ -309,7 +309,11 @@ class OpenAIResponses(Model):
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
-    def _upload_file_with_purpose(self, file: File, purpose: str) -> Optional[str]:
+    def _upload_file_with_purpose(
+        self,
+        file: File,
+        purpose: Literal["assistants", "batch", "fine-tune", "vision", "user_data", "evals"],
+    ) -> Optional[str]:
         """Upload a file to OpenAI with the specified purpose.
 
         Args:
