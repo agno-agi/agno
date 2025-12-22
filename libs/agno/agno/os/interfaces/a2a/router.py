@@ -129,9 +129,7 @@ def attach_routes(
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
         task_id = request_body.get("id")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = request.headers.get("X-User-ID") or request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
         # 3. Run the Agent
         try:
@@ -216,9 +214,7 @@ def attach_routes(
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
         task_id = request_body.get("id")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = request.headers.get("X-User-ID") or request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
         # 3. Run the Agent and stream the response
         try:
@@ -563,9 +559,7 @@ def attach_routes(
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
         task_id = request_body.get("id")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = request.headers.get("X-User-ID") or request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
         # 3. Run the Team
         try:
@@ -650,9 +644,7 @@ def attach_routes(
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
         task_id = request_body.get("id")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = request.headers.get("X-User-ID") or request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
         # 3. Run the Team and stream the response
         try:
@@ -999,9 +991,7 @@ def attach_routes(
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
         task_id = request_body.get("id")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = request.headers.get("X-User-ID") or request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
         # 3. Run the Workflow
         try:
@@ -1086,9 +1076,7 @@ def attach_routes(
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
         task_id = request_body.get("id")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = request.headers.get("X-User-ID") or request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
         # 3. Run the Workflow and stream the response
         try:
@@ -1420,9 +1408,7 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = request.headers.get("X-User-ID") or request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
         # 3. Run the agent, team, or workflow
         try:
@@ -1534,9 +1520,7 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = request.headers.get("X-User-ID") or request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
 
         # 3. Run the Agent, Team, or Workflow and stream the response
         try:
