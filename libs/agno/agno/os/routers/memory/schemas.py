@@ -30,7 +30,7 @@ class UserMemorySchema(BaseModel):
             user_id=str(memory_dict["user_id"]),
             agent_id=memory_dict.get("agent_id"),
             team_id=memory_dict.get("team_id"),
-            memory=memory_dict["memory"],
+            memory=str(memory_dict["memory"]),
             topics=memory_dict.get("topics", []),
             updated_at=memory_dict["updated_at"],
         )
