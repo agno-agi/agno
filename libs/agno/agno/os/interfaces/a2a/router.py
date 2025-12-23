@@ -287,6 +287,7 @@ def attach_routes(
         id: str,
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
+        pagesize: Optional[int] = None,
     ) -> ListTasksEndpointResponse:
         """List all tasks for an Agent. If session_id is provided in params, returns tasks from that session only."""
         request_body = await request.json()
@@ -330,6 +331,9 @@ def attach_routes(
 
             session_dict = cast(dict, session)
             runs = session_dict.get("runs", [])
+            # Apply pagesize within this session if provided
+            if pagesize is not None and pagesize > 0:
+                runs = runs[-pagesize:]
             a2a_tasks.extend([map_run_schema_to_a2a_task(run) for run in runs])
         else:
             # Load all sessions for this agent
@@ -352,6 +356,10 @@ def attach_routes(
             for session_dict in sessions_list:
                 runs = cast(dict, session_dict).get("runs", [])
                 a2a_tasks.extend([map_run_schema_to_a2a_task(run) for run in runs])
+
+            # Apply pagesize across all sessions if provided
+            if pagesize is not None and pagesize > 0:
+                a2a_tasks = a2a_tasks[-pagesize:]
         return ListTasksEndpointResponse(id=request_id, result=a2a_tasks)
 
     @router.get(
@@ -453,47 +461,26 @@ def attach_routes(
         return GetTaskEndpointResponse(id=request_id, result=a2a_task)
 
     @router.post(
-        "/agents/{id}/v1/tasks:cancel",
+        "/agents/{id}/v1/tasks/{task_id}:cancel",
         operation_id="cancel_agent_task",
         name="cancel_agent_task",
         description="Cancel a running task for an Agent.",
     )
-    async def cancel_task_agent(request: Request, id: str) -> GetTaskEndpointResponse:
+    async def cancel_task_agent(request: Request, id: str, task_id:str) -> GetTaskEndpointResponse:
         request_body = await request.json()
-        request_id = request_body.get("id")
+        request_id = request_body.get("id","unknown")
 
         # 1. Ensure agent is present
         agent = get_agent_by_id(id, agents)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
-
-        # 3. Load the cancelled Run from the database
-        if not agent.db:
-            raise HTTPException(status_code=404, detail="Database not configured")
-        if isinstance(agent.db, AsyncBaseDb):
-            session = await agent.db.get_session(
-                session_id=request_id, session_type=SessionType.AGENT, deserialize=False
-            )
-        else:
-            session = agent.db.get_session(  # type: ignore
-                session_id=request_id, session_type=SessionType.AGENT, deserialize=False
-            )
-        if not session:
-            raise HTTPException(status_code=404, detail=f"Session with ID {request_id} not found")
-        session_dict = cast(dict, session)
-        runs = session_dict.get("runs", [])
-        if not runs:
-            raise HTTPException(status_code=404, detail=f"Session with ID {request_id} has no runs")
-        run = next((run for run in runs if run.get("run_id") == request_id), None)
-        if not run:
-            raise HTTPException(status_code=404, detail=f"Run with ID {request_id} not found in session {request_id}")
-
+        session_id = request_body.get("session_id")
         # 4. Cancel the run
-        if not agent.cancel_run(run_id=request_id):
-            raise HTTPException(status_code=500, detail=f"Failed to cancel run with ID {request_id}")
+        if not agent.cancel_run(run_id=task_id):
+            raise HTTPException(status_code=500, detail=f"Failed to cancel run with ID {task_id}")
 
         # 5. Map the Agno Run into an A2A Task, and return it
-        a2a_task = map_run_schema_to_a2a_task(run)
+        a2a_task = Task(id=task_id, context_id=session_id or str(uuid4()),status=TaskStatus(state=TaskState.canceled))
         return GetTaskEndpointResponse(id=request_id, result=a2a_task)
 
     # ============= TEAMS =============
@@ -735,6 +722,7 @@ def attach_routes(
         id: str,
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
+        pagesize: Optional[int] = None,
     ) -> ListTasksEndpointResponse:
         """List all tasks for a Team. If session_id is provided in params, returns tasks from that session only."""
         request_body = await request.json()
@@ -778,6 +766,9 @@ def attach_routes(
 
             session_dict = cast(dict, session)
             runs = session_dict.get("runs", [])
+            # Apply pagesize within this session if provided
+            if pagesize is not None and pagesize > 0:
+                runs = runs[-pagesize:]
             a2a_tasks.extend([map_run_output_to_a2a_task(run) for run in runs])
         else:
             # Load all sessions for this team
@@ -800,6 +791,10 @@ def attach_routes(
             for session_dict in sessions_list:
                 runs = cast(dict, session_dict).get("runs", [])
                 a2a_tasks.extend([map_run_output_to_a2a_task(run) for run in runs])
+
+            # Apply pagesize across all sessions if provided
+            if pagesize is not None and pagesize > 0:
+                a2a_tasks = a2a_tasks[-pagesize:]
 
         return ListTasksEndpointResponse(id=request_id, result=a2a_tasks)
 
@@ -902,45 +897,28 @@ def attach_routes(
         return GetTaskEndpointResponse(id=request_id, result=a2a_task)
 
     @router.post(
-        "/teams/{id}/v1/tasks:cancel",
+        "/teams/{id}/v1/tasks/{task_id}:cancel",
         operation_id="cancel_team_task",
         name="cancel_team_task",
         description="Cancel a running task for a Team.",
     )
-    async def cancel_task_team(request: Request, id: str) -> GetTaskEndpointResponse:
+    async def cancel_task_team(request: Request, id: str, task_id: str) -> GetTaskEndpointResponse:
         request_body = await request.json()
-        request_id = request_body.get("id")
+        request_id = request_body.get("id", "unknown")
 
         # 1. Ensure team is present
         team = get_team_by_id(id, teams)
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        # 3. Load the cancelled Run from the database
-        if not team.db:
-            raise HTTPException(status_code=404, detail="Database not configured")
-        if isinstance(team.db, AsyncBaseDb):
-            session = await team.db.get_session(session_id=request_id, session_type=SessionType.TEAM, deserialize=False)
-        else:
-            session = team.db.get_session(  # type: ignore
-                session_id=request_id, session_type=SessionType.TEAM, deserialize=False
-            )
-        if not session:
-            raise HTTPException(status_code=404, detail=f"Session with ID {request_id} not found")
-        session_dict = cast(dict, session)
-        runs = session_dict.get("runs", [])
-        if not runs:
-            raise HTTPException(status_code=404, detail=f"Session with ID {request_id} has no runs")
-        run = next((run for run in runs if run.get("run_id") == request_id), None)
-        if not run:
-            raise HTTPException(status_code=404, detail=f"Run with ID {request_id} not found in session {request_id}")
+        session_id = request_body.get("session_id")
 
-        # 4. Cancel the run
-        if not team.cancel_run(run_id=request_id):
-            raise HTTPException(status_code=500, detail=f"Failed to cancel run with ID {request_id}")
+        # 2. Cancel the run
+        if not team.cancel_run(run_id=task_id):
+            raise HTTPException(status_code=500, detail=f"Failed to cancel run with ID {task_id}")
 
-        # 5. Map the Agno Run into an A2A Task, and return it
-        a2a_task = map_run_schema_to_a2a_task(run)
+        # 3. Build the canceled task response
+        a2a_task = Task(id=task_id, context_id=session_id or str(uuid4()), status=TaskStatus(state=TaskState.canceled))
         return GetTaskEndpointResponse(id=request_id, result=a2a_task)
 
     # ============= WORKFLOWS =============
@@ -1182,6 +1160,7 @@ def attach_routes(
         id: str,
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
+        pagesize: Optional[int] = None,
     ) -> ListTasksEndpointResponse:
         """List all tasks for a Workflow. If session_id is provided in params, returns tasks from that session only."""
         request_body = await request.json()
@@ -1225,6 +1204,9 @@ def attach_routes(
 
             session_dict = cast(dict, session)
             runs = session_dict.get("runs", [])
+            # Apply pagesize within this session if provided
+            if pagesize is not None and pagesize > 0:
+                runs = runs[-pagesize:]
             a2a_tasks.extend([map_run_output_to_a2a_task(run) for run in runs])
         else:
             # Load all sessions for this workflow
@@ -1247,6 +1229,10 @@ def attach_routes(
             for session_dict in sessions_list:
                 runs = cast(dict, session_dict).get("runs", [])
                 a2a_tasks.extend([map_run_output_to_a2a_task(run) for run in runs])
+
+            # Apply pagesize across all sessions if provided
+            if pagesize is not None and pagesize > 0:
+                a2a_tasks = a2a_tasks[-pagesize:]
 
         return ListTasksEndpointResponse(id=request_id, result=a2a_tasks)
 
@@ -1349,47 +1335,28 @@ def attach_routes(
         return GetTaskEndpointResponse(id=request_id, result=a2a_task)
 
     @router.post(
-        "/workflows/{id}/v1/tasks:cancel",
+        "/workflows/{id}/v1/tasks/{task_id}:cancel",
         operation_id="cancel_workflow_task",
         name="cancel_workflow_task",
         description="Cancel a running task for a Workflow.",
     )
-    async def cancel_task_workflow(request: Request, id: str) -> GetTaskEndpointResponse:
+    async def cancel_task_workflow(request: Request, id: str, task_id: str) -> GetTaskEndpointResponse:
         request_body = await request.json()
-        request_id = request_body.get("id")
+        request_id = request_body.get("id", "unknown")
 
         # 1. Ensure workflow is present
         workflow = get_workflow_by_id(id, workflows)
         if not workflow:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        # 3. Load the cancelled Run from the database
-        if not workflow.db:
-            raise HTTPException(status_code=404, detail="Database not configured")
-        if isinstance(workflow.db, AsyncBaseDb):
-            session = await workflow.db.get_session(
-                session_id=request_id, session_type=SessionType.WORKFLOW, deserialize=False
-            )
-        else:
-            session = workflow.db.get_session(  # type: ignore
-                session_id=request_id, session_type=SessionType.WORKFLOW, deserialize=False
-            )
-        if not session:
-            raise HTTPException(status_code=404, detail=f"Session with ID {request_id} not found")
-        session_dict = cast(dict, session)
-        runs = session_dict.get("runs", [])
-        if not runs:
-            raise HTTPException(status_code=404, detail=f"Session with ID {request_id} has no runs")
-        run = next((run for run in runs if run.get("run_id") == request_id), None)
-        if not run:
-            raise HTTPException(status_code=404, detail=f"Run with ID {request_id} not found in session {request_id}")
+        session_id = request_body.get("session_id")
 
-        # 4. Cancel the run
-        if not workflow.cancel_run(run_id=request_id):
-            raise HTTPException(status_code=500, detail=f"Failed to cancel run with ID {request_id}")
+        # 2. Cancel the run
+        if not workflow.cancel_run(run_id=task_id):
+            raise HTTPException(status_code=500, detail=f"Failed to cancel run with ID {task_id}")
 
-        # 5. Map the Agno Run into an A2A Task, and return it
-        a2a_task = map_run_schema_to_a2a_task(run)
+        # 3. Build the canceled task response
+        a2a_task = Task(id=task_id, context_id=session_id or str(uuid4()), status=TaskStatus(state=TaskState.canceled))
         return GetTaskEndpointResponse(id=request_id, result=a2a_task)
 
     # ============= DEPRECATED ENDPOINTS =============
