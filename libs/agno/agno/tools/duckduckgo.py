@@ -7,10 +7,6 @@ class DuckDuckGoTools(WebSearchTools):
     """
     DuckDuckGoTools is a convenience wrapper around WebSearchTools with the backend
     defaulting to "duckduckgo".
-
-    For new code, prefer using WebSearchTools directly with backend="auto" for
-    automatic backend selection, or specify a backend explicitly.
-
     Args:
         enable_search (bool): Enable web search function.
         enable_news (bool): Enable news search function.
