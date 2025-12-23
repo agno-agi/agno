@@ -191,9 +191,9 @@ class AgentOS:
         configuration = AgentOSConfig.from_path(config_file_path)
 
         # TODO: handle all configuration setup
-        self.fastapi_config = configuration.fastapi_config
-        self.databases_config = configuration.databases_config
-        self.background_tasks_config = configuration.background_tasks_config
+        self.fastapi_config = configuration.fastapi_config or FastAPIConfig()
+        self.databases_config = configuration.databases_config or DatabasesConfig()
+        self.background_tasks_config = configuration.background_tasks_config or BackgroundTasksConfig()
         self.interfaces = configuration.interfaces
         self.a2a_interface = configuration.a2a_interface
         self.enable_mcp_server = configuration.enable_mcp_server
@@ -387,8 +387,10 @@ class AgentOS:
             # Required for the built-in routes to work
             agent.store_events = True
 
-            # Propagate run_hooks_in_background setting from AgentOS to agents
-            agent._run_hooks_in_background = self.run_hooks_in_background
+            # Propagate background tasks configuration to the Agent
+            agent._run_hooks_in_background = self.background_tasks_config.run_hooks_in_background
+            agent._run_memory_in_background = self.background_tasks_config.run_memory_in_background
+            agent._run_culture_in_background = self.background_tasks_config.run_culture_in_background
 
     def _initialize_teams(self) -> None:
         """Initialize and configure all teams for AgentOS usage."""
@@ -419,7 +421,9 @@ class AgentOS:
             team.store_events = True
 
             # Propagate run_hooks_in_background setting to team and all nested members
-            team.propagate_run_hooks_in_background(self.run_hooks_in_background)
+            team.propagate_run_hooks_in_background(self.background_tasks_config.run_hooks_in_background)
+            team.propagate_run_memory_in_background(self.background_tasks_config.run_memory_in_background)
+            team.propagate_run_culture_in_background(self.background_tasks_config.run_culture_in_background)
 
     def _initialize_workflows(self) -> None:
         """Initialize and configure all workflows for AgentOS usage."""
