@@ -8805,11 +8805,7 @@ class Agent:
                 and "type" in message_copy.content[0]
             ):
                 for part in reversed(message_copy.content):
-                    if (
-                        isinstance(part, dict)
-                        and part.get("type") == "text"
-                        and isinstance(part.get("text"), str)
-                    ):
+                    if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
                         part["text"] += dependencies_block
                         break
                 else:
