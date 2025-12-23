@@ -59,14 +59,19 @@ class MemoryCompiler:
         if self.model is not None:
             self.model = get_model(self.model)
 
-    def get_user_profile(self, user_id: Optional[str] = None) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+    def get_user_profile(self, user_id: Optional[str] = None) -> Optional[UserProfile]:
         if not self.db:
             log_warning("Database not provided")
             return None
         if user_id is None:
             user_id = "default"
         self.db = cast(BaseDb, self.db)
-        return self.db.get_user_profile(user_id=user_id)
+        result = self.db.get_user_profile(user_id=user_id)
+        if result is None:
+            return None
+        if isinstance(result, dict):
+            return UserProfile.from_dict(result)
+        return result
 
     def save_user_profile(self, user_profile: UserProfile) -> Optional[Union[UserProfile, Dict[str, Any]]]:
         if not self.db:
@@ -84,15 +89,21 @@ class MemoryCompiler:
         self.db = cast(BaseDb, self.db)
         self.db.delete_user_profile(user_id=user_id)
 
-    async def aget_user_profile(self, user_id: Optional[str] = None) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+    async def aget_user_profile(self, user_id: Optional[str] = None) -> Optional[UserProfile]:
         if not self.db:
             log_warning("Database not provided")
             return None
         if user_id is None:
             user_id = "default"
         if isinstance(self.db, AsyncBaseDb):
-            return await self.db.get_user_profile(user_id=user_id)
-        return self.db.get_user_profile(user_id=user_id)
+            result = await self.db.get_user_profile(user_id=user_id)
+        else:
+            result = self.db.get_user_profile(user_id=user_id)
+        if result is None:
+            return None
+        if isinstance(result, dict):
+            return UserProfile.from_dict(result)
+        return result
 
     async def asave_user_profile(self, user_profile: UserProfile) -> Optional[Union[UserProfile, Dict[str, Any]]]:
         if not self.db:

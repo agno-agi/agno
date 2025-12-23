@@ -9025,7 +9025,27 @@ class Team:
         if user_id is None:
             user_id = "default"
 
-        return self.memory_compiler.get_user_profile(user_id=user_id)
+        return self.memory_compiler.get_user_profile(user_id=user_id)  # type: ignore
+
+    async def aget_user_profile(self, user_id: Optional[str] = None) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+        """Get the user profile for the given user ID asynchronously.
+
+        Args:
+            user_id: The user ID to get the profile for. If not provided, the current cached user ID is used.
+        Returns:
+            The user profile, or None if not found.
+        """
+        if self.memory_compiler is None:
+            if self.db is None:
+                log_warning("Database not provided.")
+                return None
+            self._set_memory_compiler()
+
+        user_id = user_id if user_id is not None else self.user_id
+        if user_id is None:
+            user_id = "default"
+
+        return await self.memory_compiler.aget_user_profile(user_id=user_id)  # type: ignore
 
     ###########################################################################
     # Handle reasoning content

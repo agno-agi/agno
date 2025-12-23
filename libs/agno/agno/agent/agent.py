@@ -226,7 +226,7 @@ class Agent:
     # If True, add the dependencies to the user prompt
     add_dependencies_to_context: bool = False
 
-    # --- Agent Memory (v1) ---
+    # --- Agent Memory ---
     # Memory manager to use for this agent
     memory_manager: Optional[MemoryManager] = None
     # Enable the agent to manage memories of the user
@@ -871,21 +871,6 @@ class Agent:
         self._set_default_model()
         self._set_debug(debug_mode=debug_mode)
         self.set_id()
-
-        # Validate: can't enable both v1 and v2 agentic memory
-        if self.enable_agentic_memory and self.enable_agentic_memory_v2:
-            raise ValueError(
-                "Cannot enable both 'enable_agentic_memory' (v1) and 'enable_agentic_memory_v2' (v2). "
-                "Please choose one memory system."
-            )
-
-        # Validate: can't enable both agentic memory v2 and automatic memory update
-        if self.enable_agentic_memory_v2 and self.update_memory_on_run:
-            raise ValueError(
-                "Cannot enable both 'enable_agentic_memory_v2' and 'update_memory_on_run'. "
-                "Use 'enable_agentic_memory_v2' for explicit tool-based memory management, "
-                "or 'update_memory_on_run' for automatic background extraction."
-            )
 
         if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
             self._set_memory_manager()
@@ -7801,6 +7786,26 @@ class Agent:
             user_id = "default"
 
         return self.memory_compiler.get_user_profile(user_id=user_id)  # type: ignore
+
+    async def aget_user_profile(self, user_id: Optional[str] = None) -> Optional[UserProfile]:
+        """Get user profile for a given user ID asynchronously.
+
+        Args:
+            user_id: The user ID to get the profile for. If not provided, the current cached user ID is used.
+        Returns:
+            Optional[UserProfile]: The user profile, or None if not found.
+        """
+        if self.memory_compiler is None:
+            if self.db is None:
+                log_warning("Database not provided.")
+                return None
+            self._set_memory_compiler()
+
+        user_id = user_id if user_id is not None else self.user_id
+        if user_id is None:
+            user_id = "default"
+
+        return await self.memory_compiler.aget_user_profile(user_id=user_id)  # type: ignore
 
     def get_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
         """Get the cultural knowledge the agent has access to
