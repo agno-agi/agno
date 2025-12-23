@@ -458,23 +458,43 @@ def attach_routes(
         name="cancel_agent_task",
         description="Cancel a running task for an Agent.",
     )
-    async def cancel_task_agent(request: Request, id: str):
+    async def cancel_task_agent(request: Request, id: str) -> GetTaskEndpointResponse:
         request_body = await request.json()
-        task_id = request_body.get("id")
-        if not agents:
-            raise HTTPException(status_code=404, detail="Agent not found")
+        request_id = request_body.get("id")
+
+        # 1. Ensure agent is present
         agent = get_agent_by_id(id, agents)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        if not agent.cancel_run(run_id=task_id):
-            raise HTTPException(status_code=500, detail="Failed to cancel run")
+        # 3. Load the cancelled Run from the database
+        if not agent.db:
+            raise HTTPException(status_code=404, detail="Database not configured")
+        if isinstance(agent.db, AsyncBaseDb):
+            session = await agent.db.get_session(
+                session_id=request_id, session_type=SessionType.AGENT, deserialize=False
+            )
+        else:
+            session = agent.db.get_session(  # type: ignore
+                session_id=request_id, session_type=SessionType.AGENT, deserialize=False
+            )
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session with ID {request_id} not found")
+        session_dict = cast(dict, session)
+        runs = session_dict.get("runs", [])
+        if not runs:
+            raise HTTPException(status_code=404, detail=f"Session with ID {request_id} has no runs")
+        run = next((run for run in runs if run.get("run_id") == request_id), None)
+        if not run:
+            raise HTTPException(status_code=404, detail=f"Run with ID {request_id} not found in session {request_id}")
 
-        return {
-            "jsonrpc": "2.0",
-            "id": request_body.get("id", "unknown"),
-            "result": {Task(status=TaskStatus(state=TaskState.canceled))},
-        }
+        # 4. Cancel the run
+        if not agent.cancel_run(run_id=request_id):
+            raise HTTPException(status_code=500, detail=f"Failed to cancel run with ID {request_id}")
+
+        # 5. Map the Agno Run into an A2A Task, and return it
+        a2a_task = map_run_schema_to_a2a_task(run)
+        return GetTaskEndpointResponse(id=request_id, result=a2a_task)
 
     # ============= TEAMS =============
     @router.get("/teams/{id}/.well-known/agent-card.json")
@@ -890,25 +910,41 @@ def attach_routes(
         name="cancel_team_task",
         description="Cancel a running task for a Team.",
     )
-    async def cancel_task_team(
-        request: Request,
-        id: str,
-    ):
+    async def cancel_task_team(request: Request, id: str) -> GetTaskEndpointResponse:
         request_body = await request.json()
-        task_id = request_body.get("id")
-        if not teams:
-            raise HTTPException(status_code=404, detail="Team not found")
+        request_id = request_body.get("id")
+
+        # 1. Ensure team is present
         team = get_team_by_id(id, teams)
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        if not team.cancel_run(run_id=task_id):
-            raise HTTPException(status_code=500, detail="Failed to cancel run")
-        return {
-            "jsonrpc": "2.0",
-            "id": request_body.get("id", "unknown"),
-            "result": {},
-        }
+        # 3. Load the cancelled Run from the database
+        if not team.db:
+            raise HTTPException(status_code=404, detail="Database not configured")
+        if isinstance(team.db, AsyncBaseDb):
+            session = await team.db.get_session(session_id=request_id, session_type=SessionType.TEAM, deserialize=False)
+        else:
+            session = team.db.get_session(  # type: ignore
+                session_id=request_id, session_type=SessionType.TEAM, deserialize=False
+            )
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session with ID {request_id} not found")
+        session_dict = cast(dict, session)
+        runs = session_dict.get("runs", [])
+        if not runs:
+            raise HTTPException(status_code=404, detail=f"Session with ID {request_id} has no runs")
+        run = next((run for run in runs if run.get("run_id") == request_id), None)
+        if not run:
+            raise HTTPException(status_code=404, detail=f"Run with ID {request_id} not found in session {request_id}")
+
+        # 4. Cancel the run
+        if not team.cancel_run(run_id=request_id):
+            raise HTTPException(status_code=500, detail=f"Failed to cancel run with ID {request_id}")
+
+        # 5. Map the Agno Run into an A2A Task, and return it
+        a2a_task = map_run_schema_to_a2a_task(run)
+        return GetTaskEndpointResponse(id=request_id, result=a2a_task)
 
     # ============= WORKFLOWS =============
     @router.get("/workflows/{id}/.well-known/agent-card.json")
@@ -1324,22 +1360,43 @@ def attach_routes(
         name="cancel_workflow_task",
         description="Cancel a running task for a Workflow.",
     )
-    async def cancel_task_workflow(request: Request, id: str):
+    async def cancel_task_workflow(request: Request, id: str) -> GetTaskEndpointResponse:
         request_body = await request.json()
-        task_id = request_body.get("id")
-        if not workflows:
-            raise HTTPException(status_code=404, detail="Workflow not found")
+        request_id = request_body.get("id")
+
+        # 1. Ensure workflow is present
         workflow = get_workflow_by_id(id, workflows)
         if not workflow:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        if not workflow.cancel_run(run_id=task_id):
-            raise HTTPException(status_code=500, detail="Failed to cancel run")
-        return {
-            "jsonrpc": "2.0",
-            "id": request_body.get("id", "unknown"),
-            "result": {},
-        }
+        # 3. Load the cancelled Run from the database
+        if not workflow.db:
+            raise HTTPException(status_code=404, detail="Database not configured")
+        if isinstance(workflow.db, AsyncBaseDb):
+            session = await workflow.db.get_session(
+                session_id=request_id, session_type=SessionType.WORKFLOW, deserialize=False
+            )
+        else:
+            session = workflow.db.get_session(  # type: ignore
+                session_id=request_id, session_type=SessionType.WORKFLOW, deserialize=False
+            )
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session with ID {request_id} not found")
+        session_dict = cast(dict, session)
+        runs = session_dict.get("runs", [])
+        if not runs:
+            raise HTTPException(status_code=404, detail=f"Session with ID {request_id} has no runs")
+        run = next((run for run in runs if run.get("run_id") == request_id), None)
+        if not run:
+            raise HTTPException(status_code=404, detail=f"Run with ID {request_id} not found in session {request_id}")
+
+        # 4. Cancel the run
+        if not workflow.cancel_run(run_id=request_id):
+            raise HTTPException(status_code=500, detail=f"Failed to cancel run with ID {request_id}")
+
+        # 5. Map the Agno Run into an A2A Task, and return it
+        a2a_task = map_run_schema_to_a2a_task(run)
+        return GetTaskEndpointResponse(id=request_id, result=a2a_task)
 
     # ============= DEPRECATED ENDPOINTS =============
 
