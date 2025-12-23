@@ -124,6 +124,15 @@ class AsyncSqliteDb(AsyncBaseDb):
         # Initialize database session factory
         self.async_session_factory = async_sessionmaker(bind=self.db_engine, expire_on_commit=False)
 
+    async def close(self) -> None:
+        """Close database connections and dispose of the connection pool.
+
+        Should be called during application shutdown to properly release
+        all database connections.
+        """
+        if self.db_engine is not None:
+            await self.db_engine.dispose()
+
     # -- DB methods --
     async def table_exists(self, table_name: str) -> bool:
         """Check if a table with the given name exists in the SQLite database.

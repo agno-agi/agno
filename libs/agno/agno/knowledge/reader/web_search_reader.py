@@ -263,21 +263,17 @@ class WebSearchReader(Reader):
 
         log_debug(f"Starting async web search reader for query: {query}")
 
-        # Perform web search (synchronous operation)
         search_results = self._perform_web_search(query)
         if not search_results:
             logger.warning(f"No search results found for query: {query}")
             return []
 
-        # Create tasks for fetching content from each URL
         async def fetch_url_async(result: Dict[str, str]) -> Optional[Document]:
             url = result.get("url", "")
 
-            # Skip if URL is invalid or already visited
             if not self._is_valid_url(url):
                 return None
 
-            # Mark URL as visited
             self._visited_urls.add(url)
 
             try:
@@ -292,32 +288,25 @@ class WebSearchReader(Reader):
                     else:
                         content = response.text
 
-                    document = self._create_document_from_url(url, content, result)
-                    return document
+                    return self._create_document_from_url(url, content, result)
 
             except Exception as e:
                 logger.warning(f"Error fetching {url}: {e}")
                 return None
 
-        # Create tasks for all URLs
-        tasks = [fetch_url_async(result) for result in search_results]
-
-        # Execute all tasks concurrently with delays
         documents = []
-        for i, task in enumerate(tasks):
-            if i > 0:  # Add delay between requests (except for the first one)
+        for i, result in enumerate(search_results):
+            if i > 0:
                 await asyncio.sleep(self.delay_between_requests)
 
-            doc = await task
+            doc = await fetch_url_async(result)
             if doc is not None:
-                # Apply chunking if enabled
                 if self.chunk:
                     chunked_docs = await self.chunk_documents_async([doc])
                     documents.extend(chunked_docs)
                 else:
                     documents.append(doc)
 
-                # Stop if we've reached max_results
                 if len(documents) >= self.max_results:
                     break
 

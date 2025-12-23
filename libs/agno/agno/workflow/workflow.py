@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from os import getenv
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Awaitable,
@@ -23,6 +24,9 @@ from uuid import uuid4
 from fastapi import WebSocket
 from pydantic import BaseModel
 
+if TYPE_CHECKING:
+    from agno.os.managers import WebSocketHandler
+
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
@@ -32,12 +36,15 @@ from agno.models.metrics import Metrics
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunContentEvent, RunEvent, RunOutput
 from agno.run.cancel import (
-    cancel_run as cancel_run_global,
-)
-from agno.run.cancel import (
+    acleanup_run,
+    araise_if_cancelled,
+    aregister_run,
     cleanup_run,
     raise_if_cancelled,
     register_run,
+)
+from agno.run.cancel import (
+    cancel_run as cancel_run_global,
 )
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
@@ -52,7 +59,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowChatInteraction, WorkflowSession
 from agno.team.team import Team
-from agno.utils.common import is_typed_dict, validate_typed_dict
+from agno.utils.agent import validate_input
 from agno.utils.log import (
     log_debug,
     log_error,
@@ -68,7 +75,7 @@ from agno.utils.print_response.workflow import (
     print_response,
     print_response_stream,
 )
-from agno.workflow import WorkflowAgent
+from agno.workflow.agent import WorkflowAgent
 from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
@@ -80,7 +87,6 @@ from agno.workflow.types import (
     StepMetrics,
     StepOutput,
     StepType,
-    WebSocketHandler,
     WorkflowExecutionInput,
     WorkflowMetrics,
 )
@@ -164,7 +170,7 @@ class Workflow:
     # Control whether to store executor responses (agent/team responses) in flattened runs
     store_executor_outputs: bool = True
 
-    websocket_handler: Optional[WebSocketHandler] = None
+    websocket_handler: Optional["WebSocketHandler"] = None
 
     # Input schema to validate the input to the workflow
     input_schema: Optional[Type[BaseModel]] = None
@@ -254,59 +260,6 @@ class Workflow:
 
     def _has_async_db(self) -> bool:
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
-
-    def _validate_input(
-        self, input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]]
-    ) -> Optional[Union[str, List, Dict, Message, BaseModel]]:
-        """Parse and validate input against input_schema if provided"""
-        if self.input_schema is None:
-            return input  # Return input unchanged if no schema is set
-
-        if input is None:
-            raise ValueError("Input required when input_schema is set")
-
-        # Handle Message objects - extract content
-        if isinstance(input, Message):
-            input = input.content  # type: ignore
-
-        # If input is a string, convert it to a dict
-        if isinstance(input, str):
-            import json
-
-            try:
-                input = json.loads(input)
-            except Exception as e:
-                raise ValueError(f"Failed to parse input. Is it a valid JSON string?: {e}")
-
-        # Case 1: Message is already a BaseModel instance
-        if isinstance(input, BaseModel):
-            if isinstance(input, self.input_schema):
-                try:
-                    return input
-                except Exception as e:
-                    raise ValueError(f"BaseModel validation failed: {str(e)}")
-            else:
-                # Different BaseModel types
-                raise ValueError(f"Expected {self.input_schema.__name__} but got {type(input).__name__}")
-
-        # Case 2: Message is a dict
-        elif isinstance(input, dict):
-            try:
-                # Check if the schema is a TypedDict
-                if is_typed_dict(self.input_schema):
-                    validated_dict = validate_typed_dict(input, self.input_schema)
-                    return validated_dict
-                else:
-                    validated_model = self.input_schema(**input)
-                    return validated_model
-            except Exception as e:
-                raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
-
-        # Case 3: Other types not supported for structured input
-        else:
-            raise ValueError(
-                f"Cannot validate {type(input)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
-            )
 
     @property
     def run_parameters(self) -> Dict[str, Any]:
@@ -1004,7 +957,7 @@ class Workflow:
     def _broadcast_to_websocket(
         self,
         event: Any,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
     ) -> None:
         """Broadcast events to WebSocket if available (async context only)"""
         if websocket_handler:
@@ -1019,7 +972,7 @@ class Workflow:
         self,
         event: "WorkflowRunOutputEvent",
         workflow_run_response: WorkflowRunOutput,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
     ) -> "WorkflowRunOutputEvent":
         """Handle workflow events for storage - similar to Team._handle_event"""
         from agno.run.agent import RunOutput
@@ -1047,8 +1000,71 @@ class Workflow:
                     workflow_run_response.events = []
                 workflow_run_response.events.append(event)
 
+        # Add to event buffer for reconnection support
+        # Use workflow_run_id for agent/team events, run_id for workflow events
+        buffer_run_id = None
+        event_index = None
+        if hasattr(event, "workflow_run_id") and event.workflow_run_id:
+            # Agent/Team event - use workflow_run_id
+            buffer_run_id = event.workflow_run_id
+        elif hasattr(event, "run_id") and event.run_id:
+            # Workflow event - use run_id
+            buffer_run_id = event.run_id
+
+        if buffer_run_id:
+            try:
+                from agno.os.managers import event_buffer
+
+                # add_event now returns the event_index
+                event_index = event_buffer.add_event(buffer_run_id, event)  # type: ignore
+            except Exception as e:
+                # Don't fail workflow execution if buffering fails
+                log_debug(f"Failed to add event to buffer: {e}")
+
         # Broadcast to WebSocket if available (async context only)
-        self._broadcast_to_websocket(event, websocket_handler)
+        # Include event_index for frontend reconnection support
+        if websocket_handler:
+            import asyncio
+
+            try:
+                loop = asyncio.get_running_loop()
+                if loop:
+                    # Pass event_index and run_id to websocket handler
+                    asyncio.create_task(
+                        websocket_handler.handle_event(event, event_index=event_index, run_id=buffer_run_id)
+                    )
+            except RuntimeError:
+                pass
+
+        # ALSO broadcast through websocket manager for reconnected clients
+        # This ensures clients who reconnect after workflow started still receive events
+        if buffer_run_id:
+            try:
+                import asyncio
+
+                from agno.os.managers import websocket_manager
+
+                loop = asyncio.get_running_loop()
+                if loop:
+                    # Format the event for broadcast
+                    event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
+                    if event_index is not None:
+                        event_dict["event_index"] = event_index
+                    if "run_id" not in event_dict:
+                        event_dict["run_id"] = buffer_run_id
+
+                    # Broadcast to registered websocket (if different from original)
+                    import json
+
+                    from agno.utils.serialize import json_serializer
+
+                    asyncio.create_task(
+                        websocket_manager.broadcast_to_run(
+                            buffer_run_id, json.dumps(event_dict, default=json_serializer)
+                        )
+                    )
+            except Exception as e:
+                log_debug(f"Failed to broadcast through manager: {e}")
 
         return event
 
@@ -1743,6 +1759,17 @@ class Workflow:
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
+        # Mark run as completed in event buffer
+        try:
+            from agno.os.managers import event_buffer
+
+            event_buffer.set_run_completed(
+                workflow_run_response.run_id,  # type: ignore
+                workflow_run_response.status or RunStatus.completed,
+            )
+        except Exception as e:
+            log_debug(f"Failed to mark run as completed in buffer: {e}")
+
         # Stop timer on error
         if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
@@ -1843,6 +1870,7 @@ class Workflow:
         """Execute a specific pipeline by name asynchronously"""
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
+        await aregister_run(run_context.run_id)
         # Read existing session from database
         workflow_session, run_context.session_state = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=run_context.session_state
@@ -1866,14 +1894,14 @@ class Workflow:
             elif isasyncgenfunction(self.steps):  # type: ignore
                 async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
                 async for chunk in async_gen:
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                     else:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
-                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                 workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
             workflow_run_response.status = RunStatus.completed
 
@@ -1893,7 +1921,7 @@ class Workflow:
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Async Executing step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -1908,7 +1936,7 @@ class Workflow:
                     )
 
                     # Check for cancellation before executing step
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     step_output = await step.aexecute(  # type: ignore[union-attr]
                         step_input,
@@ -1926,7 +1954,7 @@ class Workflow:
                     )
 
                     # Check for cancellation after step execution
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
@@ -2006,7 +2034,7 @@ class Workflow:
         else:
             self.save_session(session=workflow_session)
         # Always clean up the run tracking
-        cleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_run(workflow_run_response.run_id)  # type: ignore
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -2022,12 +2050,14 @@ class Workflow:
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
         stream_events: bool = False,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
         background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
+
+        await aregister_run(run_context.run_id)
 
         # Read existing session from database
         workflow_session, run_context.session_state = await self._aload_or_create_session(
@@ -2060,7 +2090,7 @@ class Workflow:
                 content = ""
                 async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
                 async for chunk in async_gen:
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                         yield chunk
@@ -2095,7 +2125,7 @@ class Workflow:
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     if workflow_run_response.run_id:
-                        raise_if_cancelled(workflow_run_response.run_id)
+                        await araise_if_cancelled(workflow_run_response.run_id)
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Async streaming step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -2133,7 +2163,7 @@ class Workflow:
                         background_tasks=background_tasks,
                     ):
                         if workflow_run_response.run_id:
-                            raise_if_cancelled(workflow_run_response.run_id)
+                            await araise_if_cancelled(workflow_run_response.run_id)
 
                         # Accumulate partial data from streaming events
                         partial_step_content = self._accumulate_partial_step_data(event, partial_step_content)  # type: ignore
@@ -2335,6 +2365,17 @@ class Workflow:
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
 
+        # Mark run as completed in event buffer
+        try:
+            from agno.os.managers import event_buffer
+
+            event_buffer.set_run_completed(
+                workflow_run_response.run_id,  # type: ignore
+                workflow_run_response.status or RunStatus.completed,
+            )
+        except Exception as e:
+            log_debug(f"Failed to mark run as completed in buffer: {e}")
+
         # Stop timer on error
         if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
@@ -2352,7 +2393,7 @@ class Workflow:
             await self._alog_workflow_telemetry(session_id=session_id, run_id=workflow_run_response.run_id)
 
         # Always clean up the run tracking
-        cleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_run(workflow_run_response.run_id)  # type: ignore
 
     async def _arun_background(
         self,
@@ -2394,6 +2435,7 @@ class Workflow:
             run_id=run_id,
             input=input,
             session_id=session_id,
+            user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
@@ -2482,7 +2524,7 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         stream_events: bool = False,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute workflow in background with streaming and WebSocket broadcasting"""
@@ -2512,6 +2554,7 @@ class Workflow:
             run_id=run_id,
             input=input,
             session_id=session_id,
+            user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
@@ -2769,6 +2812,7 @@ class Workflow:
             run_id=run_id,
             input=execution_input.input,
             session_id=session.session_id,
+            user_id=session.user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
@@ -2950,6 +2994,7 @@ class Workflow:
                 run_id=run_id,
                 input=execution_input.input,
                 session_id=session.session_id,
+                user_id=session.user_id,
                 workflow_id=self.id,
                 workflow_name=self.name,
                 created_at=int(datetime.now().timestamp()),
@@ -2998,6 +3043,7 @@ class Workflow:
                     run_id=str(uuid4()),
                     input=execution_input.input,
                     session_id=session.session_id,
+                    user_id=session.user_id,
                     workflow_id=self.id,
                     workflow_name=self.name,
                     created_at=int(datetime.now().timestamp()),
@@ -3010,7 +3056,7 @@ class Workflow:
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
         run_context: RunContext,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
         stream: bool = False,
     ) -> None:
         """Initialize the workflow agent with async tools (but NOT context - that's passed per-run)"""
@@ -3046,7 +3092,7 @@ class Workflow:
         run_context: RunContext,
         execution_input: WorkflowExecutionInput,
         stream: bool = False,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
         **kwargs: Any,
     ):
         """
@@ -3069,7 +3115,8 @@ class Workflow:
         if stream:
 
             async def _stream():
-                session, session_state_loaded = await self._aload_session_for_workflow_agent(
+                await aregister_run(run_context.run_id)
+                session, _ = await self._aload_session_for_workflow_agent(
                     run_context.session_id, run_context.user_id, run_context.session_state
                 )
                 async for event in self._arun_workflow_agent_stream(
@@ -3087,7 +3134,8 @@ class Workflow:
         else:
 
             async def _execute():
-                session, session_state_loaded = await self._aload_session_for_workflow_agent(
+                await aregister_run(run_context.run_id)
+                session, _ = await self._aload_session_for_workflow_agent(
                     run_context.session_id, run_context.user_id, run_context.session_state
                 )
                 return await self._arun_workflow_agent(
@@ -3107,7 +3155,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         run_context: RunContext,
         stream: bool = False,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """
@@ -3152,6 +3200,7 @@ class Workflow:
             run_id=run_id,
             input=execution_input.input,
             session_id=session.session_id,
+            user_id=session.user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
@@ -3350,6 +3399,7 @@ class Workflow:
                 run_id=run_id,
                 input=execution_input.input,
                 session_id=session.session_id,
+                user_id=session.user_id,
                 workflow_id=self.id,
                 workflow_name=self.name,
                 created_at=int(datetime.now().timestamp()),
@@ -3417,6 +3467,7 @@ class Workflow:
                     run_id=str(uuid4()),
                     input=execution_input.input,
                     session_id=session.session_id,
+                    user_id=session.user_id,
                     workflow_id=self.id,
                     workflow_name=self.name,
                     created_at=int(datetime.now().timestamp()),
@@ -3499,7 +3550,10 @@ class Workflow:
         run_id = run_id or str(uuid4())
         register_run(run_id)
 
-        input = self._validate_input(input)
+        if input is None and self.input_schema is not None:
+            raise ValueError("Input is required when input_schema is provided")
+        if input is not None and self.input_schema is not None:
+            input = validate_input(input, self.input_schema)
         if background:
             raise RuntimeError("Background execution is not supported for sync run()")
 
@@ -3577,6 +3631,7 @@ class Workflow:
             run_id=run_id,
             input=input,
             session_id=session_id,
+            user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
@@ -3667,11 +3722,14 @@ class Workflow:
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
 
-        input = self._validate_input(input)
+        if input is None and self.input_schema is not None:
+            raise ValueError("Input is required when input_schema is provided")
+        if input is not None and self.input_schema is not None:
+            input = validate_input(input, self.input_schema)
 
         websocket_handler = None
         if websocket:
-            from agno.workflow.types import WebSocketHandler
+            from agno.os.managers import WebSocketHandler
 
             websocket_handler = WebSocketHandler(websocket=websocket)
 
@@ -3715,7 +3773,6 @@ class Workflow:
 
         # Set the id for the run and register it immediately for cancellation tracking
         run_id = run_id or str(uuid4())
-        register_run(run_id)
 
         self.initialize_workflow()
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -3771,6 +3828,7 @@ class Workflow:
             run_id=run_id,
             input=input,
             session_id=session_id,
+            user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
