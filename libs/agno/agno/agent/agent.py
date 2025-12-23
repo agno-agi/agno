@@ -879,6 +879,14 @@ class Agent:
                 "Please choose one memory system."
             )
 
+        # Validate: can't enable both agentic memory v2 and automatic memory update
+        if self.enable_agentic_memory_v2 and self.update_memory_on_run:
+            raise ValueError(
+                "Cannot enable both 'enable_agentic_memory_v2' and 'update_memory_on_run'. "
+                "Use 'enable_agentic_memory_v2' for explicit tool-based memory management, "
+                "or 'update_memory_on_run' for automatic background extraction."
+            )
+
         if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
             self._set_memory_manager()
         if self.update_memory_on_run or self.enable_agentic_memory_v2 or self.memory_compiler is not None:

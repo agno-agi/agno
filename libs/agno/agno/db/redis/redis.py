@@ -2158,7 +2158,7 @@ class RedisDb(BaseDb):
             UserProfile or dict if found, None otherwise
         """
         try:
-            key = generate_redis_key(self.db_prefix, "user_profiles", user_id)
+            key = generate_redis_key(self.db_prefix, self.user_profiles_table_name, user_id)
             data = self.redis_client.get(key)
 
             if data is None:
@@ -2201,7 +2201,7 @@ class RedisDb(BaseDb):
                 "updated_at": current_time,
             }
 
-            key = generate_redis_key(self.db_prefix, "user_profiles", user_profile.user_id)
+            key = generate_redis_key(self.db_prefix, self.user_profiles_table_name, user_profile.user_id)
             serialized = serialize_data(item_data)
             self.redis_client.set(key, serialized, ex=self.expire)
 
@@ -2221,7 +2221,7 @@ class RedisDb(BaseDb):
             user_id: The unique user identifier to delete
         """
         try:
-            key = generate_redis_key(self.db_prefix, "user_profiles", user_id)
+            key = generate_redis_key(self.db_prefix, self.user_profiles_table_name, user_id)
             self.redis_client.delete(key)
             log_debug(f"Deleted user profile: {user_id}")
 

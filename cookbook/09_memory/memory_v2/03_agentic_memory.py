@@ -1,11 +1,3 @@
-"""Agentic Memory - Sarah explicitly manages her memory.
-
-This continues Sarah's story from 02_automatic_learning.py.
-The agent has TOOLS to save, update, and delete memory on request.
-
-Run after 02_automatic_learning.py to see memory accumulate.
-"""
-
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat

@@ -1808,7 +1808,7 @@ class GcsJsonDb(BaseDb):
             UserProfile or dict if found, None otherwise
         """
         try:
-            profiles = self._read_json_file("user_profiles", create_table_if_not_found=True)
+            profiles = self._read_json_file(self.user_profiles_table_name, create_table_if_not_found=True)
             if not profiles:
                 return None
 
@@ -1850,7 +1850,7 @@ class GcsJsonDb(BaseDb):
                 "updated_at": current_time,
             }
 
-            profiles = self._read_json_file("user_profiles", create_table_if_not_found=True)
+            profiles = self._read_json_file(self.user_profiles_table_name, create_table_if_not_found=True)
             if profiles is None:
                 profiles = []
 
@@ -1865,7 +1865,7 @@ class GcsJsonDb(BaseDb):
             if not found:
                 profiles.append(item_data)
 
-            self._write_json_file("user_profiles", profiles)
+            self._write_json_file(self.user_profiles_table_name, profiles)
 
             if not deserialize:
                 return item_data
@@ -1883,12 +1883,12 @@ class GcsJsonDb(BaseDb):
             user_id: The unique user identifier to delete
         """
         try:
-            profiles = self._read_json_file("user_profiles", create_table_if_not_found=False)
+            profiles = self._read_json_file(self.user_profiles_table_name, create_table_if_not_found=False)
             if not profiles:
                 return
 
             profiles = [p for p in profiles if p.get("user_id") != user_id]
-            self._write_json_file("user_profiles", profiles)
+            self._write_json_file(self.user_profiles_table_name, profiles)
             log_debug(f"Deleted user profile: {user_id}")
 
         except Exception as e:

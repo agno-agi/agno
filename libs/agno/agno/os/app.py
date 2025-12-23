@@ -923,6 +923,7 @@ class AgentOS:
             "metrics_table_name": db.metrics_table_name,
             "evals_table_name": db.eval_table_name,
             "knowledge_table_name": db.knowledge_table_name,
+            "user_profiles_table_name": db.user_profiles_table_name,
         }
         return {k: v for k, v in table_names.items() if v is not None}
 

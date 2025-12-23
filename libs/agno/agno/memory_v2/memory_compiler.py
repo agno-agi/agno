@@ -141,7 +141,8 @@ class MemoryCompiler:
             data["feedback"] = user_profile.feedback
         if not data:
             return ""
-        return f"<user_memory>\n{json.dumps(data, indent=2)}\n</user_memory>"
+        # Use compact JSON to reduce token usage
+        return f"<user_memory>\n{json.dumps(data, separators=(',', ':'))}\n</user_memory>"
 
     def create_user_profile(
         self,
@@ -297,83 +298,80 @@ class MemoryCompiler:
             - Profile: identity info (name, company, role, location, tone preference)
             - Knowledge: personal facts (interests, hobbies, habits, plans, preferences)
             - Policies: behavior rules (no emojis, be concise, avoid buzzwords)
-            - Feedback: evaluative signals (what user liked/disliked about responses)
-        """
+            - Feedback: evaluative signals (what user liked/disliked about responses)"""
         )
 
-        # -*- Return a system message for the memory compiler
-        system_prompt_lines = dedent(f"""\
-            You are a Profile Manager that is responsible for managing information and preferences about the user. "
-            You will be provided with a criteria for profile information to capture in the <profile_to_capture> section and a list of existing profile data in the <existing_profile> section.,
-            ,
-            
-            ## When to add or update profile,
-            
-            - Your first task is to decide if profile information needs to be added, updated, or deleted based on the user's message OR if no changes are needed.,
-            - If the user's message meets the criteria in the <profile_to_capture> section and that information is not already captured in the <existing_profile> section, you should capture it,
-            - If the users messages does not meet the criteria in the <profile_to_capture> section, no profile updates are needed,
-            - If the existing profile in the <existing_profile> section captures all relevant information, no updates are needed.,
-            
-            ## Categorization Rules,
-            IMPORTANT: Use the correct info_type for each piece of information:,
-            ,
-            info_type='profile' - ONLY for identity:,
-            - name, preferred_name, company, role, location, tone_preference,
-            ,
-            info_type='knowledge' - For learned facts about the user:,
-            - interests, hobbies, habits, plans, preferences, personal facts,
-            ,
-            info_type='policy' - For behavior rules:,
-            - constraints, preferences about AI behavior (no emojis, be concise),
-            ,
-            info_type='feedback' - For SPECIFIC response preferences:,
-            - key='positive': specific format/style/content the user liked,
-            - key='negative': specific format/style/content the user disliked,
-            - SKIP vague praise ("great job", "thanks") - not actionable,
-            - Only save if it tells you HOW to improve future responses,
-            ,
-            
-            ## How to save information,
-            - Capture key details as brief, third-person statements.,
-            - Examples:,
-            - 'My name is John Doe' -> info_type='profile', key='name', value='John Doe',
-            - 'I work at Acme Corp' -> info_type='profile', key='company', value='Acme Corp',
-            - 'I like anime and video games' -> info_type='knowledge', key='interests', value='enjoys anime and video games',
-            - 'I go to the gym every day' -> info_type='knowledge', key='habit', value='goes to the gym daily',
-            - 'Please be concise' -> info_type='policy', key='response_style', value='prefers concise responses',
-            - 'I love how you used bullet points' -> info_type='feedback', key='positive', value='prefers bullet point format',
-            - 'That was too long' -> info_type='feedback', key='negative', value='prefers shorter responses',
-            - 'Great!' -> DO NOT SAVE (too vague, not actionable),
-            - Create multiple entries if needed. Don't repeat information.,
-            - If user asks to forget something, delete the relevant entry.,
-            ,
-            ## Criteria for capturing profile information,
-            Use the following criteria to determine if a user's message should be captured:,
-            
-            <profile_to_capture>,
-            {profile_capture_instructions},
-            </profile_to_capture>,
-            ,
-            ## Updating profile,
-            You will also be provided with existing profile data in the <existing_profile> section. You can:,
-            - Decide to make no changes.,
-        """)
+        system_prompt = dedent(f"""\
+            You are a Profile Manager responsible for managing information and preferences about the user.
+
+            ## Security Rules
+            NEVER store secrets, credentials, API keys, passwords, tokens, or any sensitive authentication data.
+            If the user mentions such information, do NOT save it to the profile.
+
+            ## When to Add or Update Profile
+            - Decide if profile information needs to be added, updated, or deleted based on the user's message.
+            - If the user's message meets the criteria in <profile_to_capture> and is not already in <existing_profile>, capture it.
+            - If the message does not meet the criteria, no updates are needed.
+            - If the existing profile already captures the relevant information, no updates are needed.
+
+            ## Categorization Rules
+            Use the correct info_type for each piece of information:
+
+            info_type='profile' - ONLY for identity:
+            - name, preferred_name, company, role, location, tone_preference
+
+            info_type='knowledge' - For learned facts about the user:
+            - interests, hobbies, habits, plans, preferences, personal facts
+
+            info_type='policy' - For behavior rules:
+            - constraints, preferences about AI behavior (no emojis, be concise)
+
+            info_type='feedback' - For SPECIFIC response preferences:
+            - key='positive': specific format/style/content the user liked
+            - key='negative': specific format/style/content the user disliked
+            - SKIP vague praise ("great job", "thanks") - not actionable
+            - Only save if it tells you HOW to improve future responses
+
+            ## How to Save Information
+            Capture key details as brief, third-person statements.
+
+            Examples:
+            - 'My name is John Doe' -> info_type='profile', key='name', value='John Doe'
+            - 'I work at Acme Corp' -> info_type='profile', key='company', value='Acme Corp'
+            - 'I like anime and video games' -> info_type='knowledge', key='interests', value='enjoys anime and video games'
+            - 'I go to the gym every day' -> info_type='knowledge', key='habit', value='goes to the gym daily'
+            - 'Please be concise' -> info_type='policy', key='response_style', value='prefers concise responses'
+            - 'I love how you used bullet points' -> info_type='feedback', key='positive', value='prefers bullet point format'
+            - 'That was too long' -> info_type='feedback', key='negative', value='prefers shorter responses'
+            - 'Great!' -> DO NOT SAVE (too vague, not actionable)
+
+            Create multiple entries if needed. Don't repeat information.
+            If user asks to forget something, delete the relevant entry.
+
+            <profile_to_capture>
+            {profile_capture_instructions}
+            </profile_to_capture>
+
+            ## Updating Profile
+            You can:
+            - Decide to make no changes.""")
 
         if enable_update_profile:
-            system_prompt_lines += "- Decide to add or update profile information, using the `save_profile_field` tool."
+            system_prompt += "\n- Add or update profile information using the `save_profile_field` tool."
         if enable_delete_profile:
-            system_prompt_lines += "- Decide to delete profile information, using the `delete_profile_field` tool."
+            system_prompt += "\n- Delete profile information using the `delete_profile_field` tool."
 
-        system_prompt_lines += "You can call multiple tools in a single response if needed. Only add or update profile information if it is necessary to capture key information provided by the user."
+        system_prompt += "\n\nYou can call multiple tools in a single response if needed. Only add or update profile information if it is necessary to capture key information provided by the user."
+
         if existing_profile:
             existing = self._format_profile_as_context(existing_profile)
             if existing:
-                system_prompt_lines += f"\n<existing_profile>\n{existing}\n</existing_profile>"
+                system_prompt += f"\n\n<existing_profile>\n{existing}\n</existing_profile>"
 
         if self.additional_instructions:
-            system_prompt_lines += self.additional_instructions
+            system_prompt += f"\n\n{self.additional_instructions}"
 
-        return Message(role="system", content=system_prompt_lines)
+        return Message(role="system", content=system_prompt)
 
     def determine_tools_for_model(self, tools: List[Callable]) -> List[Union[Function, Dict[Any, Any]]]:
         """Convert callable tools to Function objects for the model."""
@@ -431,7 +429,7 @@ class MemoryCompiler:
         """Create tools for model to call during create_user_profile."""
 
         def save_profile_field(info_type: str, key: str, value: str) -> str:
-            """Use this function to save user profile information.
+            """Save user profile information. NEVER store secrets, credentials, API keys, or passwords.
             Args:
                 info_type (str): The type of information (profile/policy/knowledge/feedback).
                 key (str): The key/name for the information.
@@ -442,7 +440,7 @@ class MemoryCompiler:
             return self._save_to_user_memory_layer(user_id, info_type, key, value)
 
         def delete_profile_field(info_type: str, key: str) -> str:
-            """Use this function to delete/forget user profile information.
+            """Delete/forget user profile information.
             Args:
                 info_type (str): The type of information (profile/policy/knowledge/feedback).
                 key (str): The key/name of the information to delete.
@@ -469,7 +467,7 @@ class MemoryCompiler:
         """Create async tools for model to call during acreate_user_profile."""
 
         async def save_profile_field(info_type: str, key: str, value: str) -> str:
-            """Use this function to save user profile information.
+            """Save user profile information. NEVER store secrets, credentials, API keys, or passwords.
             Args:
                 info_type (str): The type of information (profile/policy/knowledge/feedback).
                 key (str): The key/name for the information.
@@ -480,7 +478,7 @@ class MemoryCompiler:
             return await self._asave_to_user_memory_layer(user_id, info_type, key, value)
 
         async def delete_profile_field(info_type: str, key: str) -> str:
-            """Use this function to delete/forget user profile information.
+            """Delete/forget user profile information.
             Args:
                 info_type (str): The type of information (profile/policy/knowledge/feedback).
                 key (str): The key/name of the information to delete.

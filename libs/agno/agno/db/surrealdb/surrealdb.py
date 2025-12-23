@@ -1,7 +1,7 @@
 import time
 from datetime import date, datetime, timedelta, timezone
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
@@ -1932,14 +1932,12 @@ class SurrealDb(BaseDb):
             if table is None:
                 return None
 
-            query = f"SELECT * FROM {table} WHERE user_id = $user_id"
-            results = self._query(query, {"user_id": user_id}, dict)
+            # Use RecordID pattern consistent with other reads in this file
+            record = RecordID(table, user_id)
+            result = self._query_one("SELECT * FROM ONLY $record", {"record": record}, dict)
 
-            if not results:
+            if not result:
                 return None
-
-            raw_result = results[0] if isinstance(results, list) else results
-            result = cast(Dict[str, Any], raw_result)
 
             # Handle RecordID for id field
             if isinstance(result.get("id"), RecordID):
@@ -1984,18 +1982,13 @@ class SurrealDb(BaseDb):
                 "updated_at": current_time,
             }
 
-            # Use UPSERT with user_id as the unique identifier
-            query = dedent(f"""
-                UPSERT {table} CONTENT $data
-                WHERE user_id = $user_id
-            """)
-            results = self._query(query, {"data": item_data, "user_id": user_profile.user_id}, dict)
+            # Use RecordID pattern consistent with other upserts in this file
+            record = RecordID(table, user_profile.user_id)
+            query = "UPSERT ONLY $record CONTENT $content"
+            result = self._query_one(query, {"record": record, "content": item_data}, dict)
 
-            if not results:
+            if not result:
                 return None
-
-            raw_result = results[0] if isinstance(results, list) else results
-            result = cast(Dict[str, Any], raw_result)
 
             # Handle RecordID for id field
             if isinstance(result.get("id"), RecordID):
@@ -2021,8 +2014,9 @@ class SurrealDb(BaseDb):
             if table is None:
                 return
 
-            query = f"DELETE FROM {table} WHERE user_id = $user_id"
-            self._query(query, {"user_id": user_id}, dict)
+            # Use RecordID pattern consistent with other deletes in this file
+            record = RecordID(table, user_id)
+            self.client.delete(record)
             log_debug(f"Deleted user profile: {user_id}")
 
         except Exception as e:

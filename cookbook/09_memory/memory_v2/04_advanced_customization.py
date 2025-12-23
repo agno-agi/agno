@@ -1,13 +1,3 @@
-"""Advanced Customization - Schema overrides and nested categories.
-
-Demonstrates:
-1. Custom schema for structured profile extraction hints
-2. Nested category organization in memory layers
-"""
-
-from dataclasses import dataclass
-from typing import List, Optional
-
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.memory_v2 import MemoryCompiler
@@ -15,23 +5,23 @@ from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
 
-@dataclass
-class EngineerProfile:
-    name: str
-    role: str
-    company: str
-    years_experience: int
-    primary_languages: List[str]
-    frameworks: List[str]
-    cloud_platforms: Optional[List[str]] = None
-
-
-def example_schema_override():
+def example_custom_instructions():
+    """Customize what the MemoryCompiler extracts using profile_capture_instructions."""
     db = SqliteDb(db_file="tmp/custom_memory.db")
+
+    # Define custom extraction instructions for engineering-focused profiles
+    custom_instructions = """
+    Focus on capturing engineering-specific information:
+    - Profile: name, role, company, years of experience
+    - Knowledge: primary programming languages, frameworks, cloud platforms, specializations
+    - Policies: communication preferences, code style preferences
+    - Feedback: what formats/explanations work well or poorly
+    """
 
     memory = MemoryCompiler(
         model=OpenAIChat(id="gpt-4o-mini"),
-        profile_schema=EngineerProfile,
+        db=db,
+        profile_capture_instructions=custom_instructions,
     )
 
     agent = Agent(
@@ -53,12 +43,15 @@ def example_schema_override():
     )
 
     print("\nExtracted profile:")
-    pprint(memory.get_user_profile(user_id).user_profile)
+    profile = memory.get_user_profile(user_id)
+    if profile:
+        pprint(profile.to_dict())
 
     memory.delete_user_profile(user_id)
 
 
 def example_nested_categories():
+    """Manually create a profile with nested category organization."""
     db = SqliteDb(db_file="tmp/custom_memory.db")
     memory = MemoryCompiler()
     memory.db = db
@@ -102,5 +95,5 @@ def example_nested_categories():
 
 
 if __name__ == "__main__":
-    example_schema_override()
+    example_custom_instructions()
     example_nested_categories()
