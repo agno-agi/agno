@@ -8446,7 +8446,6 @@ class Agent:
         # 3.3.15 Add the session state to the system message
         if add_session_state_to_context and session_state is not None:
             system_message_content += self._get_formatted_session_state_for_system_message(session_state)
-        
         # Return the system message
         return (
             Message(role=self.system_message_role, content=system_message_content.strip())  # type: ignore
