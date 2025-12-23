@@ -5,6 +5,7 @@ from textwrap import dedent
 from typing import Any, Callable, Dict, List, Optional, Union, cast
 
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.db.schemas.org_memory import OrganizationMemory
 from agno.db.schemas.user_profile import UserProfile
 from agno.models.base import Model
 from agno.models.message import Message
@@ -563,3 +564,136 @@ class MemoryCompiler:
 
         log_debug(f"Deleted {info_type} {key} for {profile.user_id}")
         return f"Forgot {info_type}: {key}"
+
+    # --- Organization Memory ---
+
+    def get_org_memory(self, org_id: str) -> Optional[Union[OrganizationMemory, Dict[str, Any]]]:
+        if not self.db:
+            log_warning("Database not provided")
+            return None
+        self.db = cast(BaseDb, self.db)
+        return self.db.get_org_memory(org_id=org_id)
+
+    def save_org_memory(self, org_memory: OrganizationMemory) -> Optional[Union[OrganizationMemory, Dict[str, Any]]]:
+        if not self.db:
+            log_warning("Database not provided")
+            return None
+        self.db = cast(BaseDb, self.db)
+        return self.db.upsert_org_memory(org_memory=org_memory)
+
+    def delete_org_memory(self, org_id: str) -> None:
+        if not self.db:
+            log_warning("Database not provided")
+            return
+        self.db = cast(BaseDb, self.db)
+        self.db.delete_org_memory(org_id=org_id)
+
+    async def aget_org_memory(self, org_id: str) -> Optional[Union[OrganizationMemory, Dict[str, Any]]]:
+        if not self.db:
+            log_warning("Database not provided")
+            return None
+        if isinstance(self.db, AsyncBaseDb):
+            return await self.db.get_org_memory(org_id=org_id)
+        return self.db.get_org_memory(org_id=org_id)
+
+    async def asave_org_memory(
+        self, org_memory: OrganizationMemory
+    ) -> Optional[Union[OrganizationMemory, Dict[str, Any]]]:
+        if not self.db:
+            log_warning("Database not provided")
+            return None
+        if isinstance(self.db, AsyncBaseDb):
+            return await self.db.upsert_org_memory(org_memory=org_memory)
+        return self.db.upsert_org_memory(org_memory=org_memory)
+
+    async def adelete_org_memory(self, org_id: str) -> None:
+        if not self.db:
+            log_warning("Database not provided")
+            return
+        if isinstance(self.db, AsyncBaseDb):
+            await self.db.delete_org_memory(org_id=org_id)
+        else:
+            self.db.delete_org_memory(org_id=org_id)
+
+    def compile_org_memory(self, org_id: str) -> str:
+        org_memory = self.get_org_memory(org_id)
+        if not org_memory:
+            return ""
+        return self._format_org_memory_as_context(org_memory)
+
+    async def acompile_org_memory(self, org_id: str) -> str:
+        org_memory = await self.aget_org_memory(org_id)
+        if not org_memory:
+            return ""
+        return self._format_org_memory_as_context(org_memory)
+
+    def _format_org_memory_as_context(self, org_memory: OrganizationMemory) -> str:
+        data: Dict[str, Any] = {}
+        if org_memory.context:
+            data["context"] = org_memory.context
+        if org_memory.policies:
+            data["policies"] = org_memory.policies
+        if not data:
+            return ""
+        return f"<org_memory>\n{json.dumps(data, separators=(',', ':'))}\n</org_memory>"
+
+    def _save_to_org_memory_layer(self, org_id: str, layer: str, key: str, value: str) -> str:
+        """Save to organization memory layer."""
+        org_memory = self.get_org_memory(org_id) or OrganizationMemory(org_id=org_id)
+        result = self._apply_save_to_org_layer(org_memory, layer, key, value)
+        if not result.startswith("Error"):
+            self.save_org_memory(org_memory)
+        return result
+
+    async def _asave_to_org_memory_layer(self, org_id: str, layer: str, key: str, value: str) -> str:
+        """Async save to organization memory layer."""
+        org_memory = await self.aget_org_memory(org_id) or OrganizationMemory(org_id=org_id)
+        result = self._apply_save_to_org_layer(org_memory, layer, key, value)
+        if not result.startswith("Error"):
+            await self.asave_org_memory(org_memory)
+        return result
+
+    def _delete_from_org_memory_layer(self, org_id: str, layer: str, key: str) -> str:
+        """Delete from organization memory layer."""
+        org_memory = self.get_org_memory(org_id)
+        if not org_memory:
+            return f"No org memory found for {org_id}"
+        result = self._apply_delete_from_org_layer(org_memory, layer, key)
+        if not result.startswith("Error") and not result.endswith("not found"):
+            self.save_org_memory(org_memory)
+        return result
+
+    async def _adelete_from_org_memory_layer(self, org_id: str, layer: str, key: str) -> str:
+        """Async delete from organization memory layer."""
+        org_memory = await self.aget_org_memory(org_id)
+        if not org_memory:
+            return f"No org memory found for {org_id}"
+        result = self._apply_delete_from_org_layer(org_memory, layer, key)
+        if not result.startswith("Error") and not result.endswith("not found"):
+            await self.asave_org_memory(org_memory)
+        return result
+
+    def _apply_save_to_org_layer(self, org_memory: OrganizationMemory, layer: str, key: str, value: str) -> str:
+        """Modify org memory in-place. Returns success/error message."""
+        if layer not in ("context", "policies"):
+            return f"Error: layer must be 'context' or 'policies', got '{layer}'"
+
+        if org_memory.memory_layers is None:
+            org_memory.memory_layers = {}
+
+        org_memory.memory_layers.setdefault(layer, {})[key] = value
+        log_debug(f"Saved org {layer} {key}={value} for {org_memory.org_id}")
+        return f"Saved org {layer}: {key} = {value}"
+
+    def _apply_delete_from_org_layer(self, org_memory: OrganizationMemory, layer: str, key: str) -> str:
+        """Modify org memory in-place. Returns success/error message."""
+        if layer not in ("context", "policies"):
+            return f"Error: layer must be 'context' or 'policies', got '{layer}'"
+
+        layers = org_memory.memory_layers or {}
+        layer_dict = layers.get(layer, {})
+        if key in layer_dict:
+            del layer_dict[key]
+            log_debug(f"Deleted org {layer} {key} for {org_memory.org_id}")
+            return f"Forgot org {layer}: {key}"
+        return f"Key '{key}' not found in org {layer}"

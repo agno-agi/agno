@@ -26,6 +26,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.org_memory import OrganizationMemory
 from agno.db.schemas.user_profile import UserProfile
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -362,6 +363,15 @@ class AsyncPostgresDb(AsyncBaseDb):
                     create_table_if_not_found=create_table_if_not_found,
                 )
             return self.user_profiles_table
+
+        if table_type == "organizations":
+            if not hasattr(self, "organizations_table"):
+                self.organizations_table = await self._get_or_create_table(
+                    table_name=self.organizations_table_name,
+                    table_type="organizations",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+            return self.organizations_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -2715,4 +2725,99 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Error deleting user profile: {e}")
+            raise e
+
+    # --- Organization Memory ---
+
+    async def get_org_memory(
+        self,
+        org_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[OrganizationMemory, Dict[str, Any]]]:
+        """Get organization memory from the database."""
+        try:
+            table = await self._get_table(table_type="organizations", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = select(table).where(table.c.org_id == org_id)
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+
+                if row is None:
+                    return None
+
+                db_row = dict(row._mapping)
+
+                if not deserialize:
+                    return db_row
+
+                return OrganizationMemory.from_dict(db_row)
+
+        except Exception as e:
+            log_error(f"Error getting org memory: {e}")
+            raise e
+
+    async def upsert_org_memory(
+        self,
+        org_memory: OrganizationMemory,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[OrganizationMemory, Dict[str, Any]]]:
+        """Upsert organization memory in the database."""
+        try:
+            table = await self._get_table(table_type="organizations", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            current_time = int(time.time())
+
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = postgresql.insert(table).values(
+                        org_id=org_memory.org_id,
+                        memory_layers=org_memory.memory_layers,
+                        created_at=org_memory.created_at or current_time,
+                        updated_at=current_time,
+                    )
+
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["org_id"],
+                        set_=dict(
+                            memory_layers=org_memory.memory_layers,
+                            updated_at=current_time,
+                        ),
+                    ).returning(table)
+
+                    result = await sess.execute(stmt)
+                    row = result.fetchone()
+
+                    if row is None:
+                        return None
+
+                    db_row = dict(row._mapping)
+
+                    if not deserialize:
+                        return db_row
+
+                    return OrganizationMemory.from_dict(db_row)
+
+        except Exception as e:
+            log_error(f"Error upserting org memory: {e}")
+            raise e
+
+    async def delete_org_memory(self, org_id: str) -> None:
+        """Delete organization memory."""
+        try:
+            table = await self._get_table(table_type="organizations")
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = table.delete().where(table.c.org_id == org_id)
+                await sess.execute(stmt)
+                log_debug(f"Deleted org memory: {org_id}")
+
+        except Exception as e:
+            log_error(f"Error deleting org memory: {e}")
             raise e

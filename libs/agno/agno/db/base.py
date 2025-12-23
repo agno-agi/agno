@@ -39,6 +39,7 @@ class BaseDb(ABC):
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         user_profiles_table: Optional[str] = None,
+        organizations_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -52,6 +53,7 @@ class BaseDb(ABC):
         self.span_table_name = spans_table or "agno_spans"
         self.versions_table_name = versions_table or "agno_schema_versions"
         self.user_profiles_table_name = user_profiles_table or "agno_user_profiles"
+        self.organizations_table_name = organizations_table or "agno_organizations"
 
     @abstractmethod
     def table_exists(self, table_name: str) -> bool:
@@ -538,6 +540,7 @@ class AsyncBaseDb(ABC):
         culture_table: Optional[str] = None,
         versions_table: Optional[str] = None,
         user_profiles_table: Optional[str] = None,
+        organizations_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -550,6 +553,7 @@ class AsyncBaseDb(ABC):
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
         self.user_profiles_table_name = user_profiles_table or "agno_user_profiles"
+        self.organizations_table_name = organizations_table or "agno_organizations"
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""

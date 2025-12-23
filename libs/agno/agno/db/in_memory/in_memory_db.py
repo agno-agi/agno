@@ -17,6 +17,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.org_memory import OrganizationMemory
 from agno.db.schemas.user_profile import UserProfile
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -38,6 +39,7 @@ class InMemoryDb(BaseDb):
         self._knowledge: List[Dict[str, Any]] = []
         self._cultural_knowledge: List[Dict[str, Any]] = []
         self._user_profiles: Dict[str, Dict[str, Any]] = {}
+        self._organizations: Dict[str, Dict[str, Any]] = {}
 
     def table_exists(self, table_name: str) -> bool:
         """In-memory implementation, always returns True."""
@@ -1393,4 +1395,66 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting user profile: {e}")
+            raise e
+
+    # --- Organization Memory ---
+
+    def get_org_memory(
+        self,
+        org_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[OrganizationMemory, Dict[str, Any]]]:
+        """Get organization memory from the database."""
+        try:
+            result = self._organizations.get(org_id)
+            if result is None:
+                return None
+
+            result_copy = deepcopy(result)
+
+            if not deserialize:
+                return result_copy
+
+            return OrganizationMemory.from_dict(result_copy)
+
+        except Exception as e:
+            log_error(f"Error getting org memory: {e}")
+            raise e
+
+    def upsert_org_memory(
+        self,
+        org_memory: OrganizationMemory,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[OrganizationMemory, Dict[str, Any]]]:
+        """Upsert organization memory in the database."""
+        try:
+            current_time = int(time.time())
+
+            item_data = {
+                "org_id": org_memory.org_id,
+                "memory_layers": org_memory.memory_layers,
+                "created_at": org_memory.created_at or current_time,
+                "updated_at": current_time,
+            }
+
+            self._organizations[org_memory.org_id] = item_data
+
+            if not deserialize:
+                return deepcopy(item_data)
+
+            return OrganizationMemory.from_dict(deepcopy(item_data))
+
+        except Exception as e:
+            log_error(f"Error upserting org memory: {e}")
+            raise e
+
+    def delete_org_memory(self, org_id: str) -> None:
+        """Delete organization memory."""
+        try:
+            if org_id in self._organizations:
+                del self._organizations[org_id]
+            log_debug(f"Deleted org memory: {org_id}")
+
+        except Exception as e:
+            log_error(f"Error deleting org memory: {e}")
             raise e

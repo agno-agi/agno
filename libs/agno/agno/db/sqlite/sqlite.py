@@ -13,6 +13,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.org_memory import OrganizationMemory
 from agno.db.schemas.user_profile import UserProfile
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
@@ -350,6 +351,14 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.user_profiles_table
+
+        elif table_type == "organizations":
+            self.organizations_table = self._get_or_create_table(
+                table_name=self.organizations_table_name,
+                table_type="organizations",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.organizations_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -3035,4 +3044,98 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting user profile: {e}")
+            raise e
+
+    # --- Organization Memory ---
+
+    def get_org_memory(
+        self,
+        org_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[OrganizationMemory, Dict[str, Any]]]:
+        """Get organization memory from the database."""
+        try:
+            table = self._get_table(table_type="organizations", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.org_id == org_id)
+                result = sess.execute(stmt)
+                row = result.fetchone()
+
+                if row is None:
+                    return None
+
+                db_row = dict(row._mapping)
+
+                if not deserialize:
+                    return db_row
+
+                return OrganizationMemory.from_dict(db_row)
+
+        except Exception as e:
+            log_error(f"Error getting org memory: {e}")
+            raise e
+
+    def upsert_org_memory(
+        self,
+        org_memory: OrganizationMemory,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[OrganizationMemory, Dict[str, Any]]]:
+        """Upsert organization memory in the database."""
+        try:
+            table = self._get_table(table_type="organizations", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            current_time = int(time.time())
+
+            with self.Session() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(
+                    org_id=org_memory.org_id,
+                    memory_layers=org_memory.memory_layers,
+                    created_at=org_memory.created_at or current_time,
+                    updated_at=current_time,
+                )
+
+                stmt = stmt.on_conflict_do_update(  # type: ignore
+                    index_elements=["org_id"],
+                    set_=dict(
+                        memory_layers=org_memory.memory_layers,
+                        updated_at=current_time,
+                    ),
+                ).returning(table)
+
+                result = sess.execute(stmt)
+                row = result.fetchone()
+
+                if row is None:
+                    return None
+
+                db_row = dict(row._mapping)
+
+                if not deserialize:
+                    return db_row
+
+                return OrganizationMemory.from_dict(db_row)
+
+        except Exception as e:
+            log_error(f"Error upserting org memory: {e}")
+            raise e
+
+    def delete_org_memory(self, org_id: str) -> None:
+        """Delete organization memory."""
+        try:
+            table = self._get_table(table_type="organizations")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.org_id == org_id)
+                sess.execute(stmt)
+                log_debug(f"Deleted org memory: {org_id}")
+
+        except Exception as e:
+            log_error(f"Error deleting org memory: {e}")
             raise e

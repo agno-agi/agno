@@ -166,6 +166,13 @@ USER_PROFILES_TABLE_SCHEMA = {
     "updated_at": {"type": BigInteger, "nullable": True},
 }
 
+ORGANIZATIONS_TABLE_SCHEMA = {
+    "org_id": {"type": String, "primary_key": True, "nullable": False},
+    "memory_layers": {"type": JSONB, "nullable": False},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+}
+
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
@@ -188,6 +195,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "traces": TRACE_TABLE_SCHEMA,
         "spans": SPAN_TABLE_SCHEMA,
         "user_profiles": USER_PROFILES_TABLE_SCHEMA,
+        "organizations": ORGANIZATIONS_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})
