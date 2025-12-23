@@ -45,12 +45,14 @@ def mock_knowledge():
     knowledge.remove_content_by_id = Mock()
     knowledge.aremove_content_by_id = AsyncMock()
     knowledge.remove_all_content = Mock()
+    knowledge.aremove_all_content = AsyncMock()  # Router calls async version
     knowledge.get_content_status = Mock()
     knowledge.aget_content_status = AsyncMock()
     knowledge.get_readers = Mock()
     knowledge.get_valid_filters = Mock()
     knowledge._load_content = Mock()
     knowledge.search = Mock()  # Mock the search method for search endpoint tests
+    knowledge.async_search = AsyncMock()  # Router calls async version
 
     return knowledge
 
@@ -277,8 +279,8 @@ def test_delete_all_content(test_app, mock_knowledge):
     assert response.status_code == 200
     assert response.text == '"success"'
 
-    # Verify knowledge.remove_all_content was called
-    mock_knowledge.remove_all_content.assert_called_once()
+    # Verify knowledge.aremove_all_content was called (router uses async version)
+    mock_knowledge.aremove_all_content.assert_called_once()
 
 
 def test_get_content_status(test_app, mock_knowledge):
@@ -413,7 +415,7 @@ def test_search_knowledge_basic(test_app, mock_knowledge):
         ),
     ]
 
-    mock_knowledge.search.return_value = mock_documents
+    mock_knowledge.async_search.return_value = mock_documents
 
     response = test_app.post("/knowledge/search", json={"query": "Jordan Mitchell skills"})
 
@@ -436,8 +438,8 @@ def test_search_knowledge_basic(test_app, mock_knowledge):
     assert doc["meta_data"] == {"page": 1, "chunk": 1}
     assert doc["usage"] == {"total_tokens": 12}
 
-    # Verify knowledge.search was called correctly
-    mock_knowledge.search.assert_called_once_with(
+    # Verify knowledge.async_search was called correctly
+    mock_knowledge.async_search.assert_called_once_with(
         query="Jordan Mitchell skills", max_results=None, filters=None, search_type=None
     )
 
@@ -450,7 +452,7 @@ def test_search_knowledge_with_search_type(test_app, mock_knowledge):
         Document(id="doc_1", content="Vector search result", name="test_doc", meta_data={}, usage={"total_tokens": 5})
     ]
 
-    mock_knowledge.search.return_value = mock_documents
+    mock_knowledge.async_search.return_value = mock_documents
 
     response = test_app.post("/knowledge/search", json={"query": "test query", "search_type": "vector"})
 
@@ -460,8 +462,8 @@ def test_search_knowledge_with_search_type(test_app, mock_knowledge):
     assert data["meta"]["total_count"] == 1
     assert len(data["data"]) == 1
 
-    # Verify knowledge.search was called with search_type
-    mock_knowledge.search.assert_called_once_with(
+    # Verify knowledge.async_search was called with search_type
+    mock_knowledge.async_search.assert_called_once_with(
         query="test query", max_results=None, filters=None, search_type="vector"
     )
 
@@ -477,7 +479,7 @@ def test_search_knowledge_with_db_id(test_app, mock_knowledge):
         Document(id="doc_1", content="Database specific result", name="db_doc", meta_data={}, usage={"total_tokens": 4})
     ]
 
-    mock_knowledge.search.return_value = mock_documents
+    mock_knowledge.async_search.return_value = mock_documents
 
     response = test_app.post("/knowledge/search", json={"query": "test", "db_id": "test_db"})
 
@@ -487,12 +489,12 @@ def test_search_knowledge_with_db_id(test_app, mock_knowledge):
     assert data["meta"]["total_count"] == 1
 
     # Note: db_id affects which knowledge instance is selected, not the search call itself
-    mock_knowledge.search.assert_called_once_with(query="test", max_results=None, filters=None, search_type=None)
+    mock_knowledge.async_search.assert_called_once_with(query="test", max_results=None, filters=None, search_type=None)
 
 
 def test_search_knowledge_no_results(test_app, mock_knowledge):
     """Test search that returns no results."""
-    mock_knowledge.search.return_value = []
+    mock_knowledge.async_search.return_value = []
 
     response = test_app.post("/knowledge/search", json={"query": "nonexistent content"})
 
@@ -505,7 +507,7 @@ def test_search_knowledge_no_results(test_app, mock_knowledge):
 
 def test_search_knowledge_empty_query(test_app, mock_knowledge):
     """Test search with empty query."""
-    mock_knowledge.search.return_value = []
+    mock_knowledge.async_search.return_value = []
 
     response = test_app.post("/knowledge/search", json={"query": ""})
 
@@ -545,7 +547,7 @@ def test_search_knowledge_with_all_parameters(test_app, mock_knowledge):
         )
     ]
 
-    mock_knowledge.search.return_value = mock_documents
+    mock_knowledge.async_search.return_value = mock_documents
 
     response = test_app.post(
         "/knowledge/search", json={"query": "full test", "search_type": "hybrid", "db_id": "test_db"}
@@ -568,7 +570,7 @@ def test_search_knowledge_with_all_parameters(test_app, mock_knowledge):
     assert doc["content_origin"] == "test_origin"
     assert doc["size"] == 100
 
-    mock_knowledge.search.assert_called_once_with(
+    mock_knowledge.async_search.assert_called_once_with(
         query="full test", max_results=None, filters=None, search_type="hybrid"
     )
 
@@ -579,7 +581,7 @@ def test_search_knowledge_timing(test_app, mock_knowledge):
 
     mock_documents = [Document(id="timing_doc", content="Timing test", name="timing", meta_data={}, usage={})]
 
-    mock_knowledge.search.return_value = mock_documents
+    mock_knowledge.async_search.return_value = mock_documents
 
     response = test_app.post("/knowledge/search", json={"query": "timing test"})
 
@@ -611,7 +613,7 @@ def test_search_knowledge_document_serialization(test_app, mock_knowledge):
     mock_doc.embedding = np.array([0.1, 0.2, 0.3])  # This should be excluded
     mock_doc.embedder = object()  # This should be excluded
 
-    mock_knowledge.search.return_value = [mock_doc]
+    mock_knowledge.async_search.return_value = [mock_doc]
 
     response = test_app.post("/knowledge/search", json={"query": "serialization test"})
 
