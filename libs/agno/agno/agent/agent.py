@@ -6201,7 +6201,7 @@ class Agent:
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
         if user_message_str and user_message_str.strip():
-            log_debug("Updating user profile via MemoryCompiler")
+            log_debug("Updating user Memories")
             self.memory_compiler.create_user_profile(
                 message=user_message_str,
                 user_id=user_id,
