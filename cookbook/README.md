@@ -10,6 +10,8 @@ Hundreds of examples. Copy, paste, run. Build agents that actually work.
 
 **Know what you're building?** Find your use case below.
 
+---
+
 ## Build by Use Case
 
 ### I want to build a single agent
@@ -23,6 +25,8 @@ Hundreds of examples. Copy, paste, run. Build agents that actually work.
 
 ### I want to deploy and manage agents
 → [06_agent_os](./06_agent_os) — Deploy to web APIs, Slack, WhatsApp, and more. The control plane for your agent systems.
+
+---
 
 ## Deep Dives
 
@@ -46,6 +50,8 @@ Hundreds of examples. Copy, paste, run. Build agents that actually work.
 
 ### Tools
 [14_tools](./14_tools) — Extend what agents can do. Web search, SQL, email, APIs, MCP, Discord, Slack, Docker, and custom tools with the `@tool` decorator.
+
+---
 
 ## Production Ready
 
