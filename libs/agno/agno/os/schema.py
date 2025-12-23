@@ -280,8 +280,8 @@ class AgentSessionDetailSchema(BaseModel):
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,  # type: ignore
             metadata=session.metadata,
             chat_history=[message.to_dict() for message in session.get_chat_history()],
-            created_at=to_utc_datetime(session.created_at),
-            updated_at=to_utc_datetime(session.updated_at),
+            created_at=to_utc_datetime(created_at),
+            updated_at=to_utc_datetime(updated_at),
         )
 
 
@@ -320,8 +320,8 @@ class TeamSessionDetailSchema(BaseModel):
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
             metadata=session.metadata,
             chat_history=[message.to_dict() for message in session.get_chat_history()],
-            created_at=to_utc_datetime(session.created_at),
-            updated_at=to_utc_datetime(session.updated_at),
+            created_at=to_utc_datetime(created_at),
+            updated_at=to_utc_datetime(updated_at),
         )
 
 
@@ -344,6 +344,8 @@ class WorkflowSessionDetailSchema(BaseModel):
     def from_session(cls, session: WorkflowSession) -> "WorkflowSessionDetailSchema":
         session_dict = session.to_dict()
         session_name = get_session_name({**session_dict, "session_type": "workflow"})
+        created_at = datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None
+        updated_at = datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else created_at
         return cls(
             session_id=session.session_id,
             user_id=session.user_id,
@@ -354,8 +356,8 @@ class WorkflowSessionDetailSchema(BaseModel):
             session_state=session.session_data.get("session_state", None) if session.session_data else None,
             workflow_data=session.workflow_data,
             metadata=session.metadata,
-            created_at=to_utc_datetime(session.created_at),
-            updated_at=to_utc_datetime(session.updated_at),
+            created_at=to_utc_datetime(created_at),
+            updated_at=to_utc_datetime(updated_at),
         )
 
 

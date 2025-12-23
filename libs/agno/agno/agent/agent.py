@@ -1728,13 +1728,6 @@ class Agent:
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
             )
 
-        if yield_run_response is not None:
-            warnings.warn(
-                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
             from fastapi import BackgroundTasks
@@ -1825,15 +1818,6 @@ class Agent:
         if stream is None:
             stream = False if self.stream is None else self.stream
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
-
         # Can't stream events if streaming is disabled
         if stream is False:
             stream_events = False
@@ -1867,8 +1851,6 @@ class Agent:
         # Start the run metrics timer, to calculate the run duration
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
-
-        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         if stream:
             response_iterator = self._run_stream(
@@ -3085,25 +3067,12 @@ class Agent:
         if stream is None:
             stream = False if self.stream is None else self.stream
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
-
         # Can't stream events if streaming is disabled
         if stream is False:
             stream_events = False
 
         if stream_events is None:
             stream_events = False if self.stream_events is None else self.stream_events
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
 
         # Run can be continued from previous run response or from passed run_response context
         if run_response is not None:

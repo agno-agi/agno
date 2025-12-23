@@ -2109,14 +2109,6 @@ class Team:
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
             )
 
-        if yield_run_response is not None:
-            warnings.warn(
-                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
-
         # Register run for cancellation tracking
         register_run(run_id)  # type: ignore
 
@@ -2207,9 +2199,6 @@ class Team:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
         if stream is False:
@@ -2727,9 +2716,6 @@ class Team:
                         user_id=user_id,
                         existing_task=memory_task,
                     )
-
-                    # Considering both stream_events and stream_intermediate_steps (deprecated)
-                    stream_events = stream_events or stream_intermediate_steps
 
                     # Yield the run started event
                     if stream_events:
