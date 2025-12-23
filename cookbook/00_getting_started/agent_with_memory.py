@@ -93,7 +93,6 @@ agent_with_memory = Agent(
     db=agent_db,
     memory_manager=memory_manager,
     enable_agentic_memory=True,
-    user_id=user_id,
     add_datetime_to_context=True,
     add_history_to_context=True,
     num_history_runs=5,
@@ -107,12 +106,14 @@ if __name__ == "__main__":
     # Tell the agent about yourself
     agent_with_memory.print_response(
         "I'm interested in AI and semiconductor stocks. My risk tolerance is moderate.",
+        user_id=user_id,
         stream=True,
     )
 
     # The agent now knows your preferences
     agent_with_memory.print_response(
         "What stocks would you recommend for me?",
+        user_id=user_id,
         stream=True,
     )
 

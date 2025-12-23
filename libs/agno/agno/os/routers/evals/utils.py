@@ -68,15 +68,11 @@ async def run_agent_as_judge_eval(
     if agent:
         agent_response = await agent.arun(eval_run_input.input, stream=False)
         output = str(agent_response.content) if agent_response.content else ""
-        model_id = agent.model.id if agent and agent.model else None
-        model_provider = agent.model.provider if agent and agent.model else None
         agent_id = agent.id
         team_id = None
     elif team:
         team_response = await team.arun(eval_run_input.input, stream=False)
         output = str(team_response.content) if team_response.content else ""
-        model_id = team.model.id if team and team.model else None
-        model_provider = team.model.provider if team and team.model else None
         agent_id = None
         team_id = team.id
     else:
@@ -98,13 +94,17 @@ async def run_agent_as_judge_eval(
     if not result:
         raise HTTPException(status_code=500, detail="Failed to run agent as judge evaluation")
 
+    # Use evaluator's model
+    eval_model_id = agent_as_judge_eval.model.id if agent_as_judge_eval.model is not None else None
+    eval_model_provider = agent_as_judge_eval.model.provider if agent_as_judge_eval.model is not None else None
+
     eval_run = EvalSchema.from_agent_as_judge_eval(
         agent_as_judge_eval=agent_as_judge_eval,
         result=result,
         agent_id=agent_id,
         team_id=team_id,
-        model_id=model_id,
-        model_provider=model_provider,
+        model_id=eval_model_id,
+        model_provider=eval_model_provider,
     )
 
     # Restore original model after eval
