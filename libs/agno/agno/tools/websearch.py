@@ -12,8 +12,8 @@ except ImportError:
 
 class WebSearchTools(Toolkit):
     """
-    WebSearchTools is a toolkit for searching the web using various backends.
-    It uses the meta-search library DDGS, which supports multiple search backends.
+    Toolkit for searching the web. Uses the meta-search library DDGS.
+    Multiple search backends (e.g. google, bing, duckduckgo) are available.
 
     Args:
         enable_search (bool): Enable web search function.
