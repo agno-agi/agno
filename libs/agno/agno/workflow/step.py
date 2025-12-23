@@ -60,7 +60,6 @@ class Step:
 
     # Step configuration
     max_retries: int = 3
-    timeout_seconds: Optional[int] = None
 
     skip_on_failure: bool = False
 
@@ -82,7 +81,6 @@ class Step:
         step_id: Optional[str] = None,
         description: Optional[str] = None,
         max_retries: int = 3,
-        timeout_seconds: Optional[int] = None,
         skip_on_failure: bool = False,
         strict_input_validation: bool = False,
         add_workflow_history: Optional[bool] = None,
@@ -103,7 +101,6 @@ class Step:
         self.step_id = step_id
         self.description = description
         self.max_retries = max_retries
-        self.timeout_seconds = timeout_seconds
         self.skip_on_failure = skip_on_failure
         self.strict_input_validation = strict_input_validation
         self.add_workflow_history = add_workflow_history
