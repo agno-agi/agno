@@ -1,3 +1,11 @@
+"""
+This cookbook demonstrates how to use an Agno Workflow with AgentOS to transcribe audio files. There are four steps in the workflow:
+1. Echo the input file
+2. Get the audio content
+3. Transcribe the audio content
+4. Convert the transcription to structured output
+"""
+
 import io
 from textwrap import dedent
 from typing import Optional
@@ -38,7 +46,6 @@ class Transcription(BaseModel):
 
 def get_transcription_agent(additional_instructions: Optional[str] = None):
     transcription_agent = Agent(
-        # model=OpenAIChat(id="gpt-4o-audio-preview"),
         model=Gemini(id="gemini-3-flash-preview"),
         markdown=True,
         description="Audio file transcription agent",
@@ -56,7 +63,7 @@ class TranscriptionRequest(BaseModel):
     audio_file: str = (
         "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/sample_audio.wav"
     )
-    model_id: str = "gpt-4o-audio-preview"
+    model_id: str = "gpt-audio-2025-08-28"
     additional_instructions: Optional[str] = None
 
 
@@ -72,7 +79,7 @@ def echo_input_file(step_input: StepInput) -> StepOutput:
     )
 
 
-# TODO: Find a cleaner way to create wav files. Probably need a step in the workflow to check file types first
+# TODO: Find a cleaner way to create wav files
 def get_audio_content(step_input: StepInput, session_state) -> StepOutput:
     request = step_input.input
     url = request.audio_file
