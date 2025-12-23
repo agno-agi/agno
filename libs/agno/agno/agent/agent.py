@@ -289,6 +289,10 @@ class Agent:
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None
     # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
     _run_hooks_in_background: Optional[bool] = None
+    # If True, run memory creation in background task
+    _run_memory_in_background: Optional[bool] = None
+    # If True, run cultural knowledge creation in background task
+    _run_culture_in_background: Optional[bool] = None
 
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
@@ -1059,12 +1063,14 @@ class Agent:
                         run_messages=run_messages,
                         user_id=user_id,
                         existing_future=memory_future,
+                        background_tasks=background_tasks,
                     )
 
                     # Start cultural knowledge creation in background thread
                     cultural_knowledge_future = self._start_cultural_knowledge_future(
                         run_messages=run_messages,
                         existing_future=cultural_knowledge_future,
+                        background_tasks=background_tasks,
                     )
 
                     raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1344,12 +1350,14 @@ class Agent:
                         run_messages=run_messages,
                         user_id=user_id,
                         existing_future=memory_future,
+                        background_tasks=background_tasks,
                     )
 
                     # Start cultural knowledge creation in background thread
                     cultural_knowledge_future = self._start_cultural_knowledge_future(
                         run_messages=run_messages,
                         existing_future=cultural_knowledge_future,
+                        background_tasks=background_tasks,
                     )
 
                     # Start the Run by yielding a RunStarted event
@@ -2018,12 +2026,14 @@ class Agent:
                         run_messages=run_messages,
                         user_id=user_id,
                         existing_task=memory_task,
+                        background_tasks=background_tasks,
                     )
 
                     # Start cultural knowledge creation as a background task (runs concurrently with the main execution)
                     cultural_knowledge_task = await self._astart_cultural_knowledge_task(
                         run_messages=run_messages,
                         existing_task=cultural_knowledge_task,
+                        background_tasks=background_tasks,
                     )
 
                     # Check for cancellation before model call
@@ -2367,12 +2377,14 @@ class Agent:
                         run_messages=run_messages,
                         user_id=user_id,
                         existing_task=memory_task,
+                        background_tasks=background_tasks,
                     )
 
                     # Start cultural knowledge creation as a background task (runs concurrently with the main execution)
                     cultural_knowledge_task = await self._astart_cultural_knowledge_task(
                         run_messages=run_messages,
                         existing_task=cultural_knowledge_task,
+                        background_tasks=background_tasks,
                     )
 
                     # 8. Reason about the task if reasoning is enabled
@@ -6075,6 +6087,7 @@ class Agent:
         run_messages: RunMessages,
         user_id: Optional[str],
         existing_task: Optional[Task[None]],
+        background_tasks: Optional[Any] = None,
     ) -> Optional[Task[None]]:
         """Cancel any existing memory task and start a new one if conditions are met.
 
@@ -6094,6 +6107,11 @@ class Agent:
             except CancelledError:
                 pass
 
+        # Run the memory creation as a background task if enabled
+        if self._run_memory_in_background is True and background_tasks is not None:
+            background_tasks.add_task(self._make_memories, run_messages=run_messages, user_id=user_id)
+            return
+
         # Create new task if conditions are met
         if (
             run_messages.user_message is not None
@@ -6110,6 +6128,7 @@ class Agent:
         self,
         run_messages: RunMessages,
         existing_task: Optional[Task[None]],
+        background_tasks: Optional[Any] = None,
     ) -> Optional[Task[None]]:
         """Cancel any existing cultural knowledge task and start a new one if conditions are met.
 
@@ -6128,6 +6147,11 @@ class Agent:
             except CancelledError:
                 pass
 
+        # Run the cultural knowledge creation as a background task if enabled
+        if self._run_culture_in_background is True and background_tasks is not None:
+            background_tasks.add_task(self._acreate_cultural_knowledge, run_messages=run_messages)
+            return
+
         # Create new task if conditions are met
         if (
             run_messages.user_message is not None
@@ -6144,6 +6168,7 @@ class Agent:
         run_messages: RunMessages,
         user_id: Optional[str],
         existing_future: Optional[Future] = None,
+        background_tasks: Optional[Any] = None,
     ) -> Optional[Future]:
         """Cancel any existing memory future and start a new one if conditions are met.
 
@@ -6159,6 +6184,11 @@ class Agent:
         # Note: cancel() only works if the future hasn't started yet
         if existing_future is not None and not existing_future.done():
             existing_future.cancel()
+
+        # Run the memory creation as a background task if enabled
+        if self._run_memory_in_background is True and background_tasks is not None:
+            background_tasks.add_task(self._make_memories, run_messages=run_messages, user_id=user_id)
+            return
 
         # Create new future if conditions are met
         if (
@@ -6176,6 +6206,7 @@ class Agent:
         self,
         run_messages: RunMessages,
         existing_future: Optional[Future] = None,
+        background_tasks: Optional[Any] = None,
     ) -> Optional[Future]:
         """Cancel any existing cultural knowledge future and start a new one if conditions are met.
 
@@ -6190,6 +6221,11 @@ class Agent:
         # Note: cancel() only works if the future hasn't started yet
         if existing_future is not None and not existing_future.done():
             existing_future.cancel()
+
+        # Run the cultural knowledge creation as a background task if enabled
+        if self._run_culture_in_background is True and background_tasks is not None:
+            background_tasks.add_task(self._make_cultural_knowledge, run_messages=run_messages)
+            return
 
         # Create new future if conditions are met
         if (

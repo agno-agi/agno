@@ -21,7 +21,11 @@ class AuthorizationConfig(BaseModel):
 
 
 class BackgroundTasksConfig(BaseModel):
+    """Configuration defining what to run as background tasks"""
+
+    run_culture_in_background: bool = False
     run_hooks_in_background: bool = False
+    run_memory_in_background: bool = False
 
 
 class DatabasesConfig(BaseModel):
