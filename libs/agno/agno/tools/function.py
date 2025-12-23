@@ -113,6 +113,9 @@ class Function(BaseModel):
     # If True, the function will be executed outside the agent's control.
     external_execution: Optional[bool] = None
 
+    # If True, the function will not produce verbose paused messages (e.g., "I have tools to execute...")
+    silent: Optional[bool] = None
+
     # Caching configuration
     cache_results: bool = False
     cache_dir: Optional[str] = None
