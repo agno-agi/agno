@@ -735,7 +735,7 @@ def attach_routes(
         id: str,
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
-    ):
+    ) -> ListTasksEndpointResponse:
         """List all tasks for a Team. If session_id is provided in params, returns tasks from that session only."""
         request_body = await request.json()
         request_id = request_body.get("id", "unknown")
@@ -800,11 +800,8 @@ def attach_routes(
             for session_dict in sessions_list:
                 runs = cast(dict, session_dict).get("runs", [])
                 a2a_tasks.extend([map_run_output_to_a2a_task(run) for run in runs])
-        return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "result": a2a_tasks,
-        }
+
+        return ListTasksEndpointResponse(id=request_id, result=a2a_tasks)
 
     @router.get(
         "/teams/{id}/v1/tasks/{task_id}",
@@ -1185,7 +1182,7 @@ def attach_routes(
         id: str,
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
-    ):
+    ) -> ListTasksEndpointResponse:
         """List all tasks for a Workflow. If session_id is provided in params, returns tasks from that session only."""
         request_body = await request.json()
         request_id = request_body.get("id", "unknown")
@@ -1250,11 +1247,8 @@ def attach_routes(
             for session_dict in sessions_list:
                 runs = cast(dict, session_dict).get("runs", [])
                 a2a_tasks.extend([map_run_output_to_a2a_task(run) for run in runs])
-        return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "result": a2a_tasks,
-        }
+
+        return ListTasksEndpointResponse(id=request_id, result=a2a_tasks)
 
     @router.get(
         "/workflows/{id}/v1/tasks/{task_id}",
