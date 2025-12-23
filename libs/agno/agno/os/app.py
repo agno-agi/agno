@@ -58,64 +58,6 @@ from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow import RemoteWorkflow, Workflow
 
 
-@asynccontextmanager
-async def mcp_lifespan(_, mcp_tools):
-    """Manage MCP connection lifecycle inside a FastAPI app"""
-    for tool in mcp_tools:
-        await tool.connect()
-
-    yield
-
-    for tool in mcp_tools:
-        await tool.close()
-
-
-@asynccontextmanager
-async def http_client_lifespan(_):
-    """Manage httpx client lifecycle for proper connection pool cleanup."""
-    from agno.utils.http import aclose_default_clients
-
-    yield
-
-    await aclose_default_clients()
-
-
-@asynccontextmanager
-async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
-    """Initializes databases in the event loop and closes them on shutdown."""
-    if agent_os.auto_provision_dbs:
-        agent_os._initialize_sync_databases()
-        await agent_os._initialize_async_databases()
-
-    yield
-
-    await agent_os._close_databases()
-
-
-def _combine_app_lifespans(lifespans: list) -> Any:
-    """Combine multiple FastAPI app lifespan context managers into one."""
-    if len(lifespans) == 1:
-        return lifespans[0]
-
-    from contextlib import asynccontextmanager
-
-    @asynccontextmanager
-    async def combined_lifespan(app):
-        async def _run_nested(index: int):
-            if index >= len(lifespans):
-                yield
-                return
-
-            async with lifespans[index](app):
-                async for _ in _run_nested(index + 1):
-                    yield
-
-        async for _ in _run_nested(0):
-            yield
-
-    return combined_lifespan
-
-
 class AgentOS:
     def __init__(
         self,

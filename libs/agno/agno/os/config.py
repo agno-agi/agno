@@ -1,11 +1,13 @@
 """Schemas related to the AgentOS configuration"""
 
+from contextlib import asynccontextmanager
 from typing import Any, Generic, List, Literal, Optional, TypeVar, Union
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field, field_validator
 
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.os.app import AgentOS
 from agno.os.interfaces.base import BaseInterface
 
 # -- New classes --
@@ -54,6 +56,64 @@ class FastAPIConfig(BaseModel):
         )
 
         return valid_cors
+
+    # -- Lifespans --
+
+    @staticmethod
+    @asynccontextmanager
+    async def mcp_lifespan(_, mcp_tools):
+        """Manage MCP connection lifecycle inside a FastAPI app"""
+        for tool in mcp_tools:
+            await tool.connect()
+
+        yield
+
+        for tool in mcp_tools:
+            await tool.close()
+
+    @staticmethod
+    @asynccontextmanager
+    async def http_client_lifespan(_):
+        """Manage httpx client lifecycle for proper connection pool cleanup."""
+        from agno.utils.http import aclose_default_clients
+
+        yield
+
+        await aclose_default_clients()
+
+    @staticmethod
+    @asynccontextmanager
+    async def db_lifespan(app: FastAPI, agent_os: AgentOS):
+        """Initializes databases in the event loop and closes them on shutdown."""
+        if agent_os.auto_provision_dbs:
+            agent_os._initialize_sync_databases()
+            await agent_os._initialize_async_databases()
+
+        yield
+
+        await agent_os._close_databases()
+
+    @staticmethod
+    def _combine_app_lifespans(lifespans: list) -> Any:
+        """Combine multiple FastAPI app lifespan context managers into one."""
+        if len(lifespans) == 1:
+            return lifespans[0]
+
+        @asynccontextmanager
+        async def combined_lifespan(app):
+            async def _run_nested(index: int):
+                if index >= len(lifespans):
+                    yield
+                    return
+
+                async with lifespans[index](app):
+                    async for _ in _run_nested(index + 1):
+                        yield
+
+            async for _ in _run_nested(0):
+                yield
+
+        return combined_lifespan
 
 
 class AgentOSConfig(BaseModel):
