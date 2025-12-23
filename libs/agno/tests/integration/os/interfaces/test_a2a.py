@@ -9,6 +9,8 @@ from agno.agent import Agent
 from agno.models.response import ToolExecution
 from agno.os.app import AgentOS
 from agno.os.interfaces.a2a import A2A
+from agno.os.interfaces.a2a.utils import map_run_schema_to_a2a_task
+
 from agno.run.agent import (
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
@@ -118,7 +120,7 @@ def test_team_card_endpoint(test_team: Team, test_team_client_for_card: TestClie
     assert "skills" in card and isinstance(card["skills"], list) and len(card["skills"]) >= 1
 
 
-    
+
 
 
 def test_workflow_card_endpoint(test_workflow: Workflow, test_workflow_client: TestClient):
@@ -1344,3 +1346,91 @@ def test_workflow_cancel_task_unknown_workflow_returns_404(test_workflow_client:
     body = {"jsonrpc": "2.0", "id": "req-9", "params": {"task_id": "t-123", "session_id": "context-1"}}
     resp = test_workflow_client.post("/a2a/workflows/unknown-workflow-id/v1/tasks:cancel", json=body)
     assert resp.status_code == 404
+
+
+# ===== Unit tests for utils =====
+
+def test_map_run_schema_basic_content():
+    """Test mapping run schema with basic content."""
+    run_schema = {
+        "run_id": "run-123",
+        "session_id": "session-456",
+        "content": "Hello world",
+    }
+    task = map_run_schema_to_a2a_task(run_schema)
+
+    assert task.id == "run-123"
+    assert task.context_id == "session-456"
+    assert task.status.state.value == "completed"
+    assert len(task.history) == 1
+    assert task.history[0].parts[0].root.text == "Hello world"
+
+
+def test_map_run_schema_with_messages():
+    """Test mapping run schema with message history."""
+    run_schema = {
+        "run_id": "run-123",
+        "session_id": "session-456",
+        "messages": [
+            {"id": "msg-1", "role": "user", "content": "What is 2+2?"},
+            {"id": "msg-2", "role": "assistant", "content": "4"},
+        ],
+    }
+    task = map_run_schema_to_a2a_task(run_schema)
+
+    assert len(task.history) == 2
+    assert task.history[0].role.value == "user"
+    assert task.history[0].parts[0].root.text == "What is 2+2?"
+    assert task.history[1].role.value == "agent"
+    assert task.history[1].parts[0].root.text == "4"
+
+
+def test_map_run_schema_status_failed():
+    """Test mapping run schema with failed status."""
+    run_schema = {
+        "run_id": "run-123",
+        "session_id": "session-456",
+        "content": "Error occurred",
+        "status": "FAILED",
+    }
+    task = map_run_schema_to_a2a_task(run_schema)
+    assert task.status.state.value == "failed"
+
+
+def test_map_run_schema_status_canceled():
+    """Test mapping run schema with canceled status."""
+    run_schema = {
+        "run_id": "run-123",
+        "session_id": "session-456",
+        "content": "Cancelled",
+        "status": "CANCELLED",
+    }
+    task = map_run_schema_to_a2a_task(run_schema)
+    assert task.status.state.value == "canceled"
+
+
+def test_map_run_schema_with_artifacts():
+    """Test mapping run schema with media artifacts."""
+    run_schema = {
+        "run_id": "run-123",
+        "session_id": "session-456",
+        "content": "Generated media",
+        "images": [{"url": "https://example.com/img.png", "alt_text": "An image"}],
+        "videos": [{"url": "https://example.com/vid.mp4"}],
+        "audio": [{"url": "https://example.com/audio.mp3"}],
+    }
+    task = map_run_schema_to_a2a_task(run_schema)
+
+    assert len(task.artifacts) == 3
+    image_artifact = next(a for a in task.artifacts if "image" in a.artifact_id)
+    assert image_artifact.parts[0].root.file.uri == "https://example.com/img.png"
+
+
+def test_map_run_schema_empty():
+    """Test mapping empty run schema generates valid task."""
+    run_schema = {}
+    task = map_run_schema_to_a2a_task(run_schema)
+
+    assert task.id is not None
+    assert task.context_id is not None
+    assert task.status.state.value == "completed"
