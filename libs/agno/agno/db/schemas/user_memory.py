@@ -1,17 +1,12 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from agno.utils.dttm import now_epoch_s, to_epoch_s
 
 
 @dataclass
 class UserMemoryV2:
-    """Model for User Memory (v2)
-
-    Stores user-specific memory including:
-    - profile: WHO the user is (name, company, role, tone preferences)
-    - layers: Policies, knowledge, and feedback
-    """
+    """Model for User Memory (v2)"""
 
     # Primary key - unique user identifier
     user_id: str

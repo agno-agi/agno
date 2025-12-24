@@ -1,8 +1,10 @@
+import json
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
-from rich.pretty import pprint
+from rich import print_json
 
 DB_FILE = "tmp/shared_memory.db"
 USER_ID = "john_doe"
@@ -55,7 +57,7 @@ print("=" * 60)
 
 user = chat_agent.get_user_memory_v2(USER_ID)
 if user:
-    pprint(user.to_dict())
+    print_json(json.dumps(user.to_dict()))
 
 # Verify research agent sees the same memory
 user_from_research = research_agent.get_user_memory_v2(USER_ID)

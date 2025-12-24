@@ -236,7 +236,7 @@ class Agent:
     add_memories_to_context: Optional[bool] = None
 
     # --- Agent Memory (v2) ---
-    # Memory compiler for structured user profile extraction
+    # Memory compiler
     memory_compiler: Optional[MemoryCompiler] = None
     # If True, automatically extracts user memory after each run
     update_memory_on_run: bool = False
@@ -6334,7 +6334,7 @@ class Agent:
             log_debug("Starting memory creation in background thread.")
             return self.background_executor.submit(self._make_memories, run_messages=run_messages, user_id=user_id)
 
-        # Create new future if conditions are met (memory_compiler v2)
+        # Create new future if conditions are met (memory v2)
         if (
             run_messages.user_message is not None
             and self.memory_compiler is not None
@@ -10417,6 +10417,7 @@ class Agent:
 
     def _build_memory_v2_prompt(self) -> str:
         """Build dynamic system prompt for memory v2 tools based on enabled layers."""
+        self.memory_compiler = cast(MemoryCompiler, self.memory_compiler)
         save_tools = []
         delete_tools = []
 
@@ -10446,10 +10447,8 @@ class Agent:
 
     def _get_user_memory_v2_tools(self, user_id: Optional[str] = None, async_mode: bool = False) -> List[Function]:
         """Get user memory v2 tools based on enabled layers."""
-        from agno.memory_v2.memory_compiler import (
-            stage_layer_update,
-            stage_profile_update,
-        )
+        self.memory_compiler = cast(MemoryCompiler, self.memory_compiler)
+        from agno.memory_v2.memory_compiler import stage_update
 
         user_id = user_id or "default"
         tools: List[Function] = []
@@ -10458,12 +10457,12 @@ class Agent:
 
             def save_user_profile(key: str, value: Any, run_context: RunContext) -> str:
                 """Save user identity info (name, company, role, location)."""
-                stage_profile_update(run_context, user_id, key, value)
+                stage_update(run_context, user_id, "profile", key, value)
                 return f"Saved profile: {key}"
 
             def delete_user_profile(key: str, run_context: RunContext) -> str:
                 """Delete user identity info."""
-                stage_profile_update(run_context, user_id, key, None)
+                stage_update(run_context, user_id, "profile", key, None, "delete")
                 return f"Deleted profile: {key}"
 
             tools.append(Function.from_callable(save_user_profile))
@@ -10473,12 +10472,12 @@ class Agent:
 
             def save_user_knowledge(key: str, value: Any, run_context: RunContext) -> str:
                 """Save a fact about the user (interests, hobbies, habits)."""
-                stage_layer_update(run_context, user_id, "knowledge", key, value, "set")
+                stage_update(run_context, user_id, "knowledge", key, value, "set")
                 return f"Saved knowledge: {key}"
 
             def delete_user_knowledge(key: str, run_context: RunContext) -> str:
                 """Delete a knowledge fact."""
-                stage_layer_update(run_context, user_id, "knowledge", key, None, "delete")
+                stage_update(run_context, user_id, "knowledge", key, None, "delete")
                 return f"Deleted knowledge: {key}"
 
             tools.append(Function.from_callable(save_user_knowledge))
@@ -10488,12 +10487,12 @@ class Agent:
 
             def save_user_policy(key: str, value: Any, run_context: RunContext) -> str:
                 """Save a behavior rule (be concise, no emojis)."""
-                stage_layer_update(run_context, user_id, "policies", key, value, "set")
+                stage_update(run_context, user_id, "policies", key, value, "set")
                 return f"Saved policy: {key}"
 
             def delete_user_policy(key: str, run_context: RunContext) -> str:
                 """Delete a behavior rule."""
-                stage_layer_update(run_context, user_id, "policies", key, None, "delete")
+                stage_update(run_context, user_id, "policies", key, None, "delete")
                 return f"Deleted policy: {key}"
 
             tools.append(Function.from_callable(save_user_policy))
@@ -10503,12 +10502,12 @@ class Agent:
 
             def save_user_feedback(key: str, value: Any, run_context: RunContext) -> str:
                 """Save response feedback. Key should be 'positive' or 'negative'."""
-                stage_layer_update(run_context, user_id, "feedback", key, value, "set")
+                stage_update(run_context, user_id, "feedback", key, value, "set")
                 return f"Saved feedback: {key}"
 
             def delete_user_feedback(key: str, run_context: RunContext) -> str:
                 """Clear feedback. Key should be 'positive' or 'negative'."""
-                stage_layer_update(run_context, user_id, "feedback", key, None, "delete")
+                stage_update(run_context, user_id, "feedback", key, None, "delete")
                 return f"Cleared feedback: {key}"
 
             tools.append(Function.from_callable(save_user_feedback))

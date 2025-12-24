@@ -1,8 +1,10 @@
+import json
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.memory_v2 import MemoryCompiler
 from agno.models.openai import OpenAIChat
-from rich.pretty import pprint
+from rich import print_json
 
 
 def example_custom_instructions():
@@ -45,7 +47,8 @@ def example_custom_instructions():
     print("\nExtracted profile:")
     profile = memory.get_user_memory_v2(user_id)
     if profile:
-        pprint(profile.to_dict())
+        print_json(json.dumps(profile.to_dict()))
+
 
 if __name__ == "__main__":
     example_custom_instructions()

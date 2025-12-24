@@ -16,29 +16,21 @@ from agno.utils.log import log_debug, log_warning
 
 @dataclass
 class MemoryCompiler:
-    # LLM model for extracting memory from messages
+    # LLM for extracting memory
     model: Optional[Model] = None
-
-    # The database to store memories
+    # storage backend
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
-
-    # Custom system prompt (overrides default extraction prompt)
+    # custom prompt (overrides default)
     system_message: Optional[str] = None
-
-    # Instructions for what to capture
-    profile_capture_instructions: Optional[str] = None
-
-    # Whether to enable save/update tools during LLM extraction
+    # what to capture
+    capture_instructions: Optional[str] = None
+    # Layer toggles
     enable_update: bool = True
-
-    # ----- Memory layer toggles -----
-    # Enable profile layer
+    # user identity (name, company, role)
     enable_profile: bool = True
-    # Enable knowledge layer
+    # user facts (languages, hobbies)
     enable_knowledge: bool = True
-    # Enable policies layer
     enable_policies: bool = True
-    # Enable feedback layer
     enable_feedback: bool = True
 
     def __init__(
@@ -46,7 +38,7 @@ class MemoryCompiler:
         model: Optional[Union[Model, str]] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         system_message: Optional[str] = None,
-        profile_capture_instructions: Optional[str] = None,
+        capture_instructions: Optional[str] = None,
         enable_update: bool = True,
         enable_profile: bool = True,
         enable_knowledge: bool = True,
@@ -56,7 +48,7 @@ class MemoryCompiler:
         self.model = get_model(model) if model else None
         self.db = db
         self.system_message = system_message
-        self.profile_capture_instructions = profile_capture_instructions
+        self.capture_instructions = capture_instructions
         self.enable_update = enable_update
         self.enable_profile = enable_profile
         self.enable_knowledge = enable_knowledge
@@ -132,7 +124,7 @@ class MemoryCompiler:
         return self._build_memory_context(memory) if memory else ""
 
     def create_user_memory_v2(self, message: str, user_id: Optional[str] = None) -> str:
-        """Create user memory from a message"""
+        """Extract user info from message using LLM and save to database."""
         if not self.db:
             return "Database not configured"
         if not self.model:
@@ -140,28 +132,91 @@ class MemoryCompiler:
         if not message:
             return "No message provided"
 
+        # Load existing memory or create new
         user_id = user_id or "default"
-        existing = self.get_user_memory_v2(user_id)
+        memory = self.get_user_memory_v2(user_id) or UserMemoryV2(user_id=user_id)
+        modified = False  # track if LLM made changes
 
-        # Use local state to avoid race conditions with concurrent calls
-        staged: Dict[str, Any] = {
-            "memory": existing or UserMemoryV2(user_id=user_id),
-            "dirty": False,
-        }
+        # Each tool modifies the memory directly. We only save the memory after all tool calls.
+        def save_user_profile(key: str, value: Any) -> str:
+            nonlocal modified
+            memory.profile[key] = value
+            modified = True
+            return f"Saved profile: {key}"
 
-        response = deepcopy(self.model).response(
-            messages=[self._build_system_message(existing), Message(role="user", content=message)],
-            tools=self._build_tools(staged),
+        def delete_user_profile(key: str) -> str:
+            nonlocal modified
+            memory.profile.pop(key, None)
+            modified = True
+            return f"Deleted profile: {key}"
+
+        def save_user_knowledge(key: str, value: Any) -> str:
+            nonlocal modified
+            memory.layers.setdefault("knowledge", {})[key] = value
+            modified = True
+            return f"Saved knowledge: {key}"
+
+        def delete_user_knowledge(key: str) -> str:
+            nonlocal modified
+            memory.layers.get("knowledge", {}).pop(key, None)
+            modified = True
+            return f"Deleted knowledge: {key}"
+
+        def save_user_policy(key: str, value: Any) -> str:
+            nonlocal modified
+            memory.layers.setdefault("policies", {})[key] = value
+            modified = True
+            return f"Saved policy: {key}"
+
+        def delete_user_policy(key: str) -> str:
+            nonlocal modified
+            memory.layers.get("policies", {}).pop(key, None)
+            modified = True
+            return f"Deleted policy: {key}"
+
+        def save_user_feedback(key: str, value: Any) -> str:
+            nonlocal modified
+            if key in ("positive", "negative"):
+                feedback = memory.layers.setdefault("feedback", {"positive": [], "negative": []})
+                if value not in feedback[key]:
+                    feedback[key].append(value)
+                modified = True
+            return f"Saved feedback: {key}"
+
+        def delete_user_feedback(key: str) -> str:
+            nonlocal modified
+            if key in ("positive", "negative"):
+                memory.layers.setdefault("feedback", {"positive": [], "negative": []})[key] = []
+                modified = True
+            return f"Cleared feedback: {key}"
+
+        # Collect tools based on enabled layers
+        tools = self._get_memory_tools(
+            save_user_profile,
+            delete_user_profile,
+            save_user_knowledge,
+            delete_user_knowledge,
+            save_user_policy,
+            delete_user_policy,
+            save_user_feedback,
+            delete_user_feedback,
         )
 
-        if staged["dirty"]:
-            staged["memory"].bump_updated_at()
-            self.save_user_memory_v2(staged["memory"])
+        # Send to LLM for extraction
+        response = deepcopy(self.model).response(
+            messages=[self._build_system_message(memory), Message(role="user", content=message)],
+            tools=tools,
+        )
+
+        # Save if anything changed
+        if modified:
+            memory.bump_updated_at()
+            self.save_user_memory_v2(memory)
 
         return response.content or "No response"
 
     async def acreate_user_memory_v2(self, message: str, user_id: Optional[str] = None) -> str:
-        """Extract and create user memory from a message using LLM (async)."""
+        """Extract user info from message using LLM and save to database (async)."""
         if not self.db:
             return "Database not configured"
         if not self.model:
@@ -169,23 +224,86 @@ class MemoryCompiler:
         if not message:
             return "No message provided"
 
+        # Load existing memory or create new
         user_id = user_id or "default"
-        existing = await self.aget_user_memory_v2(user_id)
+        memory = await self.aget_user_memory_v2(user_id) or UserMemoryV2(user_id=user_id)
+        modified = False  # track if LLM made changes
 
-        # Use local state to avoid race conditions with concurrent calls
-        staged: Dict[str, Any] = {
-            "memory": existing or UserMemoryV2(user_id=user_id),
-            "dirty": False,
-        }
+        # Define tools for LLM (each modifies memory directly)
+        async def save_user_profile(key: str, value: Any) -> str:
+            nonlocal modified
+            memory.profile[key] = value
+            modified = True
+            return f"Saved profile: {key}"
 
-        response = await deepcopy(self.model).aresponse(
-            messages=[self._build_system_message(existing), Message(role="user", content=message)],
-            tools=self._build_tools(staged, async_mode=True),
+        async def delete_user_profile(key: str) -> str:
+            nonlocal modified
+            memory.profile.pop(key, None)
+            modified = True
+            return f"Deleted profile: {key}"
+
+        async def save_user_knowledge(key: str, value: Any) -> str:
+            nonlocal modified
+            memory.layers.setdefault("knowledge", {})[key] = value
+            modified = True
+            return f"Saved knowledge: {key}"
+
+        async def delete_user_knowledge(key: str) -> str:
+            nonlocal modified
+            memory.layers.get("knowledge", {}).pop(key, None)
+            modified = True
+            return f"Deleted knowledge: {key}"
+
+        async def save_user_policy(key: str, value: Any) -> str:
+            nonlocal modified
+            memory.layers.setdefault("policies", {})[key] = value
+            modified = True
+            return f"Saved policy: {key}"
+
+        async def delete_user_policy(key: str) -> str:
+            nonlocal modified
+            memory.layers.get("policies", {}).pop(key, None)
+            modified = True
+            return f"Deleted policy: {key}"
+
+        async def save_user_feedback(key: str, value: Any) -> str:
+            nonlocal modified
+            if key in ("positive", "negative"):
+                feedback = memory.layers.setdefault("feedback", {"positive": [], "negative": []})
+                if value not in feedback[key]:
+                    feedback[key].append(value)
+                modified = True
+            return f"Saved feedback: {key}"
+
+        async def delete_user_feedback(key: str) -> str:
+            nonlocal modified
+            if key in ("positive", "negative"):
+                memory.layers.setdefault("feedback", {"positive": [], "negative": []})[key] = []
+                modified = True
+            return f"Cleared feedback: {key}"
+
+        # Collect tools based on enabled layers
+        tools = self._get_memory_tools(
+            save_user_profile,
+            delete_user_profile,
+            save_user_knowledge,
+            delete_user_knowledge,
+            save_user_policy,
+            delete_user_policy,
+            save_user_feedback,
+            delete_user_feedback,
         )
 
-        if staged["dirty"]:
-            staged["memory"].bump_updated_at()
-            await self.asave_user_memory_v2(staged["memory"])
+        # Send to LLM for extraction
+        response = await deepcopy(self.model).aresponse(
+            messages=[self._build_system_message(memory), Message(role="user", content=message)],
+            tools=tools,
+        )
+
+        # Save if anything changed
+        if modified:
+            memory.bump_updated_at()
+            await self.asave_user_memory_v2(memory)
 
         return response.content or "No response"
 
@@ -211,33 +329,25 @@ class MemoryCompiler:
         if self.system_message:
             return Message(role="system", content=self.system_message)
 
-        # Build instructions based on enabled layers
-        if self.profile_capture_instructions:
-            instructions = self.profile_capture_instructions
-        else:
-            layer_descriptions = []
-            if self.enable_profile:
-                layer_descriptions.append("- Profile: identity info (name, company, role, location)")
-            if self.enable_knowledge:
-                layer_descriptions.append("- Knowledge: personal facts (interests, hobbies, habits)")
-            if self.enable_policies:
-                layer_descriptions.append("- Policies: behavior rules (no emojis, be concise)")
-            if self.enable_feedback:
-                layer_descriptions.append("- Feedback: what user liked/disliked about responses")
-            instructions = "Capture user information into the appropriate memory layer:\n" + "\n".join(
-                layer_descriptions
-            )
-
-        # Build save tools list
-        save_tools = []
+        # Build layer info from enabled layers
+        layers = []
         if self.enable_profile:
-            save_tools.append("save_user_profile")
+            layers.append(("profile", "identity info (name, company, role, location)"))
         if self.enable_knowledge:
-            save_tools.append("save_user_knowledge")
+            layers.append(("knowledge", "personal facts (interests, hobbies, habits)"))
         if self.enable_policies:
-            save_tools.append("save_user_policy")
+            layers.append(("policy", "behavior rules (no emojis, be concise)"))
         if self.enable_feedback:
-            save_tools.append("save_user_feedback")
+            layers.append(("feedback", "what user liked/disliked about responses"))
+
+        # Build descriptions and tool names from layers
+        descriptions = [f"- {name.title()}: {desc}" for name, desc in layers]
+        save_tools = [f"save_user_{name}" for name, _ in layers]
+        delete_tools = [f"delete_user_{name}" for name, _ in layers]
+
+        instructions = "Capture user information into the appropriate memory layer:\n" + "\n".join(descriptions)
+        if self.capture_instructions:
+            instructions += f"\n\nAdditional guidance:\n{self.capture_instructions}"
 
         prompt = dedent(f"""\
             You are a Memory Manager for user information and preferences.
@@ -251,20 +361,8 @@ class MemoryCompiler:
             {instructions}
             </criteria>
 
-            Tools: {", ".join(save_tools)}""")
-
-        # Build delete tools list
-        delete_tools = []
-        if self.enable_profile:
-            delete_tools.append("delete_user_profile")
-        if self.enable_knowledge:
-            delete_tools.append("delete_user_knowledge")
-        if self.enable_policies:
-            delete_tools.append("delete_user_policy")
-        if self.enable_feedback:
-            delete_tools.append("delete_user_feedback")
-        if delete_tools:
-            prompt += f"\nDelete tools: {', '.join(delete_tools)}"
+            Tools: {", ".join(save_tools)}
+            Delete tools: {", ".join(delete_tools)}""")
 
         if existing:
             context = self._build_memory_context(existing)
@@ -273,176 +371,35 @@ class MemoryCompiler:
 
         return Message(role="system", content=prompt)
 
-    def _build_tools(self, staged: Dict[str, Any], async_mode: bool = False) -> List[Function]:
-        """Build LLM tools for memory extraction.
-
-        Args:
-            staged: Local dict with 'memory' and 'dirty' keys. Closures capture this
-                    to avoid race conditions with concurrent extract() calls.
-            async_mode: Whether to create async tool functions.
-        """
+    def _get_memory_tools(
+        self,
+        save_profile,
+        delete_profile,
+        save_knowledge,
+        delete_knowledge,
+        save_policy,
+        delete_policy,
+        save_feedback,
+        delete_feedback,
+    ) -> List[Union[Function, dict]]:
+        """Filter tools based on enabled layers."""
         tools: List[Any] = []
-
-        def make_save(info_type: str, doc: str):
-            if async_mode:
-
-                async def tool(key: str, value: str) -> str:
-                    return _stage_save(staged, info_type, key, value)
-            else:
-
-                def tool(key: str, value: str) -> str:
-                    return _stage_save(staged, info_type, key, value)
-
-            tool.__doc__ = doc
-            tool.__name__ = f"save_user_{info_type}"
-            return tool
-
-        def make_delete(info_type: str, doc: str):
-            if async_mode:
-
-                async def tool(key: str) -> str:
-                    return _stage_delete(staged, info_type, key)
-            else:
-
-                def tool(key: str) -> str:
-                    return _stage_delete(staged, info_type, key)
-
-            tool.__doc__ = doc
-            tool.__name__ = f"delete_user_{info_type}"
-            return tool
-
         if self.enable_update:
             if self.enable_profile:
-                tools.append(make_save("profile", "Save user identity info (name, company, role, location)."))
-                tools.append(make_delete("profile", "Delete user identity info."))
+                tools.extend([save_profile, delete_profile])
             if self.enable_knowledge:
-                tools.append(make_save("knowledge", "Save a fact about the user (interests, hobbies)."))
-                tools.append(make_delete("knowledge", "Delete a knowledge fact."))
+                tools.extend([save_knowledge, delete_knowledge])
             if self.enable_policies:
-                tools.append(make_save("policy", "Save a behavior rule (be concise, no emojis)."))
-                tools.append(make_delete("policy", "Delete a behavior rule."))
+                tools.extend([save_policy, delete_policy])
             if self.enable_feedback:
-                tools.append(make_save("feedback", "Save response feedback. Key: 'positive' or 'negative'."))
-                tools.append(make_delete("feedback", "Clear feedback. Key: 'positive' or 'negative'."))
-
+                tools.extend([save_feedback, delete_feedback])
         return [Function.from_callable(t, strict=True) for t in tools]
 
-
-def _stage_save(staged: Dict[str, Any], info_type: str, key: str, value: Any) -> str:
-    """Stage a save operation during LLM extraction."""
-    memory: UserMemoryV2 = staged["memory"]
-
-    if info_type == "profile":
-        memory.profile[key] = value
-    elif info_type == "policy":
-        memory.layers.setdefault("policies", {})[key] = value
-    elif info_type == "knowledge":
-        memory.layers.setdefault("knowledge", {})[key] = value
-    elif info_type == "feedback":
-        if key not in ("positive", "negative"):
-            return "Error: key must be 'positive' or 'negative'"
-        feedback = memory.layers.setdefault("feedback", {"positive": [], "negative": []})
-        if value not in feedback[key]:
-            feedback[key].append(value)
-    else:
-        return f"Error: Unknown type {info_type}"
-
-    staged["dirty"] = True
-    return f"Saved {info_type}: {key}"
-
-
-def _stage_delete(staged: Dict[str, Any], info_type: str, key: str) -> str:
-    """Stage a delete operation during LLM extraction."""
-    memory: UserMemoryV2 = staged["memory"]
-    layers = memory.layers
-
-    if info_type == "profile":
-        if key in memory.profile:
-            del memory.profile[key]
-        else:
-            return f"Key '{key}' not found"
-    elif info_type == "policy":
-        policies = layers.get("policies", {})
-        if key in policies:
-            del policies[key]
-        else:
-            return f"Key '{key}' not found"
-    elif info_type == "knowledge":
-        knowledge = layers.get("knowledge", {})
-        if key in knowledge:
-            del knowledge[key]
-        else:
-            return f"Key '{key}' not found"
-    elif info_type == "feedback":
-        if key not in ("positive", "negative"):
-            return "Error: key must be 'positive' or 'negative'"
-        feedback = layers.get("feedback", {})
-        if key in feedback:
-            feedback[key] = []
-        else:
-            return f"Key '{key}' not found"
-    else:
-        return f"Error: Unknown type {info_type}"
-
-    staged["dirty"] = True
-    return f"Deleted {info_type}: {key}"
-
-
-# =============================================================================
-# Pending Updates (for Agent/Team agentic tools)
-# =============================================================================
-#
-# These functions allow Agent/Team to batch memory updates during a run.
-# Instead of writing to the database on each tool call, updates are staged
-# in run_context.session_state and committed at the end of the run.
-#
-# Flow:
-# 1. Agent tool calls init_pending() to start batching
-# 2. Tool calls stage_profile_update() or stage_layer_update() for each change
-# 3. At end of run, commit_pending() writes all changes to database
-#
-# This batching improves performance and ensures atomicity.
 
 USER_MEMORY_KEY = "_pending_user_memory"
 
 
-def init_pending(run_context: RunContext, user_id: str) -> None:
-    """Initialize pending memory structure in run_context.
-
-    Call this before staging any updates. Safe to call multiple times.
-
-    Args:
-        run_context: The RunContext from the current agent run.
-        user_id: User ID for the pending updates.
-    """
-    if run_context.session_state is None:
-        run_context.session_state = {}
-    if USER_MEMORY_KEY not in run_context.session_state:
-        run_context.session_state[USER_MEMORY_KEY] = {
-            "user_id": user_id,
-            "profile": {},
-            "layers": {},
-        }
-
-
-def stage_profile_update(run_context: RunContext, user_id: str, key: str, value: Any) -> None:
-    """Stage a profile field update.
-
-    Args:
-        run_context: The RunContext from the current agent run.
-        user_id: User ID for the update.
-        key: Profile field name (e.g., "name", "company").
-        value: New value, or None to delete.
-    """
-    init_pending(run_context, user_id)
-    pending = run_context.session_state[USER_MEMORY_KEY]
-    if value is None:
-        pending["profile"].pop(key, None)
-    else:
-        pending["profile"][key] = value
-
-
-def stage_layer_update(
+def stage_update(
     run_context: RunContext,
     user_id: str,
     layer: str,
@@ -450,57 +407,30 @@ def stage_layer_update(
     value: Any,
     action: str = "set",
 ) -> None:
-    """Stage a layer update (policies, knowledge, or feedback).
+    """Stage a memory update for batch commit."""
+    if run_context.session_state is None:
+        run_context.session_state = {}
+    pending = run_context.session_state.setdefault(USER_MEMORY_KEY, {"user_id": user_id})
 
-    Args:
-        run_context: The RunContext from the current agent run.
-        user_id: User ID for the update.
-        layer: Layer name ("policies", "knowledge", or "feedback").
-        key: Key within the layer.
-        value: New value.
-        action: "set" to add/update, "delete" to remove.
-    """
-    init_pending(run_context, user_id)
-    pending = run_context.session_state[USER_MEMORY_KEY]
-    _apply_layer_update(pending["layers"], layer, key, value, action)
-
-
-def has_pending(run_context: RunContext) -> bool:
-    """Check if there are pending memory updates.
-
-    Args:
-        run_context: The RunContext to check.
-
-    Returns:
-        True if there are staged updates waiting to be committed.
-    """
-    return bool(run_context.session_state and USER_MEMORY_KEY in run_context.session_state)
-
-
-def clear_pending(run_context: RunContext) -> None:
-    """Clear all pending memory updates without committing.
-
-    Args:
-        run_context: The RunContext to clear.
-    """
-    if run_context.session_state:
-        run_context.session_state.pop(USER_MEMORY_KEY, None)
+    if layer == "feedback":
+        # Feedback: {positive: [...], negative: [...]}
+        feedback = pending.setdefault("feedback", {"positive": [], "negative": []})
+        if action == "delete" and key in ("positive", "negative"):
+            feedback[key] = []
+        elif key in ("positive", "negative") and value not in feedback[key]:
+            feedback[key].append(value)
+    else:
+        # profile, knowledge, policies: simple dict
+        layer_dict = pending.setdefault(layer, {})
+        if action == "delete" or value is None:
+            layer_dict.pop(key, None)
+        else:
+            layer_dict[key] = value
 
 
 def commit_pending(db: BaseDb, user_id: str, run_context: RunContext) -> bool:
-    """Commit all pending updates to database.
-
-    Loads existing memory, applies all staged updates, and saves.
-
-    Args:
-        db: Database to commit to.
-        user_id: User ID for the memory.
-        run_context: RunContext containing staged updates.
-
-    Returns:
-        True on success.
-    """
-    if not has_pending(run_context):
+    """Write all staged updates to DB in one call."""
+    if not run_context.session_state or USER_MEMORY_KEY not in run_context.session_state:
         return True
 
     pending = run_context.session_state[USER_MEMORY_KEY]
@@ -514,29 +444,18 @@ def commit_pending(db: BaseDb, user_id: str, run_context: RunContext) -> bool:
     else:
         memory = result or UserMemoryV2(user_id=user_id)
 
-    # Apply all pending updates
+    # Apply pending updates, save, and clear
     _apply_pending_updates(memory, pending)
     memory.bump_updated_at()
-
-    # Save and clear
     db.upsert_user_memory_v2(memory)
-    clear_pending(run_context)
+    run_context.session_state.pop(USER_MEMORY_KEY, None)
     log_debug(f"Committed user memory updates for {user_id}")
     return True
 
 
 async def acommit_pending(db: Union[AsyncBaseDb, BaseDb], user_id: str, run_context: RunContext) -> bool:
-    """Commit all pending updates to database (async).
-
-    Args:
-        db: Database to commit to.
-        user_id: User ID for the memory.
-        run_context: RunContext containing staged updates.
-
-    Returns:
-        True on success.
-    """
-    if not has_pending(run_context):
+    """Write all staged updates to DB in one call (async)."""
+    if not run_context.session_state or USER_MEMORY_KEY not in run_context.session_state:
         return True
 
     pending = run_context.session_state[USER_MEMORY_KEY]
@@ -554,73 +473,43 @@ async def acommit_pending(db: Union[AsyncBaseDb, BaseDb], user_id: str, run_cont
     else:
         memory = result or UserMemoryV2(user_id=user_id)
 
-    # Apply all pending updates
+    # Apply pending updates, save, and clear
     _apply_pending_updates(memory, pending)
     memory.bump_updated_at()
-
-    # Save and clear
     if isinstance(db, AsyncBaseDb):
         await db.upsert_user_memory_v2(memory)
     else:
         db.upsert_user_memory_v2(memory)
-
-    clear_pending(run_context)
+    run_context.session_state.pop(USER_MEMORY_KEY, None)
     log_debug(f"Committed user memory updates for {user_id}")
     return True
 
 
-# =============================================================================
-# Private: Helpers
-# =============================================================================
-
-
 def _apply_pending_updates(memory: UserMemoryV2, pending: Dict[str, Any]) -> None:
-    """Apply all pending updates to memory object."""
-    # Profile updates
+    """Merge pending updates into memory."""
+    # Profile
     for key, value in pending.get("profile", {}).items():
-        if value is None:
-            memory.profile.pop(key, None)
-        else:
-            memory.profile[key] = value
+        memory.profile[key] = value
 
-    # Layer updates
-    for layer, data in pending.get("layers", {}).items():
-        if layer == "feedback":
-            feedback = memory.layers.setdefault("feedback", {"positive": [], "negative": []})
-            for fb_type in ("positive", "negative"):
-                if fb_type in data:
-                    for val in data[fb_type]:
-                        if val not in feedback.setdefault(fb_type, []):
-                            feedback[fb_type].append(val)
-        else:
-            # policies and knowledge: simple dict merge
-            layer_dict = memory.layers.setdefault(layer, {})
-            for key, value in data.items():
-                if value is None:
-                    layer_dict.pop(key, None)
-                else:
-                    layer_dict[key] = value
+    # Policies
+    if pending.get("policies"):
+        if not isinstance(memory.layers.get("policies"), dict):
+            memory.layers["policies"] = {}
+        for key, value in pending["policies"].items():
+            memory.layers["policies"][key] = value
 
+    # Knowledge
+    if pending.get("knowledge"):
+        if not isinstance(memory.layers.get("knowledge"), dict):
+            memory.layers["knowledge"] = {}
+        for key, value in pending["knowledge"].items():
+            memory.layers["knowledge"][key] = value
 
-def _apply_layer_update(layers: Dict[str, Any], layer: str, key: str, value: Any, action: str) -> None:
-    """Apply a single layer update to pending layers dict."""
-    # Initialize layer structure if needed
-    if layer not in layers:
-        if layer == "feedback":
-            layers[layer] = {"positive": [], "negative": []}
-        else:
-            layers[layer] = {}
-
-    layer_data = layers[layer]
-
-    if action == "delete":
-        if layer == "policies" or layer == "knowledge":
-            layer_data.pop(key, None)
-        elif layer == "feedback" and key in ("positive", "negative"):
-            layer_data[key] = []
-    else:  # action == "set"
-        if layer == "policies" or layer == "knowledge":
-            layer_data[key] = value
-        elif layer == "feedback" and key in ("positive", "negative"):
-            if value not in layer_data[key]:
-                layer_data[key].append(value)
+    # Feedback (append to lists)
+    if pending.get("feedback"):
+        if not isinstance(memory.layers.get("feedback"), dict):
+            memory.layers["feedback"] = {"positive": [], "negative": []}
+        for fb_type in ("positive", "negative"):
+            for val in pending["feedback"].get(fb_type, []):
+                if val not in memory.layers["feedback"][fb_type]:
+                    memory.layers["feedback"][fb_type].append(val)

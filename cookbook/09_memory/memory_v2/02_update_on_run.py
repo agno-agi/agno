@@ -6,10 +6,12 @@ The agent AUTOMATICALLY extracts new information without explicit tools.
 Run after 01_basic.py to see memory accumulate.
 """
 
+import json
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from rich.pretty import pprint
+from rich import print_json
 
 DB_FILE = "tmp/user_memory.db"
 USER_ID = "sarah"
@@ -26,7 +28,7 @@ agent = Agent(
 existing = agent.get_user_memory_v2(USER_ID)
 if existing:
     print("Existing profile:")
-    pprint(existing.to_dict())
+    print_json(json.dumps(existing.to_dict()))
 
 agent.print_response(
     "We're migrating our legacy Flask services to FastAPI for better async support. "
@@ -68,4 +70,4 @@ print("=" * 60)
 
 user = agent.get_user_memory_v2(USER_ID)
 if user:
-    pprint(user.to_dict())
+    print_json(json.dumps(user.to_dict()))

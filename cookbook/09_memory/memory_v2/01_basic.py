@@ -1,7 +1,9 @@
+import json
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from rich.pretty import pprint
+from rich import print_json
 
 DB_FILE = "tmp/user_memory.db"
 USER_ID = "sarah"
@@ -50,6 +52,6 @@ print("=" * 60)
 
 user = agent.get_user_memory_v2(USER_ID)
 if user:
-    pprint(user.to_dict())
+    print_json(json.dumps(user.to_dict()))
 else:
     print("No user memory found")

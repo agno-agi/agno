@@ -9,11 +9,12 @@ Run: pip install aiosqlite
 """
 
 import asyncio
+import json
 
 from agno.agent import Agent
 from agno.db.sqlite import AsyncSqliteDb
 from agno.models.openai import OpenAIChat
-from rich.pretty import pprint
+from rich import print_json
 
 DB_FILE = "tmp/async_user_memory2.db"
 ALEX_ID = "alex"
@@ -73,12 +74,12 @@ async def main():
     print("\n[Alex's Memory]")
     alex_profile = await agent.memory_compiler.aget_user_memory_v2(ALEX_ID)
     if alex_profile:
-        pprint(alex_profile.to_dict())
+        print_json(json.dumps(alex_profile.to_dict()))
 
     print("\n[Jordan's Memory]")
     jordan_profile = await agent.memory_compiler.aget_user_memory_v2(JORDAN_ID)
     if jordan_profile:
-        pprint(jordan_profile.to_dict())
+        print_json(json.dumps(jordan_profile.to_dict()))
 
     print("\n[Personalized responses]")
     await agent.aprint_response(
