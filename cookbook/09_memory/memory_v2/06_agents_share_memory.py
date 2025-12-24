@@ -38,36 +38,39 @@ research_agent = Agent(
     markdown=True,
 )
 
-# Chat agent learns about the user
-chat_agent.print_response(
-    "My name is John Doe and I like to hike in the mountains on weekends.",
-    user_id=USER_ID,
-    stream=True,
-)
+if __name__ == "__main__":
+    # Chat agent learns about the user
+    chat_agent.print_response(
+        "My name is John Doe and I like to hike in the mountains on weekends.",
+        user_id=USER_ID,
+        stream=True,
+    )
 
-chat_agent.print_response(
-    "What are my hobbies?",
-    user_id=USER_ID,
-    stream=True,
-)
+    chat_agent.print_response(
+        "What are my hobbies?",
+        user_id=USER_ID,
+        stream=True,
+    )
 
-# Research agent now has access to the same user memory
-research_agent.print_response(
-    "I love asking questions about quantum computing. What is the latest news on quantum computing?",
-    user_id=USER_ID,
-    stream=True,
-)
+    # Research agent now has access to the same user memory
+    research_agent.print_response(
+        "I love asking questions about quantum computing. What is the latest news on quantum computing?",
+        user_id=USER_ID,
+        stream=True,
+    )
 
-# Both agents share the same memory
-print("\n" + "=" * 60)
-print("SHARED USER MEMORY")
-print("=" * 60)
+    # Both agents share the same memory
+    print("\n" + "=" * 60)
+    print("SHARED USER MEMORY")
+    print("=" * 60)
 
-user = chat_agent.get_user_memory_v2(USER_ID)
-if user:
-    print_json(json.dumps(user.to_dict()))
+    user = chat_agent.get_user_memory_v2(USER_ID)
+    if user:
+        print_json(json.dumps(user.to_dict()))
 
-# Verify research agent sees the same memory
-user_from_research = research_agent.get_user_memory_v2(USER_ID)
-if user_from_research:
-    print("\nResearch agent sees same memory:", user_from_research.user_id == USER_ID)
+    # Verify research agent sees the same memory
+    user_from_research = research_agent.get_user_memory_v2(USER_ID)
+    if user_from_research:
+        print(
+            "\nResearch agent sees same memory:", user_from_research.user_id == USER_ID
+        )

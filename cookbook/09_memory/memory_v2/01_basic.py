@@ -27,40 +27,41 @@ agent = Agent(
     user_id=USER_ID,
 )
 
-agent.print_response(
-    "Hi, I'm Sarah, a backend engineer at TechCorp. I work with Python and Go.",
-)
+if __name__ == "__main__":
+    agent.print_response(
+        "Hi, I'm Sarah, a backend engineer at TechCorp. I work with Python and Go.",
+    )
 
-agent.print_response(
-    "Please be concise and always include code examples when explaining things.",
-)
+    agent.print_response(
+        "Please be concise and always include code examples when explaining things.",
+    )
 
-agent.print_response(
-    "Forget my workplace details.",
-)
+    agent.print_response(
+        "Forget my workplace details.",
+    )
 
-agent.print_response(
-    "I'm currently building a REST API for our payment service using FastAPI.",
-)
+    agent.print_response(
+        "I'm currently building a REST API for our payment service using FastAPI.",
+    )
 
-agent.print_response(
-    "What's a good way to structure API endpoints?",
-)
+    agent.print_response(
+        "What's a good way to structure API endpoints?",
+    )
 
-agent.print_response(
-    "What do you know about me and my work?",
-)
+    agent.print_response(
+        "What do you know about me and my work?",
+    )
 
-agent.print_response(
-    "I don't like a lot of code. Focus on explaining to me the concept in detail without code examples.",
-)
+    agent.print_response(
+        "I don't like a lot of code. Focus on explaining to me the concept in detail without code examples.",
+    )
 
-print("\n" + "=" * 60)
-print("SARAH'S MEMORY PROFILE")
-print("=" * 60)
+    print("\n" + "=" * 60)
+    print("SARAH'S MEMORY PROFILE")
+    print("=" * 60)
 
-user = agent.get_user_memory_v2(USER_ID)
-if user:
-    print_json(json.dumps(user.to_dict()))
-else:
-    print("No user memory found")
+    user = agent.get_user_memory_v2(USER_ID)
+    if user:
+        print_json(json.dumps(user.to_dict()))
+    else:
+        print("No user memory found")

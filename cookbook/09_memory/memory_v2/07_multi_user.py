@@ -1,3 +1,11 @@
+"""Multi-User Memory - Concurrent users with isolated memory profiles.
+
+Demonstrates:
+- Multiple users interacting with the same agent
+- Memory isolation by user_id (each user has their own profile)
+- Personalized responses based on individual user context
+"""
+
 import asyncio
 import json
 

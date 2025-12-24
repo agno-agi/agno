@@ -7216,11 +7216,21 @@ class Team:
         return prompt
 
     def _get_user_memory_v2_tools(self, user_id: Optional[str] = None, async_mode: bool = False) -> List[Function]:
-        """Get user memory v2 tools based on enabled layers."""
+        self.memory_compiler = cast(MemoryCompiler, self.memory_compiler)
+
+        user_id = user_id or "default"
+
+        # Use schema-based tools if schemas are enabled
+        if self.memory_compiler._should_use_schemas():
+            return self._get_schema_memory_tools(user_id, async_mode)
+        else:
+            return self._get_key_value_memory_tools(user_id, async_mode)
+
+    def _get_key_value_memory_tools(self, user_id: str, async_mode: bool = False) -> List[Function]:
+        """Get key-value based memory tools (current default behavior)."""
         self.memory_compiler = cast(MemoryCompiler, self.memory_compiler)
         from agno.memory_v2.memory_compiler import stage_update
 
-        user_id = user_id or "default"
         tools: List[Function] = []
 
         if self.memory_compiler.enable_profile:
@@ -7282,6 +7292,96 @@ class Team:
 
             tools.append(Function.from_callable(save_user_feedback))
             tools.append(Function.from_callable(delete_user_feedback))
+
+        return tools
+
+    def _get_schema_memory_tools(self, user_id: str, async_mode: bool = False) -> List[Function]:
+        """Get schema-based memory tools (when schemas are enabled)."""
+        self.memory_compiler = cast(MemoryCompiler, self.memory_compiler)
+        from agno.memory_v2.memory_compiler import stage_update
+
+        tools: List[Function] = []
+
+        if self.memory_compiler.enable_profile:
+            ProfileSchema = self.memory_compiler._get_profile_schema()
+
+            def save_profile(updates, run_context: RunContext) -> str:
+                """Save user profile (name, company, role, skills, etc.)."""
+                for key, value in updates.model_dump(exclude_none=True).items():
+                    stage_update(run_context, user_id, "profile", key, value)
+                return "Profile saved"
+
+            def delete_profile_fields(keys: List[str], run_context: RunContext) -> str:
+                """Delete specific profile fields."""
+                for key in keys:
+                    stage_update(run_context, user_id, "profile", key, None, "delete")
+                return f"Deleted profile fields: {keys}"
+
+            save_profile.__annotations__["updates"] = ProfileSchema
+            tools.append(Function.from_callable(save_profile, strict=True))
+            tools.append(Function.from_callable(delete_profile_fields, strict=True))
+
+        if self.memory_compiler.enable_policies:
+            PoliciesSchema = self.memory_compiler._get_policies_schema()
+
+            def save_policies(updates, run_context: RunContext) -> str:
+                """Save user preferences (response_style, tone, formatting)."""
+                for key, value in updates.model_dump(exclude_none=True).items():
+                    stage_update(run_context, user_id, "policies", key, value)
+                return "Policies saved"
+
+            def delete_policy_fields(keys: List[str], run_context: RunContext) -> str:
+                """Delete specific policy fields."""
+                for key in keys:
+                    stage_update(run_context, user_id, "policies", key, None, "delete")
+                return f"Deleted policy fields: {keys}"
+
+            save_policies.__annotations__["updates"] = PoliciesSchema
+            tools.append(Function.from_callable(save_policies, strict=True))
+            tools.append(Function.from_callable(delete_policy_fields, strict=True))
+
+        if self.memory_compiler.enable_knowledge:
+            KnowledgeSchema = self.memory_compiler._get_knowledge_schema()
+
+            def save_knowledge(updates, run_context: RunContext) -> str:
+                """Save user context (current_project, tech_stack, interests)."""
+                for key, value in updates.model_dump(exclude_none=True).items():
+                    stage_update(run_context, user_id, "knowledge", key, value)
+                return "Knowledge saved"
+
+            def delete_knowledge_fields(keys: List[str], run_context: RunContext) -> str:
+                """Delete specific knowledge fields."""
+                for key in keys:
+                    stage_update(run_context, user_id, "knowledge", key, None, "delete")
+                return f"Deleted knowledge fields: {keys}"
+
+            save_knowledge.__annotations__["updates"] = KnowledgeSchema
+            tools.append(Function.from_callable(save_knowledge, strict=True))
+            tools.append(Function.from_callable(delete_knowledge_fields, strict=True))
+
+        if self.memory_compiler.enable_feedback:
+            FeedbackSchema = self.memory_compiler._get_feedback_schema()
+
+            def save_feedback(updates, run_context: RunContext) -> str:
+                """Save response feedback (positive/negative lists)."""
+                data = updates.model_dump(exclude_none=True)
+                for item in data.get("positive", []):
+                    stage_update(run_context, user_id, "feedback", "positive", item)
+                for item in data.get("negative", []):
+                    stage_update(run_context, user_id, "feedback", "negative", item)
+                return "Feedback saved"
+
+            def clear_feedback(clear_positive: bool, clear_negative: bool, run_context: RunContext) -> str:
+                """Clear feedback lists. Set clear_positive=true or clear_negative=true to clear."""
+                if clear_positive:
+                    stage_update(run_context, user_id, "feedback", "positive", None, "delete")
+                if clear_negative:
+                    stage_update(run_context, user_id, "feedback", "negative", None, "delete")
+                return "Feedback cleared"
+
+            save_feedback.__annotations__["updates"] = FeedbackSchema
+            tools.append(Function.from_callable(save_feedback, strict=True))
+            tools.append(Function.from_callable(clear_feedback, strict=True))
 
         return tools
 
