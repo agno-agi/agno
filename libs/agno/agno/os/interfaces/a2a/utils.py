@@ -283,6 +283,182 @@ def map_run_output_to_a2a_task(run_output: Union[RunOutput, WorkflowRunOutput]) 
     )
 
 
+def map_run_schema_to_a2a_task(run_schema: Dict) -> Task:
+    """Map a RunSchema, TeamRunSchema, or WorkflowRunSchema to an A2A Task.
+
+    This function converts run data from the API layer schema format into an A2A Task
+    that can be used for interoperability with A2A-compliant systems.
+
+    Args:
+        run_schema: The run schema object (RunSchema, TeamRunSchema, or WorkflowRunSchema)
+
+    Returns:
+        Task: The A2A Task representation of the run
+    """
+    # Build message history from run messages
+    message_history: List[A2AMessage] = []
+
+    if messages := run_schema.get("messages"):
+        for msg in messages:
+            if isinstance(msg, dict):
+                if msg.get("role") == "assistant":
+                    role = Role.agent
+                elif msg.get("role") == "user":
+                    role = Role.user
+                else:
+                    continue  # skip system instructions
+                parts: List[Part] = []
+
+                # Assuming content is always a string
+                if msg.get("content"):
+                    parts.append(Part(root=TextPart(text=str(msg["content"]))))
+
+                # Add message metadata if available
+                msg_metadata: Dict[str, Any] = {}
+                if msg.get("metrics"):
+                    msg_metadata["metrics"] = msg["metrics"]
+                if msg.get("provider_data"):
+                    msg_metadata["provider_data"] = msg["provider_data"]
+
+                message_history.append(
+                    A2AMessage(
+                        message_id=msg.get("id"),  # type: ignore
+                        role=role,
+                        parts=parts,
+                        context_id=run_schema.get("session_id") or str(uuid4()),
+                        task_id=run_schema.get("run_id") or str(uuid4()),
+                        metadata=msg_metadata if msg_metadata else None,
+                    )
+                )
+
+    # If no messages but we have content, create a single agent message
+    if not message_history and run_schema.get("content"):
+        message_history.append(
+            A2AMessage(
+                message_id=str(uuid4()),
+                role=Role.agent,
+                parts=[Part(root=TextPart(text=str(run_schema.get("content"))))],
+                context_id=run_schema.get("session_id"),
+                task_id=run_schema.get("run_id"),
+            )
+        )
+
+    # Handle artifacts (images, videos, audio, files)
+    artifacts: List[Artifact] = []
+
+    if images := run_schema.get("images"):
+        for img in images:
+            artifact_parts = []
+            img_url = img.get("url")
+            if img_url:
+                artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=img_url, mime_type="image/*"))))
+            artifacts.append(
+                Artifact(
+                    artifact_id=f"image-{str(uuid4())}",
+                    name=f"image-{img_url}",
+                    description=img.get("alt_text"),
+                    parts=artifact_parts,
+                )
+            )
+
+    if videos := run_schema.get("videos"):
+        for vid in videos:
+            artifact_parts = []
+            vid_url = vid.get("url")
+            if vid_url:
+                artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=vid_url, mime_type="video/*"))))
+            artifacts.append(
+                Artifact(
+                    artifact_id=f"video-{str(uuid4())}",
+                    name=f"video-{vid_url}",
+                    description=vid.get("description"),
+                    parts=artifact_parts,
+                )
+            )
+
+    if audio := run_schema.get("audio"):
+        for aud in audio:
+            artifact_parts = []
+            aud_url = aud.get("url")
+            if aud_url:
+                artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=aud_url, mime_type="audio/*"))))
+            artifacts.append(
+                Artifact(
+                    artifact_id=f"audio-{str(uuid4())}",
+                    name=f"audio-{aud_url}",
+                    description=aud.get("description"),
+                    parts=artifact_parts,
+                )
+            )
+
+    if files := run_schema.get("files"):
+        for file in files:
+            artifact_parts = []
+            file_url = file.get("url")
+            file_mime = file.get("mime_type")
+            if file_url:
+                artifact_parts.append(
+                    Part(
+                        root=FilePart(
+                            file=FileWithUri(
+                                uri=file_url,
+                                mime_type=file_mime or "application/octet-stream",
+                            )
+                        )
+                    )
+                )
+            artifacts.append(
+                Artifact(
+                    artifact_id=f"file-{str(uuid4())}",
+                    name=f"file-{file_url}",
+                    description=file.get("description"),
+                    parts=artifact_parts,
+                )
+            )
+
+    # Handle response_audio for agent runs
+    if response_audio := run_schema.get("response_audio"):
+        aud_url = response_audio.get("url")
+        aud_name = response_audio.get("name")
+        if aud_url:
+            artifact_parts = []
+            artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=aud_url, mime_type="audio/*"))))
+            artifacts.append(
+                Artifact(
+                    artifact_id="response-audio",
+                    name=aud_name or "response-audio",
+                    description="Audio response from agent",
+                    parts=artifact_parts,
+                )
+            )
+
+    # Determine task state based on run status
+    task_state = TaskState.completed
+    if status := run_schema.get("status"):
+        status_str = status.upper() if isinstance(status, str) else str(status).upper()
+        if status_str in ["FAILED", "ERROR"]:
+            task_state = TaskState.failed
+        elif status_str in ["CANCELLED", "CANCELED"]:
+            task_state = TaskState.canceled
+        elif status_str in ["WORKING", "RUNNING", "IN_PROGRESS"]:
+            task_state = TaskState.working
+
+    # Build task metadata from metrics if available
+    task_metadata: Dict[str, Any] = {}
+    if metrics := run_schema.get("metrics"):
+        task_metadata["metrics"] = metrics if isinstance(metrics, dict) else metrics.to_dict()
+
+    # Build the task
+    return Task(
+        id=run_schema.get("run_id") or str(uuid4()),
+        context_id=run_schema.get("session_id") or str(uuid4()),
+        status=TaskStatus(state=task_state),
+        history=message_history if message_history else None,
+        artifacts=artifacts if artifacts else None,
+        metadata=task_metadata if task_metadata else None,
+    )
+
+
 async def stream_a2a_response(
     event_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent, RunOutput]],
     request_id: Union[str, int],
