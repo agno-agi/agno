@@ -7,7 +7,7 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
-from agno.db.schemas import UserMemory
+from agno.db.schemas import Skill, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -37,6 +37,7 @@ class BaseDb(ABC):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        skills_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -49,6 +50,7 @@ class BaseDb(ABC):
         self.trace_table_name = traces_table or "agno_traces"
         self.span_table_name = spans_table or "agno_spans"
         self.versions_table_name = versions_table or "agno_schema_versions"
+        self.skills_table_name = skills_table or "agno_skills"
 
     @abstractmethod
     def table_exists(self, table_name: str) -> bool:
@@ -497,6 +499,87 @@ class BaseDb(ABC):
     def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
+    # --- Skills ---
+    @abstractmethod
+    def get_skill(
+        self,
+        skill_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[Skill, Dict[str, Any]]]:
+        """Get a skill by its ID.
+
+        Args:
+            skill_id: The unique identifier of the skill.
+            deserialize: If True, return a Skill object; if False, return raw dict.
+
+        Returns:
+            The Skill object or dict if found, None otherwise.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_skills(
+        self,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Skill], Tuple[List[Dict[str, Any]], int]]:
+        """Get skills with optional filtering and pagination.
+
+        Args:
+            name: Filter by skill name (optional).
+            limit: Maximum number of skills to return.
+            page: Page number for pagination.
+            sort_by: Column to sort by.
+            sort_order: Sort order ('asc' or 'desc').
+            deserialize: If True, return Skill objects; if False, return raw dicts with total count.
+
+        Returns:
+            List of Skill objects if deserialize=True, else tuple of (list of dicts, total count).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_skill(
+        self,
+        skill: Skill,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[Skill, Dict[str, Any]]]:
+        """Insert or update a skill.
+
+        Args:
+            skill: The Skill object to upsert.
+            deserialize: If True, return a Skill object; if False, return raw dict.
+
+        Returns:
+            The upserted Skill object or dict, or None if the operation fails.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_skill(self, skill_id: str) -> bool:
+        """Delete a skill by its ID.
+
+        Args:
+            skill_id: The unique identifier of the skill to delete.
+
+        Returns:
+            True if the skill was deleted, False otherwise.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_skills(self, skill_ids: List[str]) -> None:
+        """Delete multiple skills by their IDs.
+
+        Args:
+            skill_ids: List of skill IDs to delete.
+        """
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -513,6 +596,7 @@ class AsyncBaseDb(ABC):
         spans_table: Optional[str] = None,
         culture_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        skills_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -524,6 +608,7 @@ class AsyncBaseDb(ABC):
         self.span_table_name = spans_table or "agno_spans"
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
+        self.skills_table_name = skills_table or "agno_skills"
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""
@@ -963,4 +1048,85 @@ class AsyncBaseDb(ABC):
     async def upsert_cultural_knowledge(
         self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
     ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        raise NotImplementedError
+
+    # --- Skills ---
+    @abstractmethod
+    async def get_skill(
+        self,
+        skill_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[Skill, Dict[str, Any]]]:
+        """Get a skill by its ID.
+
+        Args:
+            skill_id: The unique identifier of the skill.
+            deserialize: If True, return a Skill object; if False, return raw dict.
+
+        Returns:
+            The Skill object or dict if found, None otherwise.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_skills(
+        self,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Skill], Tuple[List[Dict[str, Any]], int]]:
+        """Get skills with optional filtering and pagination.
+
+        Args:
+            name: Filter by skill name (optional).
+            limit: Maximum number of skills to return.
+            page: Page number for pagination.
+            sort_by: Column to sort by.
+            sort_order: Sort order ('asc' or 'desc').
+            deserialize: If True, return Skill objects; if False, return raw dicts with total count.
+
+        Returns:
+            List of Skill objects if deserialize=True, else tuple of (list of dicts, total count).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def upsert_skill(
+        self,
+        skill: Skill,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[Skill, Dict[str, Any]]]:
+        """Insert or update a skill.
+
+        Args:
+            skill: The Skill object to upsert.
+            deserialize: If True, return a Skill object; if False, return raw dict.
+
+        Returns:
+            The upserted Skill object or dict, or None if the operation fails.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_skill(self, skill_id: str) -> bool:
+        """Delete a skill by its ID.
+
+        Args:
+            skill_id: The unique identifier of the skill to delete.
+
+        Returns:
+            True if the skill was deleted, False otherwise.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_skills(self, skill_ids: List[str]) -> None:
+        """Delete multiple skills by their IDs.
+
+        Args:
+            skill_ids: List of skill IDs to delete.
+        """
         raise NotImplementedError

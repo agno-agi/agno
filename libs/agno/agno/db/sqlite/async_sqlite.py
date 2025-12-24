@@ -13,6 +13,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.skill import Skill
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
     abulk_upsert_metrics,
@@ -54,6 +55,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        skills_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -98,6 +100,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
+            skills_table=skills_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -155,6 +158,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
+            (self.skills_table_name, "skills"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -335,6 +339,15 @@ class AsyncSqliteDb(AsyncBaseDb):
                     create_table_if_not_found=create_table_if_not_found,
                 )
             return self.spans_table
+
+        elif table_type == "skills":
+            if not hasattr(self, "skills_table"):
+                self.skills_table = await self._get_or_create_table(
+                    table_name=self.skills_table_name,
+                    table_type="skills",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+            return self.skills_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -2918,3 +2931,248 @@ class AsyncSqliteDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error getting spans: {e}")
             return []
+
+    # -- Skill methods --
+
+    async def get_skill(
+        self,
+        skill_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[Skill, Dict[str, Any]]]:
+        """Get a skill from the database.
+
+        Args:
+            skill_id (str): The ID of the skill to get.
+            deserialize (Optional[bool]): Whether to deserialize the skill. Defaults to True.
+
+        Returns:
+            Optional[Union[Skill, Dict[str, Any]]]:
+                - When deserialize=True: Skill object
+                - When deserialize=False: Skill dictionary
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = await self._get_table(table_type="skills")
+            if table is None:
+                return None
+
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = select(table).where(table.c.id == skill_id)
+                    result = await sess.execute(stmt)
+                    row = result.fetchone()
+                    if row is None:
+                        return None
+
+                    skill_raw = dict(row._mapping)
+                    if not skill_raw or not deserialize:
+                        return skill_raw
+
+            return Skill.from_dict(skill_raw)
+
+        except Exception as e:
+            log_debug(f"Exception reading from skills table: {e}")
+            raise e
+
+    async def get_skills(
+        self,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Skill], Tuple[List[Dict[str, Any]], int]]:
+        """Get skills from the database.
+
+        Args:
+            name (Optional[str]): Filter by skill name.
+            limit (Optional[int]): The maximum number of skills to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            deserialize (Optional[bool]): Whether to deserialize the skills. Defaults to True.
+
+        Returns:
+            Union[List[Skill], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of Skill objects
+                - When deserialize=False: Tuple of (List of skill dictionaries, total count)
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = await self._get_table(table_type="skills")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = select(table)
+
+                    # Filtering
+                    if name is not None:
+                        stmt = stmt.where(table.c.name == name)
+
+                    # Get total count after applying filtering
+                    count_stmt = select(func.count()).select_from(stmt.alias())
+                    count_result = await sess.execute(count_stmt)
+                    total_count = count_result.scalar()
+
+                    # Sorting
+                    stmt = apply_sorting(stmt, table, sort_by, sort_order)
+
+                    # Paginating
+                    if limit is not None:
+                        stmt = stmt.limit(limit)
+                        if page is not None:
+                            stmt = stmt.offset((page - 1) * limit)
+
+                    result = await sess.execute(stmt)
+                    rows = result.fetchall()
+                    if not rows:
+                        return [] if deserialize else ([], 0)
+
+                    skills_raw = [dict(record._mapping) for record in rows]
+
+                    if not deserialize:
+                        return skills_raw, total_count
+
+            return [Skill.from_dict(record) for record in skills_raw]
+
+        except Exception as e:
+            log_error(f"Error reading from skills table: {e}")
+            raise e
+
+    async def upsert_skill(
+        self,
+        skill: Skill,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[Skill, Dict[str, Any]]]:
+        """Upsert a skill in the database.
+
+        Args:
+            skill (Skill): The skill to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the skill. Defaults to True.
+
+        Returns:
+            Optional[Union[Skill, Dict[str, Any]]]:
+                - When deserialize=True: Skill object
+                - When deserialize=False: Skill dictionary
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = await self._get_table(table_type="skills", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            current_time = int(time.time())
+
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = sqlite.insert(table).values(
+                        id=skill.id,
+                        name=skill.name,
+                        description=skill.description,
+                        instructions=skill.instructions,
+                        metadata=skill.metadata,
+                        version=skill.version,
+                        scripts=skill.scripts,
+                        references=skill.references,
+                        created_at=skill.created_at,
+                        updated_at=skill.created_at,
+                    )
+                    stmt = stmt.on_conflict_do_update(  # type: ignore
+                        index_elements=["id"],
+                        set_=dict(
+                            name=skill.name,
+                            description=skill.description,
+                            instructions=skill.instructions,
+                            metadata=skill.metadata,
+                            version=skill.version,
+                            scripts=skill.scripts,
+                            references=skill.references,
+                            updated_at=current_time,
+                            # Preserve created_at on update
+                            created_at=table.c.created_at,
+                        ),
+                    ).returning(table)
+
+                    result = await sess.execute(stmt)
+                    row = result.fetchone()
+
+                    if row is None:
+                        return None
+
+            skill_raw = dict(row._mapping)
+            if not skill_raw or not deserialize:
+                return skill_raw
+
+            return Skill.from_dict(skill_raw)
+
+        except Exception as e:
+            log_error(f"Error upserting skill: {e}")
+            raise e
+
+    async def delete_skill(self, skill_id: str) -> bool:
+        """Delete a skill from the database.
+
+        Args:
+            skill_id (str): The ID of the skill to delete.
+
+        Returns:
+            bool: True if deletion was successful, False otherwise.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = await self._get_table(table_type="skills")
+            if table is None:
+                return False
+
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    delete_stmt = table.delete().where(table.c.id == skill_id)
+                    result = await sess.execute(delete_stmt)
+
+                    success = result.rowcount > 0
+                    if success:
+                        log_debug(f"Successfully deleted skill id: {skill_id}")
+                    else:
+                        log_debug(f"No skill found with id: {skill_id}")
+
+                    return success
+
+        except Exception as e:
+            log_error(f"Error deleting skill: {e}")
+            raise e
+
+    async def delete_skills(self, skill_ids: List[str]) -> None:
+        """Delete multiple skills from the database.
+
+        Args:
+            skill_ids (List[str]): The IDs of the skills to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = await self._get_table(table_type="skills")
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    delete_stmt = table.delete().where(table.c.id.in_(skill_ids))
+                    result = await sess.execute(delete_stmt)
+                    if result.rowcount == 0:
+                        log_debug(f"No skills found with ids: {skill_ids}")
+
+        except Exception as e:
+            log_error(f"Error deleting skills: {e}")
+            raise e

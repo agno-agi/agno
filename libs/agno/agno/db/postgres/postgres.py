@@ -25,6 +25,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.skill import Skill
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -57,6 +58,7 @@ class PostgresDb(BaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        skills_table: Optional[str] = None,
         id: Optional[str] = None,
         create_schema: bool = True,
     ):
@@ -81,6 +83,7 @@ class PostgresDb(BaseDb):
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
+            skills_table (Optional[str]): Name of the table to store skills.
             id (Optional[str]): ID of the database.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
@@ -115,6 +118,7 @@ class PostgresDb(BaseDb):
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
+            skills_table=skills_table,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
@@ -2877,3 +2881,234 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Error getting spans: {e}")
             return []
+
+    def get_skill(
+        self, skill_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Skill, Dict[str, Any]]]:
+        """Get a skill from the database.
+
+        Args:
+            skill_id (str): The ID of the skill to get.
+            deserialize (Optional[bool]): Whether to deserialize the skill. Defaults to True.
+
+        Returns:
+            Union[Skill, Dict[str, Any], None]:
+                - When deserialize=True: Skill object
+                - When deserialize=False: Skill dictionary
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="skills")
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.id == skill_id)
+                result = sess.execute(stmt).fetchone()
+                if not result:
+                    return None
+
+                skill_raw = dict(result._mapping)
+                if not deserialize:
+                    return skill_raw
+
+            return Skill.from_dict(skill_raw)
+
+        except Exception as e:
+            log_error(f"Exception reading from skills table: {e}")
+            raise e
+
+    def get_skills(
+        self,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Skill], Tuple[List[Dict[str, Any]], int]]:
+        """Get skills from the database.
+
+        Args:
+            name (Optional[str]): The name of the skill to filter by.
+            limit (Optional[int]): The maximum number of skills to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            deserialize (Optional[bool]): Whether to deserialize the skills. Defaults to True.
+
+        Returns:
+            Union[List[Skill], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of Skill objects
+                - When deserialize=False: Tuple of (skill dictionaries, total count)
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="skills")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+
+                # Filtering
+                if name is not None:
+                    stmt = stmt.where(table.c.name == name)
+
+                # Get total count after applying filtering
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                # Sorting
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
+
+                # Paginating
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [] if deserialize else ([], 0)
+
+                skills_raw = [dict(record._mapping) for record in result]
+                if not deserialize:
+                    return skills_raw, total_count
+
+            return [Skill.from_dict(skill) for skill in skills_raw]
+
+        except Exception as e:
+            log_error(f"Exception reading from skills table: {e}")
+            raise e
+
+    def upsert_skill(
+        self, skill: Skill, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Skill, Dict[str, Any]]]:
+        """Upsert a skill in the database.
+
+        Args:
+            skill (Skill): The skill to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the skill. Defaults to True.
+
+        Returns:
+            Optional[Union[Skill, Dict[str, Any]]]:
+                - When deserialize=True: Skill object
+                - When deserialize=False: Skill dictionary
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = self._get_table(table_type="skills", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                current_time = int(time.time())
+
+                stmt = postgresql.insert(table).values(
+                    id=skill.id,
+                    name=skill.name,
+                    description=skill.description,
+                    instructions=skill.instructions,
+                    metadata=skill.metadata,
+                    version=skill.version,
+                    scripts=skill.scripts,
+                    references=skill.references,
+                    created_at=skill.created_at,
+                    updated_at=skill.created_at,
+                )
+                stmt = stmt.on_conflict_do_update(  # type: ignore
+                    index_elements=["id"],
+                    set_=dict(
+                        name=skill.name,
+                        description=skill.description,
+                        instructions=skill.instructions,
+                        metadata=skill.metadata,
+                        version=skill.version,
+                        scripts=skill.scripts,
+                        references=skill.references,
+                        updated_at=current_time,
+                        # Preserve created_at on update - don't overwrite existing value
+                        created_at=table.c.created_at,
+                    ),
+                ).returning(table)
+
+                result = sess.execute(stmt)
+                row = result.fetchone()
+
+            skill_raw = dict(row._mapping)
+
+            if not skill_raw or not deserialize:
+                return skill_raw
+
+            return Skill.from_dict(skill_raw)
+
+        except Exception as e:
+            log_error(f"Exception upserting skill: {e}")
+            raise e
+
+    def delete_skill(self, skill_id: str) -> bool:
+        """Delete a skill from the database.
+
+        Args:
+            skill_id (str): The ID of the skill to delete.
+
+        Returns:
+            bool: True if deletion was successful, False otherwise.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="skills")
+            if table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.id == skill_id)
+                result = sess.execute(delete_stmt)
+
+                success = result.rowcount > 0
+                if success:
+                    log_debug(f"Successfully deleted skill id: {skill_id}")
+                else:
+                    log_debug(f"No skill found with id: {skill_id}")
+
+                return success
+
+        except Exception as e:
+            log_error(f"Error deleting skill: {e}")
+            raise e
+
+    def delete_skills(self, skill_ids: List[str]) -> None:
+        """Delete skills from the database.
+
+        Args:
+            skill_ids (List[str]): The IDs of the skills to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="skills")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.id.in_(skill_ids))
+                result = sess.execute(delete_stmt)
+
+                if result.rowcount == 0:
+                    log_debug(f"No skills found with ids: {skill_ids}")
+                else:
+                    log_debug(f"Successfully deleted {result.rowcount} skills")
+
+        except Exception as e:
+            log_error(f"Error deleting skills: {e}")
+            raise e
