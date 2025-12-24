@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.user_memory import UserMemoryV2
+from agno.memory_v2.schemas import UserFeedback, UserKnowledge, UserPolicies, UserProfile
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
@@ -471,10 +472,10 @@ class MemoryCompiler:
             or self.feedback_schema is not None
         )
         if use_schemas:
-            return self._get_agentic_schema_tools(user_id)
-        return self._get_agentic_key_value_tools(user_id)
+            return self._get_schema_tools(user_id)
+        return self._get_dynamic_tools(user_id)
 
-    def _get_agentic_key_value_tools(self, user_id: str) -> List[Function]:
+    def _get_dynamic_tools(self, user_id: str) -> List[Function]:
         """Get key-value tools that stage updates for batch commit."""
         tools: List[Function] = []
 
@@ -540,9 +541,8 @@ class MemoryCompiler:
 
         return tools
 
-    def _get_agentic_schema_tools(self, user_id: str) -> List[Function]:
+    def _get_schema_tools(self, user_id: str) -> List[Function]:
         """Get schema-based tools that stage updates for batch commit."""
-        from agno.memory_v2.schemas import UserFeedback, UserKnowledge, UserPolicies, UserProfile
 
         tools: List[Function] = []
 
