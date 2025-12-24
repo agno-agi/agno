@@ -151,10 +151,10 @@ VERSIONS_TABLE_SCHEMA = {
     "updated_at": {"type": String, "nullable": True},
 }
 
-USER_PROFILES_TABLE_SCHEMA = {
+USER_MEMORY_V2_TABLE_SCHEMA = {
     "user_id": {"type": String, "primary_key": True, "nullable": False},
-    "user_profile": {"type": JSON, "nullable": False},
-    "memory_layers": {"type": JSON, "nullable": False},
+    "profile": {"type": JSON, "nullable": False},
+    "layers": {"type": JSON, "nullable": False},
     "metadata": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
@@ -181,7 +181,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "spans": SPAN_TABLE_SCHEMA,
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
-        "user_profiles": USER_PROFILES_TABLE_SCHEMA,
+        "user_memory": USER_MEMORY_V2_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
 

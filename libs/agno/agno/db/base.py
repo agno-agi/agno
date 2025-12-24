@@ -11,7 +11,7 @@ from agno.db.schemas import UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.db.schemas.user_profile import UserProfile
+from agno.db.schemas.user_memory import UserMemoryV2
 from agno.session import Session
 
 
@@ -38,7 +38,7 @@ class BaseDb(ABC):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
-        user_profiles_table: Optional[str] = None,
+        user_memory_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -51,7 +51,7 @@ class BaseDb(ABC):
         self.trace_table_name = traces_table or "agno_traces"
         self.span_table_name = spans_table or "agno_spans"
         self.versions_table_name = versions_table or "agno_schema_versions"
-        self.user_profiles_table_name = user_profiles_table or "agno_user_profiles"
+        self.user_memory_table_name = user_memory_table or "agno_user_memory"
 
     @abstractmethod
     def table_exists(self, table_name: str) -> bool:
@@ -500,25 +500,25 @@ class BaseDb(ABC):
     def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
-    # --- User Profiles ---
+    # --- User Memory (v2) ---
     @abstractmethod
-    def get_user_profile(
+    def get_user_memory_v2(
         self,
         user_id: str,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
         raise NotImplementedError
 
     @abstractmethod
-    def upsert_user_profile(
+    def upsert_user_memory_v2(
         self,
-        user_profile: UserProfile,
+        user_memory: UserMemoryV2,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
         raise NotImplementedError
 
     @abstractmethod
-    def delete_user_profile(self, user_id: str) -> None:
+    def delete_user_memory_v2(self, user_id: str) -> None:
         raise NotImplementedError
 
 
@@ -537,7 +537,7 @@ class AsyncBaseDb(ABC):
         spans_table: Optional[str] = None,
         culture_table: Optional[str] = None,
         versions_table: Optional[str] = None,
-        user_profiles_table: Optional[str] = None,
+        user_memory_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -549,7 +549,7 @@ class AsyncBaseDb(ABC):
         self.span_table_name = spans_table or "agno_spans"
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
-        self.user_profiles_table_name = user_profiles_table or "agno_user_profiles"
+        self.user_memory_table_name = user_memory_table or "agno_user_memory"
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""
@@ -991,23 +991,23 @@ class AsyncBaseDb(ABC):
     ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
         raise NotImplementedError
 
-    # --- User Profiles ---
+    # --- User Memory (v2) ---
     @abstractmethod
-    async def get_user_profile(
+    async def get_user_memory_v2(
         self,
         user_id: str,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
         raise NotImplementedError
 
     @abstractmethod
-    async def upsert_user_profile(
+    async def upsert_user_memory_v2(
         self,
-        user_profile: UserProfile,
+        user_memory: UserMemoryV2,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_user_profile(self, user_id: str) -> None:
+    async def delete_user_memory_v2(self, user_id: str) -> None:
         raise NotImplementedError

@@ -157,10 +157,10 @@ SPAN_TABLE_SCHEMA = {
     "created_at": {"type": String, "nullable": False, "index": True},  # ISO 8601 datetime string
 }
 
-USER_PROFILES_TABLE_SCHEMA = {
+USER_MEMORY_V2_TABLE_SCHEMA = {
     "user_id": {"type": String, "primary_key": True, "nullable": False},
-    "user_profile": {"type": JSONB, "nullable": False},
-    "memory_layers": {"type": JSONB, "nullable": False},
+    "profile": {"type": JSONB, "nullable": False},
+    "layers": {"type": JSONB, "nullable": False},
     "metadata": {"type": JSONB, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
@@ -187,7 +187,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "versions": VERSIONS_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
         "spans": SPAN_TABLE_SCHEMA,
-        "user_profiles": USER_PROFILES_TABLE_SCHEMA,
+        "user_memory": USER_MEMORY_V2_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

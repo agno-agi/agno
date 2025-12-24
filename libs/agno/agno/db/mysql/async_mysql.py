@@ -25,7 +25,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.schemas.user_profile import UserProfile
+from agno.db.schemas.user_memory import UserMemoryV2
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -56,7 +56,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
-        user_profiles_table: Optional[str] = None,
+        user_memory_table: Optional[str] = None,
         create_schema: bool = True,
     ):
         """
@@ -105,7 +105,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
-            user_profiles_table=user_profiles_table,
+            user_memory_table=user_memory_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -278,7 +278,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             (self.trace_table_name, "traces"),
             (self.span_table_name, "spans"),
             (self.versions_table_name, "versions"),
-            (self.user_profiles_table_name, "user_profiles"),
+            (self.user_memory_table_name, "user_memory"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -370,14 +370,14 @@ class AsyncMySQLDb(AsyncBaseDb):
                 )
             return self.spans_table
 
-        if table_type == "user_profiles":
-            if not hasattr(self, "user_profiles_table"):
-                self.user_profiles_table = await self._get_or_create_table(
-                    table_name=self.user_profiles_table_name,
-                    table_type="user_profiles",
+        if table_type == "user_memory":
+            if not hasattr(self, "user_memory_table"):
+                self.user_memory_table = await self._get_or_create_table(
+                    table_name=self.user_memory_table_name,
+                    table_type="user_memory",
                     create_table_if_not_found=create_table_if_not_found,
                 )
-            return self.user_profiles_table
+            return self.user_memory_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -2933,22 +2933,22 @@ class AsyncMySQLDb(AsyncBaseDb):
             log_error(f"Error getting spans: {e}")
             return []
 
-    async def get_user_profile(
+    async def get_user_memory_v2(
         self,
         user_id: str,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
-        """Get a user profile from the database.
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+        """Get a user memory from the database.
 
         Args:
             user_id: The unique user identifier
-            deserialize: Whether to deserialize to UserProfile object
+            deserialize: Whether to deserialize to UserMemoryV2 object
 
         Returns:
-            UserProfile or dict if found, None otherwise
+            UserMemoryV2 or dict if found, None otherwise
         """
         try:
-            table = await self._get_table(table_type="user_profiles", create_table_if_not_found=True)
+            table = await self._get_table(table_type="user_memory", create_table_if_not_found=True)
             if table is None:
                 return None
 
@@ -2965,28 +2965,28 @@ class AsyncMySQLDb(AsyncBaseDb):
                 if not deserialize:
                     return db_row
 
-                return UserProfile.from_dict(db_row)
+                return UserMemoryV2.from_dict(db_row)
 
         except Exception as e:
-            log_error(f"Error getting user profile: {e}")
+            log_error(f"Error getting user memory: {e}")
             raise e
 
-    async def upsert_user_profile(
+    async def upsert_user_memory_v2(
         self,
-        user_profile: UserProfile,
+        user_memory: UserMemoryV2,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
-        """Upsert a user profile in the database.
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+        """Upsert a user memory in the database.
 
         Args:
-            user_profile: The user profile to upsert
-            deserialize: Whether to deserialize to UserProfile object
+            user_profile: The user memory to upsert
+            deserialize: Whether to deserialize to UserMemoryV2 object
 
         Returns:
-            UserProfile or dict if successful, None otherwise
+            UserMemoryV2 or dict if successful, None otherwise
         """
         try:
-            table = await self._get_table(table_type="user_profiles", create_table_if_not_found=True)
+            table = await self._get_table(table_type="user_memory", create_table_if_not_found=True)
             if table is None:
                 return None
 
@@ -2995,25 +2995,25 @@ class AsyncMySQLDb(AsyncBaseDb):
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     stmt = mysql.insert(table).values(
-                        user_id=user_profile.user_id,
-                        user_profile=user_profile.user_profile,
-                        memory_layers=user_profile.memory_layers,
-                        metadata=user_profile.metadata,
-                        created_at=user_profile.created_at or current_time,
+                        user_id=user_memory.user_id,
+                        profile=user_memory.profile,
+                        layers=user_memory.layers,
+                        metadata=user_memory.metadata,
+                        created_at=user_memory.created_at or current_time,
                         updated_at=current_time,
                     )
 
                     stmt = stmt.on_duplicate_key_update(
-                        user_profile=user_profile.user_profile,
-                        memory_layers=user_profile.memory_layers,
-                        metadata=user_profile.metadata,
+                        profile=user_memory.profile,
+                        layers=user_memory.layers,
+                        metadata=user_memory.metadata,
                         updated_at=current_time,
                     )
 
                     await sess.execute(stmt)
 
                     # Fetch the upserted row
-                    fetch_stmt = select(table).where(table.c.user_id == user_profile.user_id)
+                    fetch_stmt = select(table).where(table.c.user_id == user_memory.user_id)
                     result = await sess.execute(fetch_stmt)
                     row = result.fetchone()
 
@@ -3025,28 +3025,28 @@ class AsyncMySQLDb(AsyncBaseDb):
                     if not deserialize:
                         return db_row
 
-                    return UserProfile.from_dict(db_row)
+                    return UserMemoryV2.from_dict(db_row)
 
         except Exception as e:
-            log_error(f"Error upserting user profile: {e}")
+            log_error(f"Error upserting user memory: {e}")
             raise e
 
-    async def delete_user_profile(self, user_id: str) -> None:
-        """Delete a user profile.
+    async def delete_user_memory_v2(self, user_id: str) -> None:
+        """Delete a user memory.
 
         Args:
             user_id: The unique user identifier to delete
         """
         try:
-            table = await self._get_table(table_type="user_profiles")
+            table = await self._get_table(table_type="user_memory")
             if table is None:
                 return
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.user_id == user_id)
                 await sess.execute(stmt)
-                log_debug(f"Deleted user profile: {user_id}")
+                log_debug(f"Deleted user memory: {user_id}")
 
         except Exception as e:
-            log_error(f"Error deleting user profile: {e}")
+            log_error(f"Error deleting user memory: {e}")
             raise e

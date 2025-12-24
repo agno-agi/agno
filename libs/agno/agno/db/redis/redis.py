@@ -27,7 +27,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.schemas.user_profile import UserProfile
+from agno.db.schemas.user_memory import UserMemoryV2
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -54,7 +54,7 @@ class RedisDb(BaseDb):
         culture_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
-        user_profiles_table: Optional[str] = None,
+        user_memory_table: Optional[str] = None,
     ):
         """
         Interface for interacting with a Redis database.
@@ -99,7 +99,7 @@ class RedisDb(BaseDb):
             culture_table=culture_table,
             traces_table=traces_table,
             spans_table=spans_table,
-            user_profiles_table=user_profiles_table,
+            user_memory_table=user_memory_table,
         )
 
         self.db_prefix = db_prefix
@@ -2143,22 +2143,22 @@ class RedisDb(BaseDb):
             log_error(f"Error getting spans: {e}")
             return []
 
-    def get_user_profile(
+    def get_user_memory_v2(
         self,
         user_id: str,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
-        """Get a user profile from the database.
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+        """Get a user memory from the database.
 
         Args:
             user_id: The unique user identifier
-            deserialize: Whether to deserialize to UserProfile object
+            deserialize: Whether to deserialize to UserMemoryV2 object
 
         Returns:
-            UserProfile or dict if found, None otherwise
+            UserMemoryV2 or dict if found, None otherwise
         """
         try:
-            key = generate_redis_key(self.db_prefix, self.user_profiles_table_name, user_id)
+            key = generate_redis_key(self.db_prefix, self.user_memory_table_name, user_id)
             data = self.redis_client.get(key)
 
             if data is None:
@@ -2169,62 +2169,62 @@ class RedisDb(BaseDb):
             if not deserialize:
                 return result
 
-            return UserProfile.from_dict(result)
+            return UserMemoryV2.from_dict(result)
 
         except Exception as e:
-            log_error(f"Error getting user profile: {e}")
+            log_error(f"Error getting user memory: {e}")
             raise e
 
-    def upsert_user_profile(
+    def upsert_user_memory_v2(
         self,
-        user_profile: UserProfile,
+        user_memory: UserMemoryV2,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
-        """Upsert a user profile in the database.
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+        """Upsert a user memory in the database.
 
         Args:
-            user_profile: The user profile to upsert
-            deserialize: Whether to deserialize to UserProfile object
+            user_profile: The user memory to upsert
+            deserialize: Whether to deserialize to UserMemoryV2 object
 
         Returns:
-            UserProfile or dict if successful, None otherwise
+            UserMemoryV2 or dict if successful, None otherwise
         """
         try:
             current_time = int(time.time())
 
             item_data = {
-                "user_id": user_profile.user_id,
-                "user_profile": user_profile.user_profile,
-                "memory_layers": user_profile.memory_layers,
-                "metadata": user_profile.metadata,
-                "created_at": user_profile.created_at or current_time,
+                "user_id": user_memory.user_id,
+                "profile": user_memory.profile,
+                "layers": user_memory.layers,
+                "metadata": user_memory.metadata,
+                "created_at": user_memory.created_at or current_time,
                 "updated_at": current_time,
             }
 
-            key = generate_redis_key(self.db_prefix, self.user_profiles_table_name, user_profile.user_id)
+            key = generate_redis_key(self.db_prefix, self.user_memory_table_name, user_memory.user_id)
             serialized = serialize_data(item_data)
             self.redis_client.set(key, serialized, ex=self.expire)
 
             if not deserialize:
                 return item_data
 
-            return UserProfile.from_dict(item_data)
+            return UserMemoryV2.from_dict(item_data)
 
         except Exception as e:
-            log_error(f"Error upserting user profile: {e}")
+            log_error(f"Error upserting user memory: {e}")
             raise e
 
-    def delete_user_profile(self, user_id: str) -> None:
-        """Delete a user profile.
+    def delete_user_memory_v2(self, user_id: str) -> None:
+        """Delete a user memory.
 
         Args:
             user_id: The unique user identifier to delete
         """
         try:
-            key = generate_redis_key(self.db_prefix, self.user_profiles_table_name, user_id)
+            key = generate_redis_key(self.db_prefix, self.user_memory_table_name, user_id)
             self.redis_client.delete(key)
-            log_debug(f"Deleted user profile: {user_id}")
+            log_debug(f"Deleted user memory: {user_id}")
 
         except Exception as e:
-            log_error(f"Error deleting user profile: {e}")
+            log_error(f"Error deleting user memory: {e}")
             raise e

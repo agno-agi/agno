@@ -98,7 +98,7 @@ SPAN_COLLECTION_SCHEMA = [
     {"key": "created_at"},
 ]
 
-USER_PROFILES_COLLECTION_SCHEMA = [
+USER_MEMORY_V2_COLLECTION_SCHEMA = [
     {"key": "user_id", "unique": True},
     {"key": "created_at"},
     {"key": "updated_at"},
@@ -116,7 +116,7 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
         "culture": CULTURAL_KNOWLEDGE_COLLECTION_SCHEMA,
         "traces": TRACE_COLLECTION_SCHEMA,
         "spans": SPAN_COLLECTION_SCHEMA,
-        "user_profiles": USER_PROFILES_COLLECTION_SCHEMA,
+        "user_memory": USER_MEMORY_V2_COLLECTION_SCHEMA,
     }
 
     indexes = index_definitions.get(collection_type)
