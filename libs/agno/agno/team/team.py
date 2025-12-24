@@ -7178,12 +7178,41 @@ class Team:
         if not save_tools:
             return ""
 
-        prompt = "<updating_user_memory>\nYou have memory tools to save/delete user information:\n\n"
-        prompt += "SAVE TOOLS:\n" + "\n".join(save_tools) + "\n"
-        prompt += "\nDELETE TOOLS:\n" + "\n".join(delete_tools) + "\n"
-        prompt += "\nSave information useful in future conversations.\n"
-        prompt += "Use delete when user asks to forget something.\n"
-        prompt += "</updating_user_memory>\n\n"
+        save_tools_str = "\n".join(save_tools)
+        delete_tools_str = "\n".join(delete_tools)
+
+        prompt = dedent(f"""\
+            <updating_user_memory>
+            You have tools to manage user memory across conversations.
+
+            SECURITY:
+            - NEVER store secrets, credentials, API keys, or passwords
+            - NEVER store sensitive personal data unless explicitly requested
+
+            SAVE TOOLS:
+            {save_tools_str}
+
+            DELETE TOOLS:
+            {delete_tools_str}
+
+            GUIDELINES:
+            - Save information useful in FUTURE conversations
+            - Profile: stable facts (name, role, company) - not temporary states
+            - Policies: explicit user preferences ("be concise", "no emojis")
+            - Knowledge: project context, technical decisions, interests
+            - Feedback: what user liked/disliked about your responses
+            - Skip trivial or one-time information
+            - Use delete when user says "forget X" or "don't remember Y"
+
+            EXAMPLE:
+            User: "I'm Sarah, a senior engineer at Acme. Keep answers short."
+            -> save_user_profile("name", "Sarah")
+            -> save_user_profile("role", "senior engineer")
+            -> save_user_profile("company", "Acme")
+            -> save_user_policy("response_style", "concise")
+            </updating_user_memory>
+
+            """)
         return prompt
 
     def _get_user_memory_v2_tools(self, user_id: Optional[str] = None, async_mode: bool = False) -> List[Function]:

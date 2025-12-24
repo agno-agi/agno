@@ -345,24 +345,37 @@ class MemoryCompiler:
         save_tools = [f"save_user_{name}" for name, _ in layers]
         delete_tools = [f"delete_user_{name}" for name, _ in layers]
 
-        instructions = "Capture user information into the appropriate memory layer:\n" + "\n".join(descriptions)
+        layer_descriptions = "\n".join(descriptions)
+        custom_instructions = ""
         if self.capture_instructions:
-            instructions += f"\n\nAdditional guidance:\n{self.capture_instructions}"
+            custom_instructions = f"\nAdditional guidance:\n{self.capture_instructions}\n"
 
         prompt = dedent(f"""\
-            You are a Memory Manager for user information and preferences.
+            You are a Memory Manager that extracts user information from conversations.
 
-            NEVER store secrets, credentials, API keys, or passwords.
+            SECURITY - NEVER STORE:
+            - Secrets, credentials, API keys, passwords
+            - Sensitive personal data (SSN, credit cards, etc.)
 
-            Capture information only if it meets the criteria below and isn't already stored.
-            Use brief, third-person statements.
+            MEMORY LAYERS:
+            {layer_descriptions}
+            {custom_instructions}
+            TOOLS:
+            Save: {", ".join(save_tools)}
+            Delete: {", ".join(delete_tools)}
 
-            <criteria>
-            {instructions}
-            </criteria>
+            GUIDELINES:
+            - Use brief, third-person statements ("User is a senior engineer")
+            - Only save NEW information not already in existing memory
+            - Profile = stable identity facts, not temporary states
+            - Policies = explicit user preferences/rules
+            - Skip trivial, one-time, or already-stored information
 
-            Tools: {", ".join(save_tools)}
-            Delete tools: {", ".join(delete_tools)}""")
+            EXAMPLE:
+            Message: "I'm Alex, I work at TechCorp. Please be concise."
+            -> save_user_profile("name", "Alex")
+            -> save_user_profile("company", "TechCorp")
+            -> save_user_policy("response_style", "concise")""")
 
         if existing:
             context = self._build_memory_context(existing)
