@@ -141,7 +141,7 @@ We're obsessive about performance because agent workloads spawn hundreds of inst
 | Instantiation | **3μs** | 1,587μs (529× slower) | 170μs (57× slower) | 210μs (70× slower) |
 | Memory | **6.6 KiB** | 161 KiB (24× higher) | 29 KiB (4× higher) | 66 KiB (10× higher) |
 
-Run the benchmarks yourself: [`cookbook/evals/performance`](https://github.com/agno-agi/agno/tree/main/cookbook/evals/performance)
+Run the benchmarks yourself: [`cookbook/12_evals/performance`](https://github.com/agno-agi/agno/tree/main/cookbook/12_evals/performance)
 
 https://github.com/user-attachments/assets/54b98576-1859-4880-9f2d-15e1a426719d
 
