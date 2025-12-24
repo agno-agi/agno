@@ -43,57 +43,9 @@ def example_custom_instructions():
     )
 
     print("\nExtracted profile:")
-    profile = memory.get_user_profile(user_id)
+    profile = memory.get_user_memory_v2(user_id)
     if profile:
         pprint(profile.to_dict())
 
-    memory.delete_user_profile(user_id)
-
-
-def example_nested_categories():
-    """Manually create a profile with nested category organization."""
-    db = SqliteDb(db_file="tmp/custom_memory.db")
-    memory = MemoryCompiler()
-    memory.db = db
-
-    user_id = "dev_nested"
-
-    from agno.db.schemas.user_profile import UserProfile
-
-    user_profile = UserProfile(
-        user_id=user_id,
-        user_profile={
-            "personal": {"name": "Jordan", "location": "Seattle", "timezone": "PST"},
-            "professional": {
-                "role": "Tech Lead",
-                "company": "InnovateTech",
-                "team_size": 5,
-            },
-            "technical": {
-                "languages": ["Python", "Rust", "TypeScript"],
-                "specialization": "distributed systems",
-            },
-        },
-        memory_layers={
-            "policies": {
-                "communication": {"style": "direct", "verbosity": "concise"},
-                "format": {"code_examples": True, "use_markdown": True},
-                "behavior": {"no_emojis": True, "no_buzzwords": True},
-            },
-            "feedback": {
-                "positive": ["step-by-step explanations work well"],
-                "negative": ["too much context before the answer"],
-            },
-        },
-    )
-    memory.save_user_profile(user_profile)
-
-    print("\nCompiled context:")
-    print(memory.compile_user_profile(user_id))
-
-    memory.delete_user_profile(user_id)
-
-
 if __name__ == "__main__":
     example_custom_instructions()
-    example_nested_categories()

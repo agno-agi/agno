@@ -67,16 +67,16 @@ if __name__ == "__main__":
     print("=" * 60)
 
     print("\nMark's profile:")
-    user_1 = agent.get_user_profile(USER_1)
+    user_1 = agent.get_user_memory_v2(USER_1)
     if user_1:
         pprint(user_1.to_dict())
 
     print("\nJohn's profile:")
-    user_2 = agent.get_user_profile(USER_2)
+    user_2 = agent.get_user_memory_v2(USER_2)
     if user_2:
         pprint(user_2.to_dict())
 
     print("\nJane's profile:")
-    user_3 = agent.get_user_profile(USER_3)
+    user_3 = agent.get_user_memory_v2(USER_3)
     if user_3:
         pprint(user_3.to_dict())

@@ -71,12 +71,12 @@ async def main():
     await asyncio.gather(alex_conversation(), jordan_conversation())
 
     print("\n[Alex's Memory]")
-    alex_profile = await agent.memory_compiler.aget_user_profile(ALEX_ID)
+    alex_profile = await agent.memory_compiler.aget_user_memory_v2(ALEX_ID)
     if alex_profile:
         pprint(alex_profile.to_dict())
 
     print("\n[Jordan's Memory]")
-    jordan_profile = await agent.memory_compiler.aget_user_profile(JORDAN_ID)
+    jordan_profile = await agent.memory_compiler.aget_user_memory_v2(JORDAN_ID)
     if jordan_profile:
         pprint(jordan_profile.to_dict())
 

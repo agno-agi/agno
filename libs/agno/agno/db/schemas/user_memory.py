@@ -39,21 +39,6 @@ class UserMemoryV2:
         """Bump updated_at to now (UTC)."""
         self.updated_at = now_epoch_s()
 
-    @property
-    def policies(self) -> Dict[str, Any]:
-        """Get user policies from layers."""
-        return self.layers.get("policies", {})
-
-    @property
-    def knowledge(self) -> List[Dict[str, Any]]:
-        """Get user knowledge from layers."""
-        return self.layers.get("knowledge", [])
-
-    @property
-    def feedback(self) -> Dict[str, Any]:
-        """Get user feedback from layers."""
-        return self.layers.get("feedback", {})
-
     def preview(self) -> Dict[str, Any]:
         """Return a preview of the user memory."""
         _preview: Dict[str, Any] = {
@@ -63,14 +48,15 @@ class UserMemoryV2:
             for key in ["name", "company", "role"]:
                 if key in self.profile:
                     _preview[key] = self.profile[key]
-        if self.policies:
+        policies = self.layers.get("policies", {})
+        knowledge = self.layers.get("knowledge", {})
+        feedback = self.layers.get("feedback", {})
+        if policies:
             _preview["has_policies"] = True
-        if self.knowledge:
-            _preview["knowledge_count"] = len(self.knowledge)
-        if self.feedback:
-            feedback_count = 0
-            if isinstance(self.feedback, dict):
-                feedback_count = len(self.feedback.get("positive", [])) + len(self.feedback.get("negative", []))
+        if knowledge:
+            _preview["knowledge_count"] = len(knowledge.keys())
+        if feedback:
+            feedback_count = len(feedback.get("positive", [])) + len(feedback.get("negative", []))
             _preview["feedback_count"] = feedback_count
         return _preview
 

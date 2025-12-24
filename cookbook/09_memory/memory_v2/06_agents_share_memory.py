@@ -53,11 +53,11 @@ print("\n" + "=" * 60)
 print("SHARED USER MEMORY")
 print("=" * 60)
 
-user = chat_agent.get_user_profile(USER_ID)
+user = chat_agent.get_user_memory_v2(USER_ID)
 if user:
     pprint(user.to_dict())
 
 # Verify research agent sees the same memory
-user_from_research = research_agent.get_user_profile(USER_ID)
+user_from_research = research_agent.get_user_memory_v2(USER_ID)
 if user_from_research:
     print("\nResearch agent sees same memory:", user_from_research.user_id == USER_ID)

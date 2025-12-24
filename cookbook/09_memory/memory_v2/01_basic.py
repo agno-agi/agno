@@ -48,7 +48,7 @@ print("\n" + "=" * 60)
 print("SARAH'S MEMORY PROFILE")
 print("=" * 60)
 
-user = agent.get_user_profile(USER_ID)
+user = agent.get_user_memory_v2(USER_ID)
 if user:
     pprint(user.to_dict())
 else:

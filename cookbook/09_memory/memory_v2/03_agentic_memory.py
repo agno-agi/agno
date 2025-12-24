@@ -15,7 +15,7 @@ agent = Agent(
     markdown=True,
 )
 
-existing = agent.get_user_profile(USER_ID)
+existing = agent.get_user_memory_v2(USER_ID)
 if existing:
     print("Existing profile:")
     pprint(existing.to_dict())
@@ -61,6 +61,6 @@ print("\n" + "=" * 60)
 print("FINAL MEMORY STATE")
 print("=" * 60)
 
-user = agent.get_user_profile(USER_ID)
+user = agent.get_user_memory_v2(USER_ID)
 if user:
     pprint(user.to_dict())

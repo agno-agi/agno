@@ -3998,10 +3998,10 @@ class Team:
             and run_context is not None
             and run_response.status != RunStatus.paused
         ):
-            from agno.memory_v2.memory_compiler import commit_user_memory_updates
+            from agno.memory_v2.memory_compiler import commit_pending
 
             try:
-                commit_user_memory_updates(cast(BaseDb, self.db), user_id, run_context)
+                commit_pending(cast(BaseDb, self.db), user_id, run_context)
             except Exception as e:
                 log_warning(f"Failed to commit user memory: {e}")
 
@@ -4036,10 +4036,10 @@ class Team:
             and run_context is not None
             and run_response.status != RunStatus.paused
         ):
-            from agno.memory_v2.memory_compiler import acommit_user_memory_updates
+            from agno.memory_v2.memory_compiler import acommit_pending
 
             try:
-                await acommit_user_memory_updates(self.db, user_id, run_context)
+                await acommit_pending(self.db, user_id, run_context)
             except Exception as e:
                 log_warning(f"Failed to commit user memory: {e}")
 
@@ -4114,7 +4114,7 @@ class Team:
         )
         if user_message_str and user_message_str.strip():
             log_debug("Updating user memory")
-            self.memory_compiler.create_user_memory(
+            self.memory_compiler.create_user_memory_v2(
                 message=user_message_str,
                 user_id=user_id,
             )
@@ -4132,7 +4132,7 @@ class Team:
         )
         if user_message_str and user_message_str.strip():
             log_debug("Updating user memory")
-            await self.memory_compiler.acreate_user_memory(
+            await self.memory_compiler.acreate_user_memory_v2(
                 message=user_message_str,
                 user_id=user_id,
             )
@@ -4161,7 +4161,7 @@ class Team:
             except asyncio.CancelledError:
                 pass
 
-        # Create new task if conditions are met (memory_manager v1)
+        # Create new task if conditions are met
         if (
             run_messages.user_message is not None
             and self.memory_manager is not None
@@ -4171,7 +4171,7 @@ class Team:
             log_debug("Starting memory creation in background task.")
             return asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
-        # Create new task if conditions are met (memory_compiler v2)
+        # Create new task if conditions are met (memory v2)
         if (
             run_messages.user_message is not None
             and self.memory_compiler is not None
@@ -4203,7 +4203,7 @@ class Team:
         if existing_future is not None and not existing_future.done():
             existing_future.cancel()
 
-        # Create new future if conditions are met (memory_manager v1)
+        # Create new future if conditions are met
         if (
             run_messages.user_message is not None
             and self.memory_manager is not None
@@ -5399,7 +5399,7 @@ class Team:
         if self.memory_manager is not None and self.enable_agentic_memory:
             _tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
 
-        if self.memory_compiler is not None and self.enable_agentic_memory_v2 and user_id:
+        if self.memory_compiler is not None and self.enable_agentic_memory_v2:
             _tools.extend(self._get_user_memory_v2_tools(user_id=user_id, async_mode=async_mode))
 
         if self.enable_agentic_state:
@@ -5878,7 +5878,7 @@ class Team:
 
         # Add user memory (v2) to the system prompt
         if self.memory_compiler is not None and user_id is not None:
-            user_context = self.memory_compiler.compile_user_memory(user_id)
+            user_context = self.memory_compiler.compile_user_memory_v2(user_id)
             if user_context:
                 system_message_content += "You have access to existing information about this user:\n\n"
                 system_message_content += user_context
@@ -5888,23 +5888,7 @@ class Team:
                 )
 
             if self.enable_agentic_memory_v2:
-                system_message_content += (
-                    "<updating_user_memory>\n"
-                    "You have memory tools to save/delete user information:\n\n"
-                    "SAVE TOOLS:\n"
-                    "- save_user_profile(key, value): identity info (name, company, role, location)\n"
-                    "- save_user_knowledge(key, value): personal facts (interests, hobbies, habits)\n"
-                    "- save_user_policy(key, value): behavior rules (be concise, no emojis)\n"
-                    "- save_user_feedback(key, value): response feedback (key='positive' or 'negative')\n\n"
-                    "DELETE TOOLS:\n"
-                    "- delete_user_profile(key): delete identity info\n"
-                    "- delete_user_knowledge(key): delete a knowledge fact\n"
-                    "- delete_user_policy(key): delete a behavior rule\n"
-                    "- delete_user_feedback(key): clear feedback (key='positive' or 'negative')\n\n"
-                    "Save information useful in future conversations.\n"
-                    "Use delete when user asks to forget something.\n"
-                    "</updating_user_memory>\n\n"
-                )
+                system_message_content += self._build_memory_v2_prompt()
 
         # Then add a summary of the interaction to the system prompt
         if self.add_session_summary_to_context and session.summary is not None:
@@ -6225,7 +6209,7 @@ class Team:
 
         # Add user memory (v2) to the system prompt
         if self.memory_compiler is not None and user_id is not None:
-            user_context = await self.memory_compiler.acompile_user_memory(user_id)
+            user_context = await self.memory_compiler.acompile_user_memory_v2(user_id)
             if user_context:
                 system_message_content += "You have access to existing information about this user:\n\n"
                 system_message_content += user_context
@@ -6235,23 +6219,7 @@ class Team:
                 )
 
             if self.enable_agentic_memory_v2:
-                system_message_content += (
-                    "<updating_user_memory>\n"
-                    "You have memory tools to save/delete user information:\n\n"
-                    "SAVE TOOLS:\n"
-                    "- save_user_profile(key, value): identity info (name, company, role, location)\n"
-                    "- save_user_knowledge(key, value): personal facts (interests, hobbies, habits)\n"
-                    "- save_user_policy(key, value): behavior rules (be concise, no emojis)\n"
-                    "- save_user_feedback(key, value): response feedback (key='positive' or 'negative')\n\n"
-                    "DELETE TOOLS:\n"
-                    "- delete_user_profile(key): delete identity info\n"
-                    "- delete_user_knowledge(key): delete a knowledge fact\n"
-                    "- delete_user_policy(key): delete a behavior rule\n"
-                    "- delete_user_feedback(key): clear feedback (key='positive' or 'negative')\n\n"
-                    "Save information useful in future conversations.\n"
-                    "Use delete when user asks to forget something.\n"
-                    "</updating_user_memory>\n\n"
-                )
+                system_message_content += self._build_memory_v2_prompt()
 
         # Then add a summary of the interaction to the system prompt
         if self.add_session_summary_to_context and session.summary is not None:
@@ -7188,64 +7156,106 @@ class Team:
 
         return Function.from_callable(update_memory_function, name="update_user_memory")
 
-    def _get_user_memory_v2_tools(self, user_id: str, async_mode: bool = False) -> List[Function]:
-        """Get all user memory v2 tools (batched updates via run_context)."""
+    def _build_memory_v2_prompt(self) -> str:
+        """Build dynamic system prompt for memory v2 tools based on enabled layers."""
+        save_tools = []
+        delete_tools = []
+
+        if self.memory_compiler.enable_profile:
+            save_tools.append("- save_user_profile(key, value): identity info (name, company, role, location)")
+            delete_tools.append("- delete_user_profile(key): delete identity info")
+        if self.memory_compiler.enable_knowledge:
+            save_tools.append("- save_user_knowledge(key, value): personal facts (interests, hobbies, habits)")
+            delete_tools.append("- delete_user_knowledge(key): delete a knowledge fact")
+        if self.memory_compiler.enable_policies:
+            save_tools.append("- save_user_policy(key, value): behavior rules (be concise, no emojis)")
+            delete_tools.append("- delete_user_policy(key): delete a behavior rule")
+        if self.memory_compiler.enable_feedback:
+            save_tools.append("- save_user_feedback(key, value): response feedback (key='positive' or 'negative')")
+            delete_tools.append("- delete_user_feedback(key): clear feedback (key='positive' or 'negative')")
+
+        if not save_tools:
+            return ""
+
+        prompt = "<updating_user_memory>\nYou have memory tools to save/delete user information:\n\n"
+        prompt += "SAVE TOOLS:\n" + "\n".join(save_tools) + "\n"
+        prompt += "\nDELETE TOOLS:\n" + "\n".join(delete_tools) + "\n"
+        prompt += "\nSave information useful in future conversations.\n"
+        prompt += "Use delete when user asks to forget something.\n"
+        prompt += "</updating_user_memory>\n\n"
+        return prompt
+
+    def _get_user_memory_v2_tools(self, user_id: Optional[str] = None, async_mode: bool = False) -> List[Function]:
+        """Get user memory v2 tools based on enabled layers."""
         from agno.memory_v2.memory_compiler import (
-            merge_user_layer_update,
-            merge_user_profile_update,
+            stage_layer_update,
+            stage_profile_update,
         )
 
-        # Tools enqueue updates into run_context, committed at end of run
-        def save_user_profile(key: str, value: str, run_context: RunContext) -> str:
-            """Save user identity info (name, company, role, location)."""
-            merge_user_profile_update(run_context, user_id, {key: value})
-            return f"Saved profile: {key}"
+        user_id = user_id or "default"
+        tools: List[Function] = []
 
-        def save_user_knowledge(key: str, value: str, run_context: RunContext) -> str:
-            """Save a fact about the user (interests, hobbies, habits)."""
-            merge_user_layer_update(run_context, user_id, "knowledge", key, value, "set")
-            return f"Saved knowledge: {key}"
+        if self.memory_compiler.enable_profile:
 
-        def save_user_policy(key: str, value: str, run_context: RunContext) -> str:
-            """Save a behavior rule (be concise, no emojis)."""
-            merge_user_layer_update(run_context, user_id, "policies", key, value, "set")
-            return f"Saved policy: {key}"
+            def save_user_profile(key: str, value: Any, run_context: RunContext) -> str:
+                """Save user identity info (name, company, role, location)."""
+                stage_profile_update(run_context, user_id, key, value)
+                return f"Saved profile: {key}"
 
-        def save_user_feedback(key: str, value: str, run_context: RunContext) -> str:
-            """Save response feedback. Key should be 'positive' or 'negative'."""
-            merge_user_layer_update(run_context, user_id, "feedback", key, value, "set")
-            return f"Saved feedback: {key}"
+            def delete_user_profile(key: str, run_context: RunContext) -> str:
+                """Delete user identity info."""
+                stage_profile_update(run_context, user_id, key, None)
+                return f"Deleted profile: {key}"
 
-        def delete_user_profile(key: str, run_context: RunContext) -> str:
-            """Delete user identity info."""
-            merge_user_profile_update(run_context, user_id, {key: None})
-            return f"Deleted profile: {key}"
+            tools.append(Function.from_callable(save_user_profile))
+            tools.append(Function.from_callable(delete_user_profile))
 
-        def delete_user_knowledge(key: str, run_context: RunContext) -> str:
-            """Delete a knowledge fact."""
-            merge_user_layer_update(run_context, user_id, "knowledge", key, None, "delete")
-            return f"Deleted knowledge: {key}"
+        if self.memory_compiler.enable_knowledge:
 
-        def delete_user_policy(key: str, run_context: RunContext) -> str:
-            """Delete a behavior rule."""
-            merge_user_layer_update(run_context, user_id, "policies", key, None, "delete")
-            return f"Deleted policy: {key}"
+            def save_user_knowledge(key: str, value: Any, run_context: RunContext) -> str:
+                """Save a fact about the user (interests, hobbies, habits)."""
+                stage_layer_update(run_context, user_id, "knowledge", key, value, "set")
+                return f"Saved knowledge: {key}"
 
-        def delete_user_feedback(key: str, run_context: RunContext) -> str:
-            """Clear feedback. Key should be 'positive' or 'negative'."""
-            merge_user_layer_update(run_context, user_id, "feedback", key, None, "delete")
-            return f"Cleared feedback: {key}"
+            def delete_user_knowledge(key: str, run_context: RunContext) -> str:
+                """Delete a knowledge fact."""
+                stage_layer_update(run_context, user_id, "knowledge", key, None, "delete")
+                return f"Deleted knowledge: {key}"
 
-        return [
-            Function.from_callable(save_user_profile),
-            Function.from_callable(save_user_knowledge),
-            Function.from_callable(save_user_policy),
-            Function.from_callable(save_user_feedback),
-            Function.from_callable(delete_user_profile),
-            Function.from_callable(delete_user_knowledge),
-            Function.from_callable(delete_user_policy),
-            Function.from_callable(delete_user_feedback),
-        ]
+            tools.append(Function.from_callable(save_user_knowledge))
+            tools.append(Function.from_callable(delete_user_knowledge))
+
+        if self.memory_compiler.enable_policies:
+
+            def save_user_policy(key: str, value: Any, run_context: RunContext) -> str:
+                """Save a behavior rule (be concise, no emojis)."""
+                stage_layer_update(run_context, user_id, "policies", key, value, "set")
+                return f"Saved policy: {key}"
+
+            def delete_user_policy(key: str, run_context: RunContext) -> str:
+                """Delete a behavior rule."""
+                stage_layer_update(run_context, user_id, "policies", key, None, "delete")
+                return f"Deleted policy: {key}"
+
+            tools.append(Function.from_callable(save_user_policy))
+            tools.append(Function.from_callable(delete_user_policy))
+
+        if self.memory_compiler.enable_feedback:
+
+            def save_user_feedback(key: str, value: Any, run_context: RunContext) -> str:
+                """Save response feedback. Key should be 'positive' or 'negative'."""
+                stage_layer_update(run_context, user_id, "feedback", key, value, "set")
+                return f"Saved feedback: {key}"
+
+            def delete_user_feedback(key: str, run_context: RunContext) -> str:
+                """Clear feedback. Key should be 'positive' or 'negative'."""
+                stage_layer_update(run_context, user_id, "feedback", key, None, "delete")
+                return f"Cleared feedback: {key}"
+
+            tools.append(Function.from_callable(save_user_feedback))
+            tools.append(Function.from_callable(delete_user_feedback))
+
+        return tools
 
     def get_member_information(self) -> str:
         """Get information about the members of the team, including their IDs, names, and roles."""
@@ -9105,7 +9115,7 @@ class Team:
         if user_id is None:
             user_id = "default"
 
-        return self.memory_compiler.get_user_memory(user_id=user_id)  # type: ignore
+        return self.memory_compiler.get_user_memory_v2(user_id=user_id)  # type: ignore
 
     async def aget_user_memory(self, user_id: Optional[str] = None) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
         """Get user memory for the given user ID asynchronously.
@@ -9125,16 +9135,7 @@ class Team:
         if user_id is None:
             user_id = "default"
 
-        return await self.memory_compiler.aget_user_memory(user_id=user_id)  # type: ignore
-
-    # Backwards compatibility aliases
-    def get_user_profile(self, user_id: Optional[str] = None) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
-        """Alias for get_user_memory (backwards compatibility)."""
-        return self.get_user_memory(user_id)
-
-    async def aget_user_profile(self, user_id: Optional[str] = None) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
-        """Alias for aget_user_memory (backwards compatibility)."""
-        return await self.aget_user_memory(user_id)
+        return await self.memory_compiler.aget_user_memory_v2(user_id=user_id)  # type: ignore
 
     ###########################################################################
     # Handle reasoning content
