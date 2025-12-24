@@ -1,5 +1,6 @@
 import json
 from os import getenv
+from re import sub
 from typing import Any, List, Optional
 
 from agno.tools import Toolkit
@@ -106,7 +107,14 @@ class GoogleBigQueryTools(Toolkit):
         """
         try:
             log_debug(f"Running Google SQL |\n{sql}")
-            cleaned_query = sql.replace("\\n", " ").replace("\n", "").replace("\\", "")
+            cleaned_query = sub(
+                r"\s+",
+                " ",
+                sql.replace("\\n", "\n")
+                .replace("\\r", "\r")
+                .replace("\\t", "\t")
+                .replace("\\", ""),
+            ).strip()
             job_config = bigquery.QueryJobConfig(default_dataset=f"{self.project}.{self.dataset}")
             query_job = self.client.query(cleaned_query, job_config)
             results = query_job.result()
