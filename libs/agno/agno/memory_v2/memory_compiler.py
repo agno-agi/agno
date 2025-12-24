@@ -124,10 +124,12 @@ class MemoryCompiler:
         return self._build_memory_context(memory) if memory else ""
 
     def create_user_memory_v2(self, message: str, user_id: Optional[str] = None) -> str:
-        """Extract user info from message using LLM and save to database."""
+        """Extract memory from user message"""
         if not self.db:
+            log_warning("No DB configured")
             return "Database not configured"
         if not self.model:
+            log_warning("Model not configured")
             return "Model not configured"
         if not message:
             return "No message provided"
