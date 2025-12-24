@@ -15,6 +15,7 @@ from agno.utils.log import log_debug, log_error, log_warning
 try:
     from sqlalchemy import Table, func
     from sqlalchemy.dialects import postgresql
+    from sqlalchemy.exc import NoSuchTableError
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session
     from sqlalchemy.sql.expression import text
@@ -183,6 +184,9 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
             return False
 
         return True
+    except NoSuchTableError:
+        log_error(f"Table {db_schema}.{table_name} does not exist")
+        return False
     except Exception as e:
         log_error(f"Error validating table schema for {db_schema}.{table_name}: {e}")
         return False
@@ -317,8 +321,8 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
                         model_counts[f"{model_id}:{model_provider}"] = (
                             model_counts.get(f"{model_id}:{model_provider}", 0) + 1
                         )
-
-            session_metrics = session.get("session_data", {}).get("session_metrics", {})
+            session_data = session.get("session_data", {}) or {}
+            session_metrics = session_data.get("session_metrics", {}) or {}
             for field in token_metrics:
                 token_metrics[field] += session_metrics.get(field, 0)
 

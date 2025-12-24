@@ -2,7 +2,7 @@ import hashlib
 import json
 import re
 import uuid
-from typing import Optional, Type
+from typing import Any, Optional, Type
 from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
@@ -275,3 +275,44 @@ def generate_id_from_name(name: Optional[str] = None) -> str:
         return name.lower().replace(" ", "-").replace("_", "-")
     else:
         return str(uuid4())
+
+
+def sanitize_string(value: Optional[str]) -> Optional[str]:
+    """Remove null bytes from string values to prevent PostgreSQL encoding errors.
+
+    PostgreSQL doesn't allow null bytes (\x00) in UTF-8 text fields. This function
+    removes them to prevent CharacterNotInRepertoireError when storing strings.
+
+    Args:
+        value: The string value to sanitize.
+
+    Returns:
+        The sanitized string with null bytes removed, or None if input was None.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    return value
+
+
+def sanitize_strings_in_dict(data: Any) -> Any:
+    """Recursively sanitize all string values in a dictionary or JSON structure.
+
+    This function traverses dictionaries, lists, and nested structures to find
+    and sanitize all string values, removing null bytes that PostgreSQL cannot handle.
+
+    Args:
+        data: The data structure to sanitize (dict, list, or any other type).
+
+    Returns:
+        The sanitized data structure with all strings cleaned of null bytes.
+    """
+    if isinstance(data, dict):
+        return {key: sanitize_strings_in_dict(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [sanitize_strings_in_dict(item) for item in data]
+    elif isinstance(data, str):
+        return sanitize_string(data)
+    else:
+        return data
