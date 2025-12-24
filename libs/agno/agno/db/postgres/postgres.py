@@ -516,6 +516,11 @@ class PostgresDb(BaseDb):
 
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
+
+                # Filter by session_type to ensure we get the correct session type
+                session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
+                stmt = stmt.where(table.c.session_type == session_type_value)
+
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -600,9 +605,7 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.created_at <= end_timestamp)
                 if session_name is not None:
                     stmt = stmt.where(
-                        func.coalesce(func.json_extract_path_text(table.c.session_data, "session_name"), "").ilike(
-                            f"%{session_name}%"
-                        )
+                        func.coalesce(table.c.session_data["session_name"].astext, "").ilike(f"%{session_name}%")
                     )
                 if session_type is not None:
                     session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
@@ -913,7 +916,7 @@ class PostgresDb(BaseDb):
                         session_dict["metadata"] = sanitize_strings_in_dict(session_dict["metadata"])
                     if session_dict.get("runs"):
                         session_dict["runs"] = sanitize_strings_in_dict(session_dict["runs"])
-                    
+
                     # Use preserved updated_at if flag is set (even if None), otherwise use current time
                     updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                     session_records.append(
@@ -970,7 +973,7 @@ class PostgresDb(BaseDb):
                         session_dict["metadata"] = sanitize_strings_in_dict(session_dict["metadata"])
                     if session_dict.get("runs"):
                         session_dict["runs"] = sanitize_strings_in_dict(session_dict["runs"])
-                    
+
                     # Use preserved updated_at if flag is set (even if None), otherwise use current time
                     updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                     session_records.append(
@@ -1027,7 +1030,7 @@ class PostgresDb(BaseDb):
                         session_dict["metadata"] = sanitize_strings_in_dict(session_dict["metadata"])
                     if session_dict.get("runs"):
                         session_dict["runs"] = sanitize_strings_in_dict(session_dict["runs"])
-                    
+
                     # Use preserved updated_at if flag is set (even if None), otherwise use current time
                     updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                     session_records.append(
@@ -1425,7 +1428,9 @@ class PostgresDb(BaseDb):
                     topics=memory.topics,
                     feedback=sanitized_feedback,
                     created_at=memory.created_at,
-                    updated_at=memory.created_at,
+                    updated_at=memory.updated_at
+                    if memory.updated_at is not None
+                    else (memory.created_at if memory.created_at is not None else current_time),
                 )
                 stmt = stmt.on_conflict_do_update(  # type: ignore
                     index_elements=["memory_id"],
@@ -1812,8 +1817,7 @@ class PostgresDb(BaseDb):
                 stmt = select(table)
 
                 # Apply sorting
-                if sort_by is not None:
-                    stmt = stmt.order_by(getattr(table.c, sort_by) * (1 if sort_order == "asc" else -1))
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
 
                 # Get total count before applying limit and pagination
                 count_stmt = select(func.count()).select_from(stmt.alias())
@@ -1874,7 +1878,7 @@ class PostgresDb(BaseDb):
                 # Build insert and update data only for fields that exist in the table
                 # String fields that need sanitization
                 string_fields = {"name", "description", "type", "status", "status_message", "external_id", "linked_to"}
-                
+
                 for model_field, table_column in field_mapping.items():
                     if table_column in table_columns:
                         value = getattr(knowledge_row, model_field, None)
@@ -1950,7 +1954,7 @@ class PostgresDb(BaseDb):
                     eval_data["eval_data"] = sanitize_strings_in_dict(eval_data["eval_data"])
                 if eval_data.get("eval_input"):
                     eval_data["eval_input"] = sanitize_strings_in_dict(eval_data["eval_input"])
-                
+
                 stmt = postgresql.insert(table).values(
                     {"created_at": current_time, "updated_at": current_time, **eval_data}
                 )
@@ -2169,7 +2173,9 @@ class PostgresDb(BaseDb):
                 # Sanitize string field to remove null bytes
                 sanitized_name = sanitize_string(name)
                 stmt = (
-                    table.update().where(table.c.run_id == eval_run_id).values(name=sanitized_name, updated_at=int(time.time()))
+                    table.update()
+                    .where(table.c.run_id == eval_run_id)
+                    .values(name=sanitized_name, updated_at=int(time.time()))
                 )
                 sess.execute(stmt)
 
@@ -2381,7 +2387,9 @@ class PostgresDb(BaseDb):
                     name=sanitized_name,
                     summary=sanitized_summary,
                     content=content_dict if content_dict else None,
-                    metadata=sanitize_strings_in_dict(cultural_knowledge.metadata) if cultural_knowledge.metadata else None,
+                    metadata=sanitize_strings_in_dict(cultural_knowledge.metadata)
+                    if cultural_knowledge.metadata
+                    else None,
                     input=sanitized_input,
                     created_at=cultural_knowledge.created_at,
                     updated_at=int(time.time()),
@@ -2394,7 +2402,9 @@ class PostgresDb(BaseDb):
                         name=sanitized_name,
                         summary=sanitized_summary,
                         content=content_dict if content_dict else None,
-                        metadata=sanitize_strings_in_dict(cultural_knowledge.metadata) if cultural_knowledge.metadata else None,
+                        metadata=sanitize_strings_in_dict(cultural_knowledge.metadata)
+                        if cultural_knowledge.metadata
+                        else None,
                         input=sanitized_input,
                         updated_at=int(time.time()),
                         agent_id=cultural_knowledge.agent_id,

@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Union, cast
 from sqlalchemy import text
 
 from agno.db.base import BaseDb
+from agno.db.migrations.utils import quote_identifier
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.utils.log import log_error, log_info, log_warning
@@ -47,7 +48,7 @@ def convert_v1_metrics_to_v2(metrics_dict: Dict[str, Any]) -> Dict[str, Any]:
 
 def convert_any_metrics_in_data(data: Any) -> Any:
     """Recursively find and convert any metrics dictionaries and handle v1 to v2 field conversion.
-    
+
     Also sanitizes all string values to remove null bytes for PostgreSQL compatibility.
     """
     if isinstance(data, dict):
@@ -66,7 +67,7 @@ def convert_any_metrics_in_data(data: Any) -> Any:
                 converted_dict[key] = convert_v1_metrics_to_v2(value)
             else:
                 converted_dict[key] = convert_any_metrics_in_data(value)
-        
+
         # Sanitize all strings in the converted dict to remove null bytes
         return sanitize_strings_in_dict(converted_dict)
 
@@ -495,15 +496,19 @@ def get_table_content_in_batches(db: BaseDb, db_schema: str, table_name: str, ba
             else:
                 raise ValueError(f"Invalid database type: {type(db).__name__}")
 
+            db_type = type(db).__name__
+            quoted_schema = quote_identifier(db_type, db_schema) if db_schema and db_schema.strip() else None
+            quoted_table = quote_identifier(db_type, table_name)
+
             offset = 0
             while True:
                 # Create a new session for each batch to avoid transaction conflicts
                 with db.Session() as sess:
                     # Handle empty schema by omitting the schema prefix (needed for SQLite)
-                    if db_schema and db_schema.strip():
-                        sql_query = f"SELECT * FROM {db_schema}.{table_name} LIMIT {batch_size} OFFSET {offset}"
+                    if quoted_schema:
+                        sql_query = f"SELECT * FROM {quoted_schema}.{quoted_table} LIMIT {batch_size} OFFSET {offset}"
                     else:
-                        sql_query = f"SELECT * FROM {table_name} LIMIT {batch_size} OFFSET {offset}"
+                        sql_query = f"SELECT * FROM {quoted_table} LIMIT {batch_size} OFFSET {offset}"
 
                     result = sess.execute(text(sql_query))
                     batch = [row._asdict() for row in result]
@@ -541,7 +546,7 @@ def get_all_table_content(db, db_schema: str, table_name: str) -> list[dict[str,
 
 def parse_agent_sessions(v1_content: List[Dict[str, Any]]) -> List[AgentSession]:
     """Parse v1 Agent sessions into v2 Agent sessions and Memories
-    
+
     Sanitizes all string and JSON fields to remove null bytes for PostgreSQL compatibility.
     """
     sessions_v2 = []
@@ -574,7 +579,7 @@ def parse_agent_sessions(v1_content: List[Dict[str, Any]]) -> List[AgentSession]
 
 def parse_team_sessions(v1_content: List[Dict[str, Any]]) -> List[TeamSession]:
     """Parse v1 Team sessions into v2 Team sessions and Memories
-    
+
     Sanitizes all string and JSON fields to remove null bytes for PostgreSQL compatibility.
     """
     sessions_v2 = []
@@ -607,7 +612,7 @@ def parse_team_sessions(v1_content: List[Dict[str, Any]]) -> List[TeamSession]:
 
 def parse_workflow_sessions(v1_content: List[Dict[str, Any]]) -> List[WorkflowSession]:
     """Parse v1 Workflow sessions into v2 Workflow sessions
-    
+
     Sanitizes all string and JSON fields to remove null bytes for PostgreSQL compatibility.
     """
     sessions_v2 = []
@@ -642,7 +647,7 @@ def parse_workflow_sessions(v1_content: List[Dict[str, Any]]) -> List[WorkflowSe
 
 def parse_memories(v1_content: List[Dict[str, Any]]) -> List[UserMemory]:
     """Parse v1 Memories into v2 Memories
-    
+
     Sanitizes all string fields to remove null bytes for PostgreSQL compatibility.
     """
     memories_v2 = []
