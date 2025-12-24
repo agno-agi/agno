@@ -57,7 +57,7 @@ def convert_any_metrics_in_data(data: Any) -> Any:
 
         # Check if this looks like a metrics dictionary
         if _is_metrics_dict(data):
-            data = convert_v1_metrics_to_v2(data)
+            return convert_v1_metrics_to_v2(data)
 
         # Otherwise, recursively process all values
         converted_dict = {}
