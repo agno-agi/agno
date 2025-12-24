@@ -19,31 +19,24 @@
 
 ## What is Agno?
 
-Agno is a multi-agent framework, runtime, and control plane.
+Agno is a multi-agent framework, runtime, and control plane. Use it to build private and secure AI products that run in your cloud.
 
-- Build agents, multi-agent teams and workflows with memory, knowledge, state, guardrails, HITL, context compression, MCP, A2A and 100+ toolkits.
-- Run your multi-agent system in production with a secure, stateless runtime and ready to use integration endpoints.
-- Test, monitor and manage AgentOS deployments across environments with full operational visibility.
-
-Agno provides full stack for building AI products that run in your cloud.
-
-| Layer | What it does |
-|-------|--------------|
-| **Framework** | Agents, teams, workflows. Memory, knowledge, tools, guardrails, HITL. 100+ toolkits. |
-| **AgentOS Runtime** | Stateless FastAPI server that runs in your cloud. Horizontally scalable. |
-| **Control Plane** | Test, monitor, and manage your agents. Connects directly to your runtime — no data proxied through us. |
+- **Build** agents, teams, and workflows with memory, knowledge, guardrails and 100+ integrations.
+- **Run** in production with a stateless FastAPI runtime. Horizontally scalable.
+- **Manage** with a control plane that connects directly to your runtime — no data leaves your environment.
 
 ## Why Agno?
 
-- **Your cloud, your data**: AgentOS runs entirely in your infrastructure. The control plane connects directly from your browser. Zero data leaves your environment.
-- **Production-ready from day one**: Pre-built FastAPI runtime with SSE endpoints. Not a toy that needs to be rewritten for prod.
-- **Actually fast**: 529× faster instantiation than LangGraph, 24× lower memory. Great for production workloads.
+- **Your cloud, your data:** Runs entirely in your infrastructure. Nothing leaves your environment.
+- **Ready for production on day one:** Pre-built FastAPI runtime with SSE endpoints, ready to deploy.
+- **Incredibly fast:** 529× faster than LangGraph, 24× lower memory.
 
-## Getting started
+## Getting Started
 
-If you're new to Agno, follow our [getting started guide](https://github.com/agno-agi/agno/tree/main/cookbook/00_getting_started) to learn the basics of building agents. After that:
-- Checkout the [cookbooks](https://github.com/agno-agi/agno/tree/main/cookbook) and build real-world applications with Agno.
-- Read the [documentation](https://docs.agno.com) to learn more about the framework and how to use it.
+Start with the [getting started guide](https://github.com/agno-agi/agno/tree/main/cookbook/00_getting_started), then:
+
+- Browse the [cookbooks](https://github.com/agno-agi/agno/tree/main/cookbook) for real-world examples
+- Read the [docs](https://docs.agno.com) to learn more
 
 ## Resources
 
@@ -111,26 +104,26 @@ This isn't a privacy mode or enterprise add-on. It's how Agno works.
 
 ## Features
 
-**Core**
+### Core:
 - Model agnostic — works with OpenAI, Anthropic, Google, local models, whatever
 - Type-safe I/O with `input_schema` and `output_schema`
 - Async-first, built for long-running tasks
 - Natively multimodal (text, images, audio, video, files)
 
-**Memory & Knowledge**
+### Memory & Knowledge:
 - Persistent storage for session history and state
 - User memory that persists across sessions
 - Agentic RAG with 20+ vector stores, hybrid search, reranking
 - Culture — shared long-term memory across agents
 
-**Execution**
+### Execution:
 - Human-in-the-loop (confirmations, approvals, overrides)
 - Guardrails for validation and security
 - Pre/post hooks for the agent lifecycle
 - First-class MCP and A2A support
 - 100+ built-in toolkits
 
-**Production**
+### Production:
 - Ready-to-use FastAPI runtime
 - Integrated control plane UI
 - Evals for accuracy, performance, latency
