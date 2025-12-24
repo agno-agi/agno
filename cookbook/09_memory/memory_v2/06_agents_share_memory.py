@@ -1,3 +1,11 @@
+"""Shared Memory - Multiple agents share the same user memory.
+
+Demonstrates:
+- Two agents (chat + research) sharing the same database
+- User info learned by one agent is available to the other
+- Memory isolation by user_id
+"""
+
 import json
 
 from agno.agent import Agent

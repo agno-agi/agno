@@ -9096,13 +9096,13 @@ class Team:
 
         return await self.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
 
-    def get_user_memory(self, user_id: Optional[str] = None) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+    def get_user_memory_v2(self, user_id: Optional[str] = None) -> Optional[UserMemoryV2]:
         """Get user memory for the given user ID.
 
         Args:
             user_id: The user ID to get memory for. If not provided, the current cached user ID is used.
         Returns:
-            The user memory, or None if not found.
+            Optional[UserMemoryV2]: The user memory, or None if not found.
         """
         if self.memory_compiler is None:
             if self.db is None:
@@ -9116,13 +9116,13 @@ class Team:
 
         return self.memory_compiler.get_user_memory_v2(user_id=user_id)  # type: ignore
 
-    async def aget_user_memory(self, user_id: Optional[str] = None) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+    async def aget_user_memory_v2(self, user_id: Optional[str] = None) -> Optional[UserMemoryV2]:
         """Get user memory for the given user ID asynchronously.
 
         Args:
             user_id: The user ID to get memory for. If not provided, the current cached user ID is used.
         Returns:
-            The user memory, or None if not found.
+            Optional[UserMemoryV2]: The user memory, or None if not found.
         """
         if self.memory_compiler is None:
             if self.db is None:

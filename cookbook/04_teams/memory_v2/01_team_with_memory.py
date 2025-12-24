@@ -49,6 +49,6 @@ team.print_response(
 
 # View the stored profile
 print("\n--- User Profile ---")
-profile = team.get_user_profile(user_id)
+profile = team.get_user_memory_v2(user_id)
 if profile:
     pprint(profile.to_dict())

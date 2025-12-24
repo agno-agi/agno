@@ -1,3 +1,11 @@
+"""Advanced Customization - Custom extraction instructions for MemoryCompiler.
+
+Demonstrates:
+- Creating a custom MemoryCompiler with capture_instructions
+- Focusing extraction on engineering-specific information
+- Using update_memory_on_run for automatic extraction
+"""
+
 import json
 
 from agno.agent import Agent
@@ -8,7 +16,7 @@ from rich import print_json
 
 
 def example_custom_instructions():
-    """Customize what the MemoryCompiler extracts using profile_capture_instructions."""
+    """Customize what the MemoryCompiler extracts using capture_instructions."""
     db = SqliteDb(db_file="tmp/custom_memory.db")
 
     # Define custom extraction instructions for engineering-focused profiles
@@ -23,7 +31,7 @@ def example_custom_instructions():
     memory = MemoryCompiler(
         model=OpenAIChat(id="gpt-4o-mini"),
         db=db,
-        profile_capture_instructions=custom_instructions,
+        capture_instructions=custom_instructions,
     )
 
     agent = Agent(

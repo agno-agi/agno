@@ -1,3 +1,12 @@
+"""Basic Memory V2 - Agent learns user information via agentic memory tools.
+
+Demonstrates:
+- enable_agentic_memory_v2: Agent gets save/delete tools to manage user memory
+- Agent extracts profile info (name, role, company)
+- Agent saves user policies (be concise, include code examples)
+- Agent can forget information on request
+"""
+
 import json
 
 from agno.agent import Agent

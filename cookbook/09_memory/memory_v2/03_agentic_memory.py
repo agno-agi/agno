@@ -1,3 +1,11 @@
+"""Agentic Memory V2 - Agent explicitly manages memory via natural language.
+
+Demonstrates:
+- Agent responding to "remember that...", "update my...", "forget that..."
+- Explicit save/delete memory tools called by the agent
+- Memory persists across conversation turns
+"""
+
 import json
 
 from agno.agent import Agent

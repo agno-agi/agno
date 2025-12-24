@@ -36,6 +36,7 @@ from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
+from agno.db.schemas.user_memory import UserMemoryV2
 from agno.eval.base import BaseEval
 from agno.exceptions import (
     InputCheckError,
@@ -7764,13 +7765,13 @@ class Agent:
 
         return await self.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
 
-    def get_user_memory_v2(self, user_id: Optional[str] = None) -> Optional[UserMemory]:
+    def get_user_memory_v2(self, user_id: Optional[str] = None) -> Optional[UserMemoryV2]:
         """Get user memory for a given user ID.
 
         Args:
             user_id: The user ID to get memory for. If not provided, the current cached user ID is used.
         Returns:
-            Optional[UserMemory]: The user memory, or None if not found.
+            Optional[UserMemoryV2]: The user memory, or None if not found.
         """
         if self.memory_compiler is None:
             if self.db is None:
@@ -7784,13 +7785,13 @@ class Agent:
 
         return self.memory_compiler.get_user_memory_v2(user_id=user_id)  # type: ignore
 
-    async def aget_user_memory_v2(self, user_id: Optional[str] = None) -> Optional[UserMemory]:
+    async def aget_user_memory_v2(self, user_id: Optional[str] = None) -> Optional[UserMemoryV2]:
         """Get user memory for a given user ID asynchronously.
 
         Args:
             user_id: The user ID to get memory for. If not provided, the current cached user ID is used.
         Returns:
-            Optional[UserMemory]: The user memory, or None if not found.
+            Optional[UserMemoryV2]: The user memory, or None if not found.
         """
         if self.memory_compiler is None:
             if self.db is None:
