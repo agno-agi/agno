@@ -1,57 +1,70 @@
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+"""Skill model and utility functions.
+
+This module re-exports the Skill dataclass from db/schemas/skill.py
+and provides utility functions for skill management.
+"""
+
+import hashlib
+from typing import Optional
+
+from agno.db.schemas.skill import Skill
+
+__all__ = ["Skill", "compute_content_hash"]
 
 
-@dataclass
-class Skill:
-    """Represents a skill that an agent can use.
+def compute_content_hash(name: str, description: str, instructions: str) -> str:
+    """Compute a content hash for a skill.
 
-    A skill provides structured instructions, reference documentation,
-    and optional scripts that an agent can access to perform specific tasks.
+    This creates a SHA256 hash of the skill's core content
+    (name, description, instructions) to use as a unique identifier.
 
-    Attributes:
-        name: Unique skill name (from folder name or SKILL.md frontmatter)
-        description: Short description of what the skill does
-        instructions: Full SKILL.md body (the instructions/guidance for the agent)
-        scripts: List of script filenames in scripts/ subdirectory (for V2)
-        references: List of reference filenames in references/ subdirectory
-        source_path: Filesystem path to the skill folder
-        metadata: Optional metadata from frontmatter (version, author, tags, etc.)
-        license: Optional license information
+    Args:
+        name: The skill name.
+        description: The skill description.
+        instructions: The skill instructions.
+
+    Returns:
+        A SHA256 hex digest of the combined content.
     """
+    content = f"{name}|{description}|{instructions}"
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
-    name: str
-    description: str
-    instructions: str
-    source_path: str
-    scripts: List[str] = field(default_factory=list)
-    references: List[str] = field(default_factory=list)
-    metadata: Optional[Dict[str, Any]] = None
-    license: Optional[str] = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert the Skill to a dictionary representation."""
-        return {
-            "name": self.name,
-            "description": self.description,
-            "instructions": self.instructions,
-            "source_path": self.source_path,
-            "scripts": self.scripts,
-            "references": self.references,
-            "metadata": self.metadata,
-            "license": self.license,
-        }
+def create_skill(
+    name: str,
+    description: str,
+    instructions: str,
+    scripts: Optional[list] = None,
+    references: Optional[list] = None,
+    metadata: Optional[dict] = None,
+    version: int = 1,
+    skill_id: Optional[str] = None,
+) -> Skill:
+    """Create a new Skill instance with auto-generated ID.
 
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Skill":
-        """Create a Skill from a dictionary."""
-        return cls(
-            name=data["name"],
-            description=data["description"],
-            instructions=data["instructions"],
-            source_path=data["source_path"],
-            scripts=data.get("scripts", []),
-            references=data.get("references", []),
-            metadata=data.get("metadata"),
-            license=data.get("license"),
-        )
+    Args:
+        name: Unique skill name.
+        description: Short description of what the skill does.
+        instructions: Full instructions/guidance for the agent.
+        scripts: List of script filenames.
+        references: List of reference filenames.
+        metadata: Optional metadata (version, author, tags, etc.).
+        version: Integer version number.
+        skill_id: Optional explicit ID. If not provided, generates from content hash.
+
+    Returns:
+        A new Skill instance.
+    """
+    if skill_id is None:
+        skill_id = compute_content_hash(name, description, instructions)
+
+    return Skill(
+        id=skill_id,
+        name=name,
+        description=description,
+        instructions=instructions,
+        metadata=metadata,
+        version=version,
+        scripts=scripts or [],
+        references=references or [],
+    )

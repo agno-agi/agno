@@ -1,4 +1,5 @@
 from agno.skills.loaders.base import SkillLoader
+from agno.skills.loaders.db import DbSkills
 from agno.skills.loaders.local import LocalSkills
 
-__all__ = ["SkillLoader", "LocalSkills"]
+__all__ = ["SkillLoader", "LocalSkills", "DbSkills"]

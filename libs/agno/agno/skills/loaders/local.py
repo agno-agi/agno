@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.skills.loaders.base import SkillLoader
-from agno.skills.skill import Skill
+from agno.skills.skill import Skill, compute_content_hash
 from agno.utils.log import log_debug, log_warning
 
 
@@ -78,7 +78,15 @@ class LocalSkills(SkillLoader):
 
             # Get optional fields
             license_info = frontmatter.get("license")
-            metadata = frontmatter.get("metadata")
+            version = frontmatter.get("version", 1)
+            metadata = frontmatter.get("metadata", {})
+
+            # Add source_path and license to metadata for reference
+            if metadata is None:
+                metadata = {}
+            metadata["source_path"] = str(folder)
+            if license_info:
+                metadata["license"] = license_info
 
             # Discover scripts
             scripts = self._discover_scripts(folder)
@@ -86,15 +94,18 @@ class LocalSkills(SkillLoader):
             # Discover references
             references = self._discover_references(folder)
 
+            # Compute content hash for ID
+            skill_id = compute_content_hash(name, description, instructions)
+
             return Skill(
+                id=skill_id,
                 name=name,
                 description=description,
                 instructions=instructions,
-                source_path=str(folder),
                 scripts=scripts,
                 references=references,
                 metadata=metadata,
-                license=license_info,
+                version=version if isinstance(version, int) else 1,
             )
 
         except Exception as e:
@@ -152,42 +163,52 @@ class LocalSkills(SkillLoader):
                 result[key] = value
         return result
 
-    def _discover_scripts(self, folder: Path) -> List[str]:
-        """Discover script files in the scripts/ subdirectory.
+    def _discover_scripts(self, folder: Path) -> List[Dict[str, str]]:
+        """Discover script files in the scripts/ subdirectory and load their content.
 
         Args:
             folder: Path to the skill folder.
 
         Returns:
-            A list of script filenames.
+            A list of script objects with name and content.
         """
         scripts_dir = folder / "scripts"
         if not scripts_dir.exists() or not scripts_dir.is_dir():
             return []
 
-        scripts: List[str] = []
-        for item in scripts_dir.iterdir():
+        scripts: List[Dict[str, str]] = []
+        for item in sorted(scripts_dir.iterdir(), key=lambda x: x.name):
             if item.is_file() and not item.name.startswith("."):
-                scripts.append(item.name)
+                try:
+                    content = item.read_text(encoding="utf-8")
+                    scripts.append({"name": item.name, "content": content})
+                except Exception as e:
+                    log_warning(f"Error reading script {item}: {e}")
+                    scripts.append({"name": item.name, "content": ""})
 
-        return sorted(scripts)
+        return scripts
 
-    def _discover_references(self, folder: Path) -> List[str]:
-        """Discover reference files in the references/ subdirectory.
+    def _discover_references(self, folder: Path) -> List[Dict[str, str]]:
+        """Discover reference files in the references/ subdirectory and load their content.
 
         Args:
             folder: Path to the skill folder.
 
         Returns:
-            A list of reference filenames.
+            A list of reference objects with name and content.
         """
         refs_dir = folder / "references"
         if not refs_dir.exists() or not refs_dir.is_dir():
             return []
 
-        references: List[str] = []
-        for item in refs_dir.iterdir():
+        references: List[Dict[str, str]] = []
+        for item in sorted(refs_dir.iterdir(), key=lambda x: x.name):
             if item.is_file() and not item.name.startswith("."):
-                references.append(item.name)
+                try:
+                    content = item.read_text(encoding="utf-8")
+                    references.append({"name": item.name, "content": content})
+                except Exception as e:
+                    log_warning(f"Error reading reference {item}: {e}")
+                    references.append({"name": item.name, "content": ""})
 
-        return sorted(references)
+        return references

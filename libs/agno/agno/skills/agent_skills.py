@@ -1,11 +1,14 @@
 import json
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.skill import Skill
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_debug, log_info, log_warning
+
+if TYPE_CHECKING:
+    from agno.db.base import AsyncBaseDb, BaseDb
 
 
 class Skills:
@@ -21,15 +24,27 @@ class Skills:
         loaders: List of SkillLoader instances to load skills from.
     """
 
-    def __init__(self, loaders: List[SkillLoader]):
+    def __init__(self, loaders: List[SkillLoader], dynamic: bool = True):
+        """Initialize Skills orchestrator.
+
+        Args:
+            loaders: List of SkillLoader instances to load skills from.
+            dynamic: If True (default), reload skills from loaders on every access.
+                     Useful for DB-backed skills that may change at runtime.
+        """
         self.loaders = loaders
+        self.dynamic = dynamic
         self._skills: Dict[str, Skill] = {}
         self._loaded = False
 
     def _ensure_loaded(self) -> None:
         """Ensure skills are loaded from all loaders."""
-        if self._loaded:
+        if self._loaded and not self.dynamic:
             return
+
+        # Clear existing skills if reloading in dynamic mode
+        if self.dynamic:
+            self._skills.clear()
 
         for loader in self.loaders:
             try:
@@ -94,9 +109,11 @@ class Skills:
             lines.append(f"  <name>{skill.name}</name>")
             lines.append(f"  <description>{skill.description}</description>")
             if skill.scripts:
-                lines.append(f"  <scripts>{', '.join(skill.scripts)}</scripts>")
+                script_names = [s["name"] if isinstance(s, dict) else s for s in skill.scripts]
+                lines.append(f"  <scripts>{', '.join(script_names)}</scripts>")
             if skill.references:
-                lines.append(f"  <references>{', '.join(skill.references)}</references>")
+                ref_names = [r["name"] if isinstance(r, dict) else r for r in skill.references]
+                lines.append(f"  <references>{', '.join(ref_names)}</references>")
             lines.append("</skill>")
         lines.append("</available_skills>")
         lines.append("")
@@ -157,13 +174,17 @@ class Skills:
                 }
             )
 
+        # Extract names from scripts/references for display
+        script_names = [s["name"] if isinstance(s, dict) else s for s in skill.scripts]
+        ref_names = [r["name"] if isinstance(r, dict) else r for r in skill.references]
+
         return json.dumps(
             {
                 "skill_name": skill.name,
                 "description": skill.description,
                 "instructions": skill.instructions,
-                "available_scripts": skill.scripts,
-                "available_references": skill.references,
+                "available_scripts": script_names,
+                "available_references": ref_names,
             }
         )
 
@@ -187,16 +208,47 @@ class Skills:
                 }
             )
 
-        if reference_path not in skill.references:
+        # Extract reference names for lookup
+        ref_names = [r["name"] if isinstance(r, dict) else r for r in skill.references]
+
+        if reference_path not in ref_names:
             return json.dumps(
                 {
                     "error": f"Reference '{reference_path}' not found in skill '{skill_name}'",
-                    "available_references": skill.references,
+                    "available_references": ref_names,
                 }
             )
 
-        # Load the reference file
-        ref_file = Path(skill.source_path) / "references" / reference_path
+        # First, check if content is stored in the skill (DB-loaded or new format)
+        for ref in skill.references:
+            if isinstance(ref, dict) and ref.get("name") == reference_path:
+                content = ref.get("content", "")
+                if content:
+                    return json.dumps(
+                        {
+                            "skill_name": skill_name,
+                            "reference_path": reference_path,
+                            "content": content,
+                        }
+                    )
+                break
+
+        # Fallback: Get source_path from metadata (for locally loaded skills without content)
+        source_path = None
+        if skill.metadata:
+            source_path = skill.metadata.get("source_path")
+
+        if source_path is None:
+            return json.dumps(
+                {
+                    "error": f"Reference '{reference_path}' has no content stored and skill '{skill_name}' has no source path.",
+                    "skill_name": skill_name,
+                    "reference_path": reference_path,
+                }
+            )
+
+        # Load the reference file from filesystem
+        ref_file = Path(source_path) / "references" / reference_path
         try:
             content = ref_file.read_text(encoding="utf-8")
             return json.dumps(
@@ -214,3 +266,60 @@ class Skills:
                     "reference_path": reference_path,
                 }
             )
+
+    def sync_to_db(self, db: "BaseDb") -> int:
+        """Sync all loaded skills to a database.
+
+        Args:
+            db: The database to sync skills to.
+
+        Returns:
+            The count of skills saved to the database.
+        """
+        self._ensure_loaded()
+
+        if not self._skills:
+            log_info("No skills to sync to database")
+            return 0
+
+        from agno.skills.loaders.db import DbSkills
+
+        db_loader = DbSkills(db=db)
+        count = db_loader.save_all(list(self._skills.values()))
+        log_info(f"Synced {count}/{len(self._skills)} skills to database")
+        return count
+
+    async def sync_to_db_async(self, db: "AsyncBaseDb") -> int:
+        """Sync all loaded skills to a database asynchronously.
+
+        Args:
+            db: The async database to sync skills to.
+
+        Returns:
+            The count of skills saved to the database.
+        """
+        self._ensure_loaded()
+
+        if not self._skills:
+            log_info("No skills to sync to database")
+            return 0
+
+        from agno.skills.loaders.db import DbSkills
+
+        db_loader = DbSkills(db=db)
+        count = await db_loader.save_all_async(list(self._skills.values()))
+        log_info(f"Synced {count}/{len(self._skills)} skills to database")
+        return count
+
+    def get_db_loader(self) -> Optional["DbSkills"]:
+        """Get the DbSkills loader if one is configured.
+
+        Returns:
+            The DbSkills loader if found, None otherwise.
+        """
+        from agno.skills.loaders.db import DbSkills
+
+        for loader in self.loaders:
+            if isinstance(loader, DbSkills):
+                return loader
+        return None

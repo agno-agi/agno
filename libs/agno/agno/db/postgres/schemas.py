@@ -4,7 +4,7 @@ from typing import Any
 
 try:
     from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import BigInteger, Boolean, Date, String, Text
+    from sqlalchemy.types import BigInteger, Boolean, Date, Integer, String, Text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -157,6 +157,19 @@ SPAN_TABLE_SCHEMA = {
     "created_at": {"type": String, "nullable": False, "index": True},  # ISO 8601 datetime string
 }
 
+SKILLS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False, "index": True},
+    "description": {"type": Text, "nullable": False},
+    "instructions": {"type": Text, "nullable": False},
+    "metadata": {"type": JSONB, "nullable": True},
+    "version": {"type": Integer, "nullable": False, "default": 1},
+    "scripts": {"type": JSONB, "nullable": True},  # List[str] as JSONB
+    "references": {"type": JSONB, "nullable": True},  # List[str] as JSONB
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+}
+
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
@@ -178,6 +191,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "versions": VERSIONS_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
         "spans": SPAN_TABLE_SCHEMA,
+        "skills": SKILLS_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

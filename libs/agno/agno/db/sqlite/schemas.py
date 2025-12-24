@@ -151,6 +151,19 @@ VERSIONS_TABLE_SCHEMA = {
     "updated_at": {"type": String, "nullable": True},
 }
 
+SKILLS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False, "index": True},
+    "description": {"type": String, "nullable": False},
+    "instructions": {"type": String, "nullable": False},
+    "metadata": {"type": JSON, "nullable": True},
+    "version": {"type": BigInteger, "nullable": False, "default": 1},
+    "scripts": {"type": JSON, "nullable": True},
+    "references": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+}
+
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
@@ -172,6 +185,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "spans": SPAN_TABLE_SCHEMA,
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
+        "skills": SKILLS_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
 
