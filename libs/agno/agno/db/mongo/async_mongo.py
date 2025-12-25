@@ -23,6 +23,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.user_memory import UserMemoryV2
 from agno.db.utils import deserialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
@@ -40,8 +41,8 @@ except ImportError:
 
 try:
     from pymongo import AsyncMongoClient  # type: ignore
-    from pymongo.collection import AsyncCollection  # type: ignore
-    from pymongo.database import AsyncDatabase  # type: ignore
+    from pymongo.asynchronous.collection import AsyncCollection  # type: ignore
+    from pymongo.asynchronous.database import AsyncDatabase  # type: ignore
 
     PYMONGO_ASYNC_AVAILABLE = True
 except ImportError:
@@ -149,6 +150,7 @@ class AsyncMongoDb(AsyncBaseDb):
         culture_collection: Optional[str] = None,
         traces_collection: Optional[str] = None,
         spans_collection: Optional[str] = None,
+        user_profiles_collection: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -172,6 +174,7 @@ class AsyncMongoDb(AsyncBaseDb):
             culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
+            user_profiles_collection (Optional[str]): Name of the collection to store user memory profiles.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -194,6 +197,7 @@ class AsyncMongoDb(AsyncBaseDb):
             culture_table=culture_collection,
             traces_table=traces_collection,
             spans_table=spans_collection,
+            user_memory_table=user_profiles_collection,
         )
 
         # Detect client type if provided
@@ -243,6 +247,7 @@ class AsyncMongoDb(AsyncBaseDb):
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
             ("culture", self.culture_table_name),
+            ("user_memory", self.user_memory_table_name),
         ]
 
         for collection_type, collection_name in collections_to_create:
@@ -451,6 +456,17 @@ class AsyncMongoDb(AsyncBaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.spans_collection
+
+        if table_type == "user_memory":
+            if reset_cache or not hasattr(self, "user_profiles_collection"):
+                if self.user_memory_table_name is None:
+                    raise ValueError("User profiles collection was not provided on initialization")
+                self.user_profiles_collection = await self._get_or_create_collection(
+                    collection_name=self.user_memory_table_name,
+                    collection_type="user_memory",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.user_profiles_collection
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -2769,3 +2785,107 @@ class AsyncMongoDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error getting spans: {e}")
             return []
+
+    async def get_user_memory_v2(
+        self,
+        user_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+        """Get a user memory from the database.
+
+        Args:
+            user_id: The unique user identifier
+            deserialize: Whether to deserialize to UserMemoryV2 object
+
+        Returns:
+            UserMemoryV2 or dict if found, None otherwise
+        """
+        try:
+            collection = await self._get_collection(table_type="user_memory", create_collection_if_not_found=True)
+            if collection is None:
+                return None
+
+            result = await collection.find_one({"user_id": user_id})
+            if result is None:
+                return None
+
+            # Remove MongoDB's _id field
+            result.pop("_id", None)
+
+            if not deserialize:
+                return result
+
+            return UserMemoryV2.from_dict(result)
+
+        except Exception as e:
+            log_error(f"Error getting user memory: {e}")
+            raise e
+
+    async def upsert_user_memory_v2(
+        self,
+        user_memory: UserMemoryV2,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+        """Upsert a user memory in the database.
+
+        Args:
+            user_profile: The user memory to upsert
+            deserialize: Whether to deserialize to UserMemoryV2 object
+
+        Returns:
+            UserMemoryV2 or dict if successful, None otherwise
+        """
+        try:
+            collection = await self._get_collection(table_type="user_memory", create_collection_if_not_found=True)
+            if collection is None:
+                return None
+
+            current_time = int(time.time())
+
+            update_doc = {
+                "user_id": user_memory.user_id,
+                "profile": user_memory.profile,
+                "layers": user_memory.layers,
+                "metadata": user_memory.metadata,
+                "created_at": user_memory.created_at or current_time,
+                "updated_at": current_time,
+            }
+
+            result = await collection.find_one_and_replace(
+                {"user_id": user_memory.user_id},
+                update_doc,
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+
+            if not deserialize:
+                return result
+
+            return UserMemoryV2.from_dict(result)
+
+        except Exception as e:
+            log_error(f"Error upserting user memory: {e}")
+            raise e
+
+    async def delete_user_memory_v2(self, user_id: str) -> None:
+        """Delete a user memory.
+
+        Args:
+            user_id: The unique user identifier to delete
+        """
+        try:
+            collection = await self._get_collection(table_type="user_memory")
+            if collection is None:
+                return
+
+            await collection.delete_one({"user_id": user_id})
+            log_debug(f"Deleted user memory: {user_id}")
+
+        except Exception as e:
+            log_error(f"Error deleting user memory: {e}")
+            raise e

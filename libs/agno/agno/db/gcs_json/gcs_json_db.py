@@ -20,6 +20,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.user_memory import UserMemoryV2
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -43,6 +44,7 @@ class GcsJsonDb(BaseDb):
         culture_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
+        user_memory_table: Optional[str] = None,
         project: Optional[str] = None,
         credentials: Optional[Any] = None,
         id: Optional[str] = None,
@@ -81,6 +83,7 @@ class GcsJsonDb(BaseDb):
             culture_table=culture_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            user_memory_table=user_memory_table,
         )
 
         self.bucket_name = bucket_name
@@ -1789,3 +1792,105 @@ class GcsJsonDb(BaseDb):
         except Exception as e:
             log_error(f"Error getting spans: {e}")
             return []
+
+    def get_user_memory_v2(
+        self,
+        user_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+        """Get a user memory from the database.
+
+        Args:
+            user_id: The unique user identifier
+            deserialize: Whether to deserialize to UserMemoryV2 object
+
+        Returns:
+            UserMemoryV2 or dict if found, None otherwise
+        """
+        try:
+            profiles = self._read_json_file(self.user_memory_table_name, create_table_if_not_found=True)
+            if not profiles:
+                return None
+
+            for profile in profiles:
+                if profile.get("user_id") == user_id:
+                    if not deserialize:
+                        return profile
+                    return UserMemoryV2.from_dict(profile)
+
+            return None
+
+        except Exception as e:
+            log_error(f"Error getting user memory: {e}")
+            raise e
+
+    def upsert_user_memory_v2(
+        self,
+        user_memory: UserMemoryV2,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+        """Upsert a user memory in the database.
+
+        Args:
+            user_profile: The user memory to upsert
+            deserialize: Whether to deserialize to UserMemoryV2 object
+
+        Returns:
+            UserMemoryV2 or dict if successful, None otherwise
+        """
+        try:
+            current_time = int(time.time())
+
+            item_data = {
+                "user_id": user_memory.user_id,
+                "profile": user_memory.profile,
+                "layers": user_memory.layers,
+                "metadata": user_memory.metadata,
+                "created_at": user_memory.created_at or current_time,
+                "updated_at": current_time,
+            }
+
+            profiles = self._read_json_file(self.user_memory_table_name, create_table_if_not_found=True)
+            if profiles is None:
+                profiles = []
+
+            # Find and update or append
+            found = False
+            for i, profile in enumerate(profiles):
+                if profile.get("user_id") == user_memory.user_id:
+                    profiles[i] = item_data
+                    found = True
+                    break
+
+            if not found:
+                profiles.append(item_data)
+
+            self._write_json_file(self.user_memory_table_name, profiles)
+
+            if not deserialize:
+                return item_data
+
+            return UserMemoryV2.from_dict(item_data)
+
+        except Exception as e:
+            log_error(f"Error upserting user memory: {e}")
+            raise e
+
+    def delete_user_memory_v2(self, user_id: str) -> None:
+        """Delete a user memory.
+
+        Args:
+            user_id: The unique user identifier to delete
+        """
+        try:
+            profiles = self._read_json_file(self.user_memory_table_name, create_table_if_not_found=False)
+            if not profiles:
+                return
+
+            profiles = [p for p in profiles if p.get("user_id") != user_id]
+            self._write_json_file(self.user_memory_table_name, profiles)
+            log_debug(f"Deleted user memory: {user_id}")
+
+        except Exception as e:
+            log_error(f"Error deleting user memory: {e}")
+            raise e
