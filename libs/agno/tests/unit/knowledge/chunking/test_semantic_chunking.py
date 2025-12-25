@@ -1,22 +1,25 @@
 """Tests for SemanticChunking wrapper that adapts Agno embedders to chonkie."""
 
+from dataclasses import dataclass
 from types import SimpleNamespace
+from typing import List
 from unittest.mock import patch
 
 import pytest
 
 from agno.knowledge.chunking.semantic import SemanticChunking
 from agno.knowledge.document.base import Document
+from agno.knowledge.embedder.base import Embedder
 
 
-class DummyEmbedder:
+@dataclass
+class DummyEmbedder(Embedder):
     """Minimal embedder stub for testing."""
 
-    def __init__(self, id: str = "azure-embedding-deployment", dimensions: int = 1024):
-        self.id = id
-        self.dimensions = dimensions
+    id: str = "azure-embedding-deployment"
+    dimensions: int = 1024
 
-    def get_embedding(self, text: str):
+    def get_embedding(self, text: str) -> List[float]:
         return [0.0] * self.dimensions
 
 
@@ -53,13 +56,13 @@ def test_semantic_chunking_wraps_embedder(fake_chonkie_capturing):
 
 def test_semantic_chunking_wrapper_calls_embedder(fake_chonkie_capturing):
     """Test that wrapper's embed method calls the Agno embedder."""
-    call_log = []
+    call_log: List[str] = []
 
-    class TrackingEmbedder:
-        def __init__(self):
-            self.dimensions = 1536
+    @dataclass
+    class TrackingEmbedder(Embedder):
+        dimensions: int = 1536
 
-        def get_embedding(self, text: str):
+        def get_embedding(self, text: str) -> List[float]:
             call_log.append(text)
             return [0.1] * self.dimensions
 

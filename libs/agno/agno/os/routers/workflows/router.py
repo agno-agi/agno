@@ -143,7 +143,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
             if workflow_id and session_id:
                 workflow = get_workflow_by_id(workflow_id, os.workflows)
                 if workflow and isinstance(workflow, Workflow):
-                    workflow_run = await workflow.aget_run_output(run_id, session_id) 
+                    workflow_run = await workflow.aget_run_output(run_id, session_id)
 
                     if workflow_run:
                         # Run exists in DB - send all events from DB
@@ -721,7 +721,9 @@ def get_workflow_router(
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        workflow.cancel_run(run_id=run_id)
+        cancelled = workflow.cancel_run(run_id=run_id)
+        if not cancelled:
+            raise HTTPException(status_code=500, detail="Failed to cancel run - run not found or already completed")
 
         return JSONResponse(content={}, status_code=200)
 

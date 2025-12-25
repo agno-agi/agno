@@ -1,25 +1,20 @@
 from agno.agent import Agent
 from agno.knowledge.chunking.semantic import SemanticChunking
-from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-embedder = OpenAIEmbedder(id="text-embedding-3-small", dimensions=1536)
-
 knowledge = Knowledge(
-    vector_db=PgVector(
-        table_name="recipes_semantic_chunking", db_url=db_url, embedder=embedder
-    ),
+    vector_db=PgVector(table_name="recipes_semantic_chunking", db_url=db_url),
 )
 knowledge.add_content(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
     reader=PDFReader(
         name="Semantic Chunking Reader",
         chunking_strategy=SemanticChunking(
-            embedder=embedder,
+            embedder="text-embedding-3-small",  # When a string is provided, it is used as the model ID for chonkie's built-in embedders
             chunk_size=500,
             similarity_threshold=0.5,
             similarity_window=3,
