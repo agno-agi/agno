@@ -197,7 +197,7 @@ class MemoryCompiler:
         )
         tools = self._compile_schema_tools(memory) if use_schemas else self._compile_tools(memory)
 
-        # Send to LLM for extraction
+        # Send to Model for extraction
         response = deepcopy(self.model).response(
             messages=[self._build_user_system_message(memory), Message(role="user", content=message)],
             tools=tools,
