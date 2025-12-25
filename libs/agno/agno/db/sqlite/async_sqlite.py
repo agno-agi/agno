@@ -14,7 +14,6 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.schemas.org_memory import OrganizationMemory
-from agno.db.schemas.user_profile import UserProfile
 from agno.db.schemas.user_memory import UserMemoryV2
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (

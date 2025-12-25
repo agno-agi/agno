@@ -38,7 +38,6 @@ from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.org_memory import OrganizationMemory
 from agno.db.schemas.user_memory import UserMemoryV2
-from agno.db.schemas.user_profile import UserProfile
 from agno.eval.base import BaseEval
 from agno.exceptions import (
     InputCheckError,

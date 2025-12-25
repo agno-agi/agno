@@ -9,7 +9,6 @@ from pydantic import BaseModel
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.org_memory import OrganizationMemory
 from agno.db.schemas.user_memory import UserMemoryV2
-from agno.db.schemas.user_profile import UserProfile as DbUserProfile
 from agno.memory_v2.schemas import UserFeedback, UserKnowledge, UserPolicies, UserProfile
 from agno.models.base import Model
 from agno.models.message import Message
@@ -649,130 +648,6 @@ class MemoryCompiler:
 
         return tools
 
-
-USER_MEMORY_KEY = "_pending_user_memory"
-
-
-def stage_update(
-    run_context: RunContext,
-    user_id: str,
-    layer: str,
-    key: str,
-    value: Any,
-    action: str = "set",
-) -> None:
-    """Stage a memory update for batch commit."""
-    if run_context.session_state is None:
-        run_context.session_state = {}
-    pending = run_context.session_state.setdefault(USER_MEMORY_KEY, {"user_id": user_id})
-
-    if action == "delete":
-        # Track deletion in separate dict
-        deletes = pending.setdefault("_deletes", {})
-        delete_keys = deletes.setdefault(layer, [])
-        if key not in delete_keys:
-            delete_keys.append(key)
-    else:
-        # All layers (profile, knowledge, policies, feedback): set value in layer dict
-        layer_dict = pending.setdefault(layer, {})
-        layer_dict[key] = value
-
-
-def commit_pending(db: BaseDb, user_id: str, run_context: RunContext) -> bool:
-    """Write all staged updates to DB in one call."""
-    if not run_context.session_state or USER_MEMORY_KEY not in run_context.session_state:
-        return True
-
-    pending = run_context.session_state[USER_MEMORY_KEY]
-    if pending.get("user_id") != user_id:
-        return True
-
-    # Load existing memory
-    result = db.get_user_memory_v2(user_id)
-    if isinstance(result, dict):
-        memory = UserMemoryV2.from_dict(result)
-    else:
-        memory = result or UserMemoryV2(user_id=user_id)
-
-    # Apply pending updates, save, and clear
-    _apply_pending_updates(memory, pending)
-    memory.bump_updated_at()
-    db.upsert_user_memory_v2(memory)
-    run_context.session_state.pop(USER_MEMORY_KEY, None)
-    log_debug(f"Committed user memory updates for {user_id}")
-    return True
-
-
-async def acommit_pending(db: Union[AsyncBaseDb, BaseDb], user_id: str, run_context: RunContext) -> bool:
-    """Write all staged updates to DB in one call (async)."""
-    if not run_context.session_state or USER_MEMORY_KEY not in run_context.session_state:
-        return True
-
-    pending = run_context.session_state[USER_MEMORY_KEY]
-    if pending.get("user_id") != user_id:
-        return True
-
-    # Load existing memory
-    if isinstance(db, AsyncBaseDb):
-        result = await db.get_user_memory_v2(user_id)
-    else:
-        result = db.get_user_memory_v2(user_id)
-
-    if isinstance(result, dict):
-        memory = UserMemoryV2.from_dict(result)
-    else:
-        memory = result or UserMemoryV2(user_id=user_id)
-
-    # Apply pending updates, save, and clear
-    _apply_pending_updates(memory, pending)
-    memory.bump_updated_at()
-    if isinstance(db, AsyncBaseDb):
-        await db.upsert_user_memory_v2(memory)
-    else:
-        db.upsert_user_memory_v2(memory)
-    run_context.session_state.pop(USER_MEMORY_KEY, None)
-    log_debug(f"Committed user memory updates for {user_id}")
-    return True
-
-
-def _apply_pending_updates(memory: UserMemoryV2, pending: Dict[str, Any]) -> None:
-    """Merge pending updates into memory."""
-    # First: Apply additions
-    # Profile
-    for key, value in pending.get("profile", {}).items():
-        memory.profile[key] = value
-
-    # Policies
-    if pending.get("policies"):
-        if not isinstance(memory.layers.get("policies"), dict):
-            memory.layers["policies"] = {}
-        for key, value in pending["policies"].items():
-            memory.layers["policies"][key] = value
-
-    # Knowledge
-    if pending.get("knowledge"):
-        if not isinstance(memory.layers.get("knowledge"), dict):
-            memory.layers["knowledge"] = {}
-        for key, value in pending["knowledge"].items():
-            memory.layers["knowledge"][key] = value
-
-    if pending.get("feedback"):
-        if not isinstance(memory.layers.get("feedback"), dict):
-            memory.layers["feedback"] = {}
-        for key, value in pending["feedback"].items():
-            memory.layers["feedback"][key] = value
-
-    # Last: Apply deletions (delete wins over add in same run)
-    for layer, keys in pending.get("_deletes", {}).items():
-        if layer == "profile":
-            for key in keys:
-                memory.profile.pop(key, None)
-        elif layer in ("policies", "knowledge", "feedback"):
-            if isinstance(memory.layers.get(layer), dict):
-                for key in keys:
-                    memory.layers[layer].pop(key, None)
-
-
     # --- Organization Memory ---
 
     def get_org_memory(self, org_id: str) -> Optional[Union[OrganizationMemory, Dict[str, Any]]]:
@@ -905,3 +780,126 @@ def _apply_pending_updates(memory: UserMemoryV2, pending: Dict[str, Any]) -> Non
             log_debug(f"Deleted org {layer} {key} for {org_memory.org_id}")
             return f"Forgot org {layer}: {key}"
         return f"Key '{key}' not found in org {layer}"
+
+
+USER_MEMORY_KEY = "_pending_user_memory"
+
+
+def stage_update(
+    run_context: RunContext,
+    user_id: str,
+    layer: str,
+    key: str,
+    value: Any,
+    action: str = "set",
+) -> None:
+    """Stage a memory update for batch commit."""
+    if run_context.session_state is None:
+        run_context.session_state = {}
+    pending = run_context.session_state.setdefault(USER_MEMORY_KEY, {"user_id": user_id})
+
+    if action == "delete":
+        # Track deletion in separate dict
+        deletes = pending.setdefault("_deletes", {})
+        delete_keys = deletes.setdefault(layer, [])
+        if key not in delete_keys:
+            delete_keys.append(key)
+    else:
+        # All layers (profile, knowledge, policies, feedback): set value in layer dict
+        layer_dict = pending.setdefault(layer, {})
+        layer_dict[key] = value
+
+
+def commit_pending(db: BaseDb, user_id: str, run_context: RunContext) -> bool:
+    """Write all staged updates to DB in one call."""
+    if not run_context.session_state or USER_MEMORY_KEY not in run_context.session_state:
+        return True
+
+    pending = run_context.session_state[USER_MEMORY_KEY]
+    if pending.get("user_id") != user_id:
+        return True
+
+    # Load existing memory
+    result = db.get_user_memory_v2(user_id)
+    if isinstance(result, dict):
+        memory = UserMemoryV2.from_dict(result)
+    else:
+        memory = result or UserMemoryV2(user_id=user_id)
+
+    # Apply pending updates, save, and clear
+    _apply_pending_updates(memory, pending)
+    memory.bump_updated_at()
+    db.upsert_user_memory_v2(memory)
+    run_context.session_state.pop(USER_MEMORY_KEY, None)
+    log_debug(f"Committed user memory updates for {user_id}")
+    return True
+
+
+async def acommit_pending(db: Union[AsyncBaseDb, BaseDb], user_id: str, run_context: RunContext) -> bool:
+    """Write all staged updates to DB in one call (async)."""
+    if not run_context.session_state or USER_MEMORY_KEY not in run_context.session_state:
+        return True
+
+    pending = run_context.session_state[USER_MEMORY_KEY]
+    if pending.get("user_id") != user_id:
+        return True
+
+    # Load existing memory
+    if isinstance(db, AsyncBaseDb):
+        result = await db.get_user_memory_v2(user_id)
+    else:
+        result = db.get_user_memory_v2(user_id)
+
+    if isinstance(result, dict):
+        memory = UserMemoryV2.from_dict(result)
+    else:
+        memory = result or UserMemoryV2(user_id=user_id)
+
+    # Apply pending updates, save, and clear
+    _apply_pending_updates(memory, pending)
+    memory.bump_updated_at()
+    if isinstance(db, AsyncBaseDb):
+        await db.upsert_user_memory_v2(memory)
+    else:
+        db.upsert_user_memory_v2(memory)
+    run_context.session_state.pop(USER_MEMORY_KEY, None)
+    log_debug(f"Committed user memory updates for {user_id}")
+    return True
+
+
+def _apply_pending_updates(memory: UserMemoryV2, pending: Dict[str, Any]) -> None:
+    """Merge pending updates into memory."""
+    # First: Apply additions
+    # Profile
+    for key, value in pending.get("profile", {}).items():
+        memory.profile[key] = value
+
+    # Policies
+    if pending.get("policies"):
+        if not isinstance(memory.layers.get("policies"), dict):
+            memory.layers["policies"] = {}
+        for key, value in pending["policies"].items():
+            memory.layers["policies"][key] = value
+
+    # Knowledge
+    if pending.get("knowledge"):
+        if not isinstance(memory.layers.get("knowledge"), dict):
+            memory.layers["knowledge"] = {}
+        for key, value in pending["knowledge"].items():
+            memory.layers["knowledge"][key] = value
+
+    if pending.get("feedback"):
+        if not isinstance(memory.layers.get("feedback"), dict):
+            memory.layers["feedback"] = {}
+        for key, value in pending["feedback"].items():
+            memory.layers["feedback"][key] = value
+
+    # Last: Apply deletions (delete wins over add in same run)
+    for layer, keys in pending.get("_deletes", {}).items():
+        if layer == "profile":
+            for key in keys:
+                memory.profile.pop(key, None)
+        elif layer in ("policies", "knowledge", "feedback"):
+            if isinstance(memory.layers.get(layer), dict):
+                for key in keys:
+                    memory.layers[layer].pop(key, None)
