@@ -26,7 +26,7 @@ TableType = Literal[
     "spans",
     "teams",
     "traces",
-    "user_profiles",
+    "user_memory",
     "users",
     "workflows",
 ]

@@ -19,6 +19,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.schemas.org_memory import OrganizationMemory
 from agno.db.schemas.user_profile import UserProfile
+from agno.db.schemas.user_memory import UserMemoryV2
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -40,6 +41,7 @@ class InMemoryDb(BaseDb):
         self._cultural_knowledge: List[Dict[str, Any]] = []
         self._user_profiles: Dict[str, Dict[str, Any]] = {}
         self._organizations: Dict[str, Dict[str, Any]] = {}
+        self._user_memory: Dict[str, Dict[str, Any]] = {}
 
     def table_exists(self, table_name: str) -> bool:
         """In-memory implementation, always returns True."""
@@ -1315,22 +1317,22 @@ class InMemoryDb(BaseDb):
         """
         raise NotImplementedError
 
-    def get_user_profile(
+    def get_user_memory_v2(
         self,
         user_id: str,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
-        """Get a user profile from the database.
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+        """Get user memory from the database.
 
         Args:
             user_id: The unique user identifier
-            deserialize: Whether to deserialize to UserProfile object
+            deserialize: Whether to deserialize to UserMemoryV2 object
 
         Returns:
-            UserProfile or dict if found, None otherwise
+            UserMemoryV2 or dict if found, None otherwise
         """
         try:
-            result = self._user_profiles.get(user_id)
+            result = self._user_memory.get(user_id)
             if result is None:
                 return None
 
@@ -1339,62 +1341,62 @@ class InMemoryDb(BaseDb):
             if not deserialize:
                 return result_copy
 
-            return UserProfile.from_dict(result_copy)
+            return UserMemoryV2.from_dict(result_copy)
 
         except Exception as e:
-            log_error(f"Error getting user profile: {e}")
+            log_error(f"Error getting user memory: {e}")
             raise e
 
-    def upsert_user_profile(
+    def upsert_user_memory_v2(
         self,
-        user_profile: UserProfile,
+        user_memory: UserMemoryV2,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[UserProfile, Dict[str, Any]]]:
-        """Upsert a user profile in the database.
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+        """Upsert user memory in the database.
 
         Args:
-            user_profile: The user profile to upsert
-            deserialize: Whether to deserialize to UserProfile object
+            user_memory: The user memory to upsert
+            deserialize: Whether to deserialize to UserMemoryV2 object
 
         Returns:
-            UserProfile or dict if successful, None otherwise
+            UserMemoryV2 or dict if successful, None otherwise
         """
         try:
             current_time = int(time.time())
 
             item_data = {
-                "user_id": user_profile.user_id,
-                "user_profile": user_profile.user_profile,
-                "memory_layers": user_profile.memory_layers,
-                "metadata": user_profile.metadata,
-                "created_at": user_profile.created_at or current_time,
+                "user_id": user_memory.user_id,
+                "profile": user_memory.profile,
+                "layers": user_memory.layers,
+                "metadata": user_memory.metadata,
+                "created_at": user_memory.created_at or current_time,
                 "updated_at": current_time,
             }
 
-            self._user_profiles[user_profile.user_id] = item_data
+            self._user_memory[user_memory.user_id] = item_data
 
             if not deserialize:
                 return deepcopy(item_data)
 
-            return UserProfile.from_dict(deepcopy(item_data))
+            return UserMemoryV2.from_dict(deepcopy(item_data))
 
         except Exception as e:
-            log_error(f"Error upserting user profile: {e}")
+            log_error(f"Error upserting user memory: {e}")
             raise e
 
-    def delete_user_profile(self, user_id: str) -> None:
-        """Delete a user profile.
+    def delete_user_memory_v2(self, user_id: str) -> None:
+        """Delete user memory.
 
         Args:
             user_id: The unique user identifier to delete
         """
         try:
-            if user_id in self._user_profiles:
-                del self._user_profiles[user_id]
-            log_debug(f"Deleted user profile: {user_id}")
+            if user_id in self._user_memory:
+                del self._user_memory[user_id]
+            log_debug(f"Deleted user memory: {user_id}")
 
         except Exception as e:
-            log_error(f"Error deleting user profile: {e}")
+            log_error(f"Error deleting user memory: {e}")
             raise e
 
     # --- Organization Memory ---

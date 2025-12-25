@@ -2,568 +2,776 @@ import json
 from copy import deepcopy
 from dataclasses import dataclass
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Union, cast
+from typing import Any, Dict, List, Optional, Type, Union, cast
+
+from pydantic import BaseModel
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.org_memory import OrganizationMemory
-from agno.db.schemas.user_profile import UserProfile
+from agno.db.schemas.user_memory import UserMemoryV2
+from agno.db.schemas.user_profile import UserProfile as DbUserProfile
+from agno.memory_v2.schemas import UserFeedback, UserKnowledge, UserPolicies, UserProfile
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
+from agno.run.base import RunContext
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
 
 
 @dataclass
 class MemoryCompiler:
-    # Model used for profile extraction
+    # Model used for creating memories
     model: Optional[Model] = None
-
-    # Provide the system message for the compiler as a string. If not provided, the default system message will be used.
-    system_message: Optional[str] = None
-    # Provide the profile capture instructions for the compiler as a string. If not provided, the default instructions will be used.
-    profile_capture_instructions: Optional[str] = None
-    # Additional instructions for the compiler. These instructions are appended to the default system message.
-    additional_instructions: Optional[str] = None
-
-    # Whether profile was updated in the last run
-    profile_updated: bool = False
-
-    # ----- db tools ---------
-    # Whether to delete profile fields
-    delete_profile: bool = True
-    # Whether to update profile fields
-    update_profile: bool = True
-
-    # The database to store user profiles
+    # The database to store memories
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
+    # what to capture
+    user_memory_capture_instructions: Optional[str] = None
+    # Layer toggles
+    enable_user_memories: bool = True
+    # user identity (name, company, role)
+    enable_user_profile: bool = True
+    # user facts (languages, hobbies)
+    enable_user_knowledge: bool = True
+    enable_user_policies: bool = True
+    enable_user_feedback: bool = True
+
+    # Schema overrides
+    use_default_schemas: bool = False
+    user_profile_schema: Optional[Type[BaseModel]] = None
+    user_policies_schema: Optional[Type[BaseModel]] = None
+    user_knowledge_schema: Optional[Type[BaseModel]] = None
+    user_feedback_schema: Optional[Type[BaseModel]] = None
+
+    # Enforce strict schema validation (set False for complex schemas)
+    strict_schema_validation: bool = True
+
+    # Per-layer custom instructions
+    user_profile_instructions: Optional[str] = None
+    user_knowledge_instructions: Optional[str] = None
+    user_policies_instructions: Optional[str] = None
+    user_feedback_instructions: Optional[str] = None
 
     def __init__(
         self,
         model: Optional[Union[Model, str]] = None,
-        system_message: Optional[str] = None,
-        profile_capture_instructions: Optional[str] = None,
-        additional_instructions: Optional[str] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-        delete_profile: bool = True,
-        update_profile: bool = True,
+        # ----- Global user memory ---------
+        user_memory_capture_instructions: Optional[str] = None,
+        enable_user_memories: bool = True,
+        use_default_schemas: bool = False,
+        # ----- User profile ---------
+        enable_user_profile: bool = True,
+        user_profile_instructions: Optional[str] = None,
+        user_profile_schema: Optional[Type[BaseModel]] = None,
+        # ----- User knowledge ---------
+        enable_user_knowledge: bool = True,
+        user_knowledge_instructions: Optional[str] = None,
+        user_knowledge_schema: Optional[Type[BaseModel]] = None,
+        # ----- User policies ---------
+        enable_user_policies: bool = True,
+        user_policies_instructions: Optional[str] = None,
+        user_policies_schema: Optional[Type[BaseModel]] = None,
+        # ----- User feedback ---------
+        enable_user_feedback: bool = True,
+        user_feedback_instructions: Optional[str] = None,
+        user_feedback_schema: Optional[Type[BaseModel]] = None,
+        # ----- Schema validation ---------
+        strict_schema_validation: bool = True,
     ):
-        self.model = model  # type: ignore[assignment]
-        self.system_message = system_message
-        self.profile_capture_instructions = profile_capture_instructions
-        self.additional_instructions = additional_instructions
+        self.model = get_model(model) if model else None
         self.db = db
-        self.delete_profile = delete_profile
-        self.update_profile = update_profile
-        self.profile_updated = False
+        self.user_memory_capture_instructions = user_memory_capture_instructions
+        self.enable_user_memories = enable_user_memories
+        self.enable_user_profile = enable_user_profile
+        self.enable_user_knowledge = enable_user_knowledge
+        self.enable_user_policies = enable_user_policies
+        self.enable_user_feedback = enable_user_feedback
+        self.use_default_schemas = use_default_schemas
+        self.user_profile_schema = user_profile_schema
+        self.user_policies_schema = user_policies_schema
+        self.user_knowledge_schema = user_knowledge_schema
+        self.user_feedback_schema = user_feedback_schema
+        self.user_profile_instructions = user_profile_instructions
+        self.user_knowledge_instructions = user_knowledge_instructions
+        self.user_policies_instructions = user_policies_instructions
+        self.user_feedback_instructions = user_feedback_instructions
+        self.strict_schema_validation = strict_schema_validation
 
-        if self.model is not None:
-            self.model = get_model(self.model)
-
-    def get_user_profile(self, user_id: Optional[str] = None) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+    def get_user_memory_v2(self, user_id: Optional[str] = None) -> Optional[UserMemoryV2]:
+        """Get user memory from DB."""
         if not self.db:
-            log_warning("Database not provided")
+            log_warning("MemoryCompiler: Database not configured")
             return None
-        if user_id is None:
-            user_id = "default"
-        self.db = cast(BaseDb, self.db)
-        return self.db.get_user_profile(user_id=user_id)
+        user_id = user_id or "default"
+        result = cast(BaseDb, self.db).get_user_memory_v2(user_id)
+        if isinstance(result, dict):
+            return UserMemoryV2.from_dict(result)
+        return result or UserMemoryV2(user_id=user_id)
 
-    def save_user_profile(self, user_profile: UserProfile) -> Optional[Union[UserProfile, Dict[str, Any]]]:
+    async def aget_user_memory_v2(self, user_id: Optional[str] = None) -> Optional[UserMemoryV2]:
         if not self.db:
-            log_warning("Database not provided")
+            log_warning("MemoryCompiler: Database not configured")
             return None
-        self.db = cast(BaseDb, self.db)
-        return self.db.upsert_user_profile(user_profile=user_profile)
-
-    def delete_user_profile(self, user_id: Optional[str] = None) -> None:
-        if not self.db:
-            log_warning("Database not provided")
-            return
-        if user_id is None:
-            user_id = "default"
-        self.db = cast(BaseDb, self.db)
-        self.db.delete_user_profile(user_id=user_id)
-
-    async def aget_user_profile(self, user_id: Optional[str] = None) -> Optional[Union[UserProfile, Dict[str, Any]]]:
-        if not self.db:
-            log_warning("Database not provided")
-            return None
-        if user_id is None:
-            user_id = "default"
+        user_id = user_id or "default"
         if isinstance(self.db, AsyncBaseDb):
-            return await self.db.get_user_profile(user_id=user_id)
-        return self.db.get_user_profile(user_id=user_id)
-
-    async def asave_user_profile(self, user_profile: UserProfile) -> Optional[Union[UserProfile, Dict[str, Any]]]:
-        if not self.db:
-            log_warning("Database not provided")
-            return None
-        if isinstance(self.db, AsyncBaseDb):
-            return await self.db.upsert_user_profile(user_profile=user_profile)
-        return self.db.upsert_user_profile(user_profile=user_profile)
-
-    async def adelete_user_profile(self, user_id: Optional[str] = None) -> None:
-        if not self.db:
-            log_warning("Database not provided")
-            return
-        if user_id is None:
-            user_id = "default"
-        if isinstance(self.db, AsyncBaseDb):
-            await self.db.delete_user_profile(user_id=user_id)
+            result = await self.db.get_user_memory_v2(user_id)
         else:
-            self.db.delete_user_profile(user_id=user_id)
+            result = self.db.get_user_memory_v2(user_id)
+        if isinstance(result, dict):
+            return UserMemoryV2.from_dict(result)
+        return result or UserMemoryV2(user_id=user_id)
 
-    def compile_user_profile(self, user_id: Optional[str] = None) -> str:
-        if user_id is None:
-            user_id = "default"
-        user_profile = self.get_user_profile(user_id)
-        if not user_profile:
-            return ""
-        return self._format_profile_as_context(user_profile)
+    def save_user_memory_v2(self, memory: UserMemoryV2) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+        """Save user memory to DB."""
+        if not self.db:
+            log_warning("MemoryCompiler: Database not configured")
+            return None
+        return cast(BaseDb, self.db).upsert_user_memory_v2(memory)
 
-    async def acompile_user_profile(self, user_id: Optional[str] = None) -> str:
-        if user_id is None:
-            user_id = "default"
-        user_profile = await self.aget_user_profile(user_id)
-        if not user_profile:
-            return ""
-        return self._format_profile_as_context(user_profile)
+    async def asave_user_memory_v2(self, memory: UserMemoryV2) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+        """Save user memory to DB (async)."""
+        if not self.db:
+            log_warning("MemoryCompiler: Database not configured")
+            return None
+        if isinstance(self.db, AsyncBaseDb):
+            return await self.db.upsert_user_memory_v2(memory)
+        return self.db.upsert_user_memory_v2(memory)
 
-    def _format_profile_as_context(self, user_profile: UserProfile) -> str:
+    def delete_user_memory_v2(self, user_id: Optional[str] = None) -> None:
+        """Delete user memory from database."""
+        if not self.db:
+            log_warning("MemoryCompiler: Database not configured")
+            return
+        cast(BaseDb, self.db).delete_user_memory_v2(user_id or "default")
+
+    async def adelete_user_memory_v2(self, user_id: Optional[str] = None) -> None:
+        """Delete user memory from database (async)."""
+        if not self.db:
+            log_warning("MemoryCompiler: Database not configured")
+            return
+        if isinstance(self.db, AsyncBaseDb):
+            await self.db.delete_user_memory_v2(user_id or "default")
+        else:
+            self.db.delete_user_memory_v2(user_id or "default")
+
+    def compile_user_memory_v2(self, user_id: Optional[str] = None) -> str:
+        """Compile user memory into context string."""
+        memory = self.get_user_memory_v2(user_id)
+        return self._build_memory_context(memory) if memory else ""
+
+    async def acompile_user_memory_v2(self, user_id: Optional[str] = None) -> str:
+        """Compile user memory into context string (async)."""
+        memory = await self.aget_user_memory_v2(user_id)
+        return self._build_memory_context(memory) if memory else ""
+
+    def create_user_memory_v2(self, message: str, user_id: Optional[str] = None) -> str:
+        """Extract memory from user message."""
+        if not self.db:
+            log_warning("No DB configured")
+            return "Database not configured"
+        if not self.model:
+            log_warning("Memory Compiler Model not configured")
+            return "MemoryCompiler: Model not configured"
+        if not message:
+            return "No message provided"
+
+        # Load existing memory for LLM context
+        user_id = user_id or "default"
+        memory = self.get_user_memory_v2(user_id) or UserMemoryV2(user_id=user_id)
+
+        # Get extraction tools based on schema configuration
+        use_schemas = (
+            self.use_default_schemas
+            or self.user_profile_schema is not None
+            or self.user_policies_schema is not None
+            or self.user_knowledge_schema is not None
+            or self.user_feedback_schema is not None
+        )
+        tools = self._compile_schema_tools(memory) if use_schemas else self._compile_tools(memory)
+
+        # Send to Model for extraction
+        response = deepcopy(self.model).response(
+            messages=[self._build_user_system_message(memory), Message(role="user", content=message)],
+            tools=cast(list, tools),
+        )
+
+        # Save if any tools were executed
+        if response.tool_executions:
+            memory.bump_updated_at()
+            self.save_user_memory_v2(memory)
+
+        return response.content or "No response"
+
+    def _compile_tools(self, memory: UserMemoryV2) -> List[Function]:
+        """Get key-value based extraction tools."""
+        if not self.enable_user_memories:
+            return []
+
+        def save_user_profile(key: str, value: Any) -> str:
+            memory.profile[key] = value
+            return f"Saved profile: {key}"
+
+        def delete_user_profile(key: str) -> str:
+            memory.profile.pop(key, None)
+            return f"Deleted profile: {key}"
+
+        def save_user_knowledge(key: str, value: Any) -> str:
+            memory.layers.setdefault("knowledge", {})[key] = value
+            return f"Saved knowledge: {key}"
+
+        def delete_user_knowledge(key: str) -> str:
+            memory.layers.get("knowledge", {}).pop(key, None)
+            return f"Deleted knowledge: {key}"
+
+        def save_user_policy(key: str, value: Any) -> str:
+            memory.layers.setdefault("policies", {})[key] = value
+            return f"Saved policy: {key}"
+
+        def delete_user_policy(key: str) -> str:
+            memory.layers.get("policies", {}).pop(key, None)
+            return f"Deleted policy: {key}"
+
+        def save_user_feedback(key: str, value: Any) -> str:
+            memory.layers.setdefault("feedback", {})[key] = value
+            return f"Saved feedback: {key}"
+
+        def delete_user_feedback(key: str) -> str:
+            memory.layers.get("feedback", {}).pop(key, None)
+            return f"Deleted feedback: {key}"
+
+        tools: List[Any] = []
+        if self.enable_user_profile:
+            tools.extend([save_user_profile, delete_user_profile])
+        if self.enable_user_knowledge:
+            tools.extend([save_user_knowledge, delete_user_knowledge])
+        if self.enable_user_policies:
+            tools.extend([save_user_policy, delete_user_policy])
+        if self.enable_user_feedback:
+            tools.extend([save_user_feedback, delete_user_feedback])
+
+        return [Function.from_callable(t, strict=self.strict_schema_validation) for t in tools]
+
+    def _compile_schema_tools(self, memory: UserMemoryV2) -> List[Function]:
+        """Get schema-based extraction tools."""
+        if not self.enable_user_memories:
+            return []
+
+        from agno.memory_v2.schemas import UserFeedback, UserKnowledge, UserPolicies, UserProfile
+
+        tools: List[Any] = []
+
+        if self.enable_user_profile:
+            ProfileSchema = self.user_profile_schema or UserProfile
+
+            def save_profile(updates: ProfileSchema) -> str:  # type: ignore
+                """Save user profile (name, company, role, skills, etc.)."""
+                for key, value in updates.model_dump(exclude_none=True).items():  # type: ignore[attr-defined]
+                    memory.profile[key] = value
+                return "Profile saved"
+
+            def delete_profile_fields(keys: List[str]) -> str:
+                """Delete specific profile fields."""
+                for key in keys:
+                    memory.profile.pop(key, None)
+                return f"Deleted profile fields: {keys}"
+
+            tools.extend([save_profile, delete_profile_fields])
+
+        if self.enable_user_policies:
+            PoliciesSchema = self.user_policies_schema or UserPolicies
+
+            def save_policies(updates: PoliciesSchema) -> str:  # type: ignore
+                """Save user preferences (response_style, tone, formatting)."""
+                policies = memory.layers.setdefault("policies", {})
+                for key, value in updates.model_dump(exclude_none=True).items():  # type: ignore[attr-defined]
+                    policies[key] = value
+                return "Policies saved"
+
+            def delete_policy_fields(keys: List[str]) -> str:
+                """Delete specific policy fields."""
+                policies = memory.layers.get("policies", {})
+                for key in keys:
+                    policies.pop(key, None)
+                return f"Deleted policy fields: {keys}"
+
+            tools.extend([save_policies, delete_policy_fields])
+
+        if self.enable_user_knowledge:
+            KnowledgeSchema = self.user_knowledge_schema or UserKnowledge
+
+            def save_knowledge(updates: KnowledgeSchema) -> str:  # type: ignore
+                """Save user context (current_project, tech_stack, interests)."""
+                knowledge = memory.layers.setdefault("knowledge", {})
+                for key, value in updates.model_dump(exclude_none=True).items():  # type: ignore[attr-defined]
+                    knowledge[key] = value
+                return "Knowledge saved"
+
+            def delete_knowledge_fields(keys: List[str]) -> str:
+                """Delete specific knowledge fields."""
+                knowledge = memory.layers.get("knowledge", {})
+                for key in keys:
+                    knowledge.pop(key, None)
+                return f"Deleted knowledge fields: {keys}"
+
+            tools.extend([save_knowledge, delete_knowledge_fields])
+
+        if self.enable_user_feedback:
+            FeedbackSchema = self.user_feedback_schema or UserFeedback
+
+            def save_feedback(updates: FeedbackSchema) -> str:  # type: ignore
+                """Save user feedback (preferences, opinions, suggestions)."""
+                feedback = memory.layers.setdefault("feedback", {})
+                for key, value in updates.model_dump(exclude_none=True).items():  # type: ignore[attr-defined]
+                    feedback[key] = value
+                return "Feedback saved"
+
+            def delete_feedback_fields(keys: List[str]) -> str:
+                """Delete specific feedback fields."""
+                feedback = memory.layers.get("feedback", {})
+                for key in keys:
+                    feedback.pop(key, None)
+                return f"Deleted feedback fields: {keys}"
+
+            tools.extend([save_feedback, delete_feedback_fields])
+
+        return [Function.from_callable(t, strict=self.strict_schema_validation) for t in tools]
+
+    async def acreate_user_memory_v2(self, message: str, user_id: Optional[str] = None) -> str:
+        """Extract memory from user message (async)."""
+        if not self.db:
+            return "Database not configured"
+        if not self.model:
+            return "MemoryCompiler: Model not configured"
+        if not message:
+            return "No message provided"
+
+        # Load existing memory for LLM context
+        user_id = user_id or "default"
+        memory = await self.aget_user_memory_v2(user_id) or UserMemoryV2(user_id=user_id)
+
+        # Get extraction tools based on schema configuration
+        use_schemas = (
+            self.use_default_schemas
+            or self.user_profile_schema is not None
+            or self.user_policies_schema is not None
+            or self.user_knowledge_schema is not None
+            or self.user_feedback_schema is not None
+        )
+        tools = self._compile_schema_tools(memory) if use_schemas else self._compile_tools(memory)
+
+        # Send to LLM for extraction
+        response = await deepcopy(self.model).aresponse(
+            messages=[self._build_user_system_message(memory), Message(role="user", content=message)],
+            tools=cast(list, tools),
+        )
+
+        # Save if any tools were executed
+        if response.tool_executions:
+            memory.bump_updated_at()
+            await self.asave_user_memory_v2(memory)
+
+        return response.content or "No response"
+
+    def _build_memory_context(self, memory: UserMemoryV2) -> str:
         data: Dict[str, Any] = {}
-        if user_profile.policies:
-            data["policies"] = user_profile.policies
-        if user_profile.user_profile:
-            data["profile"] = user_profile.user_profile
-        if user_profile.knowledge:
-            data["knowledge"] = user_profile.knowledge
-        if user_profile.feedback:
-            data["feedback"] = user_profile.feedback
+        policies = memory.layers.get("policies", {})
+        knowledge = memory.layers.get("knowledge", {})
+        feedback = memory.layers.get("feedback", {})
+        if policies:
+            data["policies"] = policies
+        if memory.profile:
+            data["profile"] = memory.profile
+        if knowledge:
+            data["knowledge"] = knowledge
+        if feedback:
+            data["feedback"] = feedback
         if not data:
             return ""
-        # Use compact JSON to reduce token usage
         return f"<user_memory>\n{json.dumps(data, separators=(',', ':'))}\n</user_memory>"
 
-    def create_user_profile(
-        self,
-        message: str,
-        user_id: Optional[str] = None,
-    ) -> str:
-        """Creates or updates user profile from a message."""
-        if self.db is None:
-            log_warning("Database not provided.")
-            return "Please provide a db to store profile"
+    def _build_user_system_message(self, existing: Optional[UserMemoryV2] = None) -> Message:
+        """Build system prompt for LLM extraction."""
+        # Default layer instructions
+        default_profile = dedent("""\
+            Capture stable identity information about the user:
+            - Personal identity: name, preferred name, age, location, timezone
+            - Professional identity: role, title, company, team, department
+            - Experience: years of experience, seniority level, career background
+            - Only save facts unlikely to change frequently""")
 
-        if not message:
-            return "No message provided"
+        default_knowledge = dedent("""\
+            Capture the user's skills, expertise, and current context:
+            - Technical skills: programming languages, frameworks, libraries, tools
+            - Domain expertise: areas of specialization, industries worked in
+            - Current work: active projects, tech stack in use, challenges faced
+            - Interests: topics learning, technologies exploring""")
 
-        if user_id is None:
-            user_id = "default"
+        default_policies = dedent("""\
+            Capture explicit preferences for response formatting:
+            - Communication style: concise vs detailed, formal vs casual
+            - Formatting: markdown, code blocks, bullet points, examples
+            - Code preferences: comments, type hints, error handling style
+            - Only save when user explicitly requests a preference""")
 
-        log_debug("MemoryCompiler Start", center=True)
-        result = self._extract_with_tools(message, user_id)
-        log_debug("MemoryCompiler End", center=True)
-        return result
+        default_feedback = dedent("""\
+            Capture any feedback the user provides:
+            - Preferences, opinions, or sentiments
+            - Things they like or dislike
+            - Suggestions or requests""")
 
-    async def acreate_user_profile(
-        self,
-        message: str,
-        user_id: Optional[str] = None,
-    ) -> str:
-        """Creates or updates user profile from a message (async)."""
-        if self.db is None:
-            log_warning("Database not provided.")
-            return "Please provide a db to store profile"
+        # Build layer info from enabled layers
+        layers = []
+        tool_names = []
+        if self.enable_user_profile:
+            desc = self.user_profile_instructions or default_profile
+            layers.append(("Profile", desc))
+            tool_names.append("profile")
+        if self.enable_user_knowledge:
+            desc = self.user_knowledge_instructions or default_knowledge
+            layers.append(("Knowledge", desc))
+            tool_names.append("knowledge")
+        if self.enable_user_policies:
+            desc = self.user_policies_instructions or default_policies
+            layers.append(("Policy", desc))
+            tool_names.append("policy")
+        if self.enable_user_feedback:
+            desc = self.user_feedback_instructions or default_feedback
+            layers.append(("Feedback", desc))
+            tool_names.append("feedback")
 
-        if not message:
-            return "No message provided"
+        # Build layer descriptions
+        layer_sections = []
+        for name, desc in layers:
+            layer_sections.append(f"{name}:\n{desc}")
+        layer_descriptions = "\n\n".join(layer_sections)
 
-        if user_id is None:
-            user_id = "default"
+        # Build tool names
+        save_tools = [f"save_user_{name}" for name in tool_names]
+        delete_tools = [f"delete_user_{name}" for name in tool_names]
 
-        log_debug("MemoryCompiler Start", center=True)
-        result = await self._aextract_with_tools(message, user_id)
-        log_debug("MemoryCompiler End", center=True)
-        return result
+        custom_instructions = ""
+        if self.user_memory_capture_instructions:
+            custom_instructions = f"\nAdditional guidance:\n{self.user_memory_capture_instructions}\n"
 
-    def _extract_with_tools(self, message: str, user_id: str) -> str:
-        """Extract profile using flexible tool-based approach."""
-        if self.model is None:
-            log_warning("Model not configured")
-            return "Model not configured"
-        if self.db is None:
-            log_warning("Database not configured")
-            return "Database not configured"
+        prompt = dedent(f"""\
+            You are a Memory Manager that extracts user information from conversations.
 
-        existing_profile = self.get_user_profile(user_id)
+            SECURITY - NEVER STORE:
+            - Secrets, credentials, API keys, passwords
+            - Sensitive personal data (SSN, credit cards, etc.)
 
-        model_copy = deepcopy(self.model)
+            MEMORY LAYERS:
 
-        # Prepare tools and wrap them as Function objects
-        raw_tools = self._get_db_tools(
-            user_id=user_id,
-            db=cast(BaseDb, self.db),
-            input_string=message,
-            enable_update_profile=self.update_profile,
-            enable_delete_profile=self.delete_profile,
+            {layer_descriptions}
+            {custom_instructions}
+            TOOLS:
+            Save: {", ".join(save_tools)}
+            Delete: {", ".join(delete_tools)}
+
+            GUIDELINES:
+            - Use brief, third-person statements ("User is a senior engineer")
+            - Only save NEW information not already in existing memory
+            - Skip trivial, one-time, or already-stored information
+
+            EXAMPLE:
+            Message: "I'm Alex, I work at TechCorp. Please be concise."
+            -> save_user_profile("name", "Alex")
+            -> save_user_profile("company", "TechCorp")
+            -> save_user_policy("response_style", "concise")""")
+
+        if existing:
+            context = self._build_memory_context(existing)
+            if context:
+                prompt += f"\n\n<existing_memory>\n{context}\n</existing_memory>"
+
+        return Message(role="system", content=prompt)
+
+    def get_memory_tools(self, user_id: str) -> List[Function]:
+        """Get tools for agentic memory updates (used by Agent/Team)."""
+        use_schemas = (
+            self.use_default_schemas
+            or self.user_profile_schema is not None
+            or self.user_policies_schema is not None
+            or self.user_knowledge_schema is not None
+            or self.user_feedback_schema is not None
         )
-        _tools = self.determine_tools_for_model(raw_tools)
+        if use_schemas:
+            return self._agentic_schema_tools(user_id)
+        return self._agentic_tools(user_id)
 
-        # Prepare the List of messages to send to the Model
-        messages_for_model: List[Message] = [
-            self.get_system_message(
-                existing_profile=existing_profile,
-                enable_update_profile=self.update_profile,
-                enable_delete_profile=self.delete_profile,
-            ),
-            Message(role="user", content=message),
-        ]
+    def _agentic_tools(self, user_id: str) -> List[Function]:
+        """Get key-value tools that stage updates for batch commit."""
+        tools: List[Function] = []
 
-        # Generate a response from the Model (includes running function calls)
-        response = model_copy.response(
-            messages=messages_for_model,
-            tools=_tools,
-        )
+        if self.enable_user_profile:
 
-        if response.tool_calls is not None and len(response.tool_calls) > 0:
-            self.profile_updated = True
+            def save_user_profile(key: str, value: Any, run_context: RunContext) -> str:
+                """Save user identity info (name, company, role, location)."""
+                stage_update(run_context, user_id, "profile", key, value)
+                return f"Saved profile: {key}"
 
-        return response.content or "No response from model"
+            def delete_user_profile(key: str, run_context: RunContext) -> str:
+                """Delete user identity info."""
+                stage_update(run_context, user_id, "profile", key, None, "delete")
+                return f"Deleted profile: {key}"
 
-    async def _aextract_with_tools(self, message: str, user_id: str) -> str:
-        """Extract profile using flexible tool-based approach - async."""
-        if self.model is None:
-            log_warning("Model not configured")
-            return "Model not configured"
-        if self.db is None:
-            log_warning("Database not configured")
-            return "Database not configured"
+            tools.append(Function.from_callable(save_user_profile))
+            tools.append(Function.from_callable(delete_user_profile))
 
-        existing_profile = await self.aget_user_profile(user_id)
+        if self.enable_user_knowledge:
 
-        model_copy = deepcopy(self.model)
+            def save_user_knowledge(key: str, value: Any, run_context: RunContext) -> str:
+                """Save a fact about the user (interests, hobbies, habits)."""
+                stage_update(run_context, user_id, "knowledge", key, value)
+                return f"Saved knowledge: {key}"
 
-        # Prepare tools and wrap them as Function objects
-        if isinstance(self.db, AsyncBaseDb):
-            raw_tools = await self._aget_db_tools(
-                user_id=user_id,
-                db=self.db,
-                input_string=message,
-                enable_update_profile=self.update_profile,
-                enable_delete_profile=self.delete_profile,
-            )
-        else:
-            raw_tools = self._get_db_tools(
-                user_id=user_id,
-                db=self.db,
-                input_string=message,
-                enable_update_profile=self.update_profile,
-                enable_delete_profile=self.delete_profile,
-            )
-        _tools = self.determine_tools_for_model(raw_tools)
+            def delete_user_knowledge(key: str, run_context: RunContext) -> str:
+                """Delete a knowledge fact."""
+                stage_update(run_context, user_id, "knowledge", key, None, "delete")
+                return f"Deleted knowledge: {key}"
 
-        # Prepare the List of messages to send to the Model
-        messages_for_model: List[Message] = [
-            self.get_system_message(
-                existing_profile=existing_profile,
-                enable_update_profile=self.update_profile,
-                enable_delete_profile=self.delete_profile,
-            ),
-            Message(role="user", content=message),
-        ]
+            tools.append(Function.from_callable(save_user_knowledge))
+            tools.append(Function.from_callable(delete_user_knowledge))
 
-        # Generate a response from the Model (includes running function calls)
-        response = await model_copy.aresponse(
-            messages=messages_for_model,
-            tools=_tools,
-        )
+        if self.enable_user_policies:
 
-        if response.tool_calls is not None and len(response.tool_calls) > 0:
-            self.profile_updated = True
+            def save_user_policy(key: str, value: Any, run_context: RunContext) -> str:
+                """Save a behavior rule (be concise, no emojis)."""
+                stage_update(run_context, user_id, "policies", key, value)
+                return f"Saved policy: {key}"
 
-        return response.content or "No response from model"
+            def delete_user_policy(key: str, run_context: RunContext) -> str:
+                """Delete a behavior rule."""
+                stage_update(run_context, user_id, "policies", key, None, "delete")
+                return f"Deleted policy: {key}"
 
-    def get_system_message(
-        self,
-        existing_profile: Optional[UserProfile] = None,
-        enable_delete_profile: bool = True,
-        enable_update_profile: bool = True,
-    ) -> Message:
-        if self.system_message is not None:
-            return Message(role="system", content=self.system_message)
+            tools.append(Function.from_callable(save_user_policy))
+            tools.append(Function.from_callable(delete_user_policy))
 
-        profile_capture_instructions = self.profile_capture_instructions or dedent(
-            """\
-            Capture user information into the appropriate memory layer:
-            - Profile: identity info (name, company, role, location, tone preference)
-            - Knowledge: personal facts (interests, hobbies, habits, plans, preferences)
-            - Policies: behavior rules (no emojis, be concise, avoid buzzwords)
-            - Feedback: evaluative signals (what user liked/disliked about responses)"""
-        )
+        if self.enable_user_feedback:
 
-        system_prompt = dedent(f"""\
-            You are a Profile Manager responsible for managing information and preferences about the user.
+            def save_user_feedback(key: str, value: Any, run_context: RunContext) -> str:
+                """Save user feedback (preferences, opinions, suggestions)."""
+                stage_update(run_context, user_id, "feedback", key, value)
+                return f"Saved feedback: {key}"
 
-            ## Security Rules
-            NEVER store secrets, credentials, API keys, passwords, tokens, or any sensitive authentication data.
-            If the user mentions such information, do NOT save it to the profile.
+            def delete_user_feedback(key: str, run_context: RunContext) -> str:
+                """Delete a feedback field."""
+                stage_update(run_context, user_id, "feedback", key, None, "delete")
+                return f"Deleted feedback: {key}"
 
-            ## When to Add or Update Profile
-            - Decide if profile information needs to be added, updated, or deleted based on the user's message.
-            - If the user's message meets the criteria in <profile_to_capture> and is not already in <existing_profile>, capture it.
-            - If the message does not meet the criteria, no updates are needed.
-            - If the existing profile already captures the relevant information, no updates are needed.
+            tools.append(Function.from_callable(save_user_feedback))
+            tools.append(Function.from_callable(delete_user_feedback))
 
-            ## Categorization Rules
-            Use the correct info_type for each piece of information:
+        return tools
 
-            info_type='profile' - ONLY for identity:
-            - name, preferred_name, company, role, location, tone_preference
+    def _agentic_schema_tools(self, user_id: str) -> List[Function]:
+        """Get schema-based tools that stage updates for batch commit."""
 
-            info_type='knowledge' - For learned facts about the user:
-            - interests, hobbies, habits, plans, preferences, personal facts
+        tools: List[Function] = []
 
-            info_type='policy' - For behavior rules:
-            - constraints, preferences about AI behavior (no emojis, be concise)
+        if self.enable_user_profile:
+            ProfileSchema = self.user_profile_schema or UserProfile
 
-            info_type='feedback' - For SPECIFIC response preferences:
-            - key='positive': specific format/style/content the user liked
-            - key='negative': specific format/style/content the user disliked
-            - SKIP vague praise ("great job", "thanks") - not actionable
-            - Only save if it tells you HOW to improve future responses
+            def save_profile(updates, run_context: RunContext) -> str:
+                """Save user profile (name, company, role, skills, etc.)."""
+                for key, value in updates.model_dump(exclude_none=True).items():
+                    stage_update(run_context, user_id, "profile", key, value)
+                return "Profile saved"
 
-            ## How to Save Information
-            Capture key details as brief, third-person statements.
+            def delete_profile_fields(keys: List[str], run_context: RunContext) -> str:
+                """Delete specific profile fields."""
+                for key in keys:
+                    stage_update(run_context, user_id, "profile", key, None, "delete")
+                return f"Deleted profile fields: {keys}"
 
-            Examples:
-            - 'My name is John Doe' -> info_type='profile', key='name', value='John Doe'
-            - 'I work at Acme Corp' -> info_type='profile', key='company', value='Acme Corp'
-            - 'I like anime and video games' -> info_type='knowledge', key='interests', value='enjoys anime and video games'
-            - 'I go to the gym every day' -> info_type='knowledge', key='habit', value='goes to the gym daily'
-            - 'Please be concise' -> info_type='policy', key='response_style', value='prefers concise responses'
-            - 'I love how you used bullet points' -> info_type='feedback', key='positive', value='prefers bullet point format'
-            - 'That was too long' -> info_type='feedback', key='negative', value='prefers shorter responses'
-            - 'Great!' -> DO NOT SAVE (too vague, not actionable)
+            save_profile.__annotations__["updates"] = ProfileSchema
+            tools.append(Function.from_callable(save_profile, strict=self.strict_schema_validation))
+            tools.append(Function.from_callable(delete_profile_fields, strict=self.strict_schema_validation))
 
-            Create multiple entries if needed. Don't repeat information.
-            If user asks to forget something, delete the relevant entry.
+        if self.enable_user_policies:
+            PoliciesSchema = self.user_policies_schema or UserPolicies
 
-            <profile_to_capture>
-            {profile_capture_instructions}
-            </profile_to_capture>
+            def save_policies(updates, run_context: RunContext) -> str:
+                """Save user preferences (response_style, tone, formatting)."""
+                for key, value in updates.model_dump(exclude_none=True).items():
+                    stage_update(run_context, user_id, "policies", key, value)
+                return "Policies saved"
 
-            ## Updating Profile
-            You can:
-            - Decide to make no changes.""")
+            def delete_policy_fields(keys: List[str], run_context: RunContext) -> str:
+                """Delete specific policy fields."""
+                for key in keys:
+                    stage_update(run_context, user_id, "policies", key, None, "delete")
+                return f"Deleted policy fields: {keys}"
 
-        if enable_update_profile:
-            system_prompt += "\n- Add or update profile information using the `save_profile_field` tool."
-        if enable_delete_profile:
-            system_prompt += "\n- Delete profile information using the `delete_profile_field` tool."
+            save_policies.__annotations__["updates"] = PoliciesSchema
+            tools.append(Function.from_callable(save_policies, strict=self.strict_schema_validation))
+            tools.append(Function.from_callable(delete_policy_fields, strict=self.strict_schema_validation))
 
-        system_prompt += "\n\nYou can call multiple tools in a single response if needed. Only add or update profile information if it is necessary to capture key information provided by the user."
+        if self.enable_user_knowledge:
+            KnowledgeSchema = self.user_knowledge_schema or UserKnowledge
 
-        if existing_profile:
-            existing = self._format_profile_as_context(existing_profile)
-            if existing:
-                system_prompt += f"\n\n<existing_profile>\n{existing}\n</existing_profile>"
+            def save_knowledge(updates, run_context: RunContext) -> str:
+                """Save user context (current_project, tech_stack, interests)."""
+                for key, value in updates.model_dump(exclude_none=True).items():
+                    stage_update(run_context, user_id, "knowledge", key, value)
+                return "Knowledge saved"
 
-        if self.additional_instructions:
-            system_prompt += f"\n\n{self.additional_instructions}"
+            def delete_knowledge_fields(keys: List[str], run_context: RunContext) -> str:
+                """Delete specific knowledge fields."""
+                for key in keys:
+                    stage_update(run_context, user_id, "knowledge", key, None, "delete")
+                return f"Deleted knowledge fields: {keys}"
 
-        return Message(role="system", content=system_prompt)
+            save_knowledge.__annotations__["updates"] = KnowledgeSchema
+            tools.append(Function.from_callable(save_knowledge, strict=self.strict_schema_validation))
+            tools.append(Function.from_callable(delete_knowledge_fields, strict=self.strict_schema_validation))
 
-    def determine_tools_for_model(self, tools: List[Callable]) -> List[Union[Function, Dict[Any, Any]]]:
-        """Convert callable tools to Function objects for the model."""
-        _functions: List[Union[Function, Dict[Any, Any]]] = []
-        for tool in tools:
-            func = Function.from_callable(tool, strict=True)
-            func.strict = True
-            _functions.append(func)
-        return _functions
+        if self.enable_user_feedback:
+            FeedbackSchema = self.user_feedback_schema or UserFeedback
 
-    def _save_to_user_memory_layer(self, user_id: str, info_type: str, key: str, value: str) -> str:
-        """Save to user memory layer."""
-        profile = self.get_user_profile(user_id) or UserProfile(user_id=user_id)
-        result = self._apply_save_to_layer(profile, info_type, key, value)
-        if not result.startswith("Error"):
-            self.save_user_profile(profile)
-        return result
+            def save_feedback(updates, run_context: RunContext) -> str:
+                """Save user feedback (preferences, opinions, suggestions)."""
+                for key, value in updates.model_dump(exclude_none=True).items():
+                    stage_update(run_context, user_id, "feedback", key, value)
+                return "Feedback saved"
 
-    async def _asave_to_user_memory_layer(self, user_id: str, info_type: str, key: str, value: str) -> str:
-        """Async save to user memory layer."""
-        profile = await self.aget_user_profile(user_id) or UserProfile(user_id=user_id)
-        result = self._apply_save_to_layer(profile, info_type, key, value)
-        if not result.startswith("Error"):
-            await self.asave_user_profile(profile)
-        return result
+            def delete_feedback_fields(keys: List[str], run_context: RunContext) -> str:
+                """Delete specific feedback fields."""
+                for key in keys:
+                    stage_update(run_context, user_id, "feedback", key, None, "delete")
+                return f"Deleted feedback fields: {keys}"
 
-    def _delete_from_user_memory_layer(self, user_id: str, info_type: str, key: str) -> str:
-        """Delete from user memory layer."""
-        profile = self.get_user_profile(user_id)
-        if not profile:
-            return f"No profile found for user {user_id}"
-        result = self._apply_delete_from_layer(profile, info_type, key)
-        if not result.startswith("Error") and not result.endswith("not found"):
-            self.save_user_profile(profile)
-        return result
+            save_feedback.__annotations__["updates"] = FeedbackSchema
+            tools.append(Function.from_callable(save_feedback, strict=self.strict_schema_validation))
+            tools.append(Function.from_callable(delete_feedback_fields, strict=self.strict_schema_validation))
 
-    async def _adelete_from_user_memory_layer(self, user_id: str, info_type: str, key: str) -> str:
-        """Async delete from user memory layer."""
-        profile = await self.aget_user_profile(user_id)
-        if not profile:
-            return f"No profile found for user {user_id}"
-        result = self._apply_delete_from_layer(profile, info_type, key)
-        if not result.startswith("Error") and not result.endswith("not found"):
-            await self.asave_user_profile(profile)
-        return result
+        return tools
 
-    def _get_db_tools(
-        self,
-        user_id: str,
-        db: BaseDb,
-        input_string: str,
-        enable_update_profile: bool = True,
-        enable_delete_profile: bool = True,
-    ) -> List[Callable]:
-        """Create tools for model to call during create_user_profile."""
 
-        def save_profile_field(info_type: str, key: str, value: str) -> str:
-            """Save user profile information. NEVER store secrets, credentials, API keys, or passwords.
-            Args:
-                info_type (str): The type of information (profile/policy/knowledge/feedback).
-                key (str): The key/name for the information.
-                value (str): The value to save.
-            Returns:
-                str: A message indicating if the information was saved successfully or not.
-            """
-            return self._save_to_user_memory_layer(user_id, info_type, key, value)
+USER_MEMORY_KEY = "_pending_user_memory"
 
-        def delete_profile_field(info_type: str, key: str) -> str:
-            """Delete/forget user profile information.
-            Args:
-                info_type (str): The type of information (profile/policy/knowledge/feedback).
-                key (str): The key/name of the information to delete.
-            Returns:
-                str: A message indicating if the information was deleted successfully or not.
-            """
-            return self._delete_from_user_memory_layer(user_id, info_type, key)
 
-        functions: List[Callable] = []
-        if enable_update_profile:
-            functions.append(save_profile_field)
-        if enable_delete_profile:
-            functions.append(delete_profile_field)
-        return functions
+def stage_update(
+    run_context: RunContext,
+    user_id: str,
+    layer: str,
+    key: str,
+    value: Any,
+    action: str = "set",
+) -> None:
+    """Stage a memory update for batch commit."""
+    if run_context.session_state is None:
+        run_context.session_state = {}
+    pending = run_context.session_state.setdefault(USER_MEMORY_KEY, {"user_id": user_id})
 
-    async def _aget_db_tools(
-        self,
-        user_id: str,
-        db: Union[BaseDb, AsyncBaseDb],
-        input_string: str,
-        enable_update_profile: bool = True,
-        enable_delete_profile: bool = True,
-    ) -> List[Callable]:
-        """Create async tools for model to call during acreate_user_profile."""
+    if action == "delete":
+        # Track deletion in separate dict
+        deletes = pending.setdefault("_deletes", {})
+        delete_keys = deletes.setdefault(layer, [])
+        if key not in delete_keys:
+            delete_keys.append(key)
+    else:
+        # All layers (profile, knowledge, policies, feedback): set value in layer dict
+        layer_dict = pending.setdefault(layer, {})
+        layer_dict[key] = value
 
-        async def save_profile_field(info_type: str, key: str, value: str) -> str:
-            """Save user profile information. NEVER store secrets, credentials, API keys, or passwords.
-            Args:
-                info_type (str): The type of information (profile/policy/knowledge/feedback).
-                key (str): The key/name for the information.
-                value (str): The value to save.
-            Returns:
-                str: A message indicating if the information was saved successfully or not.
-            """
-            return await self._asave_to_user_memory_layer(user_id, info_type, key, value)
 
-        async def delete_profile_field(info_type: str, key: str) -> str:
-            """Delete/forget user profile information.
-            Args:
-                info_type (str): The type of information (profile/policy/knowledge/feedback).
-                key (str): The key/name of the information to delete.
-            Returns:
-                str: A message indicating if the information was deleted successfully or not.
-            """
-            return await self._adelete_from_user_memory_layer(user_id, info_type, key)
+def commit_pending(db: BaseDb, user_id: str, run_context: RunContext) -> bool:
+    """Write all staged updates to DB in one call."""
+    if not run_context.session_state or USER_MEMORY_KEY not in run_context.session_state:
+        return True
 
-        functions: List[Callable] = []
-        if enable_update_profile:
-            functions.append(save_profile_field)
-        if enable_delete_profile:
-            functions.append(delete_profile_field)
-        return functions
+    pending = run_context.session_state[USER_MEMORY_KEY]
+    if pending.get("user_id") != user_id:
+        return True
 
-    def _apply_save_to_layer(self, profile: UserProfile, info_type: str, key: str, value: str) -> str:
-        """Modify profile in-place. Returns success/error message."""
-        if info_type != "profile" and profile.memory_layers is None:
-            profile.memory_layers = {}
+    # Load existing memory
+    result = db.get_user_memory_v2(user_id)
+    if isinstance(result, dict):
+        memory = UserMemoryV2.from_dict(result)
+    else:
+        memory = result or UserMemoryV2(user_id=user_id)
 
-        if info_type == "profile":
-            if profile.user_profile is None:
-                profile.user_profile = {}
-            profile.user_profile[key] = value
+    # Apply pending updates, save, and clear
+    _apply_pending_updates(memory, pending)
+    memory.bump_updated_at()
+    db.upsert_user_memory_v2(memory)
+    run_context.session_state.pop(USER_MEMORY_KEY, None)
+    log_debug(f"Committed user memory updates for {user_id}")
+    return True
 
-        elif info_type == "policy":
-            profile.memory_layers.setdefault("policies", {})[key] = value
 
-        elif info_type == "knowledge":
-            knowledge = profile.memory_layers.setdefault("knowledge", [])
-            profile.memory_layers["knowledge"] = [f for f in knowledge if f.get("key") != key]
-            profile.memory_layers["knowledge"].append({"key": key, "value": value})
+async def acommit_pending(db: Union[AsyncBaseDb, BaseDb], user_id: str, run_context: RunContext) -> bool:
+    """Write all staged updates to DB in one call (async)."""
+    if not run_context.session_state or USER_MEMORY_KEY not in run_context.session_state:
+        return True
 
-        elif info_type == "feedback":
-            if key not in ("positive", "negative"):
-                return f"Error: For feedback, key must be 'positive' or 'negative', got '{key}'"
-            feedback = profile.memory_layers.setdefault("feedback", {"positive": [], "negative": []})
-            if value not in feedback.setdefault(key, []):
-                feedback[key].append(value)
+    pending = run_context.session_state[USER_MEMORY_KEY]
+    if pending.get("user_id") != user_id:
+        return True
 
-        else:
-            return f"Error: Unknown info_type: {info_type}"
+    # Load existing memory
+    if isinstance(db, AsyncBaseDb):
+        result = await db.get_user_memory_v2(user_id)
+    else:
+        result = db.get_user_memory_v2(user_id)
 
-        log_debug(f"Saved {info_type} {key}={value} for {profile.user_id}")
-        return f"Saved {info_type}: {key} = {value}"
+    if isinstance(result, dict):
+        memory = UserMemoryV2.from_dict(result)
+    else:
+        memory = result or UserMemoryV2(user_id=user_id)
 
-    def _apply_delete_from_layer(self, profile: UserProfile, info_type: str, key: str) -> str:
-        """Modify profile in-place. Returns success/error message."""
-        layers = profile.memory_layers or {}
+    # Apply pending updates, save, and clear
+    _apply_pending_updates(memory, pending)
+    memory.bump_updated_at()
+    if isinstance(db, AsyncBaseDb):
+        await db.upsert_user_memory_v2(memory)
+    else:
+        db.upsert_user_memory_v2(memory)
+    run_context.session_state.pop(USER_MEMORY_KEY, None)
+    log_debug(f"Committed user memory updates for {user_id}")
+    return True
 
-        if info_type == "profile":
-            if profile.user_profile and key in profile.user_profile:
-                del profile.user_profile[key]
-            else:
-                return f"Key '{key}' not found in profile"
 
-        elif info_type == "policy":
-            policies = layers.get("policies", {})
-            if key in policies:
-                del policies[key]
-            else:
-                return f"Key '{key}' not found in policies"
+def _apply_pending_updates(memory: UserMemoryV2, pending: Dict[str, Any]) -> None:
+    """Merge pending updates into memory."""
+    # First: Apply additions
+    # Profile
+    for key, value in pending.get("profile", {}).items():
+        memory.profile[key] = value
 
-        elif info_type == "knowledge":
-            knowledge = layers.get("knowledge", [])
-            before = len(knowledge)
-            profile.memory_layers["knowledge"] = [f for f in knowledge if f.get("key") != key]
-            if len(profile.memory_layers["knowledge"]) == before:
-                return f"Key '{key}' not found in knowledge"
+    # Policies
+    if pending.get("policies"):
+        if not isinstance(memory.layers.get("policies"), dict):
+            memory.layers["policies"] = {}
+        for key, value in pending["policies"].items():
+            memory.layers["policies"][key] = value
 
-        elif info_type == "feedback":
-            if key not in ("positive", "negative"):
-                return f"Error: For feedback, key must be 'positive' or 'negative', got '{key}'"
-            feedback = layers.get("feedback", {})
-            if key in feedback:
-                feedback[key] = []
-            else:
-                return f"Key '{key}' not found in feedback"
+    # Knowledge
+    if pending.get("knowledge"):
+        if not isinstance(memory.layers.get("knowledge"), dict):
+            memory.layers["knowledge"] = {}
+        for key, value in pending["knowledge"].items():
+            memory.layers["knowledge"][key] = value
 
-        else:
-            return f"Error: Unknown info_type: {info_type}"
+    if pending.get("feedback"):
+        if not isinstance(memory.layers.get("feedback"), dict):
+            memory.layers["feedback"] = {}
+        for key, value in pending["feedback"].items():
+            memory.layers["feedback"][key] = value
 
-        log_debug(f"Deleted {info_type} {key} for {profile.user_id}")
-        return f"Forgot {info_type}: {key}"
+    # Last: Apply deletions (delete wins over add in same run)
+    for layer, keys in pending.get("_deletes", {}).items():
+        if layer == "profile":
+            for key in keys:
+                memory.profile.pop(key, None)
+        elif layer in ("policies", "knowledge", "feedback"):
+            if isinstance(memory.layers.get(layer), dict):
+                for key in keys:
+                    memory.layers[layer].pop(key, None)
+
 
     # --- Organization Memory ---
 

@@ -413,8 +413,8 @@ SPAN_TABLE_SCHEMA = {
     "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
 }
 
-USER_PROFILES_TABLE_SCHEMA = {
-    "TableName": "agno_user_profiles",
+USER_MEMORY_V2_TABLE_SCHEMA = {
+    "TableName": "agno_user_memory",
     "KeySchema": [{"AttributeName": "user_id", "KeyType": "HASH"}],
     "AttributeDefinitions": [
         {"AttributeName": "user_id", "AttributeType": "S"},
@@ -452,7 +452,7 @@ def get_table_schema_definition(table_type: str) -> Dict[str, Any]:
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
         "spans": SPAN_TABLE_SCHEMA,
-        "user_profiles": USER_PROFILES_TABLE_SCHEMA,
+        "user_memory": USER_MEMORY_V2_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

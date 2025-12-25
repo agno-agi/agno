@@ -136,14 +136,14 @@ class DummyAsyncMemoryDb(AsyncBaseDb):
     async def upsert_cultural_knowledge(self, *args, **kwargs):
         raise NotImplementedError
 
-    # --- User Profiles ---
-    async def get_user_profile(self, *args, **kwargs):
+    # --- User Memory (v2) ---
+    async def get_user_memory_v2(self, *args, **kwargs):
         raise NotImplementedError
 
-    async def upsert_user_profile(self, *args, **kwargs):
+    async def upsert_user_memory_v2(self, *args, **kwargs):
         raise NotImplementedError
 
-    async def delete_user_profile(self, *args, **kwargs):
+    async def delete_user_memory_v2(self, *args, **kwargs):
         raise NotImplementedError
 
     # --- Traces ---

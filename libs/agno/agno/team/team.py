@@ -36,7 +36,7 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
-from agno.db.schemas.user_profile import UserProfile
+from agno.db.schemas.user_memory import UserMemoryV2
 from agno.eval.base import BaseEval
 from agno.exceptions import (
     InputCheckError,
@@ -1656,7 +1656,9 @@ class Team:
                     run_response.status = RunStatus.completed
 
                     # 13. Cleanup and store the run response
-                    self._cleanup_and_store(run_response=run_response, session=session)
+                    self._cleanup_and_store(
+                        run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
 
                     # Log Team Telemetry
                     self._log_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
@@ -1671,7 +1673,9 @@ class Team:
                     run_response.content = str(e)
 
                     # Cleanup and store the run response and session
-                    self._cleanup_and_store(run_response=run_response, session=session)
+                    self._cleanup_and_store(
+                        run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
 
                     return run_response
                 except (InputCheckError, OutputCheckError) as e:
@@ -1682,7 +1686,9 @@ class Team:
 
                     log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
 
-                    self._cleanup_and_store(run_response=run_response, session=session)
+                    self._cleanup_and_store(
+                        run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
 
                     return run_response
                 except KeyboardInterrupt:
@@ -1711,7 +1717,9 @@ class Team:
                     log_error(f"Error in Agent run: {str(e)}")
 
                     # Cleanup and store the run response and session
-                    self._cleanup_and_store(run_response=run_response, session=session)
+                    self._cleanup_and_store(
+                        run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
 
                     return run_response
         finally:
@@ -1989,7 +1997,9 @@ class Team:
                     run_response.status = RunStatus.completed
 
                     # 10. Cleanup and store the run response
-                    self._cleanup_and_store(run_response=run_response, session=session)
+                    self._cleanup_and_store(
+                        run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
 
                     if stream_events:
                         yield completed_event
@@ -2016,7 +2026,9 @@ class Team:
                         events_to_skip=self.events_to_skip,
                         store_events=self.store_events,
                     )
-                    self._cleanup_and_store(run_response=run_response, session=session)
+                    self._cleanup_and_store(
+                        run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
                     break
                 except (InputCheckError, OutputCheckError) as e:
                     run_response.status = RunStatus.error
@@ -2033,7 +2045,9 @@ class Team:
 
                     if run_response.content is None:
                         run_response.content = str(e)
-                    self._cleanup_and_store(run_response=run_response, session=session)
+                    self._cleanup_and_store(
+                        run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
                     yield run_error
                     break
 
@@ -2068,7 +2082,9 @@ class Team:
 
                     log_error(f"Error in Team run: {str(e)}")
 
-                    self._cleanup_and_store(run_response=run_response, session=session)
+                    self._cleanup_and_store(
+                        run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
                     yield run_error
         finally:
             # Cancel background futures on error (wait_for_thread_tasks_stream handles waiting on success)
@@ -2585,7 +2601,9 @@ class Team:
                     run_response.status = RunStatus.completed
 
                     # 15. Cleanup and store the run response and session
-                    await self._acleanup_and_store(run_response=run_response, session=team_session)
+                    await self._acleanup_and_store(
+                        run_response=run_response, session=team_session, run_context=run_context, user_id=user_id
+                    )
 
                     # Log Team Telemetry
                     await self._alog_team_telemetry(session_id=team_session.session_id, run_id=run_response.run_id)
@@ -2601,7 +2619,9 @@ class Team:
                     run_response.status = RunStatus.cancelled
 
                     # Cleanup and store the run response and session
-                    await self._acleanup_and_store(run_response=run_response, session=team_session)
+                    await self._acleanup_and_store(
+                        run_response=run_response, session=team_session, run_context=run_context, user_id=user_id
+                    )
 
                     return run_response
 
@@ -2620,7 +2640,9 @@ class Team:
 
                     log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
 
-                    await self._acleanup_and_store(run_response=run_response, session=team_session)
+                    await self._acleanup_and_store(
+                        run_response=run_response, session=team_session, run_context=run_context, user_id=user_id
+                    )
 
                     return run_response
 
@@ -2645,7 +2667,9 @@ class Team:
                     log_error(f"Error in Team run: {str(e)}")
 
                     # Cleanup and store the run response and session
-                    await self._acleanup_and_store(run_response=run_response, session=team_session)
+                    await self._acleanup_and_store(
+                        run_response=run_response, session=team_session, run_context=run_context, user_id=user_id
+                    )
 
                     return run_response
         finally:
@@ -2968,7 +2992,9 @@ class Team:
                     run_response.status = RunStatus.completed
 
                     # 13. Cleanup and store the run response and session
-                    await self._acleanup_and_store(run_response=run_response, session=team_session)
+                    await self._acleanup_and_store(
+                        run_response=run_response, session=team_session, run_context=run_context, user_id=user_id
+                    )
 
                     if stream_events:
                         yield completed_event
@@ -2996,7 +3022,9 @@ class Team:
                     )
 
                     # Cleanup and store the run response and session
-                    await self._acleanup_and_store(run_response=run_response, session=team_session)
+                    await self._acleanup_and_store(
+                        run_response=run_response, session=team_session, run_context=run_context, user_id=user_id
+                    )
 
                 except (InputCheckError, OutputCheckError) as e:
                     run_response.status = RunStatus.error
@@ -3013,7 +3041,9 @@ class Team:
 
                     log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
 
-                    await self._acleanup_and_store(run_response=run_response, session=team_session)
+                    await self._acleanup_and_store(
+                        run_response=run_response, session=team_session, run_context=run_context, user_id=user_id
+                    )
 
                     yield run_error
 
@@ -3040,7 +3070,9 @@ class Team:
                     log_error(f"Error in Team run: {str(e)}")
 
                     # Cleanup and store the run response and session
-                    await self._acleanup_and_store(run_response=run_response, session=team_session)
+                    await self._acleanup_and_store(
+                        run_response=run_response, session=team_session, run_context=run_context, user_id=user_id
+                    )
 
                     yield run_error
 
@@ -3977,7 +4009,28 @@ class Team:
                 else:
                     log_warning("Something went wrong. Member run response content is not a string")
 
-    def _cleanup_and_store(self, run_response: TeamRunOutput, session: TeamSession) -> None:
+    def _cleanup_and_store(
+        self,
+        run_response: TeamRunOutput,
+        session: TeamSession,
+        run_context: Optional[RunContext] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
+        # Commit batched user memory updates (skip paused runs)
+        if (
+            self.enable_agentic_memory_v2
+            and self.db is not None
+            and user_id is not None
+            and run_context is not None
+            and run_response.status != RunStatus.paused
+        ):
+            from agno.memory_v2.memory_compiler import commit_pending
+
+            try:
+                commit_pending(cast(BaseDb, self.db), user_id, run_context)
+            except Exception as e:
+                log_warning(f"Failed to commit user memory: {e}")
+
         #  Scrub the stored run based on storage flags
         self._scrub_run_output_for_storage(run_response)
 
@@ -3994,7 +4047,28 @@ class Team:
         # Save session to memory
         self.save_session(session=session)
 
-    async def _acleanup_and_store(self, run_response: TeamRunOutput, session: TeamSession) -> None:
+    async def _acleanup_and_store(
+        self,
+        run_response: TeamRunOutput,
+        session: TeamSession,
+        run_context: Optional[RunContext] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
+        # Commit batched user memory updates (skip paused runs)
+        if (
+            self.enable_agentic_memory_v2
+            and self.db is not None
+            and user_id is not None
+            and run_context is not None
+            and run_response.status != RunStatus.paused
+        ):
+            from agno.memory_v2.memory_compiler import acommit_pending
+
+            try:
+                await acommit_pending(self.db, user_id, run_context)
+            except Exception as e:
+                log_warning(f"Failed to commit user memory: {e}")
+
         #  Scrub the stored run based on storage flags
         self._scrub_run_output_for_storage(run_response)
 
@@ -4065,8 +4139,8 @@ class Team:
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
         if user_message_str and user_message_str.strip():
-            log_debug("Updating user profile via MemoryCompiler")
-            self.memory_compiler.create_user_profile(
+            log_debug("Updating user memory")
+            self.memory_compiler.create_user_memory_v2(
                 message=user_message_str,
                 user_id=user_id,
             )
@@ -4083,8 +4157,8 @@ class Team:
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
         if user_message_str and user_message_str.strip():
-            log_debug("Updating user profile via MemoryCompiler")
-            await self.memory_compiler.acreate_user_profile(
+            log_debug("Updating user memory")
+            await self.memory_compiler.acreate_user_memory_v2(
                 message=user_message_str,
                 user_id=user_id,
             )
@@ -4113,7 +4187,7 @@ class Team:
             except asyncio.CancelledError:
                 pass
 
-        # Create new task if conditions are met (memory_manager v1)
+        # Create new task if conditions are met
         if (
             run_messages.user_message is not None
             and self.memory_manager is not None
@@ -4123,7 +4197,7 @@ class Team:
             log_debug("Starting memory creation in background task.")
             return asyncio.create_task(self._amake_memories(run_messages=run_messages, user_id=user_id))
 
-        # Create new task if conditions are met (memory_compiler v2)
+        # Create new task if conditions are met (memory v2)
         if (
             run_messages.user_message is not None
             and self.memory_compiler is not None
@@ -4155,7 +4229,7 @@ class Team:
         if existing_future is not None and not existing_future.done():
             existing_future.cancel()
 
-        # Create new future if conditions are met (memory_manager v1)
+        # Create new future if conditions are met
         if (
             run_messages.user_message is not None
             and self.memory_manager is not None
@@ -4165,7 +4239,7 @@ class Team:
             log_debug("Starting memory creation in background thread.")
             return self.background_executor.submit(self._make_memories, run_messages=run_messages, user_id=user_id)
 
-        # Create new future if conditions are met (memory_compiler v2)
+        # Create new future if conditions are met (memory v2)
         if (
             run_messages.user_message is not None
             and self.memory_compiler is not None
@@ -5358,9 +5432,8 @@ class Team:
         if self.memory_manager is not None and self.enable_agentic_memory:
             _tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
 
-        if self.memory_compiler is not None and self.enable_agentic_memory_v2 and user_id:
-            _tools.append(self._get_update_user_memory_v2_function(user_id=user_id, async_mode=async_mode))
-            _tools.append(self._get_delete_user_memory_v2_function(user_id=user_id, async_mode=async_mode))
+        if self.memory_compiler is not None and self.enable_agentic_memory_v2:
+            _tools.extend(self._get_user_memory_v2_tools(user_id=user_id, async_mode=async_mode))
 
         if self.enable_agentic_state:
             _tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
@@ -5837,13 +5910,11 @@ class Team:
                     "</updating_user_memories>\n\n"
                 )
 
-        # Add user profile (v2) to the system prompt
+        # Add user memory (v2) to the system prompt
         if self.memory_compiler is not None and user_id is not None:
-            user_context = self.memory_compiler.compile_user_profile(user_id)
+            user_context = self.memory_compiler.compile_user_memory_v2(user_id)
             if user_context:
-                system_message_content += (
-                    "You have access to stored information about this user from previous interactions:\n\n"
-                )
+                system_message_content += "You have access to existing information about this user:\n\n"
                 system_message_content += user_context
                 system_message_content += "\n"
                 system_message_content += (
@@ -5851,20 +5922,7 @@ class Team:
                 )
 
             if self.enable_agentic_memory_v2:
-                system_message_content += (
-                    "<updating_user_memory>\n"
-                    "You have memory tools to save/delete user information:\n\n"
-                    "update_user_memory(info_type, key, value)\n"
-                    "delete_user_memory(info_type, key)\n\n"
-                    "CATEGORIZATION:\n"
-                    "- info_type='profile': identity only (name, company, role, location)\n"
-                    "- info_type='knowledge': personal facts (interests, hobbies, habits, plans)\n"
-                    "- info_type='policy': behavior rules (be concise, no emojis)\n"
-                    "- info_type='feedback': ONLY for specific actionable preferences (e.g., 'prefers code examples', 'dislikes long explanations'). Skip vague praise.\n\n"
-                    "Save information useful in future conversations.\n"
-                    "Use delete when user asks to forget something.\n"
-                    "</updating_user_memory>\n\n"
-                )
+                system_message_content += self._build_memory_v2_prompt()
 
         # Add organization memory (v2) to the system prompt
         org_id = org_id if org_id is not None else self.org_id
@@ -6193,13 +6251,11 @@ class Team:
                     "</updating_user_memories>\n\n"
                 )
 
-        # Add user profile (v2) to the system prompt
+        # Add user memory (v2) to the system prompt
         if self.memory_compiler is not None and user_id is not None:
-            user_context = await self.memory_compiler.acompile_user_profile(user_id)
+            user_context = await self.memory_compiler.acompile_user_memory_v2(user_id)
             if user_context:
-                system_message_content += (
-                    "You have access to stored information about this user from previous interactions:\n\n"
-                )
+                system_message_content += "You have access to existing information about this user:\n\n"
                 system_message_content += user_context
                 system_message_content += "\n"
                 system_message_content += (
@@ -6207,20 +6263,7 @@ class Team:
                 )
 
             if self.enable_agentic_memory_v2:
-                system_message_content += (
-                    "<updating_user_memory>\n"
-                    "You have memory tools to save/delete user information:\n\n"
-                    "update_user_memory(info_type, key, value)\n"
-                    "delete_user_memory(info_type, key)\n\n"
-                    "CATEGORIZATION:\n"
-                    "- info_type='profile': identity only (name, company, role, location)\n"
-                    "- info_type='knowledge': personal facts (interests, hobbies, habits, plans)\n"
-                    "- info_type='policy': behavior rules (be concise, no emojis)\n"
-                    "- info_type='feedback': ONLY for specific actionable preferences (e.g., 'prefers code examples', 'dislikes long explanations'). Skip vague praise.\n\n"
-                    "Save information useful in future conversations.\n"
-                    "Use delete when user asks to forget something.\n"
-                    "</updating_user_memory>\n\n"
-                )
+                system_message_content += self._build_memory_v2_prompt()
 
         # Add organization memory (v2) to the system prompt
         org_id = org_id if org_id is not None else self.org_id
@@ -7170,59 +7213,70 @@ class Team:
 
         return Function.from_callable(update_memory_function, name="update_user_memory")
 
-    def _get_update_user_memory_v2_function(self, user_id: str, async_mode: bool = False) -> Function:
-        if async_mode:
+    def _build_memory_v2_prompt(self) -> str:
+        """Build dynamic system prompt for memory v2 tools based on enabled layers."""
+        self.memory_compiler = cast(MemoryCompiler, self.memory_compiler)
+        save_tools = []
+        delete_tools = []
 
-            async def aupdate_user_memory(info_type: str, key: str, value: Any) -> str:
-                """Save user information to memory.
+        if self.memory_compiler.enable_user_profile:
+            save_tools.append("- save_user_profile(key, value): identity info (name, company, role, location)")
+            delete_tools.append("- delete_user_profile(key): delete identity info")
+        if self.memory_compiler.enable_user_knowledge:
+            save_tools.append("- save_user_knowledge(key, value): personal facts (interests, hobbies, habits)")
+            delete_tools.append("- delete_user_knowledge(key): delete a knowledge fact")
+        if self.memory_compiler.enable_user_policies:
+            save_tools.append("- save_user_policy(key, value): behavior rules (be concise, no emojis)")
+            delete_tools.append("- delete_user_policy(key): delete a behavior rule")
+        if self.memory_compiler.enable_user_feedback:
+            save_tools.append("- save_user_feedback(key, value): response feedback (liked, disliked, suggestions)")
+            delete_tools.append("- delete_user_feedback(key): delete a feedback entry")
 
-                Args:
-                    info_type: One of 'profile', 'policy', 'knowledge', 'feedback'
-                    key: The key to save
-                    value: The value to save (string, boolean, or number)
-                """
-                return await self.memory_compiler._asave_to_user_memory_layer(user_id, info_type, key, str(value))  # type: ignore
+        if not save_tools:
+            return ""
 
-            return Function.from_callable(aupdate_user_memory, name="update_user_memory")
-        else:
+        save_tools_str = "\n".join(save_tools)
+        delete_tools_str = "\n".join(delete_tools)
 
-            def update_user_memory(info_type: str, key: str, value: Any) -> str:
-                """Save user information to memory.
+        prompt = dedent(f"""\
+            <updating_user_memory>
+            You have tools to manage user memory across conversations.
 
-                Args:
-                    info_type: One of 'profile', 'policy', 'knowledge', 'feedback'
-                    key: The key to save
-                    value: The value to save (string, boolean, or number)
-                """
-                return self.memory_compiler._save_to_user_memory_layer(user_id, info_type, key, str(value))  # type: ignore
+            SECURITY:
+            - NEVER store secrets, credentials, API keys, or passwords
+            - NEVER store sensitive personal data unless explicitly requested
 
-            return Function.from_callable(update_user_memory, name="update_user_memory")
+            SAVE TOOLS:
+            {save_tools_str}
 
-    def _get_delete_user_memory_v2_function(self, user_id: str, async_mode: bool = False) -> Function:
-        if async_mode:
+            DELETE TOOLS:
+            {delete_tools_str}
 
-            async def adelete_user_memory(info_type: str, key: str) -> str:
-                """Delete/forget user information from memory.
+            GUIDELINES:
+            - Save information useful in FUTURE conversations
+            - Profile: stable facts (name, role, company) - not temporary states
+            - Policies: explicit user preferences ("be concise", "no emojis")
+            - Knowledge: project context, technical decisions, interests
+            - Feedback: what user liked/disliked about your responses
+            - Skip trivial or one-time information
+            - Use delete when user says "forget X" or "don't remember Y"
 
-                Args:
-                    info_type: One of 'profile', 'policy', 'knowledge', 'feedback'
-                    key: The key to delete
-                """
-                return await self.memory_compiler._adelete_from_user_memory_layer(user_id, info_type, key)  # type: ignore
+            EXAMPLE:
+            User: "I'm Sarah, a senior engineer at Acme. Keep answers short."
+            -> save_user_profile("name", "Sarah")
+            -> save_user_profile("role", "senior engineer")
+            -> save_user_profile("company", "Acme")
+            -> save_user_policy("response_style", "concise")
+            </updating_user_memory>
 
-            return Function.from_callable(adelete_user_memory, name="delete_user_memory")
-        else:
+            """)
+        return prompt
 
-            def delete_user_memory(info_type: str, key: str) -> str:
-                """Delete/forget user information from memory.
-
-                Args:
-                    info_type: One of 'profile', 'policy', 'knowledge', 'feedback'
-                    key: The key to delete
-                """
-                return self.memory_compiler._delete_from_user_memory_layer(user_id, info_type, key)  # type: ignore
-
-            return Function.from_callable(delete_user_memory, name="delete_user_memory")
+    def _get_user_memory_v2_tools(self, user_id: Optional[str] = None, async_mode: bool = False) -> List[Function]:
+        """Get user memory v2 tools based on enabled layers."""
+        self.memory_compiler = cast(MemoryCompiler, self.memory_compiler)
+        user_id = user_id or "default"
+        return self.memory_compiler.get_memory_tools(user_id)
 
     def get_member_information(self) -> str:
         """Get information about the members of the team, including their IDs, names, and roles."""
@@ -9064,13 +9118,13 @@ class Team:
 
         return await self.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
 
-    def get_user_profile(self, user_id: Optional[str] = None) -> Optional[Union[UserProfile, Dict[str, Any]]]:
-        """Get the user profile for the given user ID.
+    def get_user_memory_v2(self, user_id: Optional[str] = None) -> Optional[UserMemoryV2]:
+        """Get user memory for the given user ID.
 
         Args:
-            user_id: The user ID to get the profile for. If not provided, the current cached user ID is used.
+            user_id: The user ID to get memory for. If not provided, the current cached user ID is used.
         Returns:
-            The user profile, or None if not found.
+            Optional[UserMemoryV2]: The user memory, or None if not found.
         """
         if self.memory_compiler is None:
             if self.db is None:
@@ -9082,7 +9136,27 @@ class Team:
         if user_id is None:
             user_id = "default"
 
-        return self.memory_compiler.get_user_profile(user_id=user_id)
+        return self.memory_compiler.get_user_memory_v2(user_id=user_id)  # type: ignore
+
+    async def aget_user_memory_v2(self, user_id: Optional[str] = None) -> Optional[UserMemoryV2]:
+        """Get user memory for the given user ID asynchronously.
+
+        Args:
+            user_id: The user ID to get memory for. If not provided, the current cached user ID is used.
+        Returns:
+            Optional[UserMemoryV2]: The user memory, or None if not found.
+        """
+        if self.memory_compiler is None:
+            if self.db is None:
+                log_warning("Database not provided.")
+                return None
+            self._set_memory_compiler()
+
+        user_id = user_id if user_id is not None else self.user_id
+        if user_id is None:
+            user_id = "default"
+
+        return await self.memory_compiler.aget_user_memory_v2(user_id=user_id)  # type: ignore
 
     ###########################################################################
     # Handle reasoning content
