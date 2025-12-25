@@ -370,12 +370,6 @@ class OpenAIChat(Model):
         # Manually add the content field even if it is None
         if message.content is None:
             message_dict["content"] = ""
-
-        # Include reasoning_details for Gemini models
-        if message.role == "assistant" and message.provider_data:
-            if message.provider_data.get("reasoning_details"):
-                message_dict["reasoning_details"] = message.provider_data["reasoning_details"]
-
         return message_dict
 
     def invoke(
@@ -835,14 +829,6 @@ class OpenAIChat(Model):
         if response.model_extra:
             model_response.provider_data["model_extra"] = response.model_extra
 
-        # Extract reasoning_details for Gemini models
-        if hasattr(response_message, "reasoning_details") and response_message.reasoning_details:
-            model_response.provider_data["reasoning_details"] = response_message.reasoning_details
-        elif hasattr(response_message, "model_extra"):
-            extra = getattr(response_message, "model_extra", None)
-            if extra and isinstance(extra, dict) and extra.get("reasoning_details"):
-                model_response.provider_data["reasoning_details"] = extra["reasoning_details"]
-
         return model_response
 
     def _parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
@@ -883,12 +869,6 @@ class OpenAIChat(Model):
                     model_response.reasoning_content = choice_delta.reasoning_content
                 elif hasattr(choice_delta, "reasoning") and choice_delta.reasoning is not None:
                     model_response.reasoning_content = choice_delta.reasoning
-
-                # Extract reasoning_details for Gemini models
-                if hasattr(choice_delta, "reasoning_details") and choice_delta.reasoning_details:
-                    if model_response.provider_data is None:
-                        model_response.provider_data = {}
-                    model_response.provider_data["reasoning_details"] = choice_delta.reasoning_details
 
                 # Add audio if present
                 if hasattr(choice_delta, "audio") and choice_delta.audio is not None:
