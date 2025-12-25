@@ -21,16 +21,17 @@ import json
 from typing import List, Optional
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
+from agno.db.postgres import PostgresDb
 from agno.memory_v2 import MemoryCompiler
-from agno.models.openai import OpenAIChat
+from agno.models.anthropic import Claude
 from pydantic import BaseModel, ConfigDict, Field
 from rich import print_json
 
 # ============================================================================
 # Storage Configuration
 # ============================================================================
-agent_db = SqliteDb(db_file="tmp/schema_memory.db")
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+agent_db = PostgresDb(db_url=db_url)
 
 
 # ============================================================================
@@ -43,17 +44,18 @@ def example_default_schemas():
     print("=" * 60)
 
     memory = MemoryCompiler(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=Claude(id="claude-sonnet-4-5"),
         db=agent_db,
         use_default_schemas=True,
+        strict_schema_validation=False,  # Disable strict schema validation for complex schemas
     )
 
     agent = Agent(
         name="Schema Agent",
-        model=OpenAIChat(id="gpt-4o"),
+        model=Claude(id="claude-sonnet-4-5"),
         db=agent_db,
         memory_compiler=memory,
-        update_memory_on_run=True,
+        enable_agentic_memory_v2=True,
         markdown=True,
     )
 
@@ -124,17 +126,18 @@ def example_custom_schemas():
         )
 
     memory = MemoryCompiler(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=Claude(id="claude-sonnet-4-5"),
         db=agent_db,
         user_profile_schema=HealthcareProfile,
         user_policies_schema=HealthcarePolicies,
         user_knowledge_schema=HealthcareKnowledge,
         user_feedback_schema=HealthcareFeedback,
+        strict_schema_validation=False,  # Disable strict schema validation for complex schemas
     )
 
     agent = Agent(
         name="Healthcare Agent",
-        model=OpenAIChat(id="gpt-4o"),
+        model=Claude(id="claude-sonnet-4-5"),
         db=agent_db,
         memory_compiler=memory,
         update_memory_on_run=True,

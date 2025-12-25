@@ -9,7 +9,7 @@ exactly what types of information to capture for your use case.
 
 Key concepts:
 - MemoryCompiler: Configures how memory is extracted and stored
-- user_capture_instructions: Global guidance for extraction
+- user_memory_capture_instructions: Global guidance for extraction
 - Per-layer instructions: user_profile_instructions, user_knowledge_instructions, etc.
 
 Example prompts to try:
@@ -38,7 +38,7 @@ memory_compiler = MemoryCompiler(
     model=OpenAIChat(id="gpt-4o-mini"),
     db=agent_db,
     # Global extraction guidance
-    user_capture_instructions="Focus on engineering-specific information.",
+    user_memory_capture_instructions="Focus on engineering-specific information.",
     # Per-layer instructions
     user_profile_instructions="name, role, company, years of experience",
     user_knowledge_instructions="programming languages, frameworks, cloud platforms",

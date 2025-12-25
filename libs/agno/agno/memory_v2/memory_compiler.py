@@ -19,12 +19,12 @@ from agno.utils.log import log_debug, log_warning
 
 @dataclass
 class MemoryCompiler:
-    # LLM for extracting memory
+    # Model used for creating memories
     model: Optional[Model] = None
-    # storage backend
+    # The database to store memories
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     # what to capture
-    user_capture_instructions: Optional[str] = None
+    user_memory_capture_instructions: Optional[str] = None
     # Layer toggles
     enable_user_memories: bool = True
     # user identity (name, company, role)
@@ -41,6 +41,9 @@ class MemoryCompiler:
     user_knowledge_schema: Optional[Type[BaseModel]] = None
     user_feedback_schema: Optional[Type[BaseModel]] = None
 
+    # Enforce strict schema validation (set False for complex schemas)
+    strict_schema_validation: bool = True
+
     # Per-layer custom instructions
     user_profile_instructions: Optional[str] = None
     user_knowledge_instructions: Optional[str] = None
@@ -51,25 +54,32 @@ class MemoryCompiler:
         self,
         model: Optional[Union[Model, str]] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-        user_capture_instructions: Optional[str] = None,
+        # ----- Global user memory ---------
+        user_memory_capture_instructions: Optional[str] = None,
         enable_user_memories: bool = True,
-        enable_user_profile: bool = True,
-        enable_user_knowledge: bool = True,
-        enable_user_policies: bool = True,
-        enable_user_feedback: bool = True,
         use_default_schemas: bool = False,
-        user_profile_schema: Optional[Type[BaseModel]] = None,
-        user_policies_schema: Optional[Type[BaseModel]] = None,
-        user_knowledge_schema: Optional[Type[BaseModel]] = None,
-        user_feedback_schema: Optional[Type[BaseModel]] = None,
+        # ----- User profile ---------
+        enable_user_profile: bool = True,
         user_profile_instructions: Optional[str] = None,
+        user_profile_schema: Optional[Type[BaseModel]] = None,
+        # ----- User knowledge ---------
+        enable_user_knowledge: bool = True,
         user_knowledge_instructions: Optional[str] = None,
+        user_knowledge_schema: Optional[Type[BaseModel]] = None,
+        # ----- User policies ---------
+        enable_user_policies: bool = True,
         user_policies_instructions: Optional[str] = None,
+        user_policies_schema: Optional[Type[BaseModel]] = None,
+        # ----- User feedback ---------
+        enable_user_feedback: bool = True,
         user_feedback_instructions: Optional[str] = None,
+        user_feedback_schema: Optional[Type[BaseModel]] = None,
+        # ----- Schema validation ---------
+        strict_schema_validation: bool = True,
     ):
         self.model = get_model(model) if model else None
         self.db = db
-        self.user_capture_instructions = user_capture_instructions
+        self.user_memory_capture_instructions = user_memory_capture_instructions
         self.enable_user_memories = enable_user_memories
         self.enable_user_profile = enable_user_profile
         self.enable_user_knowledge = enable_user_knowledge
@@ -84,6 +94,7 @@ class MemoryCompiler:
         self.user_knowledge_instructions = user_knowledge_instructions
         self.user_policies_instructions = user_policies_instructions
         self.user_feedback_instructions = user_feedback_instructions
+        self.strict_schema_validation = strict_schema_validation
 
     def get_user_memory_v2(self, user_id: Optional[str] = None) -> Optional[UserMemoryV2]:
         """Get user memory from DB."""
@@ -158,7 +169,7 @@ class MemoryCompiler:
             log_warning("No DB configured")
             return "Database not configured"
         if not self.model:
-            log_warning("Model not configured")
+            log_warning("Memory Compiler Model not configured")
             return "MemoryCompiler: Model not configured"
         if not message:
             return "No message provided"
@@ -183,8 +194,8 @@ class MemoryCompiler:
             tools=cast(list, tools),
         )
 
-        # Save directly - LLM's intent is the source of truth
-        if response.tool_calls:
+        # Save if any tools were executed
+        if response.tool_executions:
             memory.bump_updated_at()
             self.save_user_memory_v2(memory)
 
@@ -237,7 +248,7 @@ class MemoryCompiler:
         if self.enable_user_feedback:
             tools.extend([save_user_feedback, delete_user_feedback])
 
-        return [Function.from_callable(t, strict=True) for t in tools]
+        return [Function.from_callable(t, strict=self.strict_schema_validation) for t in tools]
 
     def _compile_schema_tools(self, memory: UserMemoryV2) -> List[Function]:
         """Get schema-based extraction tools."""
@@ -322,7 +333,7 @@ class MemoryCompiler:
 
             tools.extend([save_feedback, delete_feedback_fields])
 
-        return [Function.from_callable(t, strict=True) for t in tools]
+        return [Function.from_callable(t, strict=self.strict_schema_validation) for t in tools]
 
     async def acreate_user_memory_v2(self, message: str, user_id: Optional[str] = None) -> str:
         """Extract memory from user message (async)."""
@@ -353,7 +364,8 @@ class MemoryCompiler:
             tools=cast(list, tools),
         )
 
-        if response.tool_calls:
+        # Save if any tools were executed
+        if response.tool_executions:
             memory.bump_updated_at()
             await self.asave_user_memory_v2(memory)
 
@@ -437,8 +449,8 @@ class MemoryCompiler:
         delete_tools = [f"delete_user_{name}" for name in tool_names]
 
         custom_instructions = ""
-        if self.user_capture_instructions:
-            custom_instructions = f"\nAdditional guidance:\n{self.user_capture_instructions}\n"
+        if self.user_memory_capture_instructions:
+            custom_instructions = f"\nAdditional guidance:\n{self.user_memory_capture_instructions}\n"
 
         prompt = dedent(f"""\
             You are a Memory Manager that extracts user information from conversations.
@@ -573,8 +585,8 @@ class MemoryCompiler:
                 return f"Deleted profile fields: {keys}"
 
             save_profile.__annotations__["updates"] = ProfileSchema
-            tools.append(Function.from_callable(save_profile, strict=True))
-            tools.append(Function.from_callable(delete_profile_fields, strict=True))
+            tools.append(Function.from_callable(save_profile, strict=self.strict_schema_validation))
+            tools.append(Function.from_callable(delete_profile_fields, strict=self.strict_schema_validation))
 
         if self.enable_user_policies:
             PoliciesSchema = self.user_policies_schema or UserPolicies
@@ -592,8 +604,8 @@ class MemoryCompiler:
                 return f"Deleted policy fields: {keys}"
 
             save_policies.__annotations__["updates"] = PoliciesSchema
-            tools.append(Function.from_callable(save_policies, strict=True))
-            tools.append(Function.from_callable(delete_policy_fields, strict=True))
+            tools.append(Function.from_callable(save_policies, strict=self.strict_schema_validation))
+            tools.append(Function.from_callable(delete_policy_fields, strict=self.strict_schema_validation))
 
         if self.enable_user_knowledge:
             KnowledgeSchema = self.user_knowledge_schema or UserKnowledge
@@ -611,8 +623,8 @@ class MemoryCompiler:
                 return f"Deleted knowledge fields: {keys}"
 
             save_knowledge.__annotations__["updates"] = KnowledgeSchema
-            tools.append(Function.from_callable(save_knowledge, strict=True))
-            tools.append(Function.from_callable(delete_knowledge_fields, strict=True))
+            tools.append(Function.from_callable(save_knowledge, strict=self.strict_schema_validation))
+            tools.append(Function.from_callable(delete_knowledge_fields, strict=self.strict_schema_validation))
 
         if self.enable_user_feedback:
             FeedbackSchema = self.user_feedback_schema or UserFeedback
@@ -630,8 +642,8 @@ class MemoryCompiler:
                 return f"Deleted feedback fields: {keys}"
 
             save_feedback.__annotations__["updates"] = FeedbackSchema
-            tools.append(Function.from_callable(save_feedback, strict=True))
-            tools.append(Function.from_callable(delete_feedback_fields, strict=True))
+            tools.append(Function.from_callable(save_feedback, strict=self.strict_schema_validation))
+            tools.append(Function.from_callable(delete_feedback_fields, strict=self.strict_schema_validation))
 
         return tools
 
