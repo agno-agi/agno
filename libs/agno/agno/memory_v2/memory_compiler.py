@@ -26,22 +26,22 @@ class MemoryCompiler:
     # what to capture
     user_capture_instructions: Optional[str] = None
     # Layer toggles
-    enable_update: bool = True
+    enable_user_memories: bool = True
     # user identity (name, company, role)
-    enable_profile: bool = True
+    enable_user_profile: bool = True
     # user facts (languages, hobbies)
-    enable_knowledge: bool = True
-    enable_policies: bool = True
-    enable_feedback: bool = True
+    enable_user_knowledge: bool = True
+    enable_user_policies: bool = True
+    enable_user_feedback: bool = True
 
-    # Schema options (constrain what LLM can save)
+    # Schema overrides
     use_default_schemas: bool = False
     user_profile_schema: Optional[Type[BaseModel]] = None
     user_policies_schema: Optional[Type[BaseModel]] = None
     user_knowledge_schema: Optional[Type[BaseModel]] = None
     user_feedback_schema: Optional[Type[BaseModel]] = None
 
-    # Per-layer custom instructions (appended to default prompt)
+    # Per-layer custom instructions
     user_profile_instructions: Optional[str] = None
     user_knowledge_instructions: Optional[str] = None
     user_policies_instructions: Optional[str] = None
@@ -52,11 +52,11 @@ class MemoryCompiler:
         model: Optional[Union[Model, str]] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         user_capture_instructions: Optional[str] = None,
-        enable_update: bool = True,
-        enable_profile: bool = True,
-        enable_knowledge: bool = True,
-        enable_policies: bool = True,
-        enable_feedback: bool = True,
+        enable_user_memories: bool = True,
+        enable_user_profile: bool = True,
+        enable_user_knowledge: bool = True,
+        enable_user_policies: bool = True,
+        enable_user_feedback: bool = True,
         use_default_schemas: bool = False,
         user_profile_schema: Optional[Type[BaseModel]] = None,
         user_policies_schema: Optional[Type[BaseModel]] = None,
@@ -70,11 +70,11 @@ class MemoryCompiler:
         self.model = get_model(model) if model else None
         self.db = db
         self.user_capture_instructions = user_capture_instructions
-        self.enable_update = enable_update
-        self.enable_profile = enable_profile
-        self.enable_knowledge = enable_knowledge
-        self.enable_policies = enable_policies
-        self.enable_feedback = enable_feedback
+        self.enable_user_memories = enable_user_memories
+        self.enable_user_profile = enable_user_profile
+        self.enable_user_knowledge = enable_user_knowledge
+        self.enable_user_policies = enable_user_policies
+        self.enable_user_feedback = enable_user_feedback
         self.use_default_schemas = use_default_schemas
         self.user_profile_schema = user_profile_schema
         self.user_policies_schema = user_policies_schema
@@ -152,26 +152,6 @@ class MemoryCompiler:
         memory = await self.aget_user_memory_v2(user_id)
         return self._build_memory_context(memory) if memory else ""
 
-    def _merge_updates(self, existing: UserMemoryV2, updates: UserMemoryV2) -> UserMemoryV2:
-        merged_layers = {**existing.layers, **updates.layers}
-
-        # Merge feedback lists instead of overwriting
-        if "feedback" in existing.layers or "feedback" in updates.layers:
-            existing_fb = existing.layers.get("feedback", {"positive": [], "negative": []})
-            updates_fb = updates.layers.get("feedback", {"positive": [], "negative": []})
-            merged_layers["feedback"] = {
-                "positive": list(dict.fromkeys(existing_fb.get("positive", []) + updates_fb.get("positive", []))),
-                "negative": list(dict.fromkeys(existing_fb.get("negative", []) + updates_fb.get("negative", []))),
-            }
-
-        return UserMemoryV2(
-            user_id=existing.user_id,
-            profile={**existing.profile, **updates.profile},
-            layers=merged_layers,
-            metadata=updates.metadata or existing.metadata,
-            created_at=existing.created_at,
-        )
-
     def create_user_memory_v2(self, message: str, user_id: Optional[str] = None) -> str:
         """Extract memory from user message."""
         if not self.db:
@@ -203,18 +183,16 @@ class MemoryCompiler:
             tools=tools,
         )
 
-        # Save if tools were called (fresh read + merge to minimize race window)
+        # Save directly - LLM's intent is the source of truth
         if response.tool_calls:
-            current = self.get_user_memory_v2(user_id) or UserMemoryV2(user_id=user_id)
-            merged = self._merge_updates(current, memory)
-            merged.bump_updated_at()
-            self.save_user_memory_v2(merged)
+            memory.bump_updated_at()
+            self.save_user_memory_v2(memory)
 
         return response.content or "No response"
 
     def _compile_tools(self, memory: UserMemoryV2) -> List[Function]:
         """Get key-value based extraction tools."""
-        if not self.enable_update:
+        if not self.enable_user_memories:
             return []
 
         def save_user_profile(key: str, value: Any) -> str:
@@ -242,39 +220,35 @@ class MemoryCompiler:
             return f"Deleted policy: {key}"
 
         def save_user_feedback(key: str, value: Any) -> str:
-            if key in ("positive", "negative"):
-                feedback = memory.layers.setdefault("feedback", {"positive": [], "negative": []})
-                if value not in feedback[key]:
-                    feedback[key].append(value)
+            memory.layers.setdefault("feedback", {})[key] = value
             return f"Saved feedback: {key}"
 
         def delete_user_feedback(key: str) -> str:
-            if key in ("positive", "negative"):
-                memory.layers.setdefault("feedback", {"positive": [], "negative": []})[key] = []
-            return f"Cleared feedback: {key}"
+            memory.layers.get("feedback", {}).pop(key, None)
+            return f"Deleted feedback: {key}"
 
         tools: List[Any] = []
-        if self.enable_profile:
+        if self.enable_user_profile:
             tools.extend([save_user_profile, delete_user_profile])
-        if self.enable_knowledge:
+        if self.enable_user_knowledge:
             tools.extend([save_user_knowledge, delete_user_knowledge])
-        if self.enable_policies:
+        if self.enable_user_policies:
             tools.extend([save_user_policy, delete_user_policy])
-        if self.enable_feedback:
+        if self.enable_user_feedback:
             tools.extend([save_user_feedback, delete_user_feedback])
 
         return [Function.from_callable(t, strict=True) for t in tools]
 
     def _compile_schema_tools(self, memory: UserMemoryV2) -> List[Function]:
         """Get schema-based extraction tools."""
-        if not self.enable_update:
+        if not self.enable_user_memories:
             return []
 
         from agno.memory_v2.schemas import UserFeedback, UserKnowledge, UserPolicies, UserProfile
 
         tools: List[Any] = []
 
-        if self.enable_profile:
+        if self.enable_user_profile:
             ProfileSchema = self.user_profile_schema or UserProfile
 
             def save_profile(updates: ProfileSchema) -> str:  # type: ignore
@@ -291,7 +265,7 @@ class MemoryCompiler:
 
             tools.extend([save_profile, delete_profile_fields])
 
-        if self.enable_policies:
+        if self.enable_user_policies:
             PoliciesSchema = self.user_policies_schema or UserPolicies
 
             def save_policies(updates: PoliciesSchema) -> str:  # type: ignore
@@ -310,7 +284,7 @@ class MemoryCompiler:
 
             tools.extend([save_policies, delete_policy_fields])
 
-        if self.enable_knowledge:
+        if self.enable_user_knowledge:
             KnowledgeSchema = self.user_knowledge_schema or UserKnowledge
 
             def save_knowledge(updates: KnowledgeSchema) -> str:  # type: ignore
@@ -329,31 +303,24 @@ class MemoryCompiler:
 
             tools.extend([save_knowledge, delete_knowledge_fields])
 
-        if self.enable_feedback:
+        if self.enable_user_feedback:
             FeedbackSchema = self.user_feedback_schema or UserFeedback
 
             def save_feedback(updates: FeedbackSchema) -> str:  # type: ignore
-                """Save response feedback (positive/negative lists)."""
-                fb = memory.layers.setdefault("feedback", {"positive": [], "negative": []})
-                data = updates.model_dump(exclude_none=True)
-                for item in data.get("positive", []):
-                    if item not in fb["positive"]:
-                        fb["positive"].append(item)
-                for item in data.get("negative", []):
-                    if item not in fb["negative"]:
-                        fb["negative"].append(item)
+                """Save response feedback (liked, disliked, suggestions)."""
+                feedback = memory.layers.setdefault("feedback", {})
+                for key, value in updates.model_dump(exclude_none=True).items():
+                    feedback[key] = value
                 return "Feedback saved"
 
-            def clear_feedback(clear_positive: bool = False, clear_negative: bool = False) -> str:
-                """Clear feedback lists."""
-                fb = memory.layers.setdefault("feedback", {"positive": [], "negative": []})
-                if clear_positive:
-                    fb["positive"] = []
-                if clear_negative:
-                    fb["negative"] = []
-                return "Feedback cleared"
+            def delete_feedback_fields(keys: List[str]) -> str:
+                """Delete specific feedback fields."""
+                feedback = memory.layers.get("feedback", {})
+                for key in keys:
+                    feedback.pop(key, None)
+                return f"Deleted feedback fields: {keys}"
 
-            tools.extend([save_feedback, clear_feedback])
+            tools.extend([save_feedback, delete_feedback_fields])
 
         return [Function.from_callable(t, strict=True) for t in tools]
 
@@ -386,12 +353,9 @@ class MemoryCompiler:
             tools=tools,
         )
 
-        # Save if tools were called (fresh read + merge to minimize race window)
         if response.tool_calls:
-            current = await self.aget_user_memory_v2(user_id) or UserMemoryV2(user_id=user_id)
-            merged = self._merge_updates(current, memory)
-            merged.bump_updated_at()
-            await self.asave_user_memory_v2(merged)
+            memory.bump_updated_at()
+            await self.asave_user_memory_v2(memory)
 
         return response.content or "No response"
 
@@ -414,35 +378,64 @@ class MemoryCompiler:
 
     def _build_user_system_message(self, existing: Optional[UserMemoryV2] = None) -> Message:
         """Build system prompt for LLM extraction."""
+        # Default layer instructions
+        default_profile = dedent("""\
+            Capture stable identity information about the user:
+            - Personal identity: name, preferred name, age, location, timezone
+            - Professional identity: role, title, company, team, department
+            - Experience: years of experience, seniority level, career background
+            - Only save facts unlikely to change frequently""")
+
+        default_knowledge = dedent("""\
+            Capture the user's skills, expertise, and current context:
+            - Technical skills: programming languages, frameworks, libraries, tools
+            - Domain expertise: areas of specialization, industries worked in
+            - Current work: active projects, tech stack in use, challenges faced
+            - Interests: topics learning, technologies exploring""")
+
+        default_policies = dedent("""\
+            Capture explicit preferences for response formatting:
+            - Communication style: concise vs detailed, formal vs casual
+            - Formatting: markdown, code blocks, bullet points, examples
+            - Code preferences: comments, type hints, error handling style
+            - Only save when user explicitly requests a preference""")
+
+        default_feedback = dedent("""\
+            Capture feedback on response quality:
+            - Positive signals: what user praised or found helpful
+            - Negative signals: what user criticized or found unhelpful
+            - Specific requests: improvements or changes asked for""")
+
         # Build layer info from enabled layers
         layers = []
-        if self.enable_profile:
-            desc = "identity info (name, company, role, location)"
-            if self.user_profile_instructions:
-                desc += f" - {self.user_profile_instructions}"
-            layers.append(("profile", desc))
-        if self.enable_knowledge:
-            desc = "personal facts (interests, hobbies, habits)"
-            if self.user_knowledge_instructions:
-                desc += f" - {self.user_knowledge_instructions}"
-            layers.append(("knowledge", desc))
-        if self.enable_policies:
-            desc = "behavior rules (no emojis, be concise)"
-            if self.user_policies_instructions:
-                desc += f" - {self.user_policies_instructions}"
-            layers.append(("policy", desc))
-        if self.enable_feedback:
-            desc = "what user liked/disliked about responses"
-            if self.user_feedback_instructions:
-                desc += f" - {self.user_feedback_instructions}"
-            layers.append(("feedback", desc))
+        tool_names = []
+        if self.enable_user_profile:
+            desc = self.user_profile_instructions or default_profile
+            layers.append(("Profile", desc))
+            tool_names.append("profile")
+        if self.enable_user_knowledge:
+            desc = self.user_knowledge_instructions or default_knowledge
+            layers.append(("Knowledge", desc))
+            tool_names.append("knowledge")
+        if self.enable_user_policies:
+            desc = self.user_policies_instructions or default_policies
+            layers.append(("Policy", desc))
+            tool_names.append("policy")
+        if self.enable_user_feedback:
+            desc = self.user_feedback_instructions or default_feedback
+            layers.append(("Feedback", desc))
+            tool_names.append("feedback")
 
-        # Build descriptions and tool names from layers
-        descriptions = [f"- {name.title()}: {desc}" for name, desc in layers]
-        save_tools = [f"save_user_{name}" for name, _ in layers]
-        delete_tools = [f"delete_user_{name}" for name, _ in layers]
+        # Build layer descriptions
+        layer_sections = []
+        for name, desc in layers:
+            layer_sections.append(f"{name}:\n{desc}")
+        layer_descriptions = "\n\n".join(layer_sections)
 
-        layer_descriptions = "\n".join(descriptions)
+        # Build tool names
+        save_tools = [f"save_user_{name}" for name in tool_names]
+        delete_tools = [f"delete_user_{name}" for name in tool_names]
+
         custom_instructions = ""
         if self.user_capture_instructions:
             custom_instructions = f"\nAdditional guidance:\n{self.user_capture_instructions}\n"
@@ -455,6 +448,7 @@ class MemoryCompiler:
             - Sensitive personal data (SSN, credit cards, etc.)
 
             MEMORY LAYERS:
+
             {layer_descriptions}
             {custom_instructions}
             TOOLS:
@@ -464,8 +458,6 @@ class MemoryCompiler:
             GUIDELINES:
             - Use brief, third-person statements ("User is a senior engineer")
             - Only save NEW information not already in existing memory
-            - Profile = stable identity facts, not temporary states
-            - Policies = explicit user preferences/rules
             - Skip trivial, one-time, or already-stored information
 
             EXAMPLE:
@@ -498,7 +490,7 @@ class MemoryCompiler:
         """Get key-value tools that stage updates for batch commit."""
         tools: List[Function] = []
 
-        if self.enable_profile:
+        if self.enable_user_profile:
 
             def save_user_profile(key: str, value: Any, run_context: RunContext) -> str:
                 """Save user identity info (name, company, role, location)."""
@@ -513,7 +505,7 @@ class MemoryCompiler:
             tools.append(Function.from_callable(save_user_profile))
             tools.append(Function.from_callable(delete_user_profile))
 
-        if self.enable_knowledge:
+        if self.enable_user_knowledge:
 
             def save_user_knowledge(key: str, value: Any, run_context: RunContext) -> str:
                 """Save a fact about the user (interests, hobbies, habits)."""
@@ -528,7 +520,7 @@ class MemoryCompiler:
             tools.append(Function.from_callable(save_user_knowledge))
             tools.append(Function.from_callable(delete_user_knowledge))
 
-        if self.enable_policies:
+        if self.enable_user_policies:
 
             def save_user_policy(key: str, value: Any, run_context: RunContext) -> str:
                 """Save a behavior rule (be concise, no emojis)."""
@@ -543,17 +535,17 @@ class MemoryCompiler:
             tools.append(Function.from_callable(save_user_policy))
             tools.append(Function.from_callable(delete_user_policy))
 
-        if self.enable_feedback:
+        if self.enable_user_feedback:
 
             def save_user_feedback(key: str, value: Any, run_context: RunContext) -> str:
-                """Save response feedback. Key should be 'positive' or 'negative'."""
+                """Save response feedback (liked, disliked, suggestions)."""
                 stage_update(run_context, user_id, "feedback", key, value)
                 return f"Saved feedback: {key}"
 
             def delete_user_feedback(key: str, run_context: RunContext) -> str:
-                """Clear feedback. Key should be 'positive' or 'negative'."""
+                """Delete a feedback field."""
                 stage_update(run_context, user_id, "feedback", key, None, "delete")
-                return f"Cleared feedback: {key}"
+                return f"Deleted feedback: {key}"
 
             tools.append(Function.from_callable(save_user_feedback))
             tools.append(Function.from_callable(delete_user_feedback))
@@ -565,7 +557,7 @@ class MemoryCompiler:
 
         tools: List[Function] = []
 
-        if self.enable_profile:
+        if self.enable_user_profile:
             ProfileSchema = self.user_profile_schema or UserProfile
 
             def save_profile(updates, run_context: RunContext) -> str:
@@ -584,7 +576,7 @@ class MemoryCompiler:
             tools.append(Function.from_callable(save_profile, strict=True))
             tools.append(Function.from_callable(delete_profile_fields, strict=True))
 
-        if self.enable_policies:
+        if self.enable_user_policies:
             PoliciesSchema = self.user_policies_schema or UserPolicies
 
             def save_policies(updates, run_context: RunContext) -> str:
@@ -603,7 +595,7 @@ class MemoryCompiler:
             tools.append(Function.from_callable(save_policies, strict=True))
             tools.append(Function.from_callable(delete_policy_fields, strict=True))
 
-        if self.enable_knowledge:
+        if self.enable_user_knowledge:
             KnowledgeSchema = self.user_knowledge_schema or UserKnowledge
 
             def save_knowledge(updates, run_context: RunContext) -> str:
@@ -622,29 +614,24 @@ class MemoryCompiler:
             tools.append(Function.from_callable(save_knowledge, strict=True))
             tools.append(Function.from_callable(delete_knowledge_fields, strict=True))
 
-        if self.enable_feedback:
+        if self.enable_user_feedback:
             FeedbackSchema = self.user_feedback_schema or UserFeedback
 
             def save_feedback(updates, run_context: RunContext) -> str:
-                """Save response feedback (positive/negative lists)."""
-                data = updates.model_dump(exclude_none=True)
-                for item in data.get("positive", []):
-                    stage_update(run_context, user_id, "feedback", "positive", item)
-                for item in data.get("negative", []):
-                    stage_update(run_context, user_id, "feedback", "negative", item)
+                """Save response feedback (liked, disliked, suggestions)."""
+                for key, value in updates.model_dump(exclude_none=True).items():
+                    stage_update(run_context, user_id, "feedback", key, value)
                 return "Feedback saved"
 
-            def clear_feedback(clear_positive: bool, clear_negative: bool, run_context: RunContext) -> str:
-                """Clear feedback lists."""
-                if clear_positive:
-                    stage_update(run_context, user_id, "feedback", "positive", None, "delete")
-                if clear_negative:
-                    stage_update(run_context, user_id, "feedback", "negative", None, "delete")
-                return "Feedback cleared"
+            def delete_feedback_fields(keys: List[str], run_context: RunContext) -> str:
+                """Delete specific feedback fields."""
+                for key in keys:
+                    stage_update(run_context, user_id, "feedback", key, None, "delete")
+                return f"Deleted feedback fields: {keys}"
 
             save_feedback.__annotations__["updates"] = FeedbackSchema
             tools.append(Function.from_callable(save_feedback, strict=True))
-            tools.append(Function.from_callable(clear_feedback, strict=True))
+            tools.append(Function.from_callable(delete_feedback_fields, strict=True))
 
         return tools
 
@@ -665,20 +652,16 @@ def stage_update(
         run_context.session_state = {}
     pending = run_context.session_state.setdefault(USER_MEMORY_KEY, {"user_id": user_id})
 
-    if layer == "feedback":
-        # Feedback: {positive: [...], negative: [...]}
-        feedback = pending.setdefault("feedback", {"positive": [], "negative": []})
-        if action == "delete" and key in ("positive", "negative"):
-            feedback[key] = []
-        elif key in ("positive", "negative") and value not in feedback[key]:
-            feedback[key].append(value)
+    if action == "delete":
+        # Track deletion in separate dict
+        deletes = pending.setdefault("_deletes", {})
+        delete_keys = deletes.setdefault(layer, [])
+        if key not in delete_keys:
+            delete_keys.append(key)
     else:
-        # profile, knowledge, policies: simple dict
+        # All layers (profile, knowledge, policies, feedback): set value in layer dict
         layer_dict = pending.setdefault(layer, {})
-        if action == "delete" or value is None:
-            layer_dict.pop(key, None)
-        else:
-            layer_dict[key] = value
+        layer_dict[key] = value
 
 
 def commit_pending(db: BaseDb, user_id: str, run_context: RunContext) -> bool:
@@ -740,6 +723,7 @@ async def acommit_pending(db: Union[AsyncBaseDb, BaseDb], user_id: str, run_cont
 
 def _apply_pending_updates(memory: UserMemoryV2, pending: Dict[str, Any]) -> None:
     """Merge pending updates into memory."""
+    # First: Apply additions
     # Profile
     for key, value in pending.get("profile", {}).items():
         memory.profile[key] = value
@@ -758,11 +742,18 @@ def _apply_pending_updates(memory: UserMemoryV2, pending: Dict[str, Any]) -> Non
         for key, value in pending["knowledge"].items():
             memory.layers["knowledge"][key] = value
 
-    # Feedback (append to lists)
     if pending.get("feedback"):
         if not isinstance(memory.layers.get("feedback"), dict):
-            memory.layers["feedback"] = {"positive": [], "negative": []}
-        for fb_type in ("positive", "negative"):
-            for val in pending["feedback"].get(fb_type, []):
-                if val not in memory.layers["feedback"][fb_type]:
-                    memory.layers["feedback"][fb_type].append(val)
+            memory.layers["feedback"] = {}
+        for key, value in pending["feedback"].items():
+            memory.layers["feedback"][key] = value
+
+    # Last: Apply deletions (delete wins over add in same run)
+    for layer, keys in pending.get("_deletes", {}).items():
+        if layer == "profile":
+            for key in keys:
+                memory.profile.pop(key, None)
+        elif layer in ("policies", "knowledge", "feedback"):
+            if isinstance(memory.layers.get(layer), dict):
+                for key in keys:
+                    memory.layers[layer].pop(key, None)
