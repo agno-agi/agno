@@ -38,6 +38,7 @@ class BaseDb(ABC):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        organizations_table: Optional[str] = None,
         user_memory_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
@@ -51,6 +52,7 @@ class BaseDb(ABC):
         self.trace_table_name = traces_table or "agno_traces"
         self.span_table_name = spans_table or "agno_spans"
         self.versions_table_name = versions_table or "agno_schema_versions"
+        self.organizations_table_name = organizations_table or "agno_organizations"
         self.user_memory_table_name = user_memory_table or "agno_user_memory"
 
     @abstractmethod
@@ -537,6 +539,7 @@ class AsyncBaseDb(ABC):
         spans_table: Optional[str] = None,
         culture_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        organizations_table: Optional[str] = None,
         user_memory_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -549,6 +552,7 @@ class AsyncBaseDb(ABC):
         self.span_table_name = spans_table or "agno_spans"
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
+        self.organizations_table_name = organizations_table or "agno_organizations"
         self.user_memory_table_name = user_memory_table or "agno_user_memory"
 
     async def _create_all_tables(self) -> None:
