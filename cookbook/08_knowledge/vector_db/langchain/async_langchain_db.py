@@ -21,7 +21,7 @@ async def main():
 
     # Define the path to the document to be loaded into the knowledge base
     state_of_the_union = pathlib.Path(
-        "cookbook/knowledge/testing_resources/state_of_the_union.txt"
+        "cookbook/08_knowledge/testing_resources/state_of_the_union.txt"
     )
 
     # Load the document (this is synchronous in LangChain)
