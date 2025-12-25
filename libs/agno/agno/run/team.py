@@ -423,9 +423,10 @@ class CompressionCompletedEvent(BaseTeamRunEvent):
 
     event: str = TeamRunEvent.compression_completed.value
     compression_type: str = ""  # "tool" or "context"
-    original_size: int = 0
-    compressed_size: int = 0
-    items_compressed: int = 0  # tools or messages
+    original_size: Optional[int] = None
+    compressed_size: Optional[int] = None
+    items_compressed: Optional[int] = None  # tools or messages
+    compressed_message_ids: Optional[List[str]] = None
 
 
 @dataclass

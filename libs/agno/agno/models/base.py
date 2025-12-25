@@ -1282,7 +1282,7 @@ class Model(ABC):
                     if compression_type:
                         yield ModelResponse(
                             event=ModelResponseEvent.compression_started.value,
-                            extra={"compression_type": compression_type},
+                            compression_type=compression_type,
                         )
                         new_context = _compression_manager.compress(
                             messages, tools, compression_context, response_format=response_format
@@ -1298,10 +1298,8 @@ class Model(ABC):
                         stats = _compression_manager.stats
                         yield ModelResponse(
                             event=ModelResponseEvent.compression_completed.value,
-                            extra={
-                                "compression_type": compression_type,
-                                "stats": stats.copy(),
-                            },
+                            compression_type=compression_type,
+                            extra={"stats": stats.copy()},
                         )
 
                 assistant_message = Message(role=self.assistant_message_role)
@@ -1556,7 +1554,7 @@ class Model(ABC):
                     if compression_type:
                         yield ModelResponse(
                             event=ModelResponseEvent.compression_started.value,
-                            extra={"compression_type": compression_type},
+                            compression_type=compression_type,
                         )
                         new_context = await _compression_manager.acompress(
                             messages, tools, compression_context, response_format=response_format
@@ -1573,10 +1571,8 @@ class Model(ABC):
                         stats = _compression_manager.stats
                         yield ModelResponse(
                             event=ModelResponseEvent.compression_completed.value,
-                            extra={
-                                "compression_type": compression_type,
-                                "stats": stats.copy(),
-                            },
+                            compression_type=compression_type,
+                            extra={"stats": stats.copy()},
                         )
 
                 # Create assistant message and stream data

@@ -48,7 +48,9 @@ class CompressionManager:
             )
 
         if self.compress_tool_results and self.compress_context:
-            log_warning("Cannot enable `compress_tool_results` and `compress_context` simultaneously. Defaulting to `compress_context`.")
+            log_warning(
+                "Cannot enable `compress_tool_results` and `compress_context` simultaneously. Defaulting to `compress_context`."
+            )
 
     def compress(
         self,
@@ -98,11 +100,11 @@ class CompressionManager:
             return False
 
         # Message count-based compression (excludes system messages)
-        if self.compress_context_messages_limit is None:
-            return False
+        if self.compress_context_messages_limit is not None:
+            msg_count = len([m for m in messages if m.role != "system"])
+            return msg_count >= self.compress_context_messages_limit
 
-        msg_count = len([m for m in messages if m.role != "system"])
-        return msg_count >= self.compress_context_messages_limit
+        return False
 
     def _should_compress_tools(
         self,
@@ -120,11 +122,11 @@ class CompressionManager:
             return False
 
         # Count-based compression
-        if self.compress_tool_results_limit is None:
-            return False
+        if self.compress_tool_results_limit is not None:
+            uncompressed = sum(1 for m in messages if m.role == "tool" and m.compressed_content is None)
+            return uncompressed >= self.compress_tool_results_limit
 
-        uncompressed = sum(1 for m in messages if m.role == "tool" and m.compressed_content is None)
-        return uncompressed >= self.compress_tool_results_limit
+        return False
 
     def _compress_context(
         self,
@@ -158,7 +160,12 @@ class CompressionManager:
                 last_tool_idx = i
                 break
 
-        # 3. Collect messages to compress (everything except system, current_user, last_tool_batch)
+        # Get already compressed message IDs from previous runs
+        already_compressed_ids: Set[str] = set()
+        if compression_context and compression_context.message_ids:
+            already_compressed_ids = compression_context.message_ids
+
+        # 3. Collect messages to compress (everything except system, current_user, last_tool_batch, and already-compressed)
         msgs_to_compress: List[Message] = []
         compressed_msg_ids: Set[str] = set()
 
@@ -167,6 +174,9 @@ class CompressionManager:
             if msg.role == "system" or i == current_user_idx:
                 continue
             if last_tool_idx is not None and i >= last_tool_idx:
+                continue
+            # Skip messages that were already compressed in previous runs
+            if msg.id and msg.id in already_compressed_ids:
                 continue
 
             msgs_to_compress.append(msg)
@@ -295,7 +305,12 @@ class CompressionManager:
                 last_tool_idx = i
                 break
 
-        # 3. Collect messages to compress
+        # Get already compressed message IDs from previous runs
+        already_compressed_ids: Set[str] = set()
+        if compression_context and compression_context.message_ids:
+            already_compressed_ids = compression_context.message_ids
+
+        # 3. Collect messages to compress (skip already-compressed)
         msgs_to_compress: List[Message] = []
         compressed_msg_ids: Set[str] = set()
 
@@ -304,6 +319,9 @@ class CompressionManager:
             if msg.role == "system" or i == current_user_idx:
                 continue
             if last_tool_idx is not None and i >= last_tool_idx:
+                continue
+            # Skip messages that were already compressed in previous runs
+            if msg.id and msg.id in already_compressed_ids:
                 continue
 
             msgs_to_compress.append(msg)

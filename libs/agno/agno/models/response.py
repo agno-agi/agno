@@ -131,6 +131,8 @@ class ModelResponse:
 
     # Compressed context from context compression
     compression_context: Optional["CompressedContext"] = None
+    # Compression type: "tool" or "context"
+    compression_type: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize ModelResponse to dictionary for caching."""

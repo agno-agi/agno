@@ -116,6 +116,8 @@ from agno.utils.agent import (
 from agno.utils.common import is_typed_dict
 from agno.utils.events import (
     add_error_event,
+    create_compression_completed_event,
+    create_compression_started_event,
     create_parser_model_response_completed_event,
     create_parser_model_response_started_event,
     create_post_hook_completed_event,
@@ -6088,6 +6090,37 @@ class Agent:
                             events_to_skip=self.events_to_skip,  # type: ignore
                             store_events=self.store_events,
                         )
+
+            # Handle compression events
+            elif model_response_event.event == ModelResponseEvent.compression_started.value:
+                if stream_events and model_response_event.compression_type:
+                    yield handle_event(  # type: ignore
+                        create_compression_started_event(
+                            from_run_response=run_response,
+                            compression_type=model_response_event.compression_type,
+                        ),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
+
+            elif model_response_event.event == ModelResponseEvent.compression_completed.value:
+                if stream_events and model_response_event.compression_type:
+                    stats = model_response_event.extra.get("stats", {}) if model_response_event.extra else {}
+                    yield handle_event(  # type: ignore
+                        create_compression_completed_event(
+                            from_run_response=run_response,
+                            compression_type=model_response_event.compression_type,
+                            stats=stats,
+                        ),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
+
+                # Store compressed context
+                if model_response_event.compression_context:
+                    session.set_compression_context(model_response_event.compression_context)
 
     def _make_cultural_knowledge(
         self,
