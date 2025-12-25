@@ -1,9 +1,20 @@
-"""Schema-Based Memory V2 - Constrain what the LLM can save using Pydantic schemas.
+"""
+Memory V2 Schemas - Constrain What the LLM Can Save
+====================================================
+This example shows how to use Pydantic schemas to constrain memory fields.
+Instead of free-form key-value storage, schemas define exactly what can be saved.
 
-Demonstrates:
-- Using default schemas with use_default_schemas=True
-- Defining custom schemas to limit what fields the LLM can save
-- Schema validation ensures structured, predictable memory storage
+Different from dynamic memory, schema-based memory provides structure and
+validation. The LLM can only save fields defined in your schemas.
+
+Key concepts:
+- use_default_schemas: Use built-in schemas for common fields
+- Custom schemas: Define domain-specific fields with Pydantic
+
+Example prompts to try:
+- "I'm Alice Chen, a senior engineer at TechCorp"
+- "I work with Python and TypeScript"
+- "I prefer concise responses"
 """
 
 import json
@@ -16,26 +27,31 @@ from agno.models.openai import OpenAIChat
 from pydantic import BaseModel, ConfigDict, Field
 from rich import print_json
 
-DB_FILE = "tmp/schema_memory.db"
+# ============================================================================
+# Storage Configuration
+# ============================================================================
+agent_db = SqliteDb(db_file="tmp/schema_memory.db")
 
 
+# ============================================================================
+# Example 1: Default Schemas
+# ============================================================================
 def example_default_schemas():
     """Use built-in default schemas for profile, policies, knowledge, feedback."""
     print("=" * 60)
-    print("EXAMPLE 1: Default Schemas")
+    print("Example 1: Default Schemas")
     print("=" * 60)
-
-    db = SqliteDb(db_file=DB_FILE)
 
     memory = MemoryCompiler(
         model=OpenAIChat(id="gpt-4o-mini"),
-        db=db,
+        db=agent_db,
         use_default_schemas=True,
     )
 
     agent = Agent(
+        name="Schema Agent",
         model=OpenAIChat(id="gpt-4o"),
-        db=db,
+        db=agent_db,
         memory_compiler=memory,
         update_memory_on_run=True,
         markdown=True,
@@ -43,7 +59,6 @@ def example_default_schemas():
 
     user_id = "schema_user"
 
-    # The LLM will extract and save only schema-defined fields
     agent.print_response(
         "Hi, I'm Alice Chen, a senior engineer at TechCorp in San Francisco. "
         "I work with Python and TypeScript. I prefer concise responses with code examples.",
@@ -57,13 +72,14 @@ def example_default_schemas():
         print_json(json.dumps(profile.to_dict()))
 
 
+# ============================================================================
+# Example 2: Custom Schemas
+# ============================================================================
 def example_custom_schemas():
     """Define custom schemas for domain-specific memory fields."""
     print("\n" + "=" * 60)
-    print("EXAMPLE 2: Custom Schemas")
+    print("Example 2: Custom Schemas (Healthcare)")
     print("=" * 60)
-
-    db = SqliteDb(db_file=DB_FILE)
 
     # Custom profile schema for healthcare domain
     class HealthcareProfile(BaseModel):
@@ -73,7 +89,6 @@ def example_custom_schemas():
         role: Optional[str] = Field(None, description="patient/doctor/nurse/admin")
         department: Optional[str] = Field(None, description="Hospital department")
         specialty: Optional[str] = Field(None, description="Medical specialty")
-        license_number: Optional[str] = Field(None, description="Medical license ID")
 
     # Custom policies for healthcare
     class HealthcarePolicies(BaseModel):
@@ -85,7 +100,6 @@ def example_custom_schemas():
         include_citations: Optional[bool] = Field(
             None, description="Include medical citations"
         )
-        privacy_level: Optional[str] = Field(None, description="standard/hipaa-strict")
 
     # Custom knowledge for healthcare
     class HealthcareKnowledge(BaseModel):
@@ -95,19 +109,19 @@ def example_custom_schemas():
         medications: Optional[List[str]] = Field(
             None, description="Current medications"
         )
-        allergies: Optional[List[str]] = Field(None, description="Known allergies")
 
     memory = MemoryCompiler(
         model=OpenAIChat(id="gpt-4o-mini"),
-        db=db,
-        profile_schema=HealthcareProfile,
-        policies_schema=HealthcarePolicies,
-        knowledge_schema=HealthcareKnowledge,
+        db=agent_db,
+        user_profile_schema=HealthcareProfile,
+        user_policies_schema=HealthcarePolicies,
+        user_knowledge_schema=HealthcareKnowledge,
     )
 
     agent = Agent(
+        name="Healthcare Agent",
         model=OpenAIChat(id="gpt-4o"),
-        db=db,
+        db=agent_db,
         memory_compiler=memory,
         update_memory_on_run=True,
         markdown=True,
@@ -117,9 +131,8 @@ def example_custom_schemas():
 
     agent.print_response(
         "I'm Dr. Sarah Smith, a cardiologist in the Cardiology department. "
-        "License number CA-12345. I prefer formal, citation-backed responses. "
-        "I'm currently treating patients with hypertension and heart failure. "
-        "Many of my patients are on ACE inhibitors and beta blockers.",
+        "I prefer formal, citation-backed responses. "
+        "I'm currently treating patients with hypertension and heart failure.",
         user_id=user_id,
         stream=True,
     )
@@ -130,50 +143,38 @@ def example_custom_schemas():
         print_json(json.dumps(profile.to_dict()))
 
 
-def example_agentic_with_schemas():
-    """Agentic memory with schema constraints - user explicitly manages memory."""
-    print("\n" + "=" * 60)
-    print("EXAMPLE 3: Agentic Memory with Schemas")
-    print("=" * 60)
-
-    db = SqliteDb(db_file=DB_FILE)
-
-    memory = MemoryCompiler(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        db=db,
-        use_default_schemas=True,
-    )
-
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
-        db=db,
-        memory_compiler=memory,
-        enable_agentic_memory_v2=True,  # User explicitly manages memory
-        markdown=True,
-    )
-
-    user_id = "agentic_user"
-
-    # User explicitly asks to save information
-    agent.print_response(
-        "Remember that I'm working on a machine learning project using PyTorch and transformers.",
-        user_id=user_id,
-        stream=True,
-    )
-
-    agent.print_response(
-        "Update my preferences: I want detailed responses with code examples.",
-        user_id=user_id,
-        stream=True,
-    )
-
-    print("\nFinal memory state:")
-    profile = memory.get_user_memory_v2(user_id)
-    if profile:
-        print_json(json.dumps(profile.to_dict()))
-
-
+# ============================================================================
+# Run Examples
+# ============================================================================
 if __name__ == "__main__":
     example_default_schemas()
     example_custom_schemas()
-    example_agentic_with_schemas()
+
+# ============================================================================
+# More Examples
+# ============================================================================
+"""
+When to use schemas:
+
+1. Compliance requirements:
+   - Healthcare: HIPAA-compliant fields only
+   - Finance: PCI-DSS compliant fields
+   - Legal: Audit-friendly structured data
+
+2. Integration needs:
+   - CRM sync: Match CRM field structure
+   - Analytics: Consistent data for dashboards
+   - Export: Predictable JSON structure
+
+3. Quality control:
+   - Prevent garbage data
+   - Ensure required fields
+   - Type validation
+
+Schema tips:
+
+- Use Optional for all fields (LLM may not extract everything)
+- Add descriptions for LLM guidance
+- Use ConfigDict(extra="forbid") to reject unknown fields
+- Keep schemas focused on your domain
+"""

@@ -23,10 +23,8 @@ class MemoryCompiler:
     model: Optional[Model] = None
     # storage backend
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
-    # custom prompt (overrides default)
-    system_message: Optional[str] = None
     # what to capture
-    capture_instructions: Optional[str] = None
+    user_capture_instructions: Optional[str] = None
     # Layer toggles
     enable_update: bool = True
     # user identity (name, company, role)
@@ -38,42 +36,54 @@ class MemoryCompiler:
 
     # Schema options (constrain what LLM can save)
     use_default_schemas: bool = False
-    profile_schema: Optional[Type[BaseModel]] = None
-    policies_schema: Optional[Type[BaseModel]] = None
-    knowledge_schema: Optional[Type[BaseModel]] = None
-    feedback_schema: Optional[Type[BaseModel]] = None
+    user_profile_schema: Optional[Type[BaseModel]] = None
+    user_policies_schema: Optional[Type[BaseModel]] = None
+    user_knowledge_schema: Optional[Type[BaseModel]] = None
+    user_feedback_schema: Optional[Type[BaseModel]] = None
+
+    # Per-layer custom instructions (appended to default prompt)
+    user_profile_instructions: Optional[str] = None
+    user_knowledge_instructions: Optional[str] = None
+    user_policies_instructions: Optional[str] = None
+    user_feedback_instructions: Optional[str] = None
 
     def __init__(
         self,
         model: Optional[Union[Model, str]] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-        system_message: Optional[str] = None,
-        capture_instructions: Optional[str] = None,
+        user_capture_instructions: Optional[str] = None,
         enable_update: bool = True,
         enable_profile: bool = True,
         enable_knowledge: bool = True,
         enable_policies: bool = True,
         enable_feedback: bool = True,
         use_default_schemas: bool = False,
-        profile_schema: Optional[Type[BaseModel]] = None,
-        policies_schema: Optional[Type[BaseModel]] = None,
-        knowledge_schema: Optional[Type[BaseModel]] = None,
-        feedback_schema: Optional[Type[BaseModel]] = None,
+        user_profile_schema: Optional[Type[BaseModel]] = None,
+        user_policies_schema: Optional[Type[BaseModel]] = None,
+        user_knowledge_schema: Optional[Type[BaseModel]] = None,
+        user_feedback_schema: Optional[Type[BaseModel]] = None,
+        user_profile_instructions: Optional[str] = None,
+        user_knowledge_instructions: Optional[str] = None,
+        user_policies_instructions: Optional[str] = None,
+        user_feedback_instructions: Optional[str] = None,
     ):
         self.model = get_model(model) if model else None
         self.db = db
-        self.system_message = system_message
-        self.capture_instructions = capture_instructions
+        self.user_capture_instructions = user_capture_instructions
         self.enable_update = enable_update
         self.enable_profile = enable_profile
         self.enable_knowledge = enable_knowledge
         self.enable_policies = enable_policies
         self.enable_feedback = enable_feedback
         self.use_default_schemas = use_default_schemas
-        self.profile_schema = profile_schema
-        self.policies_schema = policies_schema
-        self.knowledge_schema = knowledge_schema
-        self.feedback_schema = feedback_schema
+        self.user_profile_schema = user_profile_schema
+        self.user_policies_schema = user_policies_schema
+        self.user_knowledge_schema = user_knowledge_schema
+        self.user_feedback_schema = user_feedback_schema
+        self.user_profile_instructions = user_profile_instructions
+        self.user_knowledge_instructions = user_knowledge_instructions
+        self.user_policies_instructions = user_policies_instructions
+        self.user_feedback_instructions = user_feedback_instructions
 
     def get_user_memory_v2(self, user_id: Optional[str] = None) -> Optional[UserMemoryV2]:
         """Get user memory from DB."""
@@ -180,16 +190,16 @@ class MemoryCompiler:
         # Get extraction tools based on schema configuration
         use_schemas = (
             self.use_default_schemas
-            or self.profile_schema is not None
-            or self.policies_schema is not None
-            or self.knowledge_schema is not None
-            or self.feedback_schema is not None
+            or self.user_profile_schema is not None
+            or self.user_policies_schema is not None
+            or self.user_knowledge_schema is not None
+            or self.user_feedback_schema is not None
         )
-        tools = self._get_schema_tools(memory) if use_schemas else self._get_key_value_tools(memory)
+        tools = self._compile_schema_tools(memory) if use_schemas else self._compile_tools(memory)
 
         # Send to LLM for extraction
         response = deepcopy(self.model).response(
-            messages=[self._build_system_message(memory), Message(role="user", content=message)],
+            messages=[self._build_user_system_message(memory), Message(role="user", content=message)],
             tools=tools,
         )
 
@@ -202,7 +212,7 @@ class MemoryCompiler:
 
         return response.content or "No response"
 
-    def _get_key_value_tools(self, memory: UserMemoryV2) -> List[Function]:
+    def _compile_tools(self, memory: UserMemoryV2) -> List[Function]:
         """Get key-value based extraction tools."""
         if not self.enable_update:
             return []
@@ -255,7 +265,7 @@ class MemoryCompiler:
 
         return [Function.from_callable(t, strict=True) for t in tools]
 
-    def _get_schema_tools(self, memory: UserMemoryV2) -> List[Function]:
+    def _compile_schema_tools(self, memory: UserMemoryV2) -> List[Function]:
         """Get schema-based extraction tools."""
         if not self.enable_update:
             return []
@@ -265,7 +275,7 @@ class MemoryCompiler:
         tools: List[Any] = []
 
         if self.enable_profile:
-            ProfileSchema = self.profile_schema or UserProfile
+            ProfileSchema = self.user_profile_schema or UserProfile
 
             def save_profile(updates: ProfileSchema) -> str:  # type: ignore
                 """Save user profile (name, company, role, skills, etc.)."""
@@ -282,7 +292,7 @@ class MemoryCompiler:
             tools.extend([save_profile, delete_profile_fields])
 
         if self.enable_policies:
-            PoliciesSchema = self.policies_schema or UserPolicies
+            PoliciesSchema = self.user_policies_schema or UserPolicies
 
             def save_policies(updates: PoliciesSchema) -> str:  # type: ignore
                 """Save user preferences (response_style, tone, formatting)."""
@@ -301,7 +311,7 @@ class MemoryCompiler:
             tools.extend([save_policies, delete_policy_fields])
 
         if self.enable_knowledge:
-            KnowledgeSchema = self.knowledge_schema or UserKnowledge
+            KnowledgeSchema = self.user_knowledge_schema or UserKnowledge
 
             def save_knowledge(updates: KnowledgeSchema) -> str:  # type: ignore
                 """Save user context (current_project, tech_stack, interests)."""
@@ -320,7 +330,7 @@ class MemoryCompiler:
             tools.extend([save_knowledge, delete_knowledge_fields])
 
         if self.enable_feedback:
-            FeedbackSchema = self.feedback_schema or UserFeedback
+            FeedbackSchema = self.user_feedback_schema or UserFeedback
 
             def save_feedback(updates: FeedbackSchema) -> str:  # type: ignore
                 """Save response feedback (positive/negative lists)."""
@@ -363,16 +373,16 @@ class MemoryCompiler:
         # Get extraction tools based on schema configuration
         use_schemas = (
             self.use_default_schemas
-            or self.profile_schema is not None
-            or self.policies_schema is not None
-            or self.knowledge_schema is not None
-            or self.feedback_schema is not None
+            or self.user_profile_schema is not None
+            or self.user_policies_schema is not None
+            or self.user_knowledge_schema is not None
+            or self.user_feedback_schema is not None
         )
-        tools = self._get_schema_tools(memory) if use_schemas else self._get_key_value_tools(memory)
+        tools = self._compile_schema_tools(memory) if use_schemas else self._compile_tools(memory)
 
         # Send to LLM for extraction
         response = await deepcopy(self.model).aresponse(
-            messages=[self._build_system_message(memory), Message(role="user", content=message)],
+            messages=[self._build_user_system_message(memory), Message(role="user", content=message)],
             tools=tools,
         )
 
@@ -402,21 +412,30 @@ class MemoryCompiler:
             return ""
         return f"<user_memory>\n{json.dumps(data, separators=(',', ':'))}\n</user_memory>"
 
-    def _build_system_message(self, existing: Optional[UserMemoryV2] = None) -> Message:
+    def _build_user_system_message(self, existing: Optional[UserMemoryV2] = None) -> Message:
         """Build system prompt for LLM extraction."""
-        if self.system_message:
-            return Message(role="system", content=self.system_message)
-
         # Build layer info from enabled layers
         layers = []
         if self.enable_profile:
-            layers.append(("profile", "identity info (name, company, role, location)"))
+            desc = "identity info (name, company, role, location)"
+            if self.user_profile_instructions:
+                desc += f" - {self.user_profile_instructions}"
+            layers.append(("profile", desc))
         if self.enable_knowledge:
-            layers.append(("knowledge", "personal facts (interests, hobbies, habits)"))
+            desc = "personal facts (interests, hobbies, habits)"
+            if self.user_knowledge_instructions:
+                desc += f" - {self.user_knowledge_instructions}"
+            layers.append(("knowledge", desc))
         if self.enable_policies:
-            layers.append(("policy", "behavior rules (no emojis, be concise)"))
+            desc = "behavior rules (no emojis, be concise)"
+            if self.user_policies_instructions:
+                desc += f" - {self.user_policies_instructions}"
+            layers.append(("policy", desc))
         if self.enable_feedback:
-            layers.append(("feedback", "what user liked/disliked about responses"))
+            desc = "what user liked/disliked about responses"
+            if self.user_feedback_instructions:
+                desc += f" - {self.user_feedback_instructions}"
+            layers.append(("feedback", desc))
 
         # Build descriptions and tool names from layers
         descriptions = [f"- {name.title()}: {desc}" for name, desc in layers]
@@ -425,8 +444,8 @@ class MemoryCompiler:
 
         layer_descriptions = "\n".join(descriptions)
         custom_instructions = ""
-        if self.capture_instructions:
-            custom_instructions = f"\nAdditional guidance:\n{self.capture_instructions}\n"
+        if self.user_capture_instructions:
+            custom_instructions = f"\nAdditional guidance:\n{self.user_capture_instructions}\n"
 
         prompt = dedent(f"""\
             You are a Memory Manager that extracts user information from conversations.
@@ -466,16 +485,16 @@ class MemoryCompiler:
         """Get tools for agentic memory updates (used by Agent/Team)."""
         use_schemas = (
             self.use_default_schemas
-            or self.profile_schema is not None
-            or self.policies_schema is not None
-            or self.knowledge_schema is not None
-            or self.feedback_schema is not None
+            or self.user_profile_schema is not None
+            or self.user_policies_schema is not None
+            or self.user_knowledge_schema is not None
+            or self.user_feedback_schema is not None
         )
         if use_schemas:
-            return self._get_schema_tools(user_id)
-        return self._get_dynamic_tools(user_id)
+            return self._agentic_schema_tools(user_id)
+        return self._agentic_tools(user_id)
 
-    def _get_dynamic_tools(self, user_id: str) -> List[Function]:
+    def _agentic_tools(self, user_id: str) -> List[Function]:
         """Get key-value tools that stage updates for batch commit."""
         tools: List[Function] = []
 
@@ -541,13 +560,13 @@ class MemoryCompiler:
 
         return tools
 
-    def _get_schema_tools(self, user_id: str) -> List[Function]:
+    def _agentic_schema_tools(self, user_id: str) -> List[Function]:
         """Get schema-based tools that stage updates for batch commit."""
 
         tools: List[Function] = []
 
         if self.enable_profile:
-            ProfileSchema = self.profile_schema or UserProfile
+            ProfileSchema = self.user_profile_schema or UserProfile
 
             def save_profile(updates, run_context: RunContext) -> str:
                 """Save user profile (name, company, role, skills, etc.)."""
@@ -566,7 +585,7 @@ class MemoryCompiler:
             tools.append(Function.from_callable(delete_profile_fields, strict=True))
 
         if self.enable_policies:
-            PoliciesSchema = self.policies_schema or UserPolicies
+            PoliciesSchema = self.user_policies_schema or UserPolicies
 
             def save_policies(updates, run_context: RunContext) -> str:
                 """Save user preferences (response_style, tone, formatting)."""
@@ -585,7 +604,7 @@ class MemoryCompiler:
             tools.append(Function.from_callable(delete_policy_fields, strict=True))
 
         if self.enable_knowledge:
-            KnowledgeSchema = self.knowledge_schema or UserKnowledge
+            KnowledgeSchema = self.user_knowledge_schema or UserKnowledge
 
             def save_knowledge(updates, run_context: RunContext) -> str:
                 """Save user context (current_project, tech_stack, interests)."""
@@ -604,7 +623,7 @@ class MemoryCompiler:
             tools.append(Function.from_callable(delete_knowledge_fields, strict=True))
 
         if self.enable_feedback:
-            FeedbackSchema = self.feedback_schema or UserFeedback
+            FeedbackSchema = self.user_feedback_schema or UserFeedback
 
             def save_feedback(updates, run_context: RunContext) -> str:
                 """Save response feedback (positive/negative lists)."""
