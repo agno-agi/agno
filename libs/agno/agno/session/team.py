@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from pydantic import BaseModel
 
+from agno.compression.context import CompressedContext
 from agno.models.message import Message
 from agno.run.agent import RunOutput, RunStatus
 from agno.run.team import TeamRunOutput
@@ -120,6 +121,7 @@ class TeamSession:
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
         skip_member_messages: bool = True,
+        filter_compressed: bool = False,
     ) -> List[Message]:
         """Returns the messages belonging to the session that fit the given criteria.
 
@@ -132,10 +134,17 @@ class TeamSession:
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
             skip_member_messages: Skip messages created by members of the team.
+            filter_compressed: Filter out messages that have already been compressed.
 
         Returns:
             A list of Messages belonging to the session.
         """
+        # Get compressed message IDs once at the start (if filter_compressed)
+        compressed_msg_ids: Optional[set] = None
+        if filter_compressed:
+            compressed_ctx = self.get_compression_context()
+            if compressed_ctx and compressed_ctx.message_ids:
+                compressed_msg_ids = compressed_ctx.message_ids
 
         def _should_skip_message(
             message: Message, skip_roles: Optional[List[str]] = None, skip_history_messages: bool = True
@@ -148,6 +157,11 @@ class TeamSession:
             # Skip messages with specified role
             if skip_roles and message.role in skip_roles:
                 return True
+
+            # Skip already-compressed messages
+            if compressed_msg_ids and message.id in compressed_msg_ids:
+                return True
+
             return False
 
         if member_ids is not None and skip_member_messages:
@@ -337,3 +351,17 @@ class TeamSession:
             return None
 
         return self.summary  # type: ignore
+
+    def get_compression_context(self) -> Optional[CompressedContext]:
+        """Get compressed context from session_data."""
+        if self.session_data and "compression_context" in self.session_data:
+            ctx_data = self.session_data["compression_context"]
+            if isinstance(ctx_data, dict):
+                return CompressedContext.from_dict(ctx_data)
+        return None
+
+    def set_compression_context(self, ctx: CompressedContext) -> None:
+        """Store compressed context in session_data."""
+        if self.session_data is None:
+            self.session_data = {}
+        self.session_data["compression_context"] = ctx.to_dict()
