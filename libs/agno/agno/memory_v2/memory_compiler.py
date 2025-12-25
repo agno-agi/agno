@@ -180,7 +180,7 @@ class MemoryCompiler:
         # Send to Model for extraction
         response = deepcopy(self.model).response(
             messages=[self._build_user_system_message(memory), Message(role="user", content=message)],
-            tools=tools,
+            tools=cast(list, tools),
         )
 
         # Save directly - LLM's intent is the source of truth
@@ -253,7 +253,7 @@ class MemoryCompiler:
 
             def save_profile(updates: ProfileSchema) -> str:  # type: ignore
                 """Save user profile (name, company, role, skills, etc.)."""
-                for key, value in updates.model_dump(exclude_none=True).items():
+                for key, value in updates.model_dump(exclude_none=True).items():  # type: ignore[attr-defined]
                     memory.profile[key] = value
                 return "Profile saved"
 
@@ -271,7 +271,7 @@ class MemoryCompiler:
             def save_policies(updates: PoliciesSchema) -> str:  # type: ignore
                 """Save user preferences (response_style, tone, formatting)."""
                 policies = memory.layers.setdefault("policies", {})
-                for key, value in updates.model_dump(exclude_none=True).items():
+                for key, value in updates.model_dump(exclude_none=True).items():  # type: ignore[attr-defined]
                     policies[key] = value
                 return "Policies saved"
 
@@ -290,7 +290,7 @@ class MemoryCompiler:
             def save_knowledge(updates: KnowledgeSchema) -> str:  # type: ignore
                 """Save user context (current_project, tech_stack, interests)."""
                 knowledge = memory.layers.setdefault("knowledge", {})
-                for key, value in updates.model_dump(exclude_none=True).items():
+                for key, value in updates.model_dump(exclude_none=True).items():  # type: ignore[attr-defined]
                     knowledge[key] = value
                 return "Knowledge saved"
 
@@ -307,9 +307,9 @@ class MemoryCompiler:
             FeedbackSchema = self.user_feedback_schema or UserFeedback
 
             def save_feedback(updates: FeedbackSchema) -> str:  # type: ignore
-                """Save response feedback (liked, disliked, suggestions)."""
+                """Save user feedback (preferences, opinions, suggestions)."""
                 feedback = memory.layers.setdefault("feedback", {})
-                for key, value in updates.model_dump(exclude_none=True).items():
+                for key, value in updates.model_dump(exclude_none=True).items():  # type: ignore[attr-defined]
                     feedback[key] = value
                 return "Feedback saved"
 
@@ -350,7 +350,7 @@ class MemoryCompiler:
         # Send to LLM for extraction
         response = await deepcopy(self.model).aresponse(
             messages=[self._build_user_system_message(memory), Message(role="user", content=message)],
-            tools=tools,
+            tools=cast(list, tools),
         )
 
         if response.tool_calls:
@@ -401,10 +401,10 @@ class MemoryCompiler:
             - Only save when user explicitly requests a preference""")
 
         default_feedback = dedent("""\
-            Capture feedback on response quality:
-            - Positive signals: what user praised or found helpful
-            - Negative signals: what user criticized or found unhelpful
-            - Specific requests: improvements or changes asked for""")
+            Capture any feedback the user provides:
+            - Preferences, opinions, or sentiments
+            - Things they like or dislike
+            - Suggestions or requests""")
 
         # Build layer info from enabled layers
         layers = []
@@ -538,7 +538,7 @@ class MemoryCompiler:
         if self.enable_user_feedback:
 
             def save_user_feedback(key: str, value: Any, run_context: RunContext) -> str:
-                """Save response feedback (liked, disliked, suggestions)."""
+                """Save user feedback (preferences, opinions, suggestions)."""
                 stage_update(run_context, user_id, "feedback", key, value)
                 return f"Saved feedback: {key}"
 
@@ -618,7 +618,7 @@ class MemoryCompiler:
             FeedbackSchema = self.user_feedback_schema or UserFeedback
 
             def save_feedback(updates, run_context: RunContext) -> str:
-                """Save response feedback (liked, disliked, suggestions)."""
+                """Save user feedback (preferences, opinions, suggestions)."""
                 for key, value in updates.model_dump(exclude_none=True).items():
                     stage_update(run_context, user_id, "feedback", key, value)
                 return "Feedback saved"

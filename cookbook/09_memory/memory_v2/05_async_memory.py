@@ -4,30 +4,31 @@ Memory V2 Async - Concurrent Users with Personalized Memory
 This example shows async support for Memory V2 with multiple concurrent users.
 Each user has isolated memory, enabling personalized responses.
 
-Different from sync examples, this uses AsyncSqliteDb and asyncio.gather
+Different from sync examples, this uses PostgresDb and asyncio.gather
 to handle multiple users concurrently.
 
 Key concepts:
-- AsyncSqliteDb: Async database for non-blocking I/O
+- PostgresDb: Database for concurrent operations
 - asyncio.gather: Run multiple user conversations concurrently
 - Memory isolation: Each user_id has separate memory
 
 Requirements:
-    pip install aiosqlite
+    Docker running with: ./cookbook/scripts/run_pgvector.sh
 """
 
 import asyncio
 import json
 
 from agno.agent import Agent
-from agno.db.sqlite import AsyncSqliteDb
+from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from rich import print_json
 
 # ============================================================================
 # Storage Configuration
 # ============================================================================
-agent_db = AsyncSqliteDb(db_file="tmp/async_user_memory.db")
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+agent_db = PostgresDb(db_url=db_url)
 
 # ============================================================================
 # User Configuration
@@ -128,12 +129,4 @@ Async methods available:
 - agent.arun(): Async version of run()
 - agent.aprint_response(): Async version of print_response()
 - agent.aget_user_memory_v2(): Async version of get_user_memory_v2()
-
-Database options:
-
-- AsyncSqliteDb: Local async SQLite
-- AsyncPostgresDb: Production async PostgreSQL
-
-Use asyncio.gather() to run multiple operations concurrently
-when they don't depend on each other.
 """

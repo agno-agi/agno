@@ -7162,18 +7162,18 @@ class Team:
         save_tools = []
         delete_tools = []
 
-        if self.memory_compiler.enable_profile:
+        if self.memory_compiler.enable_user_profile:
             save_tools.append("- save_user_profile(key, value): identity info (name, company, role, location)")
             delete_tools.append("- delete_user_profile(key): delete identity info")
-        if self.memory_compiler.enable_knowledge:
+        if self.memory_compiler.enable_user_knowledge:
             save_tools.append("- save_user_knowledge(key, value): personal facts (interests, hobbies, habits)")
             delete_tools.append("- delete_user_knowledge(key): delete a knowledge fact")
-        if self.memory_compiler.enable_policies:
+        if self.memory_compiler.enable_user_policies:
             save_tools.append("- save_user_policy(key, value): behavior rules (be concise, no emojis)")
             delete_tools.append("- delete_user_policy(key): delete a behavior rule")
-        if self.memory_compiler.enable_feedback:
-            save_tools.append("- save_user_feedback(key, value): response feedback (key='positive' or 'negative')")
-            delete_tools.append("- delete_user_feedback(key): clear feedback (key='positive' or 'negative')")
+        if self.memory_compiler.enable_user_feedback:
+            save_tools.append("- save_user_feedback(key, value): response feedback (liked, disliked, suggestions)")
+            delete_tools.append("- delete_user_feedback(key): delete a feedback entry")
 
         if not save_tools:
             return ""

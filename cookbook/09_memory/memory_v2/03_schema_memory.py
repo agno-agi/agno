@@ -110,12 +110,26 @@ def example_custom_schemas():
             None, description="Current medications"
         )
 
+    class HealthcareFeedback(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        liked: Optional[bool] = Field(
+            None, description="Whether the user liked the response"
+        )
+        disliked: Optional[bool] = Field(
+            None, description="Whether the user disliked the response"
+        )
+        suggestions: Optional[List[str]] = Field(
+            None, description="Suggestions for the response"
+        )
+
     memory = MemoryCompiler(
         model=OpenAIChat(id="gpt-4o-mini"),
         db=agent_db,
         user_profile_schema=HealthcareProfile,
         user_policies_schema=HealthcarePolicies,
         user_knowledge_schema=HealthcareKnowledge,
+        user_feedback_schema=HealthcareFeedback,
     )
 
     agent = Agent(
@@ -132,7 +146,8 @@ def example_custom_schemas():
     agent.print_response(
         "I'm Dr. Sarah Smith, a cardiologist in the Cardiology department. "
         "I prefer formal, citation-backed responses. "
-        "I'm currently treating patients with hypertension and heart failure.",
+        "I'm currently treating patients with hypertension and heart failure. "
+        "I liked the response, but I think you could have been more concise.",
         user_id=user_id,
         stream=True,
     )
