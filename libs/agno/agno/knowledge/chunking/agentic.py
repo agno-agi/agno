@@ -38,6 +38,8 @@ class AgenticChunking(ChunkingStrategy):
         breakpoint_prompt_template: Optional[str] = None,
         metadata_extractor: Optional[ChunkMetadataExtractor] = None,
     ):
+        if max_chunk_size <= 0:
+            raise ValueError(f"Invalid parameters: max_chunk_size ({max_chunk_size}) must be greater than 0.")
         # Convert model string to Model instance
         model = get_model(model)
         if model is None:
@@ -169,9 +171,9 @@ class AgenticChunking(ChunkingStrategy):
         if break_point is None:
             break_point = max_break_point
 
-        # Clamp into safe bounds to ensure progress and avoid empty chunks.
-        if break_point < 1:
-            break_point = 1
+        # Ensure progress and avoid empty chunks.
+        if break_point <= 0:
+            break_point = max_break_point
         if break_point > max_break_point:
             break_point = max_break_point
 

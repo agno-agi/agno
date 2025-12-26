@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Union
 
+import pytest
 from pydantic import BaseModel
 
 from agno.knowledge.chunking.agentic import AgenticChunking
@@ -78,15 +79,21 @@ def test_agentic_chunking_parses_breakpoint_from_json_response():
     assert chunks[0].meta_data["chunk_size"] == 3
 
 
-def test_agentic_chunking_clamps_breakpoint_to_safe_range():
+def test_agentic_chunking_rejects_non_positive_max_chunk_size():
+    model = DummyModel(id="dummy")
+    with pytest.raises(ValueError):
+        AgenticChunking(model=model, max_chunk_size=0)
+
+
+def test_agentic_chunking_treats_non_positive_breakpoint_as_invalid():
     model = DummyModel(id="dummy", responses=["0"])
     chunking = AgenticChunking(model=model, max_chunk_size=5)
 
     doc = Document(content="abcdef", name="MyDoc")
     chunks = chunking.chunk(doc)
 
-    assert chunks[0].content == "a"
-    assert chunks[0].meta_data["chunk_size"] == 1
+    assert [c.content for c in chunks] == ["abcde", "f"]
+    assert chunks[0].meta_data["chunk_size"] == 5
 
 
 def test_agentic_chunking_enriches_metadata_without_overwriting_reserved_fields():
