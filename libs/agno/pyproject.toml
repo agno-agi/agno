@@ -172,7 +172,7 @@ pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
-csv = ["aiofiles"]
+csv = ["aiofiles", "openpyxl", "xlrd"]
 markdown = ["unstructured", "markdown", "aiofiles"]
 chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 

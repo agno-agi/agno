@@ -2,7 +2,7 @@ import asyncio
 import csv
 import io
 from pathlib import Path
-from typing import IO, Any, List, Optional, Union
+from typing import IO, Any, Iterable, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
 try:
@@ -16,6 +16,68 @@ from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error
+
+_EXCEL_SUFFIXES = {ContentType.XLSX.value, ContentType.XLS.value}
+
+
+def _infer_file_extension(file: Union[Path, IO[Any]], name: Optional[str]) -> str:
+    if isinstance(file, Path):
+        return file.suffix.lower()
+
+    file_name = getattr(file, "name", None)
+    if isinstance(file_name, str) and file_name:
+        return Path(file_name).suffix.lower()
+
+    if name:
+        return Path(name).suffix.lower()
+
+    return ""
+
+
+def _stringify_spreadsheet_cell_value(value: Any) -> str:
+    if value is None:
+        return ""
+
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+
+    return str(value)
+
+
+def _row_values_to_csv_line(row_values: Sequence[Any]) -> str:
+    values = [_stringify_spreadsheet_cell_value(v) for v in row_values]
+    while values and values[-1] == "":
+        values.pop()
+
+    return ", ".join(values).strip()
+
+
+def _excel_rows_to_documents(
+    *,
+    workbook_name: str,
+    sheets: Iterable[Tuple[str, Iterable[Sequence[Any]]]],
+) -> List[Document]:
+    documents = []
+    for sheet_index, (sheet_name, rows) in enumerate(sheets, start=1):
+        lines = []
+        for row in rows:
+            line = _row_values_to_csv_line(row)
+            if line:
+                lines.append(line)
+
+        if not lines:
+            continue
+
+        documents.append(
+            Document(
+                name=workbook_name,
+                id=str(uuid4()),
+                meta_data={"sheet_name": sheet_name, "sheet_index": sheet_index},
+                content="\n".join(lines),
+            )
+        )
+
+    return documents
 
 
 class CSVReader(Reader):
@@ -44,6 +106,28 @@ class CSVReader(Reader):
         self, file: Union[Path, IO[Any]], delimiter: str = ",", quotechar: str = '"', name: Optional[str] = None
     ) -> List[Document]:
         try:
+            file_extension = _infer_file_extension(file, name)
+            if file_extension in _EXCEL_SUFFIXES:
+                workbook_name: str
+                if name:
+                    workbook_name = Path(name).stem
+                elif isinstance(file, Path):
+                    workbook_name = file.stem
+                else:
+                    workbook_name = Path(getattr(file, "name", "workbook")).stem
+
+                if file_extension == ContentType.XLSX.value:
+                    documents = self._read_xlsx(file, workbook_name=workbook_name)
+                else:
+                    documents = self._read_xls(file, workbook_name=workbook_name)
+
+                if self.chunk:
+                    chunked_documents = []
+                    for document in documents:
+                        chunked_documents.extend(self.chunk_document(document))
+                    return chunked_documents
+                return documents
+
             if isinstance(file, Path):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
@@ -102,6 +186,25 @@ class CSVReader(Reader):
             List of Document objects
         """
         try:
+            file_extension = _infer_file_extension(file, name)
+            if file_extension in _EXCEL_SUFFIXES:
+                workbook_name: str
+                if name:
+                    workbook_name = Path(name).stem
+                elif isinstance(file, Path):
+                    workbook_name = file.stem
+                else:
+                    workbook_name = Path(getattr(file, "name", "workbook")).stem
+
+                if file_extension == ContentType.XLSX.value:
+                    documents = await asyncio.to_thread(self._read_xlsx, file, workbook_name=workbook_name)
+                else:
+                    documents = await asyncio.to_thread(self._read_xls, file, workbook_name=workbook_name)
+
+                if self.chunk:
+                    documents = await self.chunk_documents_async(documents)
+                return documents
+
             if isinstance(file, Path):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
@@ -158,3 +261,57 @@ class CSVReader(Reader):
         except Exception as e:
             log_error(f"Error reading async: {getattr(file, 'name', str(file)) if isinstance(file, IO) else file}: {e}")
             return []
+
+    def _read_xlsx(self, file: Union[Path, IO[Any]], *, workbook_name: str) -> List[Document]:
+        try:
+            import openpyxl  # type: ignore
+        except ImportError as e:
+            raise ImportError(
+                "`openpyxl` not installed. Please install it via `pip install agno[csv]` or `pip install openpyxl`."
+            ) from e
+
+        if isinstance(file, Path):
+            workbook = openpyxl.load_workbook(filename=str(file), read_only=True, data_only=True)
+        else:
+            file.seek(0)
+            raw = file.read()
+            if isinstance(raw, str):
+                raw = raw.encode("utf-8", errors="replace")
+            workbook = openpyxl.load_workbook(filename=io.BytesIO(raw), read_only=True, data_only=True)
+
+        try:
+            return _excel_rows_to_documents(
+                workbook_name=workbook_name,
+                sheets=[(worksheet.title, worksheet.iter_rows(values_only=True)) for worksheet in workbook.worksheets],
+            )
+        finally:
+            workbook.close()
+
+    def _read_xls(self, file: Union[Path, IO[Any]], *, workbook_name: str) -> List[Document]:
+        try:
+            import xlrd  # type: ignore
+        except ImportError as e:
+            raise ImportError(
+                "`xlrd` not installed. Please install it via `pip install agno[csv]` or `pip install xlrd`."
+            ) from e
+
+        if isinstance(file, Path):
+            workbook = xlrd.open_workbook(filename=str(file))
+        else:
+            file.seek(0)
+            raw = file.read()
+            if isinstance(raw, str):
+                raw = raw.encode("utf-8", errors="replace")
+            workbook = xlrd.open_workbook(file_contents=raw)
+
+        sheets: List[Tuple[str, Iterable[Sequence[Any]]]] = []
+        for sheet_index in range(workbook.nsheets):
+            sheet = workbook.sheet_by_index(sheet_index)
+
+            def _iter_sheet_rows(_sheet: Any = sheet) -> Iterable[Sequence[Any]]:
+                for row_index in range(_sheet.nrows):
+                    yield _sheet.row_values(row_index)
+
+            sheets.append((sheet.name, _iter_sheet_rows()))
+
+        return _excel_rows_to_documents(workbook_name=workbook_name, sheets=sheets)
