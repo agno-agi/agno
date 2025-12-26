@@ -262,6 +262,7 @@ tools = [
   "agno[redshift]",
   "agno[reportlab]",
   "agno[trafilatura]",
+  "agno[tzafon]",
   "agno[neo4j]",
 ]
 
@@ -501,6 +502,7 @@ module = [
   "todoist_api_python.*",
   "tweepy.*",
   "twilio.*",
+  "tzafon.*",
   "tzlocal.*",
   "upstash_vector.*",
   "urllib3.*",
