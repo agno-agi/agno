@@ -80,12 +80,11 @@ class TzafonTools(Toolkit):
         self._page = None
 
 
-    def navigate_to(self, url: str, _cdp_url: Optional[str] = None) -> str:
+    def navigate_to(self, url: str) -> str:
         """Navigates to a URL.
 
         Args:
             url (str): The URL to navigate to
-            _cdp_url (str, optional): The connection URL from an existing session
 
         Returns:
             JSON string with navigation status
@@ -94,20 +93,19 @@ class TzafonTools(Toolkit):
             self._initialize_browser()
             if self._page:
                 self._page.goto(url, wait_until="networkidle")
-            result = {"status": "complete", "title": self._page.title() if self._page else "", "url": url}
+            result = {"status": "success", "title": self._page.title() if self._page else "", "url": url}
             return json.dumps(result)
         except Exception as e:
             logger.error(f"Failed to navigate to URL: {str(e)}")
             self.terminate_session()
             raise e
 
-    def screenshot(self, path: str, full_page: bool = True, _cdp_url: Optional[str] = None) -> str:
+    def screenshot(self, path: str, full_page: bool = True) -> str:
         """Takes a screenshot of the current page.
 
         Args:
             path (str): Where to save the screenshot
             full_page (bool): Whether to capture the full page
-            _cdp_url (str, optional): The connection URL from an existing session
 
         Returns:
             JSON string confirming screenshot was saved
@@ -122,11 +120,8 @@ class TzafonTools(Toolkit):
             self.terminate_session()
             raise e
 
-    def get_page_content(self, _cdp_url: Optional[str] = None) -> str:
+    def get_page_content(self) -> str:
         """Gets the HTML content of the current page.
-
-        Args:
-            _cdp_url (str, optional): The connection URL from an existing session
 
         Returns:
             The page HTML content
@@ -141,8 +136,7 @@ class TzafonTools(Toolkit):
 
     def terminate_session(self) -> str:
         """Closes a browser session.
-        Args:
-            session_id (str, optional): The session ID to close. If not provided, will use the current session.
+
         Returns:
             JSON string with closure status
         """
@@ -153,10 +147,10 @@ class TzafonTools(Toolkit):
 
             return json.dumps(
                 {
-                    "status": "closed",
+                    "status": "success",
                     "message": "Browser resources cleaned up. Session will auto-close if not already closed.",
                 }
             )
         except Exception as e:
             logger.error(f"Failed to close session: {str(e)}")
-            return json.dumps({"status": "warning", "message": f"Cleanup completed with warning: {str(e)}"})
+            return json.dumps({"status": "error", "message": f"Cleanup completed with error: {str(e)}"})
