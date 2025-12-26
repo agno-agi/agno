@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -24,6 +24,10 @@ class TzafonTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
+        enable_navigate_to: bool = True,
+        enable_screenshot: bool = True,
+        enable_get_page_content: bool = True,
+        enable_terminate_session: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -39,34 +43,38 @@ class TzafonTools(Toolkit):
             )
 
         self._client = Computer(api_key=self.api_key)
+        self._computer = None
         self._playwright = None
         self._browser = None
         self._page = None
 
         tools: List[Any] = []
-        if all:
+        if all or enable_navigate_to:
             tools.append(self.navigate_to)
+        if all or enable_screenshot:
             tools.append(self.screenshot)
+        if all or enable_get_page_content:
             tools.append(self.get_page_content)
+        if all or enable_terminate_session:
             tools.append(self.terminate_session)
 
-        log_debug(f"Initialized TzafonTools with tools: {tools}")
         super().__init__(name="tzafon_tools", tools=tools, **kwargs)
+        log_debug(f"Initialized TzafonTools with tools: {tools}")
 
 
     def _initialize_browser(self):
         """
         Initialize a new browser session and construct the CDP URL.
         """
-        computer = self._client.create(kind="browser")
-        cdp_url = f"{API_BASE_URL}/computers/{computer.id}/cdp?token={self.api_key}"
+        self._computer = self._client.create(kind="browser")
+        cdp_url = f"{API_BASE_URL}/computers/{self._computer.id}/cdp?token={self.api_key}"
 
         if not self._playwright:
             self._playwright = sync_playwright().start() 
-            if self._playwright:
-                self._browser = self._playwright.chromium.connect_over_cdp(cdp_url)
-            context = self._browser.contexts[0] if self._browser else ""
-            self._page = context.pages[0] or context.new_page()
+            
+        self._browser = self._playwright.chromium.connect_over_cdp(cdp_url)
+        context = self._browser.contexts[0] if self._browser else ""
+        self._page = context.pages[0] or context.new_page()
             
 
     def _cleanup(self):
@@ -97,7 +105,7 @@ class TzafonTools(Toolkit):
             return json.dumps(result)
         except Exception as e:
             logger.error(f"Failed to navigate to URL: {str(e)}")
-            self.terminate_session()
+            self._cleanup()
             raise e
 
     def screenshot(self, path: str, full_page: bool = True) -> str:
@@ -111,13 +119,12 @@ class TzafonTools(Toolkit):
             JSON string confirming screenshot was saved
         """
         try:
-            self._initialize_browser()
             if self._page:
                 self._page.screenshot(path=path, full_page=full_page)
             return json.dumps({"status": "success", "path": path})
         except Exception as e:
             logger.error(f"Failed to take screenshot: {str(e)}")
-            self.terminate_session()
+            self._cleanup()
             raise e
 
     def get_page_content(self) -> str:
@@ -127,7 +134,6 @@ class TzafonTools(Toolkit):
             The page HTML content
         """
         try:
-            self._initialize_browser()
             return self._page.content() if self._page else ""
         except Exception as e:
             logger.error(f"Failed to get page content: {str(e)}")
@@ -135,15 +141,14 @@ class TzafonTools(Toolkit):
             raise e
 
     def terminate_session(self) -> str:
-        """Closes a browser session.
+        """Closes a browser session, releasing resources.
 
         Returns:
             JSON string with closure status
         """
         try:
             self._cleanup()
-            self.__cdp_url = None
-            self._browser.terminate()
+            self._computer.terminate()
 
             return json.dumps(
                 {
