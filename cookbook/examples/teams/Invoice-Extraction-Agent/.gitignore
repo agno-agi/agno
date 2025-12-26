@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Envs
+.env
+
+# OS/Editor
+.DS_Store
+.idea/
+.vscode/
+
+# Local data
+/tmp/
+*.db
+*.sqlite
+
+# Logs
+*.log
+
+# Agno
+.cache/
