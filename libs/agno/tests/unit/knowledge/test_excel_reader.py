@@ -52,6 +52,29 @@ def test_csv_reader_reads_xlsx_as_per_sheet_documents(tmp_path: Path):
     assert first_doc.content.splitlines() == ["name, age", "alice, 30"]
 
 
+def test_csv_reader_reads_xlsx_preserves_cell_whitespace_when_chunk_disabled(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Sheet"
+    sheet.append(["  name", "age  "])
+    sheet.append(["  alice", "30  "])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "whitespace.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = CSVReader(chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    assert documents[0].content.splitlines() == ["  name, age  ", "  alice, 30  "]
+
+
 def test_csv_reader_chunks_xlsx_rows_and_preserves_sheet_metadata(tmp_path: Path):
     openpyxl = pytest.importorskip("openpyxl")
 

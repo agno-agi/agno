@@ -49,7 +49,7 @@ def _row_values_to_csv_line(row_values: Sequence[Any]) -> str:
     while values and values[-1] == "":
         values.pop()
 
-    return ", ".join(values).strip()
+    return ", ".join(values)
 
 
 def _excel_rows_to_documents(
