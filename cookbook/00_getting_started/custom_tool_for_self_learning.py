@@ -23,8 +23,8 @@ from datetime import datetime, timezone
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.knowledge import Knowledge
 from agno.knowledge.embedder.google import GeminiEmbedder
-from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.text_reader import TextReader
 from agno.models.google import Gemini
 from agno.tools.yfinance import YFinanceTools

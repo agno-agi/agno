@@ -22,4 +22,3 @@ agent = Agent(
 )
 
 agent.print_response(task, stream=True, stream_events=True, show_reasoning=True)
-
