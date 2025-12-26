@@ -38,9 +38,7 @@ class TzafonTools(Toolkit):
         """
         self.api_key = api_key or getenv("TZAFON_API_KEY")
         if not self.api_key:
-            raise ValueError(
-              "TZAFON_API_KEY is not set. Get your API key from https://tzafon.ai/dashboard"
-            )
+            raise ValueError("TZAFON_API_KEY is not set. Get your API key from https://tzafon.ai/dashboard")
 
         self._client = Computer(api_key=self.api_key)
         self._computer = None
@@ -61,7 +59,6 @@ class TzafonTools(Toolkit):
         super().__init__(name="tzafon_tools", tools=tools, **kwargs)
         log_debug(f"Initialized TzafonTools with tools: {tools}")
 
-
     def _initialize_browser(self):
         """
         Initialize a new browser session and construct the CDP URL.
@@ -70,12 +67,11 @@ class TzafonTools(Toolkit):
         cdp_url = f"{API_BASE_URL}/computers/{self._computer.id}/cdp?token={self.api_key}"
 
         if not self._playwright:
-            self._playwright = sync_playwright().start() 
-            
+            self._playwright = sync_playwright().start()
+
         self._browser = self._playwright.chromium.connect_over_cdp(cdp_url)
         context = self._browser.contexts[0] if self._browser else ""
         self._page = context.pages[0] or context.new_page()
-            
 
     def _cleanup(self):
         """Clean up browser resources."""
@@ -86,7 +82,6 @@ class TzafonTools(Toolkit):
             self._playwright.stop()
             self._playwright = None
         self._page = None
-
 
     def navigate_to(self, url: str) -> str:
         """Navigates to a URL.

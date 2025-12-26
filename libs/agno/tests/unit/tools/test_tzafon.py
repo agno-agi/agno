@@ -108,7 +108,7 @@ def test_initialize_browser(tzafon_tools, mock_playwright, mock_tzafon):
     # Verify playwright connection
     expected_cdp_url = f"{TEST_BASE_URL}/computers/test_computer_id/cdp?token={TEST_API_KEY}"
     mock_playwright["playwright"].chromium.connect_over_cdp.assert_called_once_with(expected_cdp_url)
-    
+
     # Verify internal state
     assert tzafon_tools._playwright == mock_playwright["playwright"]
     assert tzafon_tools._browser == mock_playwright["browser"]
@@ -120,16 +120,16 @@ def test_navigate_to(tzafon_tools, mock_playwright, mock_tzafon):
     # Setup mock page and computer
     mock_page = mock_playwright["page"]
     mock_page.title.return_value = "Test Page Title"
-    
+
     mock_computer = Mock()
     mock_computer.id = "test_computer_id"
     mock_tzafon.create.return_value = mock_computer
 
-    # Pre-set components to avoid full initialization if we want, 
+    # Pre-set components to avoid full initialization if we want,
     # but the method calls _initialize_browser(), so we should let it run or mock it.
     # Since we tested _initialize_browser separately, we can mock it here to isolate navigate_to logic
     # OR we can let it run. Let's let it run but ensure mocks are ready.
-    
+
     # We need to make sure _initialize_browser uses our mock_playwright.
     # The fixture mock_playwright patches `sync_playwright` so it should work automatically.
 
@@ -149,23 +149,23 @@ def test_navigate_to_failed(tzafon_tools, mock_playwright):
     with patch.object(tzafon_tools, "_initialize_browser", side_effect=Exception("Connection failed")):
         with pytest.raises(Exception, match="Connection failed"):
             tzafon_tools.navigate_to("https://example.com")
-        
+
         # Verify cleanup is called (though _initialize_browser failed, so maybe not much to cleanup)
         # But if it failed later...
-        
+
     # Let's test failure during goto
     tzafon_tools._page = mock_playwright["page"]
     tzafon_tools._page.goto.side_effect = Exception("Navigation failed")
-    
-    # We need to mock _initialize_browser to NOT overwrite our manual setup 
-    # or ensure it re-uses/sets up correctly. 
-    # Simpler to just patch _initialize_browser to do nothing for this specific test case 
+
+    # We need to mock _initialize_browser to NOT overwrite our manual setup
+    # or ensure it re-uses/sets up correctly.
+    # Simpler to just patch _initialize_browser to do nothing for this specific test case
     # assuming we already "have" a browser
     with patch.object(tzafon_tools, "_initialize_browser"):
         with patch.object(tzafon_tools, "_cleanup") as mock_cleanup:
             with pytest.raises(Exception, match="Navigation failed"):
                 tzafon_tools.navigate_to("https://example.com")
-            
+
             mock_cleanup.assert_called_once()
 
 
@@ -188,11 +188,11 @@ def test_screenshot_failed(tzafon_tools):
     """Test screenshot failure."""
     tzafon_tools._page = Mock()
     tzafon_tools._page.screenshot.side_effect = Exception("Screenshot failed")
-    
+
     with patch.object(tzafon_tools, "_cleanup") as mock_cleanup:
         with pytest.raises(Exception, match="Screenshot failed"):
             tzafon_tools.screenshot("path.png")
-        
+
         mock_cleanup.assert_called_once()
 
 
@@ -218,7 +218,7 @@ def test_terminate_session(tzafon_tools, mock_tzafon):
     # Setup mock computer
     mock_computer = Mock()
     tzafon_tools._computer = mock_computer
-    
+
     # Mock cleanup to verify it's called
     with patch.object(tzafon_tools, "_cleanup") as mock_cleanup:
         # Call the method
@@ -228,7 +228,7 @@ def test_terminate_session(tzafon_tools, mock_tzafon):
         # Verify results
         assert result_data["status"] == "success"
         assert "Browser resources cleaned up" in result_data["message"]
-        
+
         # Verify cleanup and computer termination
         mock_cleanup.assert_called_once()
         mock_computer.terminate.assert_called_once()
@@ -261,7 +261,7 @@ def test_cleanup(tzafon_tools, mock_playwright):
     # Verify resources are closed/released
     mock_playwright["browser"].close.assert_called_once()
     mock_playwright["playwright"].stop.assert_called_once()
-    
+
     assert tzafon_tools._browser is None
     assert tzafon_tools._playwright is None
     assert tzafon_tools._page is None
