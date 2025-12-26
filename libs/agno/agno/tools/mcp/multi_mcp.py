@@ -1,3 +1,4 @@
+import inspect
 import weakref
 from contextlib import AsyncExitStack
 from dataclasses import asdict
@@ -92,6 +93,26 @@ class MultiMCPTools(Toolkit):
         self.refresh_connection = refresh_connection
 
         self.header_provider = header_provider
+
+        # Validate header_provider signature
+        if header_provider:
+            try:
+                sig = inspect.signature(header_provider)
+                params = list(sig.parameters.values())
+
+                # Check if function accepts **kwargs (VAR_KEYWORD)
+                has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
+
+                # Must have at least one parameter or **kwargs
+                if not has_var_keyword and len(params) == 0:
+                    raise ValueError(
+                        "header_provider must accept at least one parameter (run_context). "
+                        "Expected signature: header_provider(run_context: RunContext) -> dict[str, Any]"
+                    )
+            except ValueError:
+                raise
+            except Exception as e:
+                log_warning(f"Could not validate header_provider signature: {e}")
 
         if server_params_list is None and commands is None and urls is None:
             raise ValueError("Either server_params_list or commands or urls must be provided")
