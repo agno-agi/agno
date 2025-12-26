@@ -6415,6 +6415,20 @@ class Team:
                 elif len(input_message) > 0 and isinstance(input_message[0], Message):
                     # This is a list of Message objects, extract text content from them
                     input_content = get_text_from_message(input_message)
+                    # Inject dependencies into the extracted content if enabled
+                    if (
+                        add_dependencies_to_context
+                        and run_context
+                        and run_context.dependencies
+                        and isinstance(input_content, str)
+                    ):
+                        dependencies_str = self._convert_dependencies_to_string(run_context.dependencies)
+                        input_content = (
+                            input_content
+                            + "\n\n<additional context>\n"
+                            + dependencies_str
+                            + "\n</additional context>"
+                        )
                 elif all(isinstance(item, str) for item in input_message):
                     input_content = "\n".join([str(item) for item in input_message])
                 else:
@@ -6432,6 +6446,20 @@ class Team:
 
             # If message is provided as a Message, use it directly
             elif isinstance(input_message, Message):
+                # Inject dependencies if enabled
+                if (
+                    add_dependencies_to_context
+                    and run_context
+                    and run_context.dependencies
+                    and isinstance(input_message.content, str)
+                ):
+                    dependencies_str = self._convert_dependencies_to_string(run_context.dependencies)
+                    input_message.content = (
+                        input_message.content
+                        + "\n\n<additional context>\n"
+                        + dependencies_str
+                        + "\n</additional context>"
+                    )
                 return input_message
             # If message is provided as a dict, try to validate it as a Message
             elif isinstance(input_message, dict):
@@ -6573,6 +6601,20 @@ class Team:
                 elif len(input_message) > 0 and isinstance(input_message[0], Message):
                     # This is a list of Message objects, extract text content from them
                     input_content = get_text_from_message(input_message)
+                    # Inject dependencies into the extracted content if enabled
+                    if (
+                        add_dependencies_to_context
+                        and run_context
+                        and run_context.dependencies
+                        and isinstance(input_content, str)
+                    ):
+                        dependencies_str = self._convert_dependencies_to_string(run_context.dependencies)
+                        input_content = (
+                            input_content
+                            + "\n\n<additional context>\n"
+                            + dependencies_str
+                            + "\n</additional context>"
+                        )
                 elif all(isinstance(item, str) for item in input_message):
                     input_content = "\n".join([str(item) for item in input_message])
                 else:
@@ -6590,6 +6632,20 @@ class Team:
 
             # If message is provided as a Message, use it directly
             elif isinstance(input_message, Message):
+                # Inject dependencies if enabled
+                if (
+                    add_dependencies_to_context
+                    and run_context
+                    and run_context.dependencies
+                    and isinstance(input_message.content, str)
+                ):
+                    dependencies_str = self._convert_dependencies_to_string(run_context.dependencies)
+                    input_message.content = (
+                        input_message.content
+                        + "\n\n<additional context>\n"
+                        + dependencies_str
+                        + "\n</additional context>"
+                    )
                 return input_message
             # If message is provided as a dict, try to validate it as a Message
             elif isinstance(input_message, dict):
