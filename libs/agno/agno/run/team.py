@@ -51,8 +51,11 @@ class TeamRunInput:
             return self.input_content.model_dump_json(exclude_none=True)
         elif isinstance(self.input_content, Message):
             return json.dumps(self.input_content.to_dict())
-        elif isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], Message):
-            return json.dumps([m.to_dict() for m in self.input_content])
+        elif isinstance(self.input_content, list):
+            try:
+                return json.dumps(self.to_dict().get("input_content"))
+            except Exception:
+                return str(self.input_content)
         else:
             return str(self.input_content)
 
@@ -67,22 +70,15 @@ class TeamRunInput:
                 result["input_content"] = self.input_content.model_dump(exclude_none=True)
             elif isinstance(self.input_content, Message):
                 result["input_content"] = self.input_content.to_dict()
-
-            # Handle input_content provided as a list of Message objects
-            elif (
-                isinstance(self.input_content, list)
-                and self.input_content
-                and isinstance(self.input_content[0], Message)
-            ):
-                result["input_content"] = [m.to_dict() for m in self.input_content]
-
-            # Handle input_content provided as a list of dicts
-            elif (
-                isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], dict)
-            ):
-                for content in self.input_content:
-                    # Handle media input
-                    if isinstance(content, dict):
+            elif isinstance(self.input_content, list):
+                serialized_items: List[Any] = []
+                for item in self.input_content:
+                    if isinstance(item, Message):
+                        serialized_items.append(item.to_dict())
+                    elif isinstance(item, BaseModel):
+                        serialized_items.append(item.model_dump(exclude_none=True))
+                    elif isinstance(item, dict):
+                        content = dict(item)
                         if content.get("images"):
                             content["images"] = [
                                 img.to_dict() if isinstance(img, Image) else img for img in content["images"]
@@ -99,7 +95,11 @@ class TeamRunInput:
                             content["files"] = [
                                 file.to_dict() if isinstance(file, File) else file for file in content["files"]
                             ]
-                result["input_content"] = self.input_content
+                        serialized_items.append(content)
+                    else:
+                        serialized_items.append(item)
+
+                result["input_content"] = serialized_items
             else:
                 result["input_content"] = self.input_content
 
@@ -146,9 +146,11 @@ class TeamRunEvent(str, Enum):
 
     tool_call_started = "TeamToolCallStarted"
     tool_call_completed = "TeamToolCallCompleted"
+    tool_call_error = "TeamToolCallError"
 
     reasoning_started = "TeamReasoningStarted"
     reasoning_step = "TeamReasoningStep"
+    reasoning_content_delta = "TeamReasoningContentDelta"
     reasoning_completed = "TeamReasoningCompleted"
 
     memory_update_started = "TeamMemoryUpdateStarted"
@@ -347,6 +349,14 @@ class ReasoningStepEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class ReasoningContentDeltaEvent(BaseTeamRunEvent):
+    """Event for streaming reasoning content chunks as they arrive."""
+
+    event: str = TeamRunEvent.reasoning_content_delta.value
+    reasoning_content: str = ""  # The delta/chunk of reasoning content
+
+
+@dataclass
 class ReasoningCompletedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.reasoning_completed.value
     content: Optional[Any] = None
@@ -367,6 +377,13 @@ class ToolCallCompletedEvent(BaseTeamRunEvent):
     images: Optional[List[Image]] = None  # Images produced by the tool call
     videos: Optional[List[Video]] = None  # Videos produced by the tool call
     audio: Optional[List[Audio]] = None  # Audio produced by the tool call
+
+
+@dataclass
+class ToolCallErrorEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.tool_call_error.value
+    tool: Optional[ToolExecution] = None
+    error: Optional[str] = None
 
 
 @dataclass
@@ -411,6 +428,7 @@ TeamRunOutputEvent = Union[
     PreHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
+    ReasoningContentDeltaEvent,
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
@@ -418,6 +436,7 @@ TeamRunOutputEvent = Union[
     SessionSummaryCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
+    ToolCallErrorEvent,
     ParserModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
@@ -440,6 +459,7 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.post_hook_completed.value: PostHookCompletedEvent,
     TeamRunEvent.reasoning_started.value: ReasoningStartedEvent,
     TeamRunEvent.reasoning_step.value: ReasoningStepEvent,
+    TeamRunEvent.reasoning_content_delta.value: ReasoningContentDeltaEvent,
     TeamRunEvent.reasoning_completed.value: ReasoningCompletedEvent,
     TeamRunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
     TeamRunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
@@ -447,6 +467,7 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.session_summary_completed.value: SessionSummaryCompletedEvent,
     TeamRunEvent.tool_call_started.value: ToolCallStartedEvent,
     TeamRunEvent.tool_call_completed.value: ToolCallCompletedEvent,
+    TeamRunEvent.tool_call_error.value: ToolCallErrorEvent,
     TeamRunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
     TeamRunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     TeamRunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,

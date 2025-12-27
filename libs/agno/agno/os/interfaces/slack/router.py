@@ -3,12 +3,12 @@ from typing import Optional, Union
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from agno.agent.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.slack.security import verify_slack_signature
-from agno.team.team import Team
+from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
 from agno.utils.log import log_info
-from agno.workflow.workflow import Workflow
+from agno.workflow import RemoteWorkflow, Workflow
 
 
 class SlackEventResponse(BaseModel):
@@ -25,9 +25,9 @@ class SlackChallengeResponse(BaseModel):
 
 def attach_routes(
     router: APIRouter,
-    agent: Optional[Agent] = None,
-    team: Optional[Team] = None,
-    workflow: Optional[Workflow] = None,
+    agent: Optional[Union[Agent, RemoteAgent]] = None,
+    team: Optional[Union[Team, RemoteTeam]] = None,
+    workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
     reply_to_mentions_only: bool = True,
 ) -> APIRouter:
     # Determine entity type for documentation

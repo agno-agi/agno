@@ -1173,8 +1173,8 @@ class InMemoryDb(BaseDb):
             raise e
 
     # --- Traces ---
-    def create_trace(self, trace: "Trace") -> None:
-        """Create a single trace record in the database.
+    def upsert_trace(self, trace: "Trace") -> None:
+        """Create or update a single trace record in the database.
 
         Args:
             trace: The Trace object to store (one per trace_id).

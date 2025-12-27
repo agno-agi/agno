@@ -1,0 +1,93 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: agnohq/pgvector:18
+    container_name: system-test-postgres
+    environment:
+      POSTGRES_USER: ai
+      POSTGRES_PASSWORD: ai
+      POSTGRES_DB: ai
+    ports:
+      - "5632:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai -d ai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - agno-test-network
+
+  # Remote AgentOS Server (hosts actual agents, teams, workflows)
+  remote-server:
+    build:
+      context: ../..
+      dockerfile: tests/system/Dockerfile.remote
+    container_name: system-test-remote
+    environment:
+      DATABASE_URL: postgresql+psycopg://ai:ai@postgres:5432/ai
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      RELOAD: "true"
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-test-secret-key-for-system-tests-do-not-use-in-production}
+      ENABLE_AUTHORIZATION: ${ENABLE_AUTHORIZATION:-true}
+    ports:
+      - "7002:7002"
+    volumes:
+      # Mount agno source for live code updates
+      - ../../agno:/app/agno/agno
+      # Mount the server file for live updates
+      - ./remote_server.py:/app/remote_server.py
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7002/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
+    networks:
+      - agno-test-network
+
+  # Gateway AgentOS Server (consumes remote agents via RemoteAgent, RemoteTeam, RemoteWorkflow)
+  gateway-server:
+    build:
+      context: ../..
+      dockerfile: tests/system/Dockerfile.gateway
+    container_name: system-test-gateway
+    environment:
+      DATABASE_URL: postgresql+psycopg://ai:ai@postgres:5432/ai
+      REMOTE_SERVER_URL: http://remote-server:7002
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      RELOAD: "true"
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-test-secret-key-for-system-tests-do-not-use-in-production}
+      ENABLE_AUTHORIZATION: ${ENABLE_AUTHORIZATION:-true}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-test-signing-secret}
+    ports:
+      - "7001:7001"
+    volumes:
+      # Mount agno source for live code updates
+      - ../../agno:/app/agno/agno
+      # Mount the server file for live updates
+      - ./gateway_server.py:/app/gateway_server.py
+    depends_on:
+      remote-server:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7001/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
+    networks:
+      - agno-test-network
+
+volumes:
+  postgres_data:
+
+networks:
+  agno-test-network:
+    driver: bridge

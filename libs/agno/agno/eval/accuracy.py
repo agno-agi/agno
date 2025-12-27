@@ -282,7 +282,8 @@ Remember: You must only compare the agent_output to the expected_output. The exp
     ) -> Optional[AccuracyEvaluation]:
         """Orchestrate the evaluation process."""
         try:
-            accuracy_agent_response = evaluator_agent.run(evaluation_input).content
+            response = evaluator_agent.run(evaluation_input, stream=False)
+            accuracy_agent_response = response.content
             if accuracy_agent_response is None or not isinstance(accuracy_agent_response, AccuracyAgentResponse):
                 raise EvalError(f"Evaluator Agent returned an invalid response: {accuracy_agent_response}")
             return AccuracyEvaluation(
@@ -306,7 +307,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
     ) -> Optional[AccuracyEvaluation]:
         """Orchestrate the evaluation process asynchronously."""
         try:
-            response = await evaluator_agent.arun(evaluation_input)
+            response = await evaluator_agent.arun(evaluation_input, stream=False)
             accuracy_agent_response = response.content
             if accuracy_agent_response is None or not isinstance(accuracy_agent_response, AccuracyAgentResponse):
                 raise EvalError(f"Evaluator Agent returned an invalid response: {accuracy_agent_response}")
@@ -362,9 +363,11 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 agent_session_id = f"eval_{self.eval_id}_{i + 1}"
 
                 if self.agent is not None:
-                    output = self.agent.run(input=eval_input, session_id=agent_session_id).content
+                    agent_response = self.agent.run(input=eval_input, session_id=agent_session_id, stream=False)
+                    output = agent_response.content
                 elif self.team is not None:
-                    output = self.team.run(input=eval_input, session_id=agent_session_id).content
+                    team_response = self.team.run(input=eval_input, session_id=agent_session_id, stream=False)
+                    output = team_response.content
 
                 if not output:
                     logger.error(f"Failed to generate a valid answer on iteration {i + 1}: {output}")
@@ -505,11 +508,11 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 agent_session_id = f"eval_{self.eval_id}_{i + 1}"
 
                 if self.agent is not None:
-                    response = await self.agent.arun(input=eval_input, session_id=agent_session_id)
-                    output = response.content
+                    agent_response = await self.agent.arun(input=eval_input, session_id=agent_session_id, stream=False)
+                    output = agent_response.content
                 elif self.team is not None:
-                    response = await self.team.arun(input=eval_input, session_id=agent_session_id)  # type: ignore
-                    output = response.content
+                    team_response = await self.team.arun(input=eval_input, session_id=agent_session_id, stream=False)
+                    output = team_response.content
 
                 if not output:
                     logger.error(f"Failed to generate a valid answer on iteration {i + 1}: {output}")

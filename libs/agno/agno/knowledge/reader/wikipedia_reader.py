@@ -1,3 +1,4 @@
+import asyncio
 from typing import List, Optional
 
 from agno.knowledge.chunking.fixed import FixedSizeChunking
@@ -45,7 +46,38 @@ class WikipediaReader(Reader):
 
         except wikipedia.exceptions.PageError:
             summary = None
-            log_info("PageError: Page not found.")
+            log_info("Wikipedia Error: Page not found.")
+
+        # Only create Document if we successfully got a summary
+        if summary:
+            return [
+                Document(
+                    name=topic,
+                    meta_data={"topic": topic},
+                    content=summary,
+                )
+            ]
+        return []
+
+    async def async_read(self, topic: str) -> List[Document]:
+        """
+        Asynchronously read content from Wikipedia.
+
+        Args:
+            topic: The Wikipedia topic to read
+
+        Returns:
+            A list of documents containing the Wikipedia summary
+        """
+        log_debug(f"Async reading Wikipedia topic: {topic}")
+        summary = None
+        try:
+            # Run the synchronous wikipedia API call in a thread pool
+            summary = await asyncio.to_thread(wikipedia.summary, topic, auto_suggest=self.auto_suggest)
+
+        except wikipedia.exceptions.PageError:
+            summary = None
+            log_info("Wikipedia Error: Page not found.")
 
         # Only create Document if we successfully got a summary
         if summary:

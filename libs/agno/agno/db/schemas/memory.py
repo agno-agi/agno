@@ -1,8 +1,8 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from agno.utils.dttm import now_epoch_s
+from agno.utils.dttm import now_epoch_s, to_epoch_s
 
 
 @dataclass
@@ -22,17 +22,20 @@ class UserMemory:
     team_id: Optional[str] = None
 
     def __post_init__(self) -> None:
-        """Automatically set created_at if not provided."""
-        if self.created_at is None:
-            self.created_at = now_epoch_s()
+        """Automatically set/normalize created_at and updated_at."""
+        self.created_at = now_epoch_s() if self.created_at is None else to_epoch_s(self.created_at)
+        if self.updated_at is not None:
+            self.updated_at = to_epoch_s(self.updated_at)
 
     def to_dict(self) -> Dict[str, Any]:
+        created_at = datetime.fromtimestamp(self.created_at).isoformat() if self.created_at is not None else None
+        updated_at = datetime.fromtimestamp(self.updated_at).isoformat() if self.updated_at is not None else created_at
         _dict = {
             "memory_id": self.memory_id,
             "memory": self.memory,
             "topics": self.topics,
-            "created_at": datetime.fromtimestamp(self.created_at).isoformat() if self.created_at else None,
-            "updated_at": datetime.fromtimestamp(self.updated_at).isoformat() if self.updated_at else None,
+            "created_at": created_at,
+            "updated_at": updated_at,
             "input": self.input,
             "user_id": self.user_id,
             "agent_id": self.agent_id,
@@ -45,17 +48,10 @@ class UserMemory:
     def from_dict(cls, data: Dict[str, Any]) -> "UserMemory":
         data = dict(data)
 
-        if created_at := data.get("created_at"):
-            if isinstance(created_at, (int, float)):
-                data["created_at"] = datetime.fromtimestamp(created_at, tz=timezone.utc)
-            else:
-                data["created_at"] = datetime.fromisoformat(created_at)
-
-        # Convert updated_at to datetime
-        if updated_at := data.get("updated_at"):
-            if isinstance(updated_at, (int, float)):
-                data["updated_at"] = datetime.fromtimestamp(updated_at, tz=timezone.utc)
-            else:
-                data["updated_at"] = datetime.fromisoformat(updated_at)
+        # Preserve 0 and None explicitly; only process if key exists
+        if "created_at" in data and data["created_at"] is not None:
+            data["created_at"] = to_epoch_s(data["created_at"])
+        if "updated_at" in data and data["updated_at"] is not None:
+            data["updated_at"] = to_epoch_s(data["updated_at"])
 
         return cls(**data)

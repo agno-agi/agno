@@ -217,23 +217,6 @@ class PineconeDb(VectorDb):
             log_debug(f"Deleting index: {self.name}")
             self.client.delete_index(name=self.name, timeout=self.timeout)
 
-    def doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the index.
-
-        Args:
-            document (Document): The document to check.
-
-        Returns:
-            bool: True if the document exists, False otherwise.
-
-        """
-        response = self.index.fetch(ids=[document.id], namespace=self.namespace)
-        return len(response.vectors) > 0
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the index asynchronously."""
-        return await asyncio.to_thread(self.doc_exists, document)
-
     def name_exists(self, name: str) -> bool:
         """Check if an index with the given name exists.
 

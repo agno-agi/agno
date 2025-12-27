@@ -13,9 +13,11 @@ from agno.models.message import Citations, DocumentCitation, Message, UrlCitatio
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
+from agno.tools.function import Function
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import MCPServerConfiguration, format_messages, format_tools_for_model
+from agno.utils.tokens import count_schema_tokens
 
 try:
     from anthropic import Anthropic as AnthropicClient
@@ -100,8 +102,8 @@ class Claude(Model):
         # Claude Sonnet 4.x family (versions before 4.5)
         "claude-sonnet-4-20250514",
         "claude-sonnet-4",
-        # Claude Opus 4.x family (versions before 4.1)
-        # (Add any Opus 4.x models released before 4.1 if they exist)
+        # Claude Opus 4.x family (versions before 4.1 and 4.5)
+        # (Add any Opus 4.x models released before 4.1/4.5 if they exist)
     }
 
     id: str = "claude-sonnet-4-5-20250929"
@@ -189,7 +191,9 @@ class Claude(Model):
             return False
         if self.id.startswith("claude-sonnet-4-") and not self.id.startswith("claude-sonnet-4-5"):
             return False
-        if self.id.startswith("claude-opus-4-") and not self.id.startswith("claude-opus-4-1"):
+        if self.id.startswith("claude-opus-4-") and not (
+            self.id.startswith("claude-opus-4-1") or self.id.startswith("claude-opus-4-5")
+        ):
             return False
 
         return True
@@ -318,8 +322,11 @@ class Claude(Model):
 
             return {"type": "json_schema", "schema": schema}
 
-        # Handle dict format (already in correct structure)
+        # Handle dict format
         elif isinstance(response_format, dict):
+            # Claude only supports json_schema, not json_object
+            if response_format.get("type") == "json_object":
+                return None
             return response_format
 
         return None
@@ -398,6 +405,48 @@ class Claude(Model):
             _client_params["http_client"] = get_default_async_client()
         self.async_client = AsyncAnthropicClient(**_client_params)
         return self.async_client
+
+    def count_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
+        anthropic_tools = None
+        if tools:
+            formatted_tools = self._format_tools(tools)
+            anthropic_tools = format_tools_for_model(formatted_tools)
+
+        kwargs: Dict[str, Any] = {"messages": anthropic_messages, "model": self.id}
+        if system_prompt:
+            kwargs["system"] = system_prompt
+        if anthropic_tools:
+            kwargs["tools"] = anthropic_tools
+
+        response = self.get_client().messages.count_tokens(**kwargs)
+        return response.input_tokens + count_schema_tokens(response_format, self.id)
+
+    async def acount_tokens(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> int:
+        anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
+        anthropic_tools = None
+        if tools:
+            formatted_tools = self._format_tools(tools)
+            anthropic_tools = format_tools_for_model(formatted_tools)
+
+        kwargs: Dict[str, Any] = {"messages": anthropic_messages, "model": self.id}
+        if system_prompt:
+            kwargs["system"] = system_prompt
+        if anthropic_tools:
+            kwargs["tools"] = anthropic_tools
+
+        response = await self.get_async_client().messages.count_tokens(**kwargs)
+        return response.input_tokens + count_schema_tokens(response_format, self.id)
 
     def get_request_params(
         self,

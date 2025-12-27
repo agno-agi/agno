@@ -128,13 +128,15 @@ def test_name_exists(lance_db, sample_documents):
 
 def test_id_exists(lance_db, sample_documents):
     """Test ID existence check"""
-    lance_db.insert(documents=[sample_documents[0]], content_hash="test_hash")
+    content_hash = "test_hash"
+    lance_db.insert(documents=[sample_documents[0]], content_hash=content_hash)
 
-    # Get the actual ID that was generated (MD5 hash of content)
+    # Get the actual ID that was generated (MD5 hash of base_id_content_hash)
     from hashlib import md5
 
     cleaned_content = sample_documents[0].content.replace("\x00", "\ufffd")
-    expected_id = md5(cleaned_content.encode()).hexdigest()
+    base_id = sample_documents[0].id or md5(cleaned_content.encode()).hexdigest()
+    expected_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
     assert lance_db.id_exists(expected_id) is True
     assert lance_db.id_exists("nonexistent_id") is False
@@ -142,14 +144,16 @@ def test_id_exists(lance_db, sample_documents):
 
 def test_delete_by_id(lance_db, sample_documents):
     """Test deleting documents by ID"""
-    lance_db.insert(documents=sample_documents, content_hash="test_hash")
+    content_hash = "test_hash"
+    lance_db.insert(documents=sample_documents, content_hash=content_hash)
     assert lance_db.get_count() == 3
 
     # Get the actual ID that was generated for the first document
     from hashlib import md5
 
     cleaned_content = sample_documents[0].content.replace("\x00", "\ufffd")
-    doc_id = md5(cleaned_content.encode()).hexdigest()
+    base_id = sample_documents[0].id or md5(cleaned_content.encode()).hexdigest()
+    doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
     # Delete by ID
     result = lance_db.delete_by_id(doc_id)

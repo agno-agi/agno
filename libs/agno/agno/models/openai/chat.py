@@ -248,7 +248,7 @@ class OpenAIChat(Model):
         # Add tools
         if tools is not None and len(tools) > 0:
             # Remove unsupported fields for OpenAILike models
-            if self.provider in ["AIMLAPI", "Fireworks", "Nvidia"]:
+            if self.provider in ["AIMLAPI", "Fireworks", "Nvidia", "VLLM"]:
                 for tool in tools:
                     if tool.get("type") == "function":
                         if tool["function"].get("requires_confirmation") is not None:
@@ -768,7 +768,6 @@ class OpenAIChat(Model):
         # Add role
         if response_message.role is not None:
             model_response.role = response_message.role
-
         # Add content
         if response_message.content is not None:
             model_response.content = response_message.content
@@ -820,6 +819,16 @@ class OpenAIChat(Model):
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
 
+        if model_response.provider_data is None:
+            model_response.provider_data = {}
+
+        if response.id:
+            model_response.provider_data["id"] = response.id
+        if response.system_fingerprint:
+            model_response.provider_data["system_fingerprint"] = response.system_fingerprint
+        if response.model_extra:
+            model_response.provider_data["model_extra"] = response.model_extra
+
         return model_response
 
     def _parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
@@ -836,11 +845,21 @@ class OpenAIChat(Model):
 
         if response_delta.choices and len(response_delta.choices) > 0:
             choice_delta: ChoiceDelta = response_delta.choices[0].delta
-
             if choice_delta:
                 # Add content
                 if choice_delta.content is not None:
                     model_response.content = choice_delta.content
+
+                    # We only want to handle these if content is present
+                    if model_response.provider_data is None:
+                        model_response.provider_data = {}
+
+                    if response_delta.id:
+                        model_response.provider_data["id"] = response_delta.id
+                    if response_delta.system_fingerprint:
+                        model_response.provider_data["system_fingerprint"] = response_delta.system_fingerprint
+                    if response_delta.model_extra:
+                        model_response.provider_data["model_extra"] = response_delta.model_extra
 
                 # Add tool calls
                 if choice_delta.tool_calls is not None:
@@ -925,5 +944,7 @@ class OpenAIChat(Model):
         if completion_tokens_details := response_usage.completion_tokens_details:
             metrics.audio_output_tokens = completion_tokens_details.audio_tokens or 0
             metrics.reasoning_tokens = completion_tokens_details.reasoning_tokens or 0
+
+        metrics.cost = getattr(response_usage, "cost", None)
 
         return metrics

@@ -1,12 +1,15 @@
 import os
 import shutil
 from typing import List
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from agno.knowledge.document import Document
 from agno.vectordb.chroma import ChromaDb
+from agno.vectordb.chroma.chromadb import reciprocal_rank_fusion
 from agno.vectordb.distance import Distance
+from agno.vectordb.search import SearchType
 
 TEST_COLLECTION = "test_collection"
 TEST_PATH = "tmp/test_chromadb"
@@ -590,3 +593,527 @@ async def test_async_exists(chroma_db):
 
     exists = await chroma_db.async_exists()
     assert exists is False
+
+
+# =============================================================================
+# Tests for Reciprocal Rank Fusion (RRF)
+# =============================================================================
+
+
+def test_rrf_single_list():
+    """Test RRF with a single ranked list."""
+    ranked_list = [("doc1", 0.9), ("doc2", 0.7), ("doc3", 0.5)]
+    result = reciprocal_rank_fusion([ranked_list], k=60)
+
+    # Should return all docs, sorted by RRF score
+    assert len(result) == 3
+    assert result[0][0] == "doc1"  # Highest rank should be first
+    assert result[1][0] == "doc2"
+    assert result[2][0] == "doc3"
+
+
+def test_rrf_two_lists_same_order():
+    """Test RRF with two lists having the same ranking order."""
+    list1 = [("doc1", 0.9), ("doc2", 0.7), ("doc3", 0.5)]
+    list2 = [("doc1", 0.8), ("doc2", 0.6), ("doc3", 0.4)]
+    result = reciprocal_rank_fusion([list1, list2], k=60)
+
+    # doc1 should still be first as it's ranked first in both lists
+    assert result[0][0] == "doc1"
+    assert result[1][0] == "doc2"
+    assert result[2][0] == "doc3"
+
+
+def test_rrf_two_lists_different_order():
+    """Test RRF with two lists having different ranking orders."""
+    list1 = [("doc1", 0.9), ("doc2", 0.7), ("doc3", 0.5)]
+    list2 = [("doc3", 0.9), ("doc2", 0.7), ("doc1", 0.5)]
+    result = reciprocal_rank_fusion([list1, list2], k=60)
+
+    # All three docs should be present
+    assert len(result) == 3
+
+    # With k=60, the scores are:
+    # doc1: 1/(60+1) + 1/(60+3) = 1/61 + 1/63 ≈ 0.0323
+    # doc2: 1/(60+2) + 1/(60+2) = 2/62 ≈ 0.0323
+    # doc3: 1/(60+3) + 1/(60+1) = 1/63 + 1/61 ≈ 0.0323
+    # doc1 and doc3 have equal scores, doc2 is slightly lower
+    # (because 1/61 + 1/63 > 2/62)
+    doc_ids = [doc_id for doc_id, _ in result]
+    assert "doc1" in doc_ids
+    assert "doc2" in doc_ids
+    assert "doc3" in doc_ids
+
+    # Verify doc2 is not first (it has slightly lower score)
+    # doc1 or doc3 should be first due to 1/61 + 1/63 > 2/62
+    assert result[0][0] in ["doc1", "doc3"]
+
+
+def test_rrf_disjoint_lists():
+    """Test RRF with disjoint document sets."""
+    list1 = [("doc1", 0.9), ("doc2", 0.7)]
+    list2 = [("doc3", 0.8), ("doc4", 0.6)]
+    result = reciprocal_rank_fusion([list1, list2], k=60)
+
+    # All 4 docs should be present
+    doc_ids = [doc_id for doc_id, _ in result]
+    assert len(doc_ids) == 4
+    assert "doc1" in doc_ids
+    assert "doc2" in doc_ids
+    assert "doc3" in doc_ids
+    assert "doc4" in doc_ids
+
+
+def test_rrf_overlapping_lists():
+    """Test RRF with partially overlapping document sets."""
+    list1 = [("doc1", 0.9), ("doc2", 0.7), ("doc3", 0.5)]
+    list2 = [("doc2", 0.9), ("doc4", 0.7)]
+    result = reciprocal_rank_fusion([list1, list2], k=60)
+
+    # doc2 appears in both lists, should have higher RRF score
+    doc_ids = [doc_id for doc_id, _ in result]
+    assert len(doc_ids) == 4
+    # doc2 should be ranked highest (appears in both lists at good positions)
+    assert result[0][0] == "doc2"
+
+
+def test_rrf_empty_lists():
+    """Test RRF with empty input."""
+    result = reciprocal_rank_fusion([], k=60)
+    assert result == []
+
+    result = reciprocal_rank_fusion([[]], k=60)
+    assert result == []
+
+
+def test_rrf_k_parameter_effect():
+    """Test that k parameter affects score calculation."""
+    ranked_list = [("doc1", 0.9), ("doc2", 0.7)]
+
+    # With k=60 (default)
+    result_k60 = reciprocal_rank_fusion([ranked_list], k=60)
+    # With k=1 (more emphasis on top ranks)
+    result_k1 = reciprocal_rank_fusion([ranked_list], k=1)
+
+    # Both should have same order but different scores
+    assert result_k60[0][0] == result_k1[0][0]
+    assert result_k60[1][0] == result_k1[1][0]
+
+    # Scores should be different due to different k values
+    # k=1: 1/(1+1)=0.5 for rank 1, 1/(1+2)=0.33 for rank 2
+    # k=60: 1/(60+1)=0.016 for rank 1, 1/(60+2)=0.016 for rank 2
+    assert result_k1[0][1] != result_k60[0][1]
+
+
+def test_rrf_score_calculation():
+    """Test exact RRF score calculation."""
+    ranked_list = [("doc1", 0.9)]
+    result = reciprocal_rank_fusion([ranked_list], k=60)
+
+    # For k=60, rank=1: score = 1/(60+1) = 1/61
+    expected_score = 1.0 / 61
+    assert abs(result[0][1] - expected_score) < 1e-10
+
+
+# =============================================================================
+# Tests for Search Type Configuration
+# =============================================================================
+
+
+def test_default_search_type(mock_embedder):
+    """Test that default search type is vector."""
+    os.makedirs(TEST_PATH, exist_ok=True)
+    try:
+        db = ChromaDb(
+            collection="test_default_search",
+            path=TEST_PATH,
+            persistent_client=False,
+            embedder=mock_embedder,
+        )
+        assert db.search_type == SearchType.vector
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH)
+
+
+def test_vector_search_type_config(mock_embedder):
+    """Test vector search type configuration."""
+    os.makedirs(TEST_PATH, exist_ok=True)
+    try:
+        db = ChromaDb(
+            collection="test_vector_search",
+            path=TEST_PATH,
+            persistent_client=False,
+            embedder=mock_embedder,
+            search_type=SearchType.vector,
+        )
+        assert db.search_type == SearchType.vector
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH)
+
+
+def test_keyword_search_type_config(mock_embedder):
+    """Test keyword search type configuration."""
+    os.makedirs(TEST_PATH, exist_ok=True)
+    try:
+        db = ChromaDb(
+            collection="test_keyword_search",
+            path=TEST_PATH,
+            persistent_client=False,
+            embedder=mock_embedder,
+            search_type=SearchType.keyword,
+        )
+        assert db.search_type == SearchType.keyword
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH)
+
+
+def test_hybrid_search_type_config(mock_embedder):
+    """Test hybrid search type configuration."""
+    os.makedirs(TEST_PATH, exist_ok=True)
+    try:
+        db = ChromaDb(
+            collection="test_hybrid_search",
+            path=TEST_PATH,
+            persistent_client=False,
+            embedder=mock_embedder,
+            search_type=SearchType.hybrid,
+        )
+        assert db.search_type == SearchType.hybrid
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH)
+
+
+def test_hybrid_rrf_k_default(mock_embedder):
+    """Test default hybrid_rrf_k value."""
+    os.makedirs(TEST_PATH, exist_ok=True)
+    try:
+        db = ChromaDb(
+            collection="test_rrf_default",
+            path=TEST_PATH,
+            persistent_client=False,
+            embedder=mock_embedder,
+        )
+        assert db.hybrid_rrf_k == 60
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH)
+
+
+def test_hybrid_rrf_k_custom(mock_embedder):
+    """Test custom hybrid_rrf_k value."""
+    os.makedirs(TEST_PATH, exist_ok=True)
+    try:
+        db = ChromaDb(
+            collection="test_rrf_custom",
+            path=TEST_PATH,
+            persistent_client=False,
+            embedder=mock_embedder,
+            hybrid_rrf_k=30,
+        )
+        assert db.hybrid_rrf_k == 30
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH)
+
+
+def test_get_supported_search_types(mock_embedder):
+    """Test that get_supported_search_types returns correct types."""
+    os.makedirs(TEST_PATH, exist_ok=True)
+    try:
+        db = ChromaDb(
+            collection="test_supported_types",
+            path=TEST_PATH,
+            persistent_client=False,
+            embedder=mock_embedder,
+        )
+        supported = db.get_supported_search_types()
+        assert SearchType.vector in supported
+        assert SearchType.keyword in supported
+        assert SearchType.hybrid in supported
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH)
+
+
+# =============================================================================
+# Tests for Vector Search
+# =============================================================================
+
+
+def test_vector_search_basic(chroma_db, sample_documents):
+    """Test basic vector search."""
+    chroma_db.insert(content_hash="test_hash", documents=sample_documents)
+
+    results = chroma_db._vector_search("coconut soup", limit=2)
+    assert len(results) == 2
+    assert all(isinstance(doc, Document) for doc in results)
+
+
+def test_vector_search_empty_collection(chroma_db):
+    """Test vector search on empty collection."""
+    results = chroma_db._vector_search("any query", limit=5)
+    assert len(results) == 0
+
+
+def test_vector_search_with_limit(chroma_db, sample_documents):
+    """Test vector search respects limit parameter."""
+    chroma_db.insert(content_hash="test_hash", documents=sample_documents)
+
+    results = chroma_db._vector_search("Thai food", limit=1)
+    assert len(results) == 1
+
+    results = chroma_db._vector_search("Thai food", limit=10)
+    assert len(results) == 3  # Only 3 documents in collection
+
+
+# =============================================================================
+# Tests for Keyword Search
+# =============================================================================
+
+
+def test_keyword_search_basic(chroma_db, sample_documents):
+    """Test basic keyword search."""
+    chroma_db.insert(content_hash="test_hash", documents=sample_documents)
+
+    results = chroma_db._keyword_search("coconut", limit=5)
+    # Should find documents containing "coconut"
+    assert all(isinstance(doc, Document) for doc in results)
+
+
+def test_keyword_search_empty_query(chroma_db, sample_documents):
+    """Test keyword search with empty query."""
+    chroma_db.insert(content_hash="test_hash", documents=sample_documents)
+
+    results = chroma_db._keyword_search("", limit=5)
+    assert len(results) == 0
+
+
+def test_keyword_search_no_match(chroma_db, sample_documents):
+    """Test keyword search with no matching documents."""
+    chroma_db.insert(content_hash="test_hash", documents=sample_documents)
+
+    results = chroma_db._keyword_search("pizza", limit=5)
+    # May return empty or results depending on ChromaDB behavior
+    assert isinstance(results, list)
+
+
+# =============================================================================
+# Tests for Hybrid Search
+# =============================================================================
+
+
+@pytest.fixture
+def hybrid_chroma_db(mock_embedder):
+    """Fixture to create a ChromaDb instance with hybrid search enabled."""
+    os.makedirs(TEST_PATH, exist_ok=True)
+
+    if os.path.exists(TEST_PATH):
+        shutil.rmtree(TEST_PATH)
+        os.makedirs(TEST_PATH)
+
+    db = ChromaDb(
+        collection="test_hybrid",
+        path=TEST_PATH,
+        persistent_client=False,
+        embedder=mock_embedder,
+        search_type=SearchType.hybrid,
+        hybrid_rrf_k=60,
+    )
+    db.create()
+    yield db
+
+    try:
+        db.drop()
+    except Exception:
+        pass
+
+    if os.path.exists(TEST_PATH):
+        shutil.rmtree(TEST_PATH)
+
+
+def test_hybrid_search_basic(hybrid_chroma_db, sample_documents):
+    """Test basic hybrid search."""
+    hybrid_chroma_db.insert(content_hash="test_hash", documents=sample_documents)
+
+    results = hybrid_chroma_db._hybrid_search("coconut soup", limit=2)
+    assert len(results) <= 2
+    assert all(isinstance(doc, Document) for doc in results)
+
+
+def test_hybrid_search_returns_rrf_score(hybrid_chroma_db, sample_documents):
+    """Test that hybrid search results include RRF score in metadata."""
+    hybrid_chroma_db.insert(content_hash="test_hash", documents=sample_documents)
+
+    results = hybrid_chroma_db._hybrid_search("Thai food", limit=3)
+    for doc in results:
+        assert "rrf_score" in doc.meta_data
+        assert isinstance(doc.meta_data["rrf_score"], float)
+        assert doc.meta_data["rrf_score"] > 0
+
+
+def test_hybrid_search_empty_collection(hybrid_chroma_db):
+    """Test hybrid search on empty collection."""
+    results = hybrid_chroma_db._hybrid_search("any query", limit=5)
+    assert len(results) == 0
+
+
+def test_hybrid_search_empty_query(hybrid_chroma_db, sample_documents):
+    """Test hybrid search with empty query."""
+    hybrid_chroma_db.insert(content_hash="test_hash", documents=sample_documents)
+
+    # Empty query should handle gracefully
+    results = hybrid_chroma_db._hybrid_search("", limit=5)
+    assert isinstance(results, list)
+
+
+def test_hybrid_search_dispatches_correctly(hybrid_chroma_db, sample_documents):
+    """Test that search() dispatches to _hybrid_search when search_type is hybrid."""
+    hybrid_chroma_db.insert(content_hash="test_hash", documents=sample_documents)
+
+    # The main search method should use hybrid search
+    results = hybrid_chroma_db.search("coconut", limit=2)
+    assert isinstance(results, list)
+    # Results from hybrid search should have rrf_score
+    for doc in results:
+        if doc.meta_data:
+            assert "rrf_score" in doc.meta_data
+
+
+# =============================================================================
+# Tests for Search Method Dispatch
+# =============================================================================
+
+
+def test_search_dispatches_to_vector(mock_embedder):
+    """Test that search dispatches to _vector_search for vector type."""
+    os.makedirs(TEST_PATH, exist_ok=True)
+    try:
+        db = ChromaDb(
+            collection="test_dispatch_vector",
+            path=TEST_PATH,
+            persistent_client=False,
+            embedder=mock_embedder,
+            search_type=SearchType.vector,
+        )
+        db.create()
+
+        with patch.object(db, "_vector_search", return_value=[]) as mock_vector:
+            db.search("test query", limit=5)
+            mock_vector.assert_called_once()
+
+        db.drop()
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH)
+
+
+def test_search_dispatches_to_keyword(mock_embedder):
+    """Test that search dispatches to _keyword_search for keyword type."""
+    os.makedirs(TEST_PATH, exist_ok=True)
+    try:
+        db = ChromaDb(
+            collection="test_dispatch_keyword",
+            path=TEST_PATH,
+            persistent_client=False,
+            embedder=mock_embedder,
+            search_type=SearchType.keyword,
+        )
+        db.create()
+
+        with patch.object(db, "_keyword_search", return_value=[]) as mock_keyword:
+            db.search("test query", limit=5)
+            mock_keyword.assert_called_once()
+
+        db.drop()
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH)
+
+
+def test_search_dispatches_to_hybrid(mock_embedder):
+    """Test that search dispatches to _hybrid_search for hybrid type."""
+    os.makedirs(TEST_PATH, exist_ok=True)
+    try:
+        db = ChromaDb(
+            collection="test_dispatch_hybrid",
+            path=TEST_PATH,
+            persistent_client=False,
+            embedder=mock_embedder,
+            search_type=SearchType.hybrid,
+        )
+        db.create()
+
+        with patch.object(db, "_hybrid_search", return_value=[]) as mock_hybrid:
+            db.search("test query", limit=5)
+            mock_hybrid.assert_called_once()
+
+        db.drop()
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH)
+
+
+# =============================================================================
+# Tests for Reranker Error Handling
+# =============================================================================
+
+
+def test_reranker_failure_returns_unranked(mock_embedder, sample_documents):
+    """Test that reranker failure returns unranked results gracefully."""
+    os.makedirs(TEST_PATH, exist_ok=True)
+    try:
+        # Create a mock reranker that raises an exception
+        mock_reranker = MagicMock()
+        mock_reranker.rerank.side_effect = Exception("Reranker API error")
+
+        db = ChromaDb(
+            collection="test_reranker_error",
+            path=TEST_PATH,
+            persistent_client=False,
+            embedder=mock_embedder,
+            reranker=mock_reranker,
+        )
+        db.create()
+        db.insert(content_hash="test_hash", documents=sample_documents)
+
+        # Search should succeed even if reranker fails
+        results = db.search("coconut", limit=2)
+        assert isinstance(results, list)
+        # Should have results (unranked) despite reranker failure
+
+        db.drop()
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH)
+
+
+def test_reranker_success(mock_embedder, sample_documents):
+    """Test that reranker is called when provided and succeeds."""
+    os.makedirs(TEST_PATH, exist_ok=True)
+    try:
+        # Create a mock reranker that returns reranked results
+        mock_reranker = MagicMock()
+        mock_reranker.rerank.return_value = sample_documents[:1]
+
+        db = ChromaDb(
+            collection="test_reranker_success",
+            path=TEST_PATH,
+            persistent_client=False,
+            embedder=mock_embedder,
+            reranker=mock_reranker,
+        )
+        db.create()
+        db.insert(content_hash="test_hash", documents=sample_documents)
+
+        db.search("coconut", limit=2)
+        # Reranker should have been called
+        mock_reranker.rerank.assert_called()
+
+        db.drop()
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH)

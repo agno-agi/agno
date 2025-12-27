@@ -419,6 +419,7 @@ class Parallel:
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
                     session_state=step_session_state,
+                    run_context=run_context,
                     parent_step_id=parallel_step_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
@@ -580,6 +581,7 @@ class Parallel:
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
                     session_state=step_session_state,
+                    run_context=run_context,
                     background_tasks=background_tasks,
                 )  # type: ignore[union-attr]
                 return idx, inner_step_result, step_session_state

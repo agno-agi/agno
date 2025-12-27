@@ -309,6 +309,44 @@ def test_search_stream():
     assert citations_found
 
 
+def test_url_context():
+    agent = Agent(
+        model=Gemini(id="gemini-2.5-flash", url_context=True),
+        exponential_backoff=True,
+        delay_between_retries=5,
+        telemetry=False,
+    )
+
+    response = agent.run("Summarize the content from https://docs.agno.com/introduction")
+
+    assert response.content is not None
+    assert response.citations is not None
+    assert response.citations.raw is not None
+    assert "url_context_metadata" in response.citations.raw
+
+
+def test_url_context_stream():
+    agent = Agent(
+        model=Gemini(id="gemini-2.5-flash", url_context=True),
+        exponential_backoff=True,
+        delay_between_retries=5,
+        telemetry=False,
+    )
+
+    response_stream = agent.run("Summarize the content from https://docs.agno.com/introduction", stream=True)
+
+    responses = []
+    citations_found = False
+
+    for chunk in response_stream:
+        responses.append(chunk)
+        if chunk.citations is not None and chunk.citations.raw and "url_context_metadata" in chunk.citations.raw:
+            citations_found = True
+
+    assert len(responses) > 0
+    assert citations_found
+
+
 def test_tool_use_with_enum():
     """A simple test for enum tool use."""
 

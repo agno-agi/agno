@@ -1,0 +1,31 @@
+chat:
+  quick_prompts:
+    simple-research-agent:
+      - "What are the differences between the Gemini 3 and GPT-5 family of models. When should each be used?"
+      - "What are the current trends in enterprise adoption of AI agents in 2025?"
+      - "Is PostgreSQL suitable for vector search in production systems, and what are its main limitations?"
+
+    product-comparison-agent:
+      - "Compare Gemini 3 Pro vs GPT-5 for enterprise agent systems"
+      - "Compare AWS Lambda vs Google Cloud Run for backend APIs"
+      - "Compare Tesla Model 3 vs BMW i4 as a daily commuter car"
+
+    creative-studio-agent:
+      - "A surreal desert landscape with floating monoliths, golden hour lighting, dreamlike atmosphere"
+      - "A vintage European street in the rain, reflections on cobblestone, moody cinematic lighting"
+      - "An astronaut floating above Earth at night, glowing city lights below, realistic, cinematic"
+
+    self-learning-research-agent:
+      - "What is the consensus on AI agents in enterprise production systems?"
+      - "Has the consensus on AI agents in production systems changed recently?"
+      - "How are companies currently deploying Gemini models in production?"
+
+    self-learning-agent:
+      - "Analyze nvidia and tsla performance and suggest a rule of thumb for when to buy or sell."
+      - "Analyze AMD stock for me."
+      - "What prior learnings can I use?"
+
+    plan-and-learn-agent:
+      - "How is PaL (you) different from a regular agent with tools?"
+      - "Help me decide between Supabase, Firebase, and PlanetScale for my startup."
+      - "Analyze sentiment around AI investment, both private and public."

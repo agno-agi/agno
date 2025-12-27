@@ -1,0 +1,48 @@
+
+{
+  "table_name": "race_wins",
+  "table_description": "Documents race win data from 1950-2020, detailing venue, winner, team, and race duration.",
+  "table_columns": [
+    {
+        "name": "index",
+        "type": "int",
+        "description": "Unique index for each entry."
+    },
+    {
+        "name": "venue",
+        "type": "text",
+        "description": "Venue where the race was held."
+    },
+    {
+        "name": "date",
+        "type": "text",
+        "description": "Date of the race in the format 'DD Mon YYYY'.",
+        "tip": "Use the `TO_DATE` function to convert the date to a date type."
+    },
+    {
+        "name": "name",
+        "type": "text",
+        "description": "Name of the winning driver."
+    },
+    {
+        "name": "name_tag",
+        "type": "text",
+        "description": "Tag associated with the driver's name."
+    },
+    {
+        "name": "team",
+        "type": "text",
+        "description": "Team of the winning driver."
+    },
+    {
+        "name": "laps",
+        "type": "float",
+        "description": "Number of laps completed in the race."
+    },
+    {
+        "name": "time",
+        "type": "text",
+        "description": "Winning time of the race."
+    }
+]
+}

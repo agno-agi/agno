@@ -42,6 +42,9 @@ class Citations(BaseModel):
     # Raw citations from the model
     raw: Optional[Any] = None
 
+    # Search queries used to retrieve the citations
+    search_queries: Optional[List[str]] = None
+
     # URLs of the citations.
     urls: Optional[List[UrlCitation]] = None
 

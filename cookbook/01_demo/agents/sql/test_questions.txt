@@ -1,0 +1,69 @@
+Here are 10 questions where:
+- 3 questions work with existing knowledge
+- 4 questions produce reusable artifacts worth saving to the KB
+- 3 questions become noticeably better once those artifacts exist in the KB
+
+==============================
+A) 3 questions that don't need KB updates
+==============================
+
+1) How many championships has each driver won?
+2) Top 10 drivers by total career points
+3) Which team won the most Constructors Championships?
+
+==============================
+B) 4 questions that should update the knowledge base
+==============================
+
+4) Drivers with the most podium finishes
+
+What to save to KB:
+- Rule: drivers_championship.position is TEXT, cast safely only after filtering numeric values
+- Pattern: numeric-position filter snippet: position ~ '^[0-9]+$'
+
+5) Most race wins in a single season by a driver
+
+What to save to KB:
+- Rule: race_wins.date is TEXT and must be parsed with TO_DATE(date, 'DD Mon YYYY')
+- Pattern: reusable season derivation: EXTRACT(YEAR FROM TO_DATE(date, 'DD Mon YYYY'))::INT
+
+6) Compare the number of race wins vs championship position for constructors in a given year
+
+What to save to KB:
+- Pattern: per-year wins CTE + standings join (LEFT JOIN + COALESCE)
+- Rule: for season-level joins to race_wins, always join with derived year
+
+7) Drivers who won races but never won a championship
+
+What to save to KB:
+- Pattern: “wins but never champion” anti-join pattern
+- Gotcha note: champions come from drivers_championship WHERE position = '1' (TEXT)
+
+==============================
+C) 3 questions that use the updated KB artifacts
+==============================
+
+These are chosen so the agent should retrieve and reuse the saved patterns and rules.
+
+8) Average championship position per driver
+
+How it improves using KB:
+- It reuses the “safe numeric cast” rule from #4
+- It avoids casting non-numeric positions if they exist
+
+9) Championship winners with the fewest race wins in their championship season
+
+How it improves using KB:
+- It reuses the year extraction pattern from #5
+- It reuses the join-safety rule from #6 (season-scoped join)
+
+10) Do champions usually have the most race wins that season?
+
+How it improves using KB:
+- It reuses the “wins vs standings” scaffold from #6
+- It reuses the “season join must include derived year” rule from #5
+- It avoids the classic mistake of joining on name alone without year
+
+If you want, I can also provide:
+- the exact “KB artifacts” you should save after questions 4–7 (name, summary, notes, tags)
+- a recommended run order as a scripted demo (ask, query, save, then show improvement)

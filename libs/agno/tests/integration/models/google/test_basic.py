@@ -247,3 +247,95 @@ def test_custom_client_params():
         telemetry=False,
     )
     agent.print_response("what is the best ice cream?", stream=True)
+
+
+def test_count_tokens():
+    from agno.models.message import Message
+
+    model = Gemini(id="gemini-2.0-flash")
+    messages = [
+        Message(role="user", content="Hello world, this is a test message for token counting"),
+    ]
+
+    tokens = model.count_tokens(messages)
+
+    assert isinstance(tokens, int)
+    assert tokens > 0
+    assert tokens < 100
+
+
+def test_count_tokens_with_tools():
+    from agno.models.message import Message
+    from agno.tools.calculator import CalculatorTools
+
+    model = Gemini(id="gemini-2.0-flash")
+    messages = [
+        Message(role="user", content="What is 2 + 2?"),
+    ]
+
+    calculator = CalculatorTools()
+
+    tokens_without_tools = model.count_tokens(messages)
+    tokens_with_tools = model.count_tokens(messages, tools=list(calculator.functions.values()))
+
+    assert isinstance(tokens_with_tools, int)
+    assert tokens_with_tools > tokens_without_tools, "Token count with tools should be higher"
+
+
+@pytest.mark.asyncio
+async def test_acount_tokens():
+    """Test async token counting."""
+    from agno.models.message import Message
+
+    model = Gemini(id="gemini-2.0-flash")
+    messages = [
+        Message(role="user", content="Hello world, this is a test message for token counting"),
+    ]
+
+    sync_tokens = model.count_tokens(messages)
+    async_tokens = await model.acount_tokens(messages)
+
+    assert isinstance(async_tokens, int)
+    assert async_tokens > 0
+    assert async_tokens == sync_tokens
+
+
+@pytest.mark.asyncio
+async def test_acount_tokens_with_tools():
+    """Test async token counting with tools."""
+    from agno.models.message import Message
+    from agno.tools.calculator import CalculatorTools
+
+    model = Gemini(id="gemini-2.0-flash")
+    messages = [
+        Message(role="user", content="What is 2 + 2?"),
+    ]
+
+    calculator = CalculatorTools()
+    tools = list(calculator.functions.values())
+
+    sync_tokens = model.count_tokens(messages, tools=tools)
+    async_tokens = await model.acount_tokens(messages, tools=tools)
+
+    assert isinstance(async_tokens, int)
+    assert async_tokens == sync_tokens
+    assert async_tokens > model.count_tokens(messages)
+
+
+@pytest.mark.skip(reason="Missing VertexAI credentials in Github Actions")
+@pytest.mark.asyncio
+async def test_acount_tokens_vertexai():
+    """Test async token counting with VertexAI."""
+    from agno.models.message import Message
+
+    model = Gemini(id="gemini-2.0-flash", vertexai=True)
+    messages = [
+        Message(role="user", content="Hello world, this is a test message for token counting"),
+    ]
+
+    sync_tokens = model.count_tokens(messages)
+    async_tokens = await model.acount_tokens(messages)
+
+    assert isinstance(async_tokens, int)
+    assert async_tokens > 0
+    assert async_tokens == sync_tokens

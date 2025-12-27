@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 from time import sleep
 from typing import Optional
 
@@ -17,65 +18,108 @@ DEFAULT_BACKOFF_FACTOR = 2  # Exponential backoff: 1, 2, 4, 8...
 _global_sync_client: Optional[httpx.Client] = None
 _global_async_client: Optional[httpx.AsyncClient] = None
 
+# Locks for thread-safe lazy initialization
+_sync_client_lock = threading.Lock()
+_async_client_lock = threading.Lock()
+
 
 def get_default_sync_client() -> httpx.Client:
     """Get or create the global synchronous httpx client.
+
+    Thread-safe lazy initialization using double-checked locking.
+
+    Note: HTTP/2 is disabled for the sync client because HTTP/2's stream
+    multiplexing is not thread-safe when sharing a client across threads
+    (e.g., when using ThreadPoolExecutor). HTTP/1.1 uses connection pooling
+    where each connection handles one request at a time, which is thread-safe.
 
     Returns:
         A singleton httpx.Client instance with default limits.
     """
     global _global_sync_client
-    if _global_sync_client is None or _global_sync_client.is_closed:
-        _global_sync_client = httpx.Client(
-            limits=httpx.Limits(max_connections=1000, max_keepalive_connections=200), http2=True, follow_redirects=True
-        )
+
+    if _global_sync_client is not None and not _global_sync_client.is_closed:
+        return _global_sync_client
+
+    with _sync_client_lock:
+        if _global_sync_client is None or _global_sync_client.is_closed:
+            _global_sync_client = httpx.Client(
+                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=200),
+                http2=False,  # Disabled for thread safety in multi-threaded contexts
+                follow_redirects=True,
+            )
     return _global_sync_client
 
 
 def get_default_async_client() -> httpx.AsyncClient:
     """Get or create the global asynchronous httpx client.
 
+    Thread-safe lazy initialization using double-checked locking.
+
+    Note: HTTP/2 is enabled for the async client because asyncio runs in a
+    single-threaded event loop where HTTP/2 stream multiplexing is safe.
+
     Returns:
         A singleton httpx.AsyncClient instance with default limits.
     """
     global _global_async_client
-    if _global_async_client is None or _global_async_client.is_closed:
-        _global_async_client = httpx.AsyncClient(
-            limits=httpx.Limits(max_connections=1000, max_keepalive_connections=200), http2=True, follow_redirects=True
-        )
+
+    if _global_async_client is not None and not _global_async_client.is_closed:
+        return _global_async_client
+
+    with _async_client_lock:
+        if _global_async_client is None or _global_async_client.is_closed:
+            _global_async_client = httpx.AsyncClient(
+                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=200),
+                http2=True,  # Safe in async context (single-threaded event loop)
+                follow_redirects=True,
+            )
     return _global_async_client
 
 
 def close_sync_client() -> None:
     """Closes the global sync httpx client.
 
-    Should be called during application shutdown.
+    Thread-safe. Should be called during application shutdown.
     """
     global _global_sync_client
-    if _global_sync_client is not None and not _global_sync_client.is_closed:
-        _global_sync_client.close()
+    with _sync_client_lock:
+        if _global_sync_client is not None and not _global_sync_client.is_closed:
+            _global_sync_client.close()
+            _global_sync_client = None
 
 
 async def aclose_default_clients() -> None:
     """Asynchronously close the global httpx clients.
 
-    Should be called during application shutdown in async contexts.
+    Thread-safe. Should be called during application shutdown in async contexts.
     """
     global _global_sync_client, _global_async_client
-    if _global_sync_client is not None and not _global_sync_client.is_closed:
-        _global_sync_client.close()
-    if _global_async_client is not None and not _global_async_client.is_closed:
-        await _global_async_client.aclose()
+
+    with _sync_client_lock:
+        if _global_sync_client is not None and not _global_sync_client.is_closed:
+            _global_sync_client.close()
+            _global_sync_client = None
+
+    with _async_client_lock:
+        if _global_async_client is not None and not _global_async_client.is_closed:
+            await _global_async_client.aclose()
+            _global_async_client = None
 
 
 def set_default_sync_client(client: httpx.Client) -> None:
     """Set the global synchronous httpx client.
 
-    IMPORTANT: Call before creating any model instances. Models cache clients on first use.
+    Thread-safe. Call before creating any model instances for best results,
+    though this can be called at any time.
 
     Allows consumers to override the default httpx client with custom configuration
     (e.g., custom limits, timeouts, proxies, SSL verification, etc.).
     This is useful at application startup to customize how all models connect.
+
+    Warning: If using this client in multi-threaded contexts (e.g., ThreadPoolExecutor),
+    consider disabling HTTP/2 (http2=False) to avoid thread-safety issues with
+    HTTP/2 stream multiplexing.
 
     Example:
         >>> import httpx
@@ -83,6 +127,7 @@ def set_default_sync_client(client: httpx.Client) -> None:
         >>> custom_client = httpx.Client(
         ...     limits=httpx.Limits(max_connections=500),
         ...     timeout=httpx.Timeout(30.0),
+        ...     http2=False,  # Recommended for multi-threaded use
         ...     verify=False  # for dev environments
         ... )
         >>> set_default_sync_client(custom_client)
@@ -92,13 +137,15 @@ def set_default_sync_client(client: httpx.Client) -> None:
         client: An httpx.Client instance to use as the global sync client.
     """
     global _global_sync_client
-    _global_sync_client = client
+    with _sync_client_lock:
+        _global_sync_client = client
 
 
 def set_default_async_client(client: httpx.AsyncClient) -> None:
     """Set the global asynchronous httpx client.
 
-    IMPORTANT: Call before creating any model instances. Models cache clients on first use.
+    Thread-safe. Call before creating any model instances for best results,
+    though this can be called at any time.
 
     Allows consumers to override the default async httpx client with custom configuration
     (e.g., custom limits, timeouts, proxies, SSL verification, etc.).
@@ -119,7 +166,8 @@ def set_default_async_client(client: httpx.AsyncClient) -> None:
         client: An httpx.AsyncClient instance to use as the global async client.
     """
     global _global_async_client
-    _global_async_client = client
+    with _async_client_lock:
+        _global_async_client = client
 
 
 def fetch_with_retry(

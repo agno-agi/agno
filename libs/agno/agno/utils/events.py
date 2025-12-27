@@ -16,6 +16,7 @@ from agno.run.agent import (
     PreHookCompletedEvent,
     PreHookStartedEvent,
     ReasoningCompletedEvent,
+    ReasoningContentDeltaEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     RunCancelledEvent,
@@ -33,6 +34,7 @@ from agno.run.agent import (
     SessionSummaryCompletedEvent,
     SessionSummaryStartedEvent,
     ToolCallCompletedEvent,
+    ToolCallErrorEvent,
     ToolCallStartedEvent,
 )
 from agno.run.requirement import RunRequirement
@@ -47,6 +49,7 @@ from agno.run.team import PostHookStartedEvent as TeamPostHookStartedEvent
 from agno.run.team import PreHookCompletedEvent as TeamPreHookCompletedEvent
 from agno.run.team import PreHookStartedEvent as TeamPreHookStartedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
+from agno.run.team import ReasoningContentDeltaEvent as TeamReasoningContentDeltaEvent
 from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
 from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
 from agno.run.team import RunCancelledEvent as TeamRunCancelledEvent
@@ -59,6 +62,7 @@ from agno.run.team import SessionSummaryCompletedEvent as TeamSessionSummaryComp
 from agno.run.team import SessionSummaryStartedEvent as TeamSessionSummaryStartedEvent
 from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
+from agno.run.team import ToolCallErrorEvent as TeamToolCallErrorEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
 from agno.session.summary import SessionSummary
 
@@ -161,23 +165,41 @@ def create_run_continued_event(from_run_response: RunOutput) -> RunContinuedEven
     )
 
 
-def create_team_run_error_event(from_run_response: TeamRunOutput, error: str) -> TeamRunErrorEvent:
+def create_team_run_error_event(
+    from_run_response: TeamRunOutput,
+    error: str,
+    error_type: Optional[str] = None,
+    error_id: Optional[str] = None,
+    additional_data: Optional[Dict[str, Any]] = None,
+) -> TeamRunErrorEvent:
     return TeamRunErrorEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
         content=error,
+        error_type=error_type,
+        error_id=error_id,
+        additional_data=additional_data,
     )
 
 
-def create_run_error_event(from_run_response: RunOutput, error: str) -> RunErrorEvent:
+def create_run_error_event(
+    from_run_response: RunOutput,
+    error: str,
+    error_type: Optional[str] = None,
+    error_id: Optional[str] = None,
+    additional_data: Optional[Dict[str, Any]] = None,
+) -> RunErrorEvent:
     return RunErrorEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
         content=error,
+        error_type=error_type,
+        error_id=error_id,
+        additional_data=additional_data,
     )
 
 
@@ -421,6 +443,19 @@ def create_reasoning_step_event(
     )
 
 
+def create_reasoning_content_delta_event(
+    from_run_response: RunOutput, reasoning_content: str
+) -> ReasoningContentDeltaEvent:
+    """Create an event for streaming reasoning content chunks."""
+    return ReasoningContentDeltaEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        reasoning_content=reasoning_content,
+    )
+
+
 def create_team_reasoning_step_event(
     from_run_response: TeamRunOutput, reasoning_step: ReasoningStep, reasoning_content: str
 ) -> TeamReasoningStepEvent:
@@ -431,6 +466,19 @@ def create_team_reasoning_step_event(
         run_id=from_run_response.run_id,
         content=reasoning_step,
         content_type=reasoning_step.__class__.__name__,
+        reasoning_content=reasoning_content,
+    )
+
+
+def create_team_reasoning_content_delta_event(
+    from_run_response: TeamRunOutput, reasoning_content: str
+) -> TeamReasoningContentDeltaEvent:
+    """Create an event for streaming reasoning content chunks for Team."""
+    return TeamReasoningContentDeltaEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
         reasoning_content=reasoning_content,
     )
 
@@ -512,6 +560,32 @@ def create_team_tool_call_completed_event(
         images=from_run_response.images,
         videos=from_run_response.videos,
         audio=from_run_response.audio,
+    )
+
+
+def create_tool_call_error_event(
+    from_run_response: RunOutput, tool: ToolExecution, error: Optional[str] = None
+) -> ToolCallErrorEvent:
+    return ToolCallErrorEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool=tool,
+        error=error,
+    )
+
+
+def create_team_tool_call_error_event(
+    from_run_response: TeamRunOutput, tool: ToolExecution, error: Optional[str] = None
+) -> TeamToolCallErrorEvent:
+    return TeamToolCallErrorEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool=tool,
+        error=error,
     )
 
 
@@ -692,9 +766,30 @@ def handle_event(
     store_events: bool = False,
 ) -> Union[RunOutputEvent, TeamRunOutputEvent]:
     # We only store events that are not run_response_content events
-    events_to_skip = [event.value for event in events_to_skip] if events_to_skip else []
-    if store_events and event.event not in events_to_skip:
+    _events_to_skip: List[str] = [event.value for event in events_to_skip] if events_to_skip else []
+    if store_events and event.event not in _events_to_skip:
         if run_response.events is None:
             run_response.events = []
         run_response.events.append(event)  # type: ignore
     return event
+
+
+def add_error_event(
+    error: RunErrorEvent,
+    events: Optional[List[RunOutputEvent]],
+):
+    if events is None:
+        events = []
+    events.append(error)
+
+    return events
+
+
+def add_team_error_event(
+    error: TeamRunErrorEvent,
+    events: Optional[List[Union[RunOutputEvent, TeamRunOutputEvent]]],
+):
+    if events is None:
+        events = []
+    events.append(error)
+    return events

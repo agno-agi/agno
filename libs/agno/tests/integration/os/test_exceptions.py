@@ -1,6 +1,7 @@
 """Integration tests for exception handling in AgentOS."""
 
 import logging
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -107,16 +108,24 @@ def test_http_exception_logging(test_os_client, caplog):
         assert response.status_code == 404
 
 
-def test_internal_server_error_response_format(test_os_client, test_agent_bad_model, caplog):
+def test_internal_server_error_response_format(test_agent: Agent, caplog):
     """Test that 500 errors return generic message without exposing internals."""
+    # Create a fresh AgentOS with the test agent
+    agent_os = AgentOS(agents=[test_agent])
+    app = agent_os.get_app()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    # Mock the agent's arun method to raise an exception
+    test_agent.arun = AsyncMock(side_effect=Exception("Internal error"))
+
     with caplog.at_level(logging.ERROR):
-        response = test_os_client.post(
-            f"/agents/{test_agent_bad_model.id}/runs",
-            data={"message": "Hello, world!"},
+        response = client.post(
+            f"/agents/{test_agent.id}/runs",
+            data={"message": "Hello, world!", "stream": "false"},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
 
-    assert response.status_code == 404
+    assert response.status_code == 500
     response_json = response.json()
     assert "detail" in response_json
     assert isinstance(response_json["detail"], str)

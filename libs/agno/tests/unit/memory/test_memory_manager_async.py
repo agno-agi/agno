@@ -137,7 +137,7 @@ class DummyAsyncMemoryDb(AsyncBaseDb):
         raise NotImplementedError
 
     # --- Traces ---
-    async def create_trace(self, trace: "Trace") -> None:
+    async def upsert_trace(self, trace: "Trace") -> None:
         raise NotImplementedError
 
     async def get_trace(self, trace_id: str):

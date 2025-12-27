@@ -82,7 +82,7 @@ class ContentResponseSchema(BaseModel):
             status=status,
             status_message=content.get("status_message"),
             created_at=parse_timestamp(content.get("created_at")),
-            updated_at=parse_timestamp(content.get("updated_at")),
+            updated_at=parse_timestamp(content.get("updated_at", content.get("created_at", 0))),
             # TODO: These fields are not available in the Content class. Fix the inconsistency
             access_count=None,
             linked_to=None,

@@ -12,10 +12,12 @@ def _assert_metrics(response: RunOutput):
     input_tokens = response.metrics.input_tokens
     output_tokens = response.metrics.output_tokens
     total_tokens = response.metrics.total_tokens
+    cost = response.metrics.cost
 
     assert input_tokens > 0
     assert output_tokens > 0
     assert total_tokens > 0
+    assert cost > 0
     assert total_tokens == input_tokens + output_tokens
 
 

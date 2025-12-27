@@ -272,7 +272,6 @@ def test_team_introduction_multiline(shared_db):
     """Test that multiline introduction text is handled correctly."""
     session_id = str(uuid.uuid4())
     introduction_text = """Hello! I'm your personal assistant.
-    
 I can help you with:
 - Programming questions
 - General knowledge
@@ -330,9 +329,9 @@ def test_team_get_chat_history_with_introduction(shared_db):
     chat_history = team.get_chat_history(session_id=session_id)
 
     assert chat_history is not None
-    # Introduction + system messages + (2 user messages + 2 assistant responses)
+    # Introduction +  (2 user messages + 2 assistant responses)
     # System messages are included in team runs
-    assert len(chat_history) >= 7
+    assert len(chat_history) >= 5
 
     # First message should be the introduction from assistant
     assert chat_history[0].role == "assistant"

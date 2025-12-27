@@ -256,14 +256,8 @@ def test_document_existence(vector_db: MongoVectorDb, mock_mongodb_client: Magic
     """Test document existence checking methods."""
     collection = mock_mongodb_client["test_vectordb"][vector_db.collection_name]
 
-    # Create test documents
-    docs = create_test_documents(1)
-
     # Setup mock responses for find_one
     def mock_find_one(query: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        # For doc_exists
-        if "_id" in query and query["_id"] == md5(docs[0].content.encode("utf-8")).hexdigest():
-            return {"_id": "doc_0", "content": "This is test document 0", "name": "test_doc_0"}
         # For name_exists
         if "name" in query and query["name"] == "test_doc_0":
             return {"_id": "doc_0", "content": "This is test document 0", "name": "test_doc_0"}
@@ -273,9 +267,6 @@ def test_document_existence(vector_db: MongoVectorDb, mock_mongodb_client: Magic
         return None
 
     collection.find_one.side_effect = mock_find_one
-
-    # Test by document object
-    assert vector_db.doc_exists(docs[0])
 
     # Test by name
     assert vector_db.name_exists("test_doc_0")
