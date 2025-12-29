@@ -34,6 +34,7 @@ from agno.run.agent import (
     SessionSummaryCompletedEvent,
     SessionSummaryStartedEvent,
     ToolCallCompletedEvent,
+    ToolCallErrorEvent,
     ToolCallStartedEvent,
 )
 from agno.run.requirement import RunRequirement
@@ -61,6 +62,7 @@ from agno.run.team import SessionSummaryCompletedEvent as TeamSessionSummaryComp
 from agno.run.team import SessionSummaryStartedEvent as TeamSessionSummaryStartedEvent
 from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
+from agno.run.team import ToolCallErrorEvent as TeamToolCallErrorEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
 from agno.session.summary import SessionSummary
 
@@ -561,6 +563,32 @@ def create_team_tool_call_completed_event(
     )
 
 
+def create_tool_call_error_event(
+    from_run_response: RunOutput, tool: ToolExecution, error: Optional[str] = None
+) -> ToolCallErrorEvent:
+    return ToolCallErrorEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool=tool,
+        error=error,
+    )
+
+
+def create_team_tool_call_error_event(
+    from_run_response: TeamRunOutput, tool: ToolExecution, error: Optional[str] = None
+) -> TeamToolCallErrorEvent:
+    return TeamToolCallErrorEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool=tool,
+        error=error,
+    )
+
+
 def create_run_output_content_event(
     from_run_response: RunOutput,
     content: Optional[Any] = None,
@@ -738,8 +766,8 @@ def handle_event(
     store_events: bool = False,
 ) -> Union[RunOutputEvent, TeamRunOutputEvent]:
     # We only store events that are not run_response_content events
-    events_to_skip = [event.value for event in events_to_skip] if events_to_skip else []
-    if store_events and event.event not in events_to_skip:
+    _events_to_skip: List[str] = [event.value for event in events_to_skip] if events_to_skip else []
+    if store_events and event.event not in _events_to_skip:
         if run_response.events is None:
             run_response.events = []
         run_response.events.append(event)  # type: ignore

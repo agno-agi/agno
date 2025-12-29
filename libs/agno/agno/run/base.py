@@ -51,6 +51,7 @@ class BaseRunOutputEvent:
                 "session_summary",
                 "metrics",
                 "run_input",
+                "requirements",
             ]
         }
 
@@ -138,6 +139,9 @@ class BaseRunOutputEvent:
         if hasattr(self, "run_input") and self.run_input is not None:
             _dict["run_input"] = self.run_input.to_dict()
 
+        if hasattr(self, "requirements") and self.requirements is not None:
+            _dict["requirements"] = [req.to_dict() if hasattr(req, "to_dict") else req for req in self.requirements]
+
         return _dict
 
     def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
@@ -218,6 +222,21 @@ class BaseRunOutputEvent:
                 from agno.run.agent import RunInput
 
                 data["run_input"] = RunInput.from_dict(run_input)
+
+                # Handle requirements
+
+        # Handle requirements
+        requirements_data = data.pop("requirements", None)
+        if requirements_data is not None:
+            from agno.run.requirement import RunRequirement
+
+            requirements_list: List[RunRequirement] = []
+            for item in requirements_data:
+                if isinstance(item, RunRequirement):
+                    requirements_list.append(item)
+                elif isinstance(item, dict):
+                    requirements_list.append(RunRequirement.from_dict(item))
+            data["requirements"] = requirements_list if requirements_list else None
 
         # Filter data to only include fields that are actually defined in the target class
         from dataclasses import fields
