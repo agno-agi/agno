@@ -45,7 +45,6 @@ from agno.exceptions import (
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.knowledge import Knowledge
-from agno.skills import Skill, Skills
 from agno.knowledge.types import KnowledgeFilter
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
@@ -78,6 +77,7 @@ from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
+from agno.skills import Skill, Skills
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
@@ -7752,6 +7752,9 @@ class Agent:
         if self.db is None:
             raise ValueError("No database configured for the agent. Set agent.db to sync skills.")
 
+        if isinstance(self.db, AsyncBaseDb):
+            raise ValueError("Synchronous sync_skills_to_db requires a sync database. Use async_skills_to_db instead.")
+
         return self.skills.sync_to_db(self.db)
 
     async def async_skills_to_db(self) -> int:
@@ -7768,10 +7771,13 @@ class Agent:
         if self.skills is None:
             return 0
 
-        if self.async_db is None:
-            raise ValueError("No async database configured for the agent. Set agent.async_db to sync skills.")
+        if self.db is None:
+            raise ValueError("No database configured for the agent. Set agent.db to sync skills.")
 
-        return await self.skills.sync_to_db_async(self.async_db)
+        if not isinstance(self.db, AsyncBaseDb):
+            raise ValueError("Async async_skills_to_db requires an async database. Use sync_skills_to_db instead.")
+
+        return await self.skills.sync_to_db_async(self.db)
 
     def load_skills_from_directory(self, path: str) -> int:
         """Load skills from a directory and add them to the agent.
@@ -8191,7 +8197,6 @@ class Agent:
         # 3.3.15 Add the session state to the system message
         if add_session_state_to_context and session_state is not None:
             system_message_content += f"\n<session_state>\n{session_state}\n</session_state>\n\n"
-
 
         # Return the system message
         return (

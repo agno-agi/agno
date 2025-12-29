@@ -3038,7 +3038,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     skills_raw = [dict(record._mapping) for record in rows]
 
                     if not deserialize:
-                        return skills_raw, total_count
+                        return skills_raw, total_count or 0
 
             return [Skill.from_dict(record) for record in skills_raw]
 
@@ -3140,7 +3140,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     delete_stmt = table.delete().where(table.c.id == skill_id)
                     result = await sess.execute(delete_stmt)
 
-                    success = result.rowcount > 0
+                    success = result.rowcount > 0  # type: ignore
                     if success:
                         log_debug(f"Successfully deleted skill id: {skill_id}")
                     else:
@@ -3170,7 +3170,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 async with sess.begin():
                     delete_stmt = table.delete().where(table.c.id.in_(skill_ids))
                     result = await sess.execute(delete_stmt)
-                    if result.rowcount == 0:
+                    if result.rowcount == 0:  # type: ignore
                         log_debug(f"No skills found with ids: {skill_ids}")
 
         except Exception as e:

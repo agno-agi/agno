@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.skill import Skill
@@ -10,6 +10,7 @@ from agno.utils.log import log_debug, log_info, log_warning
 if TYPE_CHECKING:
     from agno.db.base import AsyncBaseDb, BaseDb
     from agno.models.base import Model
+    from agno.skills.loaders.db import DbSkills
 
 
 class UnsafeSkillError(Exception):
@@ -148,6 +149,9 @@ Respond with ONLY "SAFE" or "UNSAFE: <brief reason>"
                 user_message = Message(role="user", content=prompt)
                 assistant_message = Message(role="assistant")
 
+                # Type narrowing - we know verification_model is not None here
+                # because _verify_script_safety checks this before calling _verify_with_model
+                assert self.verification_model is not None
                 response = self.verification_model.invoke(
                     messages=[user_message],
                     assistant_message=assistant_message,

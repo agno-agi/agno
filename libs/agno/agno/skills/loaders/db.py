@@ -3,8 +3,7 @@
 This loader reads skills from a database and can optionally sync skills back to the database.
 """
 
-from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Union, cast
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.skills.loaders.base import SkillLoader
@@ -45,10 +44,13 @@ class DbSkills(SkillLoader):
             )
 
         try:
-            skills = self.db.get_skills(name=self.name_filter)
-            if isinstance(skills, tuple):
+            result = self.db.get_skills(name=self.name_filter)
+            if isinstance(result, tuple):
                 # get_skills returns (skills_list, count) when deserialize=False
-                skills = skills[0]
+                # We always use deserialize=True (default), so cast is safe
+                skills = cast(List[Skill], result[0])
+            else:
+                skills = cast(List[Skill], result)
             log_debug(f"Loaded {len(skills)} skills from database")
             return skills
         except Exception as e:
@@ -63,14 +65,16 @@ class DbSkills(SkillLoader):
         """
         if not isinstance(self.db, AsyncBaseDb):
             raise RuntimeError(
-                "Cannot use async load_async() with sync database. "
-                "Use load() instead or use an async database."
+                "Cannot use async load_async() with sync database. Use load() instead or use an async database."
             )
 
         try:
-            skills = await self.db.get_skills(name=self.name_filter)
-            if isinstance(skills, tuple):
-                skills = skills[0]
+            result = await self.db.get_skills(name=self.name_filter)
+            if isinstance(result, tuple):
+                # We always use deserialize=True (default), so cast is safe
+                skills = cast(List[Skill], result[0])
+            else:
+                skills = cast(List[Skill], result)
             log_debug(f"Loaded {len(skills)} skills from database")
             return skills
         except Exception as e:
@@ -87,16 +91,15 @@ class DbSkills(SkillLoader):
             The saved Skill if successful, None otherwise.
         """
         if isinstance(self.db, AsyncBaseDb):
-            raise RuntimeError(
-                "Cannot use synchronous save() with async database. "
-                "Use save_async() instead."
-            )
+            raise RuntimeError("Cannot use synchronous save() with async database. Use save_async() instead.")
 
         try:
             result = self.db.upsert_skill(skill)
             if result:
                 log_debug(f"Saved skill '{skill.name}' to database")
-            return result
+                # We always use deserialize=True (default), so result is a Skill
+                return cast(Skill, result)
+            return None
         except Exception as e:
             log_error(f"Error saving skill to database: {e}")
             return None
@@ -111,16 +114,15 @@ class DbSkills(SkillLoader):
             The saved Skill if successful, None otherwise.
         """
         if not isinstance(self.db, AsyncBaseDb):
-            raise RuntimeError(
-                "Cannot use async save_async() with sync database. "
-                "Use save() instead."
-            )
+            raise RuntimeError("Cannot use async save_async() with sync database. Use save() instead.")
 
         try:
             result = await self.db.upsert_skill(skill)
             if result:
                 log_debug(f"Saved skill '{skill.name}' to database")
-            return result
+                # We always use deserialize=True (default), so result is a Skill
+                return cast(Skill, result)
+            return None
         except Exception as e:
             log_error(f"Error saving skill to database: {e}")
             return None
@@ -135,10 +137,7 @@ class DbSkills(SkillLoader):
             The count of successfully saved skills.
         """
         if isinstance(self.db, AsyncBaseDb):
-            raise RuntimeError(
-                "Cannot use synchronous save_all() with async database. "
-                "Use save_all_async() instead."
-            )
+            raise RuntimeError("Cannot use synchronous save_all() with async database. Use save_all_async() instead.")
 
         count = 0
         for skill in skills:
@@ -157,10 +156,7 @@ class DbSkills(SkillLoader):
             The count of successfully saved skills.
         """
         if not isinstance(self.db, AsyncBaseDb):
-            raise RuntimeError(
-                "Cannot use async save_all_async() with sync database. "
-                "Use save_all() instead."
-            )
+            raise RuntimeError("Cannot use async save_all_async() with sync database. Use save_all() instead.")
 
         count = 0
         for skill in skills:
@@ -179,10 +175,7 @@ class DbSkills(SkillLoader):
             True if successful, False otherwise.
         """
         if isinstance(self.db, AsyncBaseDb):
-            raise RuntimeError(
-                "Cannot use synchronous delete() with async database. "
-                "Use delete_async() instead."
-            )
+            raise RuntimeError("Cannot use synchronous delete() with async database. Use delete_async() instead.")
 
         try:
             result = self.db.delete_skill(skill_id)
@@ -203,10 +196,7 @@ class DbSkills(SkillLoader):
             True if successful, False otherwise.
         """
         if not isinstance(self.db, AsyncBaseDb):
-            raise RuntimeError(
-                "Cannot use async delete_async() with sync database. "
-                "Use delete() instead."
-            )
+            raise RuntimeError("Cannot use async delete_async() with sync database. Use delete() instead.")
 
         try:
             result = await self.db.delete_skill(skill_id)

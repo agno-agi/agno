@@ -23,7 +23,9 @@ class SkillSchema(BaseModel):
     metadata: Optional[Dict[str, Any]] = Field(None, description="Optional metadata (version, author, tags, etc.)")
     version: int = Field(1, description="Integer version number for the skill")
     scripts: List[SkillFileSchema] = Field(default_factory=list, description="List of scripts with name and content")
-    references: List[SkillFileSchema] = Field(default_factory=list, description="List of references with name and content")
+    references: List[SkillFileSchema] = Field(
+        default_factory=list, description="List of references with name and content"
+    )
     created_at: Optional[datetime] = Field(None, description="When the skill was created")
     updated_at: Optional[datetime] = Field(None, description="When the skill was last updated")
 
@@ -43,8 +45,12 @@ class SkillSchema(BaseModel):
         scripts_raw = skill_dict.get("scripts", [])
         references_raw = skill_dict.get("references", [])
 
-        scripts = [SkillFileSchema(**s) if isinstance(s, dict) else SkillFileSchema(name=s, content="") for s in scripts_raw]
-        references = [SkillFileSchema(**r) if isinstance(r, dict) else SkillFileSchema(name=r, content="") for r in references_raw]
+        scripts = [
+            SkillFileSchema(**s) if isinstance(s, dict) else SkillFileSchema(name=s, content="") for s in scripts_raw
+        ]
+        references = [
+            SkillFileSchema(**r) if isinstance(r, dict) else SkillFileSchema(name=r, content="") for r in references_raw
+        ]
 
         return cls(
             id=skill_dict["id"],
@@ -69,7 +75,9 @@ class SkillCreateSchema(BaseModel):
     metadata: Optional[Dict[str, Any]] = Field(None, description="Optional metadata")
     version: int = Field(1, description="Integer version number", ge=1)
     scripts: List[SkillFileSchema] = Field(default_factory=list, description="List of scripts with name and content")
-    references: List[SkillFileSchema] = Field(default_factory=list, description="List of references with name and content")
+    references: List[SkillFileSchema] = Field(
+        default_factory=list, description="List of references with name and content"
+    )
 
 
 class SkillUpdateSchema(BaseModel):

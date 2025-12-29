@@ -2882,9 +2882,7 @@ class PostgresDb(BaseDb):
             log_error(f"Error getting spans: {e}")
             return []
 
-    def get_skill(
-        self, skill_id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[Skill, Dict[str, Any]]]:
+    def get_skill(self, skill_id: str, deserialize: Optional[bool] = True) -> Optional[Union[Skill, Dict[str, Any]]]:
         """Get a skill from the database.
 
         Args:
@@ -2986,9 +2984,7 @@ class PostgresDb(BaseDb):
             log_error(f"Exception reading from skills table: {e}")
             raise e
 
-    def upsert_skill(
-        self, skill: Skill, deserialize: Optional[bool] = True
-    ) -> Optional[Union[Skill, Dict[str, Any]]]:
+    def upsert_skill(self, skill: Skill, deserialize: Optional[bool] = True) -> Optional[Union[Skill, Dict[str, Any]]]:
         """Upsert a skill in the database.
 
         Args:

@@ -13,7 +13,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
@@ -153,10 +152,16 @@ async def create_skill_via_api():
             try:
                 response = await client.get(f"{base_url}/health", timeout=2)
                 if response.status_code == 200:
-                    print(f"[Skill Creator] Server ready after {i+1} attempts", flush=True)
+                    print(
+                        f"[Skill Creator] Server ready after {i + 1} attempts",
+                        flush=True,
+                    )
                     break
             except httpx.RequestError:
-                print(f"[Skill Creator] Waiting for server... attempt {i+1}/{max_retries}", flush=True)
+                print(
+                    f"[Skill Creator] Waiting for server... attempt {i + 1}/{max_retries}",
+                    flush=True,
+                )
             await asyncio.sleep(1)
         else:
             print("[Skill Creator] Server not ready after max retries", flush=True)
@@ -185,7 +190,10 @@ async def create_skill_via_api():
             if response.status_code == 201:
                 print("Created 'docker-deployment' skill via API!")
             else:
-                print(f"[Skill Creator] Failed to create skill: {response.status_code} - {response.text}", flush=True)
+                print(
+                    f"[Skill Creator] Failed to create skill: {response.status_code} - {response.text}",
+                    flush=True,
+                )
         except httpx.RequestError as e:
             print(f"[Skill Creator] Error creating skill: {e}", flush=True)
 
@@ -217,6 +225,4 @@ app = agent_os.get_app()
 
 if __name__ == "__main__":
     agent_os.serve(app="skills_from_db:app", reload=True)
-    agent.print_response(
-        "Tell me which skills are available in this agent?"
-    )
+    agent.print_response("Tell me which skills are available in this agent?")
