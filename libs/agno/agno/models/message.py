@@ -125,10 +125,29 @@ class Message(BaseModel):
         if isinstance(self.content, str):
             return self.content
         if isinstance(self.content, list):
-            if len(self.content) > 0 and isinstance(self.content[0], dict) and "text" in self.content[0]:
-                return self.content[0].get("text", "")
-            else:
-                return json.dumps(self.content)
+            if len(self.content) > 0:
+                # Check if the first item is a dict with "text" key
+                if isinstance(self.content[0], dict) and "text" in self.content[0]:
+                    return self.content[0].get("text", "")
+                # Check if the first item is a TextContent object (from MCP)
+                elif hasattr(self.content[0], 'text') and hasattr(self.content[0], 'type'):
+                    # Assuming it's a TextContent object with 'text' attribute
+                    return getattr(self.content[0], 'text', '')
+                # Check if it's a Pydantic model with model_dump method
+                elif hasattr(self.content[0], 'model_dump'):
+                    try:
+                        dumped = self.content[0].model_dump()
+                        if isinstance(dumped, dict) and "text" in dumped:
+                            return dumped.get("text", "")
+                    except Exception:
+                        pass
+            # If we can't extract text content specifically, try to serialize the whole list
+            try:
+                return json.dumps(self.content,
+                                  default=lambda o: o.model_dump() if hasattr(o, 'model_dump') else str(o))
+            except Exception:
+                # Fallback: convert to string representation
+                return str(self.content)
         return ""
 
     def get_content(self, use_compressed_content: bool = False) -> Optional[Union[List[Any], str]]:
