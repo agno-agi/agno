@@ -60,7 +60,6 @@ def sample_team_session() -> TeamSession:
         team_id="test_team_1",
         user_id="test_user_1",
         status=RunStatus.completed,
-        agent_runs=[],
     )
     return TeamSession(
         session_id="test_team_session_1",
@@ -74,7 +73,7 @@ def sample_team_session() -> TeamSession:
     )
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_upsert_agent_session(async_postgres_db_real: AsyncPostgresDb, sample_agent_session: AgentSession):
     """Test upserting an agent session"""
     # First insert
@@ -94,7 +93,7 @@ async def test_upsert_agent_session(async_postgres_db_real: AsyncPostgresDb, sam
     assert updated_result.session_data["updated"] is True
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_upsert_team_session(async_postgres_db_real: AsyncPostgresDb, sample_team_session: TeamSession):
     """Test upserting a team session"""
     # First insert
@@ -107,7 +106,7 @@ async def test_upsert_team_session(async_postgres_db_real: AsyncPostgresDb, samp
     assert result.user_id == "test_user_1"
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_agent_session(async_postgres_db_real: AsyncPostgresDb, sample_agent_session: AgentSession):
     """Test getting an agent session"""
     # First upsert the session
@@ -123,7 +122,7 @@ async def test_get_agent_session(async_postgres_db_real: AsyncPostgresDb, sample
     assert result.session_data["key"] == "value"
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_team_session(async_postgres_db_real: AsyncPostgresDb, sample_team_session: TeamSession):
     """Test getting a team session"""
     # First upsert the session
@@ -139,7 +138,7 @@ async def test_get_team_session(async_postgres_db_real: AsyncPostgresDb, sample_
     assert result.session_data["team_key"] == "team_value"
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_sessions_with_filtering(
     async_postgres_db_real: AsyncPostgresDb, sample_agent_session: AgentSession, sample_team_session: TeamSession
 ):
@@ -164,7 +163,7 @@ async def test_get_sessions_with_filtering(
     assert user_sessions[0].user_id == "test_user_1"
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_sessions_with_pagination(async_postgres_db_real: AsyncPostgresDb):
     """Test getting sessions with pagination"""
     # Create multiple sessions
@@ -206,7 +205,7 @@ async def test_get_sessions_with_pagination(async_postgres_db_real: AsyncPostgre
     assert total_count == 5
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_delete_session(async_postgres_db_real: AsyncPostgresDb, sample_agent_session: AgentSession):
     """Test deleting a single session"""
     # First insert the session
@@ -225,7 +224,7 @@ async def test_delete_session(async_postgres_db_real: AsyncPostgresDb, sample_ag
     assert result is None
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_delete_sessions_bulk(async_postgres_db_real: AsyncPostgresDb):
     """Test deleting multiple sessions"""
     # Create and insert multiple sessions
@@ -243,6 +242,7 @@ async def test_delete_sessions_bulk(async_postgres_db_real: AsyncPostgresDb):
             agent_id=f"test_agent_{i}",
             user_id="test_user_1",
             runs=[agent_run],
+            created_at=int(time.time()) + i,
         )
         session_ids.append(f"test_session_{i}")
         await async_postgres_db_real.upsert_session(session)
@@ -259,7 +259,7 @@ async def test_delete_sessions_bulk(async_postgres_db_real: AsyncPostgresDb):
     assert len(sessions) == 0
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_rename_session(async_postgres_db_real: AsyncPostgresDb, sample_agent_session: AgentSession):
     """Test renaming a session"""
     # First insert the session
