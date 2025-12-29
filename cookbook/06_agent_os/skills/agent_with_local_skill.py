@@ -5,8 +5,8 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.skills import LocalSkills, Skills
 
-# Get the skills directory relative to this file
-skills_dir = Path(__file__).parent / "skills"
+# Get the shared skills directory (in cookbook/15_skills/skills/)
+skills_dir = Path(__file__).parent.parent.parent / "15_skills" / "skills"
 
 # Create agent with skills
 agent = Agent(
