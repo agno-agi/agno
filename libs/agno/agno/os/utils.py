@@ -342,7 +342,9 @@ def get_session_name(session: Dict[str, Any]) -> str:
                 return message["content"]
 
         run_input = r.get("input")
-        if run_input is not None:
+        if isinstance(run_input, str):
+            return run_input
+        if isinstance(run_input, dict):
             return run_input.get("input_content")
 
     return ""
