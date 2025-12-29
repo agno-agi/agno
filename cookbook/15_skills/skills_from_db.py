@@ -205,7 +205,7 @@ async def skill_creator_lifespan(_app):
             pass
 
 
-# Create AgentOS with custom lifespan
+# Create AgentOS with a custom lifespan
 agent_os = AgentOS(
     id="skills-db-demo",
     description="Skills Demo - Agent with Local + Database skills",
@@ -217,3 +217,6 @@ app = agent_os.get_app()
 
 if __name__ == "__main__":
     agent_os.serve(app="skills_from_db:app", reload=True)
+    agent.print_response(
+        "Tell me which skills are available in this agent?"
+    )

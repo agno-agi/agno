@@ -35,4 +35,5 @@ if __name__ == "__main__":
         "        total = total + items[i]['price'] * items[i]['quantity']\n"
         "    return total\n"
         "```"
+        "Also tell what all Skills you have?"
     )
