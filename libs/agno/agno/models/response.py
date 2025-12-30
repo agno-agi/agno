@@ -37,7 +37,7 @@ class ToolExecution:
 
     created_at: int = field(default_factory=lambda: int(time()))
 
-    # User control flow requirements
+    # User control flow (HITL) fields
     requires_confirmation: Optional[bool] = None
     confirmed: Optional[bool] = None
     confirmation_note: Optional[str] = None

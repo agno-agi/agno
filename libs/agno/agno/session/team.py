@@ -46,7 +46,6 @@ class TeamSession:
         session_dict = asdict(self)
 
         session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
-        print(session_dict["runs"])
         session_dict["summary"] = self.summary.to_dict() if self.summary else None
 
         return session_dict
@@ -92,10 +91,7 @@ class TeamSession:
 
     def upsert_run(self, run_response: Union[TeamRunOutput, RunOutput]):
         """Adds a RunOutput, together with some calculated data, to the runs list."""
-
         messages = run_response.messages
-        if messages is None:
-            return
 
         # Make message duration None
         for m in messages or []:

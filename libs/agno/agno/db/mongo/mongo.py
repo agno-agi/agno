@@ -98,9 +98,19 @@ class MongoDb(BaseDb):
 
         self.db_url: Optional[str] = db_url
         self.db_client: MongoClient = _client
+
         self.db_name: str = db_name if db_name is not None else "agno"
 
         self._database: Optional[Database] = None
+
+    def close(self) -> None:
+        """Close the MongoDB client connection.
+
+        Should be called during application shutdown to properly release
+        all database connections.
+        """
+        if self.db_client is not None:
+            self.db_client.close()
 
     @property
     def database(self) -> Database:
@@ -2028,8 +2038,45 @@ class MongoDb(BaseDb):
             log_info(f"Migrated {len(memories)} memories to collection: {self.memory_table_name}")
 
     # --- Traces ---
-    def create_trace(self, trace: "Trace") -> None:
-        """Create a single trace record in the database.
+    def _get_component_level(
+        self, workflow_id: Optional[str], team_id: Optional[str], agent_id: Optional[str], name: str
+    ) -> int:
+        """Get the component level for a trace based on its context.
+
+        Component levels (higher = more important):
+            - 3: Workflow root (.run or .arun with workflow_id)
+            - 2: Team root (.run or .arun with team_id)
+            - 1: Agent root (.run or .arun with agent_id)
+            - 0: Child span (not a root)
+
+        Args:
+            workflow_id: The workflow ID of the trace.
+            team_id: The team ID of the trace.
+            agent_id: The agent ID of the trace.
+            name: The name of the trace.
+
+        Returns:
+            int: The component level (0-3).
+        """
+        # Check if name indicates a root span
+        is_root_name = ".run" in name or ".arun" in name
+
+        if not is_root_name:
+            return 0  # Child span (not a root)
+        elif workflow_id:
+            return 3  # Workflow root
+        elif team_id:
+            return 2  # Team root
+        elif agent_id:
+            return 1  # Agent root
+        else:
+            return 0  # Unknown
+
+    def upsert_trace(self, trace: "Trace") -> None:
+        """Create or update a single trace record in the database.
+
+        Uses MongoDB's update_one with upsert=True and aggregation pipeline
+        to handle concurrent inserts atomically and avoid race conditions.
 
         Args:
             trace: The Trace object to store (one per trace_id).
@@ -2039,83 +2086,140 @@ class MongoDb(BaseDb):
             if collection is None:
                 return
 
-            # Check if trace already exists
-            existing = collection.find_one({"trace_id": trace.trace_id})
+            trace_dict = trace.to_dict()
+            trace_dict.pop("total_spans", None)
+            trace_dict.pop("error_count", None)
 
-            if existing:
-                # workflow (level 3) > team (level 2) > agent (level 1) > child/unknown (level 0)
-                def get_component_level(
-                    workflow_id: Optional[str], team_id: Optional[str], agent_id: Optional[str], name: str
-                ) -> int:
-                    # Check if name indicates a root span
-                    is_root_name = ".run" in name or ".arun" in name
+            # Calculate the component level for the new trace
+            new_level = self._get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
 
-                    if not is_root_name:
-                        return 0  # Child span (not a root)
-                    elif workflow_id:
-                        return 3  # Workflow root
-                    elif team_id:
-                        return 2  # Team root
-                    elif agent_id:
-                        return 1  # Agent root
-                    else:
-                        return 0  # Unknown
+            # Use MongoDB aggregation pipeline update for atomic upsert
+            # This allows conditional logic within a single atomic operation
+            pipeline: List[Dict[str, Any]] = [
+                {
+                    "$set": {
+                        # Always update these fields
+                        "status": trace.status,
+                        "created_at": {"$ifNull": ["$created_at", trace_dict.get("created_at")]},
+                        # Use $min for start_time (keep earliest)
+                        "start_time": {
+                            "$cond": {
+                                "if": {"$eq": [{"$type": "$start_time"}, "missing"]},
+                                "then": trace_dict.get("start_time"),
+                                "else": {"$min": ["$start_time", trace_dict.get("start_time")]},
+                            }
+                        },
+                        # Use $max for end_time (keep latest)
+                        "end_time": {
+                            "$cond": {
+                                "if": {"$eq": [{"$type": "$end_time"}, "missing"]},
+                                "then": trace_dict.get("end_time"),
+                                "else": {"$max": ["$end_time", trace_dict.get("end_time")]},
+                            }
+                        },
+                        # Preserve existing non-null context values using $ifNull
+                        "run_id": {"$ifNull": [trace.run_id, "$run_id"]},
+                        "session_id": {"$ifNull": [trace.session_id, "$session_id"]},
+                        "user_id": {"$ifNull": [trace.user_id, "$user_id"]},
+                        "agent_id": {"$ifNull": [trace.agent_id, "$agent_id"]},
+                        "team_id": {"$ifNull": [trace.team_id, "$team_id"]},
+                        "workflow_id": {"$ifNull": [trace.workflow_id, "$workflow_id"]},
+                    }
+                },
+                {
+                    "$set": {
+                        # Calculate duration_ms from the (potentially updated) start_time and end_time
+                        # MongoDB stores dates as strings in ISO format, so we need to parse them
+                        "duration_ms": {
+                            "$cond": {
+                                "if": {
+                                    "$and": [
+                                        {"$ne": [{"$type": "$start_time"}, "missing"]},
+                                        {"$ne": [{"$type": "$end_time"}, "missing"]},
+                                    ]
+                                },
+                                "then": {
+                                    "$subtract": [
+                                        {"$toLong": {"$toDate": "$end_time"}},
+                                        {"$toLong": {"$toDate": "$start_time"}},
+                                    ]
+                                },
+                                "else": trace_dict.get("duration_ms", 0),
+                            }
+                        },
+                        # Update name based on component level priority
+                        # Only update if new trace is from a higher-level component
+                        "name": {
+                            "$cond": {
+                                "if": {"$eq": [{"$type": "$name"}, "missing"]},
+                                "then": trace.name,
+                                "else": {
+                                    "$cond": {
+                                        "if": {
+                                            "$gt": [
+                                                new_level,
+                                                {
+                                                    "$switch": {
+                                                        "branches": [
+                                                            # Check if existing name is a root span
+                                                            {
+                                                                "case": {
+                                                                    "$not": {
+                                                                        "$or": [
+                                                                            {
+                                                                                "$regexMatch": {
+                                                                                    "input": {"$ifNull": ["$name", ""]},
+                                                                                    "regex": "\\.run",
+                                                                                }
+                                                                            },
+                                                                            {
+                                                                                "$regexMatch": {
+                                                                                    "input": {"$ifNull": ["$name", ""]},
+                                                                                    "regex": "\\.arun",
+                                                                                }
+                                                                            },
+                                                                        ]
+                                                                    }
+                                                                },
+                                                                "then": 0,
+                                                            },
+                                                            # Workflow root (level 3)
+                                                            {
+                                                                "case": {"$ne": ["$workflow_id", None]},
+                                                                "then": 3,
+                                                            },
+                                                            # Team root (level 2)
+                                                            {
+                                                                "case": {"$ne": ["$team_id", None]},
+                                                                "then": 2,
+                                                            },
+                                                            # Agent root (level 1)
+                                                            {
+                                                                "case": {"$ne": ["$agent_id", None]},
+                                                                "then": 1,
+                                                            },
+                                                        ],
+                                                        "default": 0,
+                                                    }
+                                                },
+                                            ]
+                                        },
+                                        "then": trace.name,
+                                        "else": "$name",
+                                    }
+                                },
+                            }
+                        },
+                    }
+                },
+            ]
 
-                existing_level = get_component_level(
-                    existing.get("workflow_id"),
-                    existing.get("team_id"),
-                    existing.get("agent_id"),
-                    existing.get("name", ""),
-                )
-                new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
-
-                # Only update name if new trace is from a higher or equal level
-                should_update_name = new_level > existing_level
-
-                # Parse existing start_time to calculate correct duration
-                existing_start_time_str = existing.get("start_time")
-                if isinstance(existing_start_time_str, str):
-                    existing_start_time = datetime.fromisoformat(existing_start_time_str.replace("Z", "+00:00"))
-                else:
-                    existing_start_time = trace.start_time
-
-                recalculated_duration_ms = int((trace.end_time - existing_start_time).total_seconds() * 1000)
-
-                update_values: Dict[str, Any] = {
-                    "end_time": trace.end_time.isoformat(),
-                    "duration_ms": recalculated_duration_ms,
-                    "status": trace.status,
-                    "name": trace.name if should_update_name else existing.get("name"),
-                }
-
-                # Update context fields ONLY if new value is not None (preserve non-null values)
-                if trace.run_id is not None:
-                    update_values["run_id"] = trace.run_id
-                if trace.session_id is not None:
-                    update_values["session_id"] = trace.session_id
-                if trace.user_id is not None:
-                    update_values["user_id"] = trace.user_id
-                if trace.agent_id is not None:
-                    update_values["agent_id"] = trace.agent_id
-                if trace.team_id is not None:
-                    update_values["team_id"] = trace.team_id
-                if trace.workflow_id is not None:
-                    update_values["workflow_id"] = trace.workflow_id
-
-                log_debug(
-                    f"  Updating trace with context: run_id={update_values.get('run_id', 'unchanged')}, "
-                    f"session_id={update_values.get('session_id', 'unchanged')}, "
-                    f"user_id={update_values.get('user_id', 'unchanged')}, "
-                    f"agent_id={update_values.get('agent_id', 'unchanged')}, "
-                    f"team_id={update_values.get('team_id', 'unchanged')}, "
-                )
-
-                collection.update_one({"trace_id": trace.trace_id}, {"$set": update_values})
-            else:
-                trace_dict = trace.to_dict()
-                trace_dict.pop("total_spans", None)
-                trace_dict.pop("error_count", None)
-                collection.insert_one(trace_dict)
+            # Perform atomic upsert using aggregation pipeline
+            collection.update_one(
+                {"trace_id": trace.trace_id},
+                pipeline,
+                upsert=True,
+            )
 
         except Exception as e:
             log_error(f"Error creating trace: {e}")
@@ -2217,11 +2321,6 @@ class MongoDb(BaseDb):
         try:
             from agno.tracing.schemas import Trace as TraceSchema
 
-            log_debug(
-                f"get_traces called with filters: run_id={run_id}, session_id={session_id}, "
-                f"user_id={user_id}, agent_id={agent_id}, page={page}, limit={limit}"
-            )
-
             collection = self._get_collection(table_type="traces")
             if collection is None:
                 log_debug("Traces collection not found")
@@ -2235,7 +2334,6 @@ class MongoDb(BaseDb):
             if run_id:
                 query["run_id"] = run_id
             if session_id:
-                log_debug(f"Filtering by session_id={session_id}")
                 query["session_id"] = session_id
             if user_id:
                 query["user_id"] = user_id
@@ -2257,14 +2355,12 @@ class MongoDb(BaseDb):
 
             # Get total count
             total_count = collection.count_documents(query)
-            log_debug(f"Total matching traces: {total_count}")
 
             # Apply pagination
             skip = ((page or 1) - 1) * (limit or 20)
             cursor = collection.find(query).sort("start_time", -1).skip(skip).limit(limit or 20)
 
             results = list(cursor)
-            log_debug(f"Returning page {page} with {len(results)} traces")
 
             traces = []
             for row in results:
@@ -2318,12 +2414,6 @@ class MongoDb(BaseDb):
                 workflow_id, first_trace_at, last_trace_at.
         """
         try:
-            log_debug(
-                f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
-                f"workflow_id={workflow_id}, team_id={team_id}, "
-                f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
-            )
-
             collection = self._get_collection(table_type="traces")
             if collection is None:
                 log_debug("Traces collection not found")
@@ -2369,7 +2459,6 @@ class MongoDb(BaseDb):
             count_pipeline = pipeline + [{"$count": "total"}]
             count_result = list(collection.aggregate(count_pipeline))
             total_count = count_result[0]["total"] if count_result else 0
-            log_debug(f"Total matching sessions: {total_count}")
 
             # Apply pagination
             skip = ((page or 1) - 1) * (limit or 20)
@@ -2377,7 +2466,6 @@ class MongoDb(BaseDb):
             pipeline.append({"$limit": limit or 20})
 
             results = list(collection.aggregate(pipeline))
-            log_debug(f"Returning page {page} with {len(results)} session stats")
 
             # Convert to list of dicts with datetime objects
             stats_list = []

@@ -20,6 +20,9 @@ class AgnoAPISettings(BaseSettings):
     # Authentication settings
     os_security_key: Optional[str] = Field(default=None, description="Bearer token for API authentication")
 
+    # Authorization flag - when True, JWT middleware handles auth and security key validation is skipped
+    authorization_enabled: bool = Field(default=False, description="Whether JWT authorization is enabled")
+
     # Cors origin list to allow requests from.
     # This list is set using the set_cors_origin_list validator
     cors_origin_list: Optional[List[str]] = Field(default=None, validate_default=True)
