@@ -47,6 +47,7 @@ See the [custom strategy example](./custom_strategy_example.py) for a complete w
 ## Supported Chunking Strategies
 
 - **[Agentic Chunking](./agentic_chunking.py)** - AI-powered intelligent chunk boundaries
+- **[Agentic Chunking (Custom Prompt + Metadata)](./agentic_chunking_custom_prompt_metadata.py)** - Customize breakpoints and enrich chunk metadata
 - **[CSV Row Chunking](./csv_row_chunking.py)** - Each CSV row as a separate chunk
 - **[Document Chunking](./document_chunking.py)** - Treat entire document as single chunk
 - **[Fixed Size Chunking](./fixed_size_chunking.py)** - Fixed character/token length chunks
