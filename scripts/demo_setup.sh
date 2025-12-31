@@ -49,17 +49,28 @@ fi
 
 # Setup
 echo -e "    ${DIM}Removing old environment...${NC}"
+echo -e "    ${DIM}> rm -rf ${VENV_DIR}${NC}"
 rm -rf ${VENV_DIR}
 
+echo ""
 echo -e "    ${DIM}Creating Python 3.12 venv...${NC}"
-VIRTUAL_ENV=${VENV_DIR} uv venv --python 3.12 --quiet
+echo -e "    ${DIM}> uv venv ${VENV_DIR} --python 3.12${NC}"
+uv venv ${VENV_DIR} --python 3.12 --quiet
 
+echo ""
 echo -e "    ${DIM}Installing agno[demo]...${NC}"
+echo -e "    ${DIM}> VIRTUAL_ENV=${VENV_DIR} uv pip install -e ${AGNO_DIR}[demo]${NC}"
 VIRTUAL_ENV=${VENV_DIR} uv pip install -e ${AGNO_DIR}[demo] --quiet
+
+# Copy activation command to clipboard
+ACTIVATE_CMD="source .venvs/demo/bin/activate"
+echo -n "${ACTIVATE_CMD}" | pbcopy
 
 echo ""
 echo -e "    ${BOLD}Done.${NC}"
 echo ""
-echo -e "    ${DIM}Activate:${NC}  source .venvs/demo/bin/activate"
-echo -e "    ${DIM}Run:${NC}       python cookbook/01_demo/run.py"
+echo -e "    ${DIM}Activate:${NC}  ${ACTIVATE_CMD}"
+echo -e "    ${DIM}Run Demo:${NC}  python cookbook/01_demo/run.py"
+echo ""
+echo -e "    ${DIM}(Activation command copied to clipboard. Just paste and hit enter.)${NC}"
 echo ""
