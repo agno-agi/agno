@@ -37,6 +37,7 @@ class BaseDb(ABC):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        learnings_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -49,6 +50,7 @@ class BaseDb(ABC):
         self.trace_table_name = traces_table or "agno_traces"
         self.span_table_name = spans_table or "agno_spans"
         self.versions_table_name = versions_table or "agno_schema_versions"
+        self.learnings_table_name = learnings_table or "agno_learnings"
 
     @abstractmethod
     def table_exists(self, table_name: str) -> bool:
@@ -497,6 +499,93 @@ class BaseDb(ABC):
     def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
+    # --- Learning ---
+    @abstractmethod
+    def get_learning(
+        self,
+        learning_type: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve a learning record.
+
+        Args:
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+
+        Returns:
+            Dict with 'content' key containing the learning data, or None.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_learning(
+        self,
+        id: str,
+        learning_type: str,
+        content: Dict[str, Any],
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Insert or update a learning record.
+
+        Args:
+            id: Unique identifier for the learning.
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            content: The learning content as a dict.
+            user_id: Associated user ID.
+            agent_id: Associated agent ID.
+            team_id: Associated team ID.
+            session_id: Associated session ID.
+            metadata: Optional metadata.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_learning(self, id: str) -> bool:
+        """Delete a learning record.
+
+        Args:
+            id: The learning ID to delete.
+
+        Returns:
+            True if deleted, False otherwise.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get multiple learning records.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of learning records.
+        """
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -513,6 +602,7 @@ class AsyncBaseDb(ABC):
         spans_table: Optional[str] = None,
         culture_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        learnings_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -524,6 +614,7 @@ class AsyncBaseDb(ABC):
         self.span_table_name = spans_table or "agno_spans"
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
+        self.learnings_table_name = learnings_table or "agno_learnings"
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""
@@ -963,4 +1054,91 @@ class AsyncBaseDb(ABC):
     async def upsert_cultural_knowledge(
         self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
     ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        raise NotImplementedError
+
+    # --- Learning ---
+    @abstractmethod
+    async def aget_learning(
+        self,
+        learning_type: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Async retrieve a learning record.
+
+        Args:
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+
+        Returns:
+            Dict with 'content' key containing the learning data, or None.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def aupsert_learning(
+        self,
+        id: str,
+        learning_type: str,
+        content: Dict[str, Any],
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Async insert or update a learning record.
+
+        Args:
+            id: Unique identifier for the learning.
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            content: The learning content as a dict.
+            user_id: Associated user ID.
+            agent_id: Associated agent ID.
+            team_id: Associated team ID.
+            session_id: Associated session ID.
+            metadata: Optional metadata.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def adelete_learning(self, id: str) -> bool:
+        """Async delete a learning record.
+
+        Args:
+            id: The learning ID to delete.
+
+        Returns:
+            True if deleted, False otherwise.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def aget_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Async get multiple learning records.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of learning records.
+        """
         raise NotImplementedError
