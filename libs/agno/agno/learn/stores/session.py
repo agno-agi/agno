@@ -12,6 +12,11 @@ Key Features:
 - Optional planning mode (goal, plan, progress tracking)
 - Session-scoped storage (each session_id has one context)
 - No agent tool (system-managed only)
+
+Supported Modes:
+- BACKGROUND only. SessionContextStore does not support AGENTIC, PROPOSE, or HITL modes.
+  Session context is automatic note-taking for continuity - the agent doesn't decide
+  what to save about the session.
 """
 
 from copy import deepcopy
@@ -20,7 +25,7 @@ from os import getenv
 from textwrap import dedent
 from typing import Any, Callable, List, Optional, Union
 
-from agno.learn.config import SessionContextConfig
+from agno.learn.config import LearningMode, SessionContextConfig
 from agno.learn.schemas import SessionContext
 from agno.learn.stores.protocol import LearningStore, from_dict_safe, to_dict_safe
 from agno.utils.log import (
@@ -50,6 +55,11 @@ class SessionContextStore(LearningStore):
     Key difference from UserProfileStore:
     - UserProfile: accumulates memories over time
     - SessionContext: snapshot of current session state
+
+    Supported Modes:
+    - BACKGROUND only. This store does not support AGENTIC, PROPOSE, or HITL modes.
+      Session context is system-managed automatic summarization - the agent doesn't
+      decide what to save about the session. There are no agent tools.
 
     Usage:
         >>> store = SessionContextStore(config=SessionContextConfig(db=db, model=model))
@@ -84,6 +94,16 @@ class SessionContextStore(LearningStore):
     def __post_init__(self):
         self._schema = self.config.schema or SessionContext
 
+        # SessionContextStore only supports BACKGROUND mode
+        # Config doesn't have mode field by design, but check defensively
+        if hasattr(self.config, "mode") and self.config.mode is not None:
+            if self.config.mode != LearningMode.BACKGROUND:
+                log_warning(
+                    f"SessionContextStore only supports BACKGROUND mode, got {self.config.mode}. "
+                    "Session context is system-managed automatic summarization with no agent tools. "
+                    "Ignoring mode setting."
+                )
+
     # =========================================================================
     # LearningStore Protocol Implementation
     # =========================================================================
@@ -101,12 +121,18 @@ class SessionContextStore(LearningStore):
     def recall(
         self,
         session_id: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         **kwargs,
     ) -> Optional[Any]:
         """Retrieve session context from storage.
 
         Args:
             session_id: The session to retrieve context for (required).
+            user_id: Optional user context (stored but not used for lookup).
+            agent_id: Optional agent context.
+            team_id: Optional team context.
             **kwargs: Additional context (ignored).
 
         Returns:
@@ -119,6 +145,9 @@ class SessionContextStore(LearningStore):
     async def arecall(
         self,
         session_id: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         **kwargs,
     ) -> Optional[Any]:
         """Async version of recall."""
@@ -182,7 +211,8 @@ class SessionContextStore(LearningStore):
             data: Session context data from recall().
 
         Returns:
-            Context string to inject into the agent's system prompt, or empty string if no data.
+            Context string to inject into the agent's system prompt,
+            or empty string if no data.
         """
         if not data:
             return ""
@@ -196,19 +226,23 @@ class SessionContextStore(LearningStore):
         if not context_text:
             return ""
 
-        return (
-            dedent("""\
+        return dedent(f"""\
             <session_context>
             Earlier in this session:
-            """)
-            + context_text
-            + dedent("""
+            {context_text}
 
             Use this for continuity. Current conversation takes precedence.
-            </session_context>""")
-        )
+            </session_context>\
+        """)
 
-    def get_tools(self, **kwargs) -> List[Callable]:
+    def get_tools(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        **kwargs,
+    ) -> List[Callable]:
         """Session context has no agent tools (system-managed only).
 
         Returns:
@@ -216,7 +250,14 @@ class SessionContextStore(LearningStore):
         """
         return []
 
-    async def aget_tools(self, **kwargs) -> List[Callable]:
+    async def aget_tools(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        **kwargs,
+    ) -> List[Callable]:
         """Async version of get_tools."""
         return []
 

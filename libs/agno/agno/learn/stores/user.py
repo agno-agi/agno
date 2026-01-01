@@ -21,7 +21,7 @@ from os import getenv
 from textwrap import dedent
 from typing import Any, Callable, List, Optional, Union
 
-from agno.learn.config import UserProfileConfig
+from agno.learn.config import LearningMode, UserProfileConfig
 from agno.learn.schemas import UserProfile
 from agno.learn.stores.protocol import LearningStore, from_dict_safe, to_dict_safe
 from agno.utils.log import (
@@ -79,6 +79,21 @@ class UserProfileStore(LearningStore):
     def __post_init__(self):
         self._schema = self.config.schema or UserProfile
 
+        # Warn if unsupported mode is used
+        if self.config.mode == LearningMode.PROPOSE:
+            log_warning(
+                "UserProfileStore does not support PROPOSE mode. "
+                "User profile captures facts, not insights requiring approval. "
+                "Falling back to BACKGROUND mode. Use AGENTIC mode or enable_tool=True for agent updates."
+            )
+        elif self.config.mode == LearningMode.HITL:
+            log_warning(
+                "UserProfileStore does not support HITL mode. "
+                "User profile captures facts, not insights requiring approval. "
+                "Falling back to BACKGROUND mode. Use AGENTIC mode or enable_tool=True for agent updates."
+            )
+            # Don't change the config, just warn - let it behave like BACKGROUND
+
     # =========================================================================
     # LearningStore Protocol Implementation
     # =========================================================================
@@ -128,6 +143,9 @@ class UserProfileStore(LearningStore):
     ) -> None:
         """Extract user profile from messages.
 
+        Only runs in BACKGROUND mode. In AGENTIC mode, agent uses
+        update_user_memory tool directly.
+
         Args:
             messages: Conversation messages to analyze.
             user_id: The user to update profile for (required).
@@ -135,6 +153,10 @@ class UserProfileStore(LearningStore):
             team_id: Optional team context.
             **kwargs: Additional context (ignored).
         """
+        # Only run background extraction in BACKGROUND mode (or PROPOSE/HITL which falls back to BACKGROUND mode)
+        if self.config.mode == LearningMode.AGENTIC:
+            return
+
         if not user_id or not messages:
             return
         self.extract_and_save(
@@ -148,6 +170,10 @@ class UserProfileStore(LearningStore):
         self, messages: List[Any], user_id: str, agent_id: Optional[str] = None, team_id: Optional[str] = None, **kwargs
     ) -> None:
         """Async version of process."""
+        # Only run background extraction in BACKGROUND mode (or PROPOSE/HITL which falls back to BACKGROUND mode)
+        if self.config.mode == LearningMode.AGENTIC:
+            return
+
         if not user_id or not messages:
             return
         await self.aextract_and_save(messages=messages, user_id=user_id, agent_id=agent_id, team_id=team_id)
@@ -162,6 +188,14 @@ class UserProfileStore(LearningStore):
             Context string to inject into the agent's system prompt, or empty string if no data.
         """
         if not data:
+            # Even with no data, mention tool if enabled
+            if self.config.enable_tool:
+                return dedent("""\
+                    <user_profile>
+                    No information saved about this user yet.
+
+                    You can use `update_user_memory` to save information worth remembering about this user.
+                    </user_profile>""")
             return ""
 
         memories_text = None
@@ -171,19 +205,36 @@ class UserProfileStore(LearningStore):
             memories_text = "\n".join(f"- {m.get('content', str(m))}" for m in data.memories)
 
         if not memories_text:
+            if self.config.enable_tool:
+                return dedent("""\
+                    <user_profile>
+                    No information saved about this user yet.
+
+                    You can use `update_user_memory` to save information worth remembering about this user.
+                    </user_profile>""")
             return ""
 
-        return (
+        context = (
             dedent("""\
             <user_profile>
             What you know about this user:
             """)
             + memories_text
-            + dedent("""
+        )
+
+        if self.config.enable_tool:
+            context += dedent("""
+
+            You can use `update_user_memory` to save new information or update existing memories.
+            Use this to personalize responses. Current conversation takes precedence.
+            </user_profile>""")
+        else:
+            context += dedent("""
 
             Use this to personalize responses. Current conversation takes precedence.
             </user_profile>""")
-        )
+
+        return context
 
     def get_tools(
         self,
