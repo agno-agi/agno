@@ -21,13 +21,19 @@ Key Features:
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from os import getenv
 from textwrap import dedent
 from typing import Any, Callable, List, Optional
 
 from agno.learn.config import KnowledgeConfig, LearningMode
 from agno.learn.schemas import BaseLearning
 from agno.learn.stores.base import LearningStore, to_dict_safe
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import (
+    log_debug,
+    log_warning,
+    set_log_level_to_debug,
+    set_log_level_to_info,
+)
 
 
 @dataclass
@@ -62,9 +68,11 @@ class KnowledgeStore(LearningStore):
 
     Args:
         config: KnowledgeConfig with all settings including knowledge base.
+        debug_mode: Enable debug logging.
     """
 
     config: KnowledgeConfig = field(default_factory=KnowledgeConfig)
+    debug_mode: bool = False
 
     # State tracking (internal)
     learning_saved: bool = field(default=False, init=False)
@@ -186,7 +194,7 @@ class KnowledgeStore(LearningStore):
 
         parts = []
         for i, learning in enumerate(learnings, 1):
-            formatted = self._format_single_learning(learning)
+            formatted = self._format_single_learning(learning=learning)
             if formatted:
                 parts.append(f"{i}. {formatted}")
 
@@ -195,14 +203,16 @@ class KnowledgeStore(LearningStore):
 
         learnings_text = "\n".join(parts)
 
-        return dedent(f"""\
+        return (
+            dedent(f"""\
             <relevant_learnings>
             Insights from past interactions:
-            {learnings_text}
-
+            """)
+            + learnings_text
+            + dedent("""
             Apply where appropriate.
-            </relevant_learnings>
-        """)
+            </relevant_learnings>""")
+        )
 
     def get_tools(
         self,
@@ -253,6 +263,18 @@ class KnowledgeStore(LearningStore):
     def model(self):
         """Model for extraction (if needed)."""
         return self.config.model
+
+    # =========================================================================
+    # Debug/Logging
+    # =========================================================================
+
+    def set_log_level(self):
+        """Set log level based on debug_mode or environment variable."""
+        if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
+            self.debug_mode = True
+            set_log_level_to_debug()
+        else:
+            set_log_level_to_info()
 
     # =========================================================================
     # Agent Tool
@@ -381,7 +403,7 @@ class KnowledgeStore(LearningStore):
 
             learnings = []
             for result in results or []:
-                learning = self._parse_result(result)
+                learning = self._parse_result(result=result)
                 if learning:
                     # Filter by agent/team if specified
                     if agent_id and hasattr(learning, "agent_id") and learning.agent_id != agent_id:
@@ -417,7 +439,7 @@ class KnowledgeStore(LearningStore):
 
             learnings = []
             for result in results or []:
-                learning = self._parse_result(result)
+                learning = self._parse_result(result=result)
                 if learning:
                     if agent_id and hasattr(learning, "agent_id") and learning.agent_id != agent_id:
                         continue
@@ -477,10 +499,10 @@ class KnowledgeStore(LearningStore):
             learning_obj = self.schema(**learning_data)
 
             # Convert to text for vector storage
-            text_content = self._to_text_content(learning_obj)
+            text_content = self._to_text_content(learning=learning_obj)
 
             # Build a unique ID
-            learning_id = f"learning_{title.lower().replace(' ', '_')[:50]}"
+            learning_id = self._build_learning_id(title=title)
 
             # Add to knowledge base
             self.knowledge.load_text(
@@ -521,8 +543,8 @@ class KnowledgeStore(LearningStore):
             }
 
             learning_obj = self.schema(**learning_data)
-            text_content = self._to_text_content(learning_obj)
-            learning_id = f"learning_{title.lower().replace(' ', '_')[:50]}"
+            text_content = self._to_text_content(learning=learning_obj)
+            learning_id = self._build_learning_id(title=title)
 
             if hasattr(self.knowledge, "aload_text"):
                 await self.knowledge.aload_text(
@@ -559,7 +581,7 @@ class KnowledgeStore(LearningStore):
             return False
 
         try:
-            learning_id = f"learning_{title.lower().replace(' ', '_')[:50]}"
+            learning_id = self._build_learning_id(title=title)
             if hasattr(self.knowledge, "delete"):
                 self.knowledge.delete(id=learning_id)
                 log_debug(f"Deleted learning: {title}")
@@ -578,7 +600,7 @@ class KnowledgeStore(LearningStore):
             return False
 
         try:
-            learning_id = f"learning_{title.lower().replace(' ', '_')[:50]}"
+            learning_id = self._build_learning_id(title=title)
             if hasattr(self.knowledge, "adelete"):
                 await self.knowledge.adelete(id=learning_id)
                 log_debug(f"Deleted learning: {title}")
@@ -614,7 +636,7 @@ class KnowledgeStore(LearningStore):
             Formatted string suitable for system prompts.
         """
         learnings = self.search(query=query, limit=limit)
-        return self.format_for_prompt(learnings)
+        return self.format_for_prompt(data=learnings)
 
     async def aget_relevant_context(
         self,
@@ -623,11 +645,15 @@ class KnowledgeStore(LearningStore):
     ) -> str:
         """Async version of get_relevant_context."""
         learnings = await self.asearch(query=query, limit=limit)
-        return self.format_for_prompt(learnings)
+        return self.format_for_prompt(data=learnings)
 
     # =========================================================================
     # Private Helpers
     # =========================================================================
+
+    def _build_learning_id(self, title: str) -> str:
+        """Build a unique learning ID from title."""
+        return f"learning_{title.lower().replace(' ', '_')[:50]}"
 
     def _parse_result(self, result: Any) -> Optional[Any]:
         """Parse a search result into a learning object."""

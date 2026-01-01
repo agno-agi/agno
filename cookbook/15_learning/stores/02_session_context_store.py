@@ -657,16 +657,16 @@ if __name__ == "__main__":
 
     # Run tests
     test_basic_summary()
-    # test_planning_mode()
-    # test_summary_vs_planning()
-    # test_context_replacement()
-    # test_delete_and_clear()
-    # test_format_for_prompt()
-    # test_multi_session_isolation()
-    # test_empty_messages()
-    # test_state_tracking()
-    # test_long_conversation()
-    # test_custom_instructions()
+    test_planning_mode()
+    test_summary_vs_planning()
+    test_context_replacement()
+    test_delete_and_clear()
+    test_format_for_prompt()
+    test_multi_session_isolation()
+    test_empty_messages()
+    test_state_tracking()
+    test_long_conversation()
+    test_custom_instructions()
 
     # Cleanup
     cleanup()

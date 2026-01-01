@@ -661,8 +661,7 @@ class SessionContextStore(LearningStore):
                 ## Conversation
                 <conversation>""")
                 + conversation_text
-                + dedent("""\
-                {conversation_text}
+                + dedent("""
                 </conversation>
 
                 ## Guidelines
@@ -674,8 +673,7 @@ class SessionContextStore(LearningStore):
 
                 """)
                 + custom_instructions
-                + dedent("""\
-
+                + dedent("""
                 Use the save_session_context tool to save your analysis.\
             """)
             )
@@ -695,7 +693,7 @@ class SessionContextStore(LearningStore):
                 <conversation>
                 """)
                 + conversation_text
-                + dedent("""\
+                + dedent("""
                 </conversation>
 
                 ## Guidelines
@@ -706,8 +704,7 @@ class SessionContextStore(LearningStore):
 
                 """)
                 + custom_instructions
-                + dedent("""\
-
+                + dedent("""
                 Use the save_session_context tool to save your summary.\
             """)
             )

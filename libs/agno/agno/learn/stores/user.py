@@ -192,14 +192,16 @@ class UserProfileStore(LearningStore):
         if not memories_text:
             return ""
 
-        return dedent(f"""\
+        return (
+            dedent(f"""\
             <user_profile>
             What you know about this user:
-            {memories_text}
-
+            """)
+            + memories_text
+            + dedent("""
             Use this to personalize responses. Current conversation takes precedence.
-            </user_profile>\
-        """)
+            </user_profile>""")
+        )
 
     def get_tools(
         self,
