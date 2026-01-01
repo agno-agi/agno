@@ -4,8 +4,9 @@ User Profile Store
 Storage backend for User Profile learning type.
 """
 
+import uuid
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from textwrap import dedent
 from typing import Any, Callable, List, Optional, Union
 
@@ -13,7 +14,6 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.learn.config import UserProfileConfig
 from agno.learn.schemas import BaseUserProfile
 from agno.learn.stores.base import BaseLearningStore, from_dict_safe, to_dict_safe
-from agno.models.base import Model
 from agno.models.message import Message
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
@@ -27,34 +27,95 @@ class UserProfileStore(BaseLearningStore):
     Profiles are stored per user_id and persist across sessions.
 
     Args:
-        db: Database backend for UserProfile storage.
-        model: Model for profile extraction.
-        config: UserProfileConfig with settings.
+        config: UserProfileConfig with all settings including db and model.
     """
 
-    db: Optional[Union[BaseDb, AsyncBaseDb]] = None
-    model: Optional[Model] = None
-    config: Optional[UserProfileConfig] = None
+    config: UserProfileConfig = field(default_factory=UserProfileConfig)
 
-    # Whether profile was updated in the last run
+    # State tracking (internal)
     profile_updated: bool = False
 
-    # Provide the system message for the manager as a string
-    system_message: Optional[str] = None
-    # Provide custom instructions for profile extraction
-    profile_capture_instructions: Optional[str] = None
-    # Additional instructions appended to the default system message
-    additional_instructions: Optional[str] = None
-
-    # Tool controls
-    enable_add: bool = True
-    enable_update: bool = True
-    enable_delete: bool = True
-    enable_clear: bool = False
-
     def __post_init__(self):
-        self.config = self.config or UserProfileConfig()
         self.schema = self.config.schema or BaseUserProfile
+
+    # --- Properties for cleaner access ---
+
+    @property
+    def db(self) -> Optional[Union[BaseDb, AsyncBaseDb]]:
+        return self.config.db
+
+    @property
+    def model(self):
+        return self.config.model
+
+    # --- Agent Tool ---
+
+    def get_agent_tool(
+        self,
+        user_id: str,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> Callable:
+        """Get the tool to expose to the agent.
+
+        Returns a callable that the agent can use to update user memory.
+        """
+
+        def update_user_memory(task: str) -> str:
+            """Update information about the user.
+
+            Use this to save, update, or delete information about the user.
+
+            Args:
+                task: What to remember, update, or forget about the user.
+                      Examples:
+                      - "Remember that user's name is John"
+                      - "User now prefers dark mode"
+                      - "Forget user's old address"
+
+            Returns:
+                Confirmation message.
+            """
+            return self.run_user_profile_update(
+                task=task,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+            )
+
+        return update_user_memory
+
+    async def aget_agent_tool(
+        self,
+        user_id: str,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> Callable:
+        """Get the async tool to expose to the agent."""
+
+        async def update_user_memory(task: str) -> str:
+            """Update information about the user.
+
+            Use this to save, update, or delete information about the user.
+
+            Args:
+                task: What to remember, update, or forget about the user.
+                      Examples:
+                      - "Remember that user's name is John"
+                      - "User now prefers dark mode"
+                      - "Forget user's old address"
+
+            Returns:
+                Confirmation message.
+            """
+            return await self.arun_user_profile_update(
+                task=task,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+            )
+
+        return update_user_memory
 
     # --- Read Operations ---
 
@@ -344,7 +405,8 @@ class UserProfileStore(BaseLearningStore):
         if hasattr(profile, "add_memory"):
             profile.add_memory(memory)
         elif hasattr(profile, "memories"):
-            profile.memories.append({"content": memory})
+            memory_id = str(uuid.uuid4())[:8]
+            profile.memories.append({"id": memory_id, "content": memory})
 
         self.save(user_id, profile, agent_id=agent_id, team_id=team_id)
         log_debug(f"Added memory for user {user_id}: {memory[:50]}...")
@@ -365,7 +427,8 @@ class UserProfileStore(BaseLearningStore):
         if hasattr(profile, "add_memory"):
             profile.add_memory(memory)
         elif hasattr(profile, "memories"):
-            profile.memories.append({"content": memory})
+            memory_id = str(uuid.uuid4())[:8]
+            profile.memories.append({"id": memory_id, "content": memory})
 
         await self.asave(user_id, profile, agent_id=agent_id, team_id=team_id)
         log_debug(f"Added memory for user {user_id}: {memory[:50]}...")
@@ -418,15 +481,16 @@ class UserProfileStore(BaseLearningStore):
         input_string = self._messages_to_input_string(messages)
 
         # Get tools
-        tools = self._determine_tools_for_model(
-            self._get_db_tools(
-                user_id=user_id,
-                db=self.db,
-                input_string=input_string,
-                agent_id=agent_id,
-                team_id=team_id,
-            )
+        tools = self._get_extraction_tools(
+            user_id=user_id,
+            input_string=input_string,
+            agent_id=agent_id,
+            team_id=team_id,
         )
+        tool_map = {func.__name__: func for func in tools}
+
+        # Convert to Function objects for model
+        functions = self._determine_tools_for_model(tools)
 
         # Prepare messages for model
         messages_for_model: List[Message] = [
@@ -438,15 +502,24 @@ class UserProfileStore(BaseLearningStore):
         model_copy = deepcopy(self.model)
         response = model_copy.response(
             messages=messages_for_model,
-            tools=tools,
+            tools=functions,
         )
 
-        if response.tool_calls is not None and len(response.tool_calls) > 0:
-            self.profile_updated = True
+        # Execute tool calls
+        if response.tool_calls:
+            for tool_call in response.tool_calls:
+                tool_name = tool_call.function.name
+                tool_args = tool_call.function.arguments
+                if tool_name in tool_map:
+                    try:
+                        tool_map[tool_name](**tool_args)
+                        self.profile_updated = True
+                    except Exception as e:
+                        log_warning(f"Error executing {tool_name}: {e}")
 
         log_debug("UserProfileStore: Extraction complete", center=True)
 
-        return response.content or "No response from model"
+        return response.content or "Profile updated" if self.profile_updated else "No updates needed"
 
     async def aextract_and_save(
         self,
@@ -478,25 +551,23 @@ class UserProfileStore(BaseLearningStore):
 
         # Get tools
         if isinstance(self.db, AsyncBaseDb):
-            tools = self._determine_tools_for_model(
-                await self._aget_db_tools(
-                    user_id=user_id,
-                    db=self.db,
-                    input_string=input_string,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                )
+            tools = await self._aget_extraction_tools(
+                user_id=user_id,
+                input_string=input_string,
+                agent_id=agent_id,
+                team_id=team_id,
             )
         else:
-            tools = self._determine_tools_for_model(
-                self._get_db_tools(
-                    user_id=user_id,
-                    db=self.db,
-                    input_string=input_string,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                )
+            tools = self._get_extraction_tools(
+                user_id=user_id,
+                input_string=input_string,
+                agent_id=agent_id,
+                team_id=team_id,
             )
+        tool_map = {func.__name__: func for func in tools}
+
+        # Convert to Function objects for model
+        functions = self._determine_tools_for_model(tools)
 
         # Prepare messages for model
         messages_for_model: List[Message] = [
@@ -508,29 +579,44 @@ class UserProfileStore(BaseLearningStore):
         model_copy = deepcopy(self.model)
         response = await model_copy.aresponse(
             messages=messages_for_model,
-            tools=tools,
+            tools=functions,
         )
 
-        if response.tool_calls is not None and len(response.tool_calls) > 0:
-            self.profile_updated = True
+        # Execute tool calls
+        if response.tool_calls:
+            for tool_call in response.tool_calls:
+                tool_name = tool_call.function.name
+                tool_args = tool_call.function.arguments
+                if tool_name in tool_map:
+                    try:
+                        import asyncio
+                        if asyncio.iscoroutinefunction(tool_map[tool_name]):
+                            await tool_map[tool_name](**tool_args)
+                        else:
+                            tool_map[tool_name](**tool_args)
+                        self.profile_updated = True
+                    except Exception as e:
+                        log_warning(f"Error executing {tool_name}: {e}")
 
         log_debug("UserProfileStore: Extraction complete", center=True)
 
-        return response.content or "No response from model"
+        return response.content or "Profile updated" if self.profile_updated else "No updates needed"
 
-    # --- Task Operations ---
+    # --- Update Operations (called by agent tool) ---
 
-    def run_profile_task(
+    def run_user_profile_update(
         self,
         task: str,
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> str:
-        """Run a profile management task.
+        """Run a user profile update task.
+
+        Called by the agent tool to update user profile.
 
         Args:
-            task: The task description.
+            task: The update task description.
             user_id: The unique user identifier.
             agent_id: Optional agent context.
             team_id: Optional team context.
@@ -538,125 +624,29 @@ class UserProfileStore(BaseLearningStore):
         Returns:
             Response from model.
         """
-        if self.model is None:
-            log_warning("No model provided for user profile task")
-            return "No model provided for user profile task"
-
-        if not self.db:
-            log_warning("No DB provided for user profile store")
-            return "No DB provided for user profile store"
-
-        if isinstance(self.db, AsyncBaseDb):
-            raise ValueError(
-                "run_profile_task() is not supported with an async DB. Please use arun_profile_task() instead."
-            )
-
-        log_debug("UserProfileStore: Running profile task", center=True)
-
-        # Reset state
-        self.profile_updated = False
-
-        # Get existing profile
-        existing_profile = self.get(user_id, agent_id=agent_id, team_id=team_id)
-        existing_data = self._profile_to_memory_list(existing_profile)
-
-        # Get tools
-        tools = self._determine_tools_for_model(
-            self._get_db_tools(
-                user_id=user_id,
-                db=self.db,
-                input_string=task,
-                agent_id=agent_id,
-                team_id=team_id,
-            )
+        messages = [Message(role="user", content=task)]
+        return self.extract_and_save(
+            messages=messages,
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
         )
 
-        # Prepare messages for model
-        messages_for_model: List[Message] = [
-            self._get_system_message(existing_data),
-            Message(role="user", content=task),
-        ]
-
-        # Generate response (model will call tools)
-        model_copy = deepcopy(self.model)
-        response = model_copy.response(
-            messages=messages_for_model,
-            tools=tools,
-        )
-
-        if response.tool_calls is not None and len(response.tool_calls) > 0:
-            self.profile_updated = True
-
-        log_debug("UserProfileStore: Task complete", center=True)
-
-        return response.content or "No response from model"
-
-    async def arun_profile_task(
+    async def arun_user_profile_update(
         self,
         task: str,
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> str:
-        """Async version of run_profile_task."""
-        if self.model is None:
-            log_warning("No model provided for user profile task")
-            return "No model provided for user profile task"
-
-        if not self.db:
-            log_warning("No DB provided for user profile store")
-            return "No DB provided for user profile store"
-
-        log_debug("UserProfileStore: Running profile task (async)", center=True)
-
-        # Reset state
-        self.profile_updated = False
-
-        # Get existing profile
-        existing_profile = await self.aget(user_id, agent_id=agent_id, team_id=team_id)
-        existing_data = self._profile_to_memory_list(existing_profile)
-
-        # Get tools
-        if isinstance(self.db, AsyncBaseDb):
-            tools = self._determine_tools_for_model(
-                await self._aget_db_tools(
-                    user_id=user_id,
-                    db=self.db,
-                    input_string=task,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                )
-            )
-        else:
-            tools = self._determine_tools_for_model(
-                self._get_db_tools(
-                    user_id=user_id,
-                    db=self.db,
-                    input_string=task,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                )
-            )
-
-        # Prepare messages for model
-        messages_for_model: List[Message] = [
-            self._get_system_message(existing_data),
-            Message(role="user", content=task),
-        ]
-
-        # Generate response (model will call tools)
-        model_copy = deepcopy(self.model)
-        response = await model_copy.aresponse(
-            messages=messages_for_model,
-            tools=tools,
+        """Async version of run_user_profile_update."""
+        messages = [Message(role="user", content=task)]
+        return await self.aextract_and_save(
+            messages=messages,
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
         )
-
-        if response.tool_calls is not None and len(response.tool_calls) > 0:
-            self.profile_updated = True
-
-        log_debug("UserProfileStore: Task complete", center=True)
-
-        return response.content or "No response from model"
 
     # --- Private Helpers ---
 
@@ -681,21 +671,16 @@ class UserProfileStore(BaseLearningStore):
 
         memories = []
 
-        # Add name as a memory if present
-        if hasattr(profile, "name") and profile.name:
-            memories.append({"memory_id": "name", "memory": f"User's name is {profile.name}"})
-
-        if hasattr(profile, "preferred_name") and profile.preferred_name:
-            memories.append({"memory_id": "preferred_name", "memory": f"User prefers to be called {profile.preferred_name}"})
-
         # Add memories from profile
         if hasattr(profile, "memories") and profile.memories:
-            for i, mem in enumerate(profile.memories):
+            for mem in profile.memories:
                 if isinstance(mem, dict):
+                    memory_id = mem.get("id", str(uuid.uuid4())[:8])
                     content = mem.get("content", str(mem))
                 else:
+                    memory_id = str(uuid.uuid4())[:8]
                     content = str(mem)
-                memories.append({"memory_id": f"memory_{i}", "memory": content})
+                memories.append({"id": memory_id, "content": content})
 
         return memories
 
@@ -704,15 +689,15 @@ class UserProfileStore(BaseLearningStore):
         if len(messages) == 1:
             return messages[0].get_content_string()
         else:
-            return ", ".join([
-                m.get_content_string()
+            return "\n".join([
+                f"{m.role}: {m.get_content_string()}"
                 for m in messages
-                if m.role == "user" and m.content
+                if m.content
             ])
 
     def _determine_tools_for_model(self, tools: List[Callable]) -> List[Union[Function, dict]]:
         """Convert callables to Functions for model."""
-        _function_names = []
+        _function_names: List[str] = []
         _functions: List[Union[Function, dict]] = []
 
         for tool in tools:
@@ -732,95 +717,119 @@ class UserProfileStore(BaseLearningStore):
 
     def _get_system_message(self, existing_data: List[dict]) -> Message:
         """Build system message for extraction."""
-        if self.system_message is not None:
-            return Message(role="system", content=self.system_message)
+        # Full override from config
+        if self.config.system_message is not None:
+            return Message(role="system", content=self.config.system_message)
 
-        profile_capture_instructions = self.profile_capture_instructions or dedent("""\
-            Profile information should capture personal details about the user that are relevant to the current conversation, such as:
-            - Personal facts: name, age, occupation, location, interests, and preferences
-            - Opinions and preferences: what the user likes, dislikes, enjoys, or finds frustrating
-            - Significant life events or experiences shared by the user
-            - Important context about the user's current situation, challenges, or goals
-            - Any other details that offer meaningful insight into the user's personality, perspective, or needs
+        # Use config instructions or default
+        profile_capture_instructions = self.config.instructions or dedent("""\
+            Capture information that reveals who this person truly is:
+
+            **Identity & Background**
+            - Name and how they prefer to be addressed
+            - Professional role, expertise, and experience level
+            - Key life context (location, situation, background)
+
+            **How They Think & Work**
+            - Problem-solving approach and working style
+            - Communication preferences (direct, detailed, casual, formal)
+            - Values and principles that guide their decisions
+            - Areas of deep knowledge or expertise
+
+            **What Matters To Them**
+            - Current goals, projects, and priorities
+            - Recurring challenges or frustrations
+            - Strong opinions and preferences
+            - What motivates or energizes them
+
+            **Patterns & Preferences**
+            - Consistent behaviors or habits mentioned multiple times
+            - Tools, technologies, or methods they prefer
+            - How they like to receive information or feedback
+
+            Do NOT capture:
+            - One-time events unless they reveal a pattern
+            - Trivial details unlikely to matter in future conversations
+            - Inferences or assumptions not directly stated
         """)
 
-        system_prompt_lines = [
-            "You are a User Profile Manager that is responsible for managing information and preferences about the user. "
-            "You will be provided with criteria for profile information to capture in the <profile_to_capture> section and a list of existing profile data in the <existing_profile> section.",
-            "",
-            "## When to add or update profile",
-            "- Your first task is to decide if profile data needs to be added, updated, or deleted based on the user's message OR if no changes are needed.",
-            "- If the user's message meets the criteria in the <profile_to_capture> section and that information is not already captured in the <existing_profile> section, you should capture it.",
-            "- If the user's message does not meet the criteria in the <profile_to_capture> section, no profile updates are needed.",
-            "- If the existing data in the <existing_profile> section captures all relevant information, no profile updates are needed.",
-            "",
-            "## How to add or update profile",
-            "- If you decide to add new profile data, create entries that capture key information, as if you were storing it for future reference.",
-            "- Profile entries should be brief, third-person statements that encapsulate the most important aspect of the user's input.",
-            "  - Example: If the user's message is 'I'm going to the gym', an entry could be `User goes to the gym regularly`.",
-            "  - Example: If the user's message is 'My name is John Doe', an entry could be `User's name is John Doe`.",
-            "- Don't make a single entry too long or complex, create multiple entries if needed.",
-            "- Don't repeat the same information in multiple entries. Rather update existing entries if needed.",
-            "- If a user asks for profile data to be updated or forgotten, remove all reference to the information that should be forgotten.",
-            "- When updating an entry, append with new information rather than completely overwriting it.",
-            "- When a user's preferences change, update the relevant entries to reflect the new preferences.",
-            "",
-            "## Criteria for creating profile entries",
-            "Use the following criteria to determine if a user's message should be captured.",
-            "",
-            "<profile_to_capture>",
-            profile_capture_instructions,
-            "</profile_to_capture>",
-            "",
-            "## Updating profile",
-            "You will also be provided with a list of existing profile data in the <existing_profile> section. You can:",
-            "  - Decide to make no changes.",
-        ]
+        system_prompt = dedent(f"""\
+            You are a User Profile Manager. Your job is to maintain accurate, useful memories about the user.
 
-        if self.enable_add:
-            system_prompt_lines.append("  - Decide to add new profile data, using the `add_profile_entry` tool.")
-        if self.enable_update:
-            system_prompt_lines.append("  - Decide to update an existing entry, using the `update_profile_entry` tool.")
-        if self.enable_delete:
-            system_prompt_lines.append("  - Decide to delete an existing entry, using the `delete_profile_entry` tool.")
-        if self.enable_clear:
-            system_prompt_lines.append("  - Decide to clear all profile data, using the `clear_profile` tool.")
+            ## Your Task
+            Review the conversation and decide if any information should be saved to the user's profile.
+            Only save information that will be genuinely useful in future conversations.
 
-        system_prompt_lines += [
-            "You can call multiple tools in a single response if needed.",
-            "Only add or update profile data if it is necessary to capture key information provided by the user.",
-        ]
+            ## What To Capture
+            {profile_capture_instructions}
 
-        if existing_data and len(existing_data) > 0:
-            system_prompt_lines.append("\n<existing_profile>")
+            ## How To Write Entries
+            - Write in third person: "User is..." or "User prefers..."
+            - Be specific and factual, not vague
+            - One clear fact per entry
+            - Preserve nuance - don't overgeneralize
+
+            Good: "User is a software engineer at Google working on search infrastructure"
+            Bad: "User works in tech"
+
+            Good: "User mentioned going to the gym today"
+            Bad: "User goes to the gym regularly" (don't infer patterns from single mentions)
+
+            ## Existing Profile
+        """)
+
+        if existing_data:
+            system_prompt += "\nThe user already has these memories saved:\n"
             for entry in existing_data:
-                system_prompt_lines.append(f"ID: {entry['memory_id']}")
-                system_prompt_lines.append(f"Entry: {entry['memory']}")
-                system_prompt_lines.append("")
-            system_prompt_lines.append("</existing_profile>")
+                system_prompt += f"- [{entry['id']}] {entry['content']}\n"
+            system_prompt += "\nYou can update or delete these if the conversation indicates changes.\n"
+        else:
+            system_prompt += "\nNo existing memories for this user.\n"
 
-        if self.additional_instructions:
-            system_prompt_lines.append(self.additional_instructions)
+        system_prompt += dedent("""\
 
-        return Message(role="system", content="\n".join(system_prompt_lines))
+            ## Available Actions
+        """)
 
-    def _get_db_tools(
+        if self.config.enable_add:
+            system_prompt += "- `add_memory`: Add a new memory about the user\n"
+        if self.config.enable_update:
+            system_prompt += "- `update_memory`: Update an existing memory by its ID\n"
+        if self.config.enable_delete:
+            system_prompt += "- `delete_memory`: Delete a memory that is no longer accurate\n"
+        if self.config.enable_clear:
+            system_prompt += "- `clear_all_memories`: Remove all memories (use sparingly)\n"
+
+        system_prompt += dedent("""\
+
+            ## Important
+            - Only take action if there's genuinely useful information to save
+            - It's fine to do nothing if the conversation has no profile-relevant content
+            - Quality over quantity - fewer accurate memories beats many vague ones
+        """)
+
+        if self.config.additional_instructions:
+            system_prompt += f"\n{self.config.additional_instructions}"
+
+        return Message(role="system", content=system_prompt)
+
+    def _get_extraction_tools(
         self,
         user_id: str,
-        db: BaseDb,
         input_string: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> List[Callable]:
-        """Get sync DB tools for the model."""
+        """Get sync extraction tools for the model."""
 
-        def add_profile_entry(entry: str, topics: Optional[List[str]] = None) -> str:
-            """Use this function to add a new entry to the user profile.
+        def add_memory(memory: str) -> str:
+            """Add a new memory about the user.
+
             Args:
-                entry (str): The profile entry to be added.
-                topics (Optional[List[str]]): The topics of the entry (e.g. ["name", "hobbies", "location"]).
+                memory: The memory to save. Write in third person, e.g. "User is a software engineer"
+
             Returns:
-                str: A message indicating if the entry was added successfully or not.
+                Confirmation message.
             """
             try:
                 profile = self.get(user_id, agent_id=agent_id, team_id=team_id)
@@ -828,120 +837,123 @@ class UserProfileStore(BaseLearningStore):
                     profile = self.schema(user_id=user_id)
 
                 if hasattr(profile, "memories"):
-                    profile.memories.append({"content": entry, "topics": topics, "input": input_string})
+                    memory_id = str(uuid.uuid4())[:8]
+                    profile.memories.append({
+                        "id": memory_id,
+                        "content": memory,
+                        "source": input_string[:200] if input_string else None,
+                    })
 
                 self.save(user_id, profile, agent_id=agent_id, team_id=team_id)
-                log_debug(f"Profile entry added: {entry[:50]}...")
-                return "Profile entry added successfully"
+                log_debug(f"Memory added: {memory[:50]}...")
+                return f"Memory saved: {memory}"
             except Exception as e:
-                log_warning(f"Error adding profile entry: {e}")
-                return f"Error adding profile entry: {e}"
+                log_warning(f"Error adding memory: {e}")
+                return f"Error: {e}"
 
-        def update_profile_entry(entry_id: str, entry: str, topics: Optional[List[str]] = None) -> str:
-            """Use this function to update an existing entry in the user profile.
+        def update_memory(memory_id: str, memory: str) -> str:
+            """Update an existing memory.
+
             Args:
-                entry_id (str): The id of the entry to be updated.
-                entry (str): The updated entry text.
-                topics (Optional[List[str]]): The topics of the entry (e.g. ["name", "hobbies", "location"]).
+                memory_id: The ID of the memory to update.
+                memory: The new memory content.
+
             Returns:
-                str: A message indicating if the entry was updated successfully or not.
-            """
-            if entry == "":
-                return "Can't update entry with empty string. Use the delete function if available."
-
-            try:
-                profile = self.get(user_id, agent_id=agent_id, team_id=team_id)
-                if profile is None:
-                    return "No profile found to update"
-
-                # Handle special fields
-                if entry_id == "name" and hasattr(profile, "name"):
-                    profile.name = entry
-                elif entry_id == "preferred_name" and hasattr(profile, "preferred_name"):
-                    profile.preferred_name = entry
-                elif entry_id.startswith("memory_") and hasattr(profile, "memories"):
-                    idx = int(entry_id.replace("memory_", ""))
-                    if 0 <= idx < len(profile.memories):
-                        profile.memories[idx] = {"content": entry, "topics": topics, "input": input_string}
-
-                self.save(user_id, profile, agent_id=agent_id, team_id=team_id)
-                log_debug(f"Profile entry updated: {entry_id}")
-                return "Profile entry updated successfully"
-            except Exception as e:
-                log_warning(f"Error updating profile entry: {e}")
-                return f"Error updating profile entry: {e}"
-
-        def delete_profile_entry(entry_id: str) -> str:
-            """Use this function to delete an entry from the user profile.
-            Args:
-                entry_id (str): The id of the entry to be deleted.
-            Returns:
-                str: A message indicating if the entry was deleted successfully or not.
+                Confirmation message.
             """
             try:
                 profile = self.get(user_id, agent_id=agent_id, team_id=team_id)
                 if profile is None:
                     return "No profile found"
 
-                # Handle special fields
-                if entry_id == "name" and hasattr(profile, "name"):
-                    profile.name = None
-                elif entry_id == "preferred_name" and hasattr(profile, "preferred_name"):
-                    profile.preferred_name = None
-                elif entry_id.startswith("memory_") and hasattr(profile, "memories"):
-                    idx = int(entry_id.replace("memory_", ""))
-                    if 0 <= idx < len(profile.memories):
-                        profile.memories.pop(idx)
+                if hasattr(profile, "memories"):
+                    for mem in profile.memories:
+                        if isinstance(mem, dict) and mem.get("id") == memory_id:
+                            mem["content"] = memory
+                            mem["source"] = input_string[:200] if input_string else None
+                            self.save(user_id, profile, agent_id=agent_id, team_id=team_id)
+                            log_debug(f"Memory updated: {memory_id}")
+                            return f"Memory updated: {memory}"
+                    return f"Memory {memory_id} not found"
 
-                self.save(user_id, profile, agent_id=agent_id, team_id=team_id)
-                log_debug(f"Profile entry deleted: {entry_id}")
-                return "Profile entry deleted successfully"
+                return "Profile has no memories field"
             except Exception as e:
-                log_warning(f"Error deleting profile entry: {e}")
-                return f"Error deleting profile entry: {e}"
+                log_warning(f"Error updating memory: {e}")
+                return f"Error: {e}"
 
-        def clear_profile() -> str:
-            """Use this function to clear all profile data for the user.
+        def delete_memory(memory_id: str) -> str:
+            """Delete a memory that is no longer accurate.
+
+            Args:
+                memory_id: The ID of the memory to delete.
 
             Returns:
-                str: A message indicating if the profile was cleared successfully or not.
+                Confirmation message.
+            """
+            try:
+                profile = self.get(user_id, agent_id=agent_id, team_id=team_id)
+                if profile is None:
+                    return "No profile found"
+
+                if hasattr(profile, "memories"):
+                    original_len = len(profile.memories)
+                    profile.memories = [
+                        mem for mem in profile.memories
+                        if not (isinstance(mem, dict) and mem.get("id") == memory_id)
+                    ]
+                    if len(profile.memories) < original_len:
+                        self.save(user_id, profile, agent_id=agent_id, team_id=team_id)
+                        log_debug(f"Memory deleted: {memory_id}")
+                        return f"Memory {memory_id} deleted"
+                    return f"Memory {memory_id} not found"
+
+                return "Profile has no memories field"
+            except Exception as e:
+                log_warning(f"Error deleting memory: {e}")
+                return f"Error: {e}"
+
+        def clear_all_memories() -> str:
+            """Clear all memories for this user. Use sparingly.
+
+            Returns:
+                Confirmation message.
             """
             try:
                 self.clear(user_id, agent_id=agent_id, team_id=team_id)
-                log_debug("Profile cleared")
-                return "Profile cleared successfully"
+                log_debug("All memories cleared")
+                return "All memories cleared"
             except Exception as e:
-                log_warning(f"Error clearing profile: {e}")
-                return f"Error clearing profile: {e}"
+                log_warning(f"Error clearing memories: {e}")
+                return f"Error: {e}"
 
         functions: List[Callable] = []
-        if self.enable_add:
-            functions.append(add_profile_entry)
-        if self.enable_update:
-            functions.append(update_profile_entry)
-        if self.enable_delete:
-            functions.append(delete_profile_entry)
-        if self.enable_clear:
-            functions.append(clear_profile)
+        if self.config.enable_add:
+            functions.append(add_memory)
+        if self.config.enable_update:
+            functions.append(update_memory)
+        if self.config.enable_delete:
+            functions.append(delete_memory)
+        if self.config.enable_clear:
+            functions.append(clear_all_memories)
         return functions
 
-    async def _aget_db_tools(
+    async def _aget_extraction_tools(
         self,
         user_id: str,
-        db: Union[BaseDb, AsyncBaseDb],
         input_string: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> List[Callable]:
-        """Get async DB tools for the model."""
+        """Get async extraction tools for the model."""
 
-        async def add_profile_entry(entry: str, topics: Optional[List[str]] = None) -> str:
-            """Use this function to add a new entry to the user profile.
+        async def add_memory(memory: str) -> str:
+            """Add a new memory about the user.
+
             Args:
-                entry (str): The profile entry to be added.
-                topics (Optional[List[str]]): The topics of the entry (e.g. ["name", "hobbies", "location"]).
+                memory: The memory to save. Write in third person, e.g. "User is a software engineer"
+
             Returns:
-                str: A message indicating if the entry was added successfully or not.
+                Confirmation message.
             """
             try:
                 profile = await self.aget(user_id, agent_id=agent_id, team_id=team_id)
@@ -949,99 +961,102 @@ class UserProfileStore(BaseLearningStore):
                     profile = self.schema(user_id=user_id)
 
                 if hasattr(profile, "memories"):
-                    profile.memories.append({"content": entry, "topics": topics, "input": input_string})
+                    memory_id = str(uuid.uuid4())[:8]
+                    profile.memories.append({
+                        "id": memory_id,
+                        "content": memory,
+                        "source": input_string[:200] if input_string else None,
+                    })
 
                 await self.asave(user_id, profile, agent_id=agent_id, team_id=team_id)
-                log_debug(f"Profile entry added: {entry[:50]}...")
-                return "Profile entry added successfully"
+                log_debug(f"Memory added: {memory[:50]}...")
+                return f"Memory saved: {memory}"
             except Exception as e:
-                log_warning(f"Error adding profile entry: {e}")
-                return f"Error adding profile entry: {e}"
+                log_warning(f"Error adding memory: {e}")
+                return f"Error: {e}"
 
-        async def update_profile_entry(entry_id: str, entry: str, topics: Optional[List[str]] = None) -> str:
-            """Use this function to update an existing entry in the user profile.
+        async def update_memory(memory_id: str, memory: str) -> str:
+            """Update an existing memory.
+
             Args:
-                entry_id (str): The id of the entry to be updated.
-                entry (str): The updated entry text.
-                topics (Optional[List[str]]): The topics of the entry (e.g. ["name", "hobbies", "location"]).
+                memory_id: The ID of the memory to update.
+                memory: The new memory content.
+
             Returns:
-                str: A message indicating if the entry was updated successfully or not.
-            """
-            if entry == "":
-                return "Can't update entry with empty string. Use the delete function if available."
-
-            try:
-                profile = await self.aget(user_id, agent_id=agent_id, team_id=team_id)
-                if profile is None:
-                    return "No profile found to update"
-
-                # Handle special fields
-                if entry_id == "name" and hasattr(profile, "name"):
-                    profile.name = entry
-                elif entry_id == "preferred_name" and hasattr(profile, "preferred_name"):
-                    profile.preferred_name = entry
-                elif entry_id.startswith("memory_") and hasattr(profile, "memories"):
-                    idx = int(entry_id.replace("memory_", ""))
-                    if 0 <= idx < len(profile.memories):
-                        profile.memories[idx] = {"content": entry, "topics": topics, "input": input_string}
-
-                await self.asave(user_id, profile, agent_id=agent_id, team_id=team_id)
-                log_debug(f"Profile entry updated: {entry_id}")
-                return "Profile entry updated successfully"
-            except Exception as e:
-                log_warning(f"Error updating profile entry: {e}")
-                return f"Error updating profile entry: {e}"
-
-        async def delete_profile_entry(entry_id: str) -> str:
-            """Use this function to delete an entry from the user profile.
-            Args:
-                entry_id (str): The id of the entry to be deleted.
-            Returns:
-                str: A message indicating if the entry was deleted successfully or not.
+                Confirmation message.
             """
             try:
                 profile = await self.aget(user_id, agent_id=agent_id, team_id=team_id)
                 if profile is None:
                     return "No profile found"
 
-                # Handle special fields
-                if entry_id == "name" and hasattr(profile, "name"):
-                    profile.name = None
-                elif entry_id == "preferred_name" and hasattr(profile, "preferred_name"):
-                    profile.preferred_name = None
-                elif entry_id.startswith("memory_") and hasattr(profile, "memories"):
-                    idx = int(entry_id.replace("memory_", ""))
-                    if 0 <= idx < len(profile.memories):
-                        profile.memories.pop(idx)
+                if hasattr(profile, "memories"):
+                    for mem in profile.memories:
+                        if isinstance(mem, dict) and mem.get("id") == memory_id:
+                            mem["content"] = memory
+                            mem["source"] = input_string[:200] if input_string else None
+                            await self.asave(user_id, profile, agent_id=agent_id, team_id=team_id)
+                            log_debug(f"Memory updated: {memory_id}")
+                            return f"Memory updated: {memory}"
+                    return f"Memory {memory_id} not found"
 
-                await self.asave(user_id, profile, agent_id=agent_id, team_id=team_id)
-                log_debug(f"Profile entry deleted: {entry_id}")
-                return "Profile entry deleted successfully"
+                return "Profile has no memories field"
             except Exception as e:
-                log_warning(f"Error deleting profile entry: {e}")
-                return f"Error deleting profile entry: {e}"
+                log_warning(f"Error updating memory: {e}")
+                return f"Error: {e}"
 
-        async def clear_profile() -> str:
-            """Use this function to clear all profile data for the user.
+        async def delete_memory(memory_id: str) -> str:
+            """Delete a memory that is no longer accurate.
+
+            Args:
+                memory_id: The ID of the memory to delete.
 
             Returns:
-                str: A message indicating if the profile was cleared successfully or not.
+                Confirmation message.
+            """
+            try:
+                profile = await self.aget(user_id, agent_id=agent_id, team_id=team_id)
+                if profile is None:
+                    return "No profile found"
+
+                if hasattr(profile, "memories"):
+                    original_len = len(profile.memories)
+                    profile.memories = [
+                        mem for mem in profile.memories
+                        if not (isinstance(mem, dict) and mem.get("id") == memory_id)
+                    ]
+                    if len(profile.memories) < original_len:
+                        await self.asave(user_id, profile, agent_id=agent_id, team_id=team_id)
+                        log_debug(f"Memory deleted: {memory_id}")
+                        return f"Memory {memory_id} deleted"
+                    return f"Memory {memory_id} not found"
+
+                return "Profile has no memories field"
+            except Exception as e:
+                log_warning(f"Error deleting memory: {e}")
+                return f"Error: {e}"
+
+        async def clear_all_memories() -> str:
+            """Clear all memories for this user. Use sparingly.
+
+            Returns:
+                Confirmation message.
             """
             try:
                 await self.aclear(user_id, agent_id=agent_id, team_id=team_id)
-                log_debug("Profile cleared")
-                return "Profile cleared successfully"
+                log_debug("All memories cleared")
+                return "All memories cleared"
             except Exception as e:
-                log_warning(f"Error clearing profile: {e}")
-                return f"Error clearing profile: {e}"
+                log_warning(f"Error clearing memories: {e}")
+                return f"Error: {e}"
 
         functions: List[Callable] = []
-        if self.enable_add:
-            functions.append(add_profile_entry)
-        if self.enable_update:
-            functions.append(update_profile_entry)
-        if self.enable_delete:
-            functions.append(delete_profile_entry)
-        if self.enable_clear:
-            functions.append(clear_profile)
+        if self.config.enable_add:
+            functions.append(add_memory)
+        if self.config.enable_update:
+            functions.append(update_memory)
+        if self.config.enable_delete:
+            functions.append(delete_memory)
+        if self.config.enable_clear:
+            functions.append(clear_all_memories)
         return functions

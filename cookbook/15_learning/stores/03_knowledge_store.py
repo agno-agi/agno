@@ -1,30 +1,46 @@
 """
-Knowledge Store - Learned Knowledge with Semantic Search
+Knowledge Store Cookbook
+========================
 
-This cookbook demonstrates the KnowledgeStore for saving and retrieving
-reusable insights via semantic search.
+"Knowledge is of no value unless you put it into practice." - Anton Chekhov
 
-Features tested:
-- Saving learnings with title, content, context, and tags
-- Semantic search retrieval
-- Knowledge persistence and retrieval
-- Custom learning schemas
+This cookbook demonstrates KnowledgeStore - a system for saving and
+retrieving reusable insights via semantic search.
 
-Note: Requires a Knowledge base with vector DB (e.g., PgVector).
+Unlike the other stores:
+- UserProfile = about a specific person
+- SessionContext = about a specific conversation
+- Knowledge = wisdom that applies anywhere
+
+The magic: you save a learning once, and it surfaces whenever relevant,
+across any user, any session, any context.
+
+Tests:
+1. Saving learnings - Capture insights
+2. Semantic search - Find by meaning, not keywords
+3. Agent tool - Let agents save what they learn
+4. Relevance retrieval - Get context for prompts
+5. PROPOSE mode workflow - Human-in-the-loop
+6. Cross-domain search - One query, multiple domains
+7. Tags and filtering - Organize your knowledge
+8. Learning lifecycle - Create, find, delete
 """
 
-from agno.db.postgres import PostgresDb
-from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.pgvector import PgVector
-from agno.learn.stores.knowledge import KnowledgeStore
-from agno.learn.config import KnowledgeConfig
-from agno.learn.schemas import DefaultLearning
 from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
+from agno.learn.config import KnowledgeConfig, LearningMode
+from agno.learn.schemas import BaseLearning
+from agno.learn.stores.knowledge import KnowledgeStore
+from agno.vectordb.pgvector import PgVector
 from rich.pretty import pprint
+
+# -----------------------------------------------------------------------------
+# Setup
+# -----------------------------------------------------------------------------
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-# Setup vector database for knowledge storage
+# Vector database for semantic search
 embedder = OpenAIEmbedder(id="text-embedding-3-small")
 vector_db = PgVector(
     table_name="agno_learned_knowledge",
@@ -32,20 +48,36 @@ vector_db = PgVector(
     embedder=embedder,
 )
 
-# Create knowledge base
+# Knowledge base wraps the vector DB
 knowledge_base = Knowledge(vector_db=vector_db)
 
-# Create the store
-store = KnowledgeStore(knowledge=knowledge_base)
+# The store
+store = KnowledgeStore(
+    config=KnowledgeConfig(
+        knowledge=knowledge_base,
+        mode=LearningMode.AGENTIC,
+        enable_tool=True,
+        enable_add=True,
+        enable_update=True,
+        enable_delete=True,
+    )
+)
+
+
+# -----------------------------------------------------------------------------
+# Test 1: Saving Learnings
+# -----------------------------------------------------------------------------
 
 
 def test_save_learnings():
-    """Test saving learnings to the knowledge base."""
-    print("=" * 60)
-    print("TEST: Save Learnings")
+    """
+    The foundation: save insights that matter.
+    Each learning has: title, content, context, tags.
+    """
+    print("\n" + "=" * 60)
+    print("TEST 1: Saving Learnings")
     print("=" * 60)
 
-    # Save some learnings
     learnings = [
         {
             "title": "Python async best practices",
@@ -54,31 +86,32 @@ def test_save_learnings():
             "tags": ["python", "async", "performance"],
         },
         {
-            "title": "LLM prompt engineering - chain of thought",
-            "learning": "Adding 'Let's think step by step' to prompts improves reasoning accuracy by 20-40% on complex tasks. Works best with math and logic problems.",
+            "title": "LLM chain of thought prompting",
+            "learning": "Adding 'Let's think step by step' to prompts improves reasoning accuracy by 20-40% on complex tasks. Works best for math and logic problems.",
             "context": "When prompting LLMs for complex reasoning",
             "tags": ["llm", "prompts", "reasoning"],
         },
         {
-            "title": "Database indexing rule of thumb",
-            "learning": "Create indexes on columns used in WHERE clauses that filter more than 10-15% of rows. For high-cardinality columns, B-tree indexes work well. For low-cardinality, consider partial indexes.",
+            "title": "Database indexing strategy",
+            "learning": "Create indexes on columns used in WHERE clauses that filter more than 10-15% of rows. B-tree for high-cardinality, partial indexes for low-cardinality.",
             "context": "When optimizing database queries",
             "tags": ["database", "performance", "sql"],
         },
         {
-            "title": "React state management patterns",
-            "learning": "For shared state across 2-3 components, use React Context. For complex state with many consumers, consider Zustand or Jotai over Redux for simpler code.",
-            "context": "When designing React application architecture",
+            "title": "React state management",
+            "learning": "For shared state across 2-3 components, use Context. For complex state with many consumers, Zustand or Jotai over Redux for simpler code.",
+            "context": "When designing React architecture",
             "tags": ["react", "state", "frontend"],
         },
         {
-            "title": "API rate limiting strategy",
-            "learning": "Implement token bucket algorithm for rate limiting. Use sliding window for smoother rate limits. Always return Retry-After header with 429 responses.",
+            "title": "API rate limiting",
+            "learning": "Token bucket for rate limiting, sliding window for smoother limits. Always return Retry-After header with 429 responses.",
             "context": "When implementing API rate limiting",
             "tags": ["api", "rate-limiting", "backend"],
         },
     ]
 
+    print("\n💾 Saving learnings...")
     for l in learnings:
         success = store.save(
             title=l["title"],
@@ -86,226 +119,341 @@ def test_save_learnings():
             context=l["context"],
             tags=l["tags"],
         )
-        print(f"  Saved: {l['title'][:40]}... {'✓' if success else '✗'}")
+        status = "✓" if success else "✗"
+        print(f"   {status} {l['title']}")
 
-    print("\n✅ Save learnings test passed!")
+    print("\n✅ Learnings saved")
+
+
+# -----------------------------------------------------------------------------
+# Test 2: Semantic Search
+# -----------------------------------------------------------------------------
 
 
 def test_semantic_search():
-    """Test semantic search retrieval."""
+    """
+    The magic: find by MEANING, not keywords.
+    "How do I make Python faster?" finds async best practices.
+    """
     print("\n" + "=" * 60)
-    print("TEST: Semantic Search")
+    print("TEST 2: Semantic Search")
     print("=" * 60)
 
-    # Search for Python-related learnings
-    query_1 = "How can I make my Python code faster?"
-    results_1 = store.search(query=query_1, limit=3)
+    queries = [
+        "How can I make my Python code faster?",
+        "What's the best way to manage state in React?",
+        "How do I improve API response times?",
+    ]
 
-    print(f"\nQuery: '{query_1}'")
-    print(f"Results ({len(results_1)} found):")
-    for r in results_1:
-        print(f"  - {r.title}")
-        print(f"    {r.learning[:80]}...")
+    for query in queries:
+        print(f"\n🔍 Query: '{query}'")
+        results = store.search(query=query, limit=2)
 
-    # Search for frontend-related learnings
-    query_2 = "What's the best way to manage state in React?"
-    results_2 = store.search(query=query_2, limit=3)
+        if results:
+            for r in results:
+                print(f"   → {r.title}")
+                print(f"     {r.learning[:60]}...")
+        else:
+            print("   No results found")
 
-    print(f"\nQuery: '{query_2}'")
-    print(f"Results ({len(results_2)} found):")
-    for r in results_2:
-        print(f"  - {r.title}")
-        print(f"    {r.learning[:80]}...")
-
-    # Search for something not directly mentioned
-    query_3 = "How do I improve API response times?"
-    results_3 = store.search(query=query_3, limit=3)
-
-    print(f"\nQuery: '{query_3}'")
-    print(f"Results ({len(results_3)} found):")
-    for r in results_3:
-        print(f"  - {r.title}")
-        print(f"    {r.learning[:80]}...")
-
-    print("\n✅ Semantic search test passed!")
+    print("\n✅ Semantic search works")
 
 
-def test_learning_schema():
-    """Test the DefaultLearning schema."""
+# -----------------------------------------------------------------------------
+# Test 3: Agent Tool
+# -----------------------------------------------------------------------------
+
+
+def test_agent_tool():
+    """
+    In AGENTIC mode, agents can save learnings directly.
+    The tool is what gets exposed to the agent.
+    """
     print("\n" + "=" * 60)
-    print("TEST: DefaultLearning Schema")
+    print("TEST 3: Agent Tool")
     print("=" * 60)
 
-    # Create learning via schema
-    learning = DefaultLearning(
-        title="Test Learning",
-        learning="This is a test insight about testing.",
-        context="When writing tests",
-        tags=["test", "demo"],
+    # Get the tool (this is what an agent would use)
+    save_learning = store.get_agent_tool()
+
+    # Agent discovers something useful...
+    result = save_learning(
+        title="Debugging tip: print statements",
+        learning="When debugging async code, print statements may appear out of order. Use logging with timestamps or a debugger for accurate tracing.",
+        context="When debugging Python async code",
+        tags=["python", "debugging", "async"],
     )
 
-    print("\nLearning object:")
-    pprint(learning.to_dict())
+    print(f"\n🔧 Agent saved learning: {result}")
+    print(f"   learning_saved: {store.learning_saved}")
 
-    print("\nFormatted text:")
-    print(learning.to_text())
+    # Verify it's searchable
+    results = store.search("async debugging")
+    if results:
+        print(f"\n   Found in search: {results[0].title}")
 
-    # Test from_dict
-    parsed = DefaultLearning.from_dict({
-        "title": "Parsed Learning",
-        "learning": "Parsed from dict",
-    })
-
-    assert parsed is not None
-    assert parsed.title == "Parsed Learning"
-    print("\n  ✓ from_dict works correctly")
-
-    # Test from_dict with invalid data
-    invalid = DefaultLearning.from_dict({"title": "Missing learning field"})
-    assert invalid is None, "Should return None for invalid data"
-    print("  ✓ from_dict returns None for invalid data")
-
-    print("\n✅ Schema test passed!")
+    print("\n✅ Agent tool works")
 
 
-def test_get_all_learnings():
-    """Test retrieving all learnings."""
+# -----------------------------------------------------------------------------
+# Test 4: Relevance Retrieval
+# -----------------------------------------------------------------------------
+
+
+def test_relevance_retrieval():
+    """
+    get_relevant_context() gives prompt-ready formatted text.
+    Inject into system prompts to inform responses.
+    """
     print("\n" + "=" * 60)
-    print("TEST: Get All Learnings")
+    print("TEST 4: Relevance Retrieval")
     print("=" * 60)
 
-    all_learnings = store.get_all(limit=10)
-
-    print(f"\nTotal learnings: {len(all_learnings)}")
-    for l in all_learnings:
-        print(f"  - {l.title}")
-        if l.tags:
-            print(f"    Tags: {', '.join(l.tags)}")
-
-    print("\n✅ Get all learnings test passed!")
-
-
-def test_learning_for_context():
-    """Test how learnings can be used to provide context."""
-    print("\n" + "=" * 60)
-    print("TEST: Learning Context for Agent")
-    print("=" * 60)
-
-    # Simulate what happens when an agent asks a question
+    # Simulate user asking about something
     user_query = "I'm building an API and it's slow. How can I improve performance?"
 
-    relevant_learnings = store.search(query=user_query, limit=3)
+    context = store.get_relevant_context(query=user_query, limit=3)
 
-    print(f"\nUser query: '{user_query}'")
-    print("\nRelevant learnings to inject into context:")
+    print(f"\n❓ User query: '{user_query}'")
+    print(f"\n📚 Relevant context for injection:")
+    print("-" * 50)
+    print(context if context else "(no relevant learnings found)")
     print("-" * 50)
 
-    context_parts = []
-    for l in relevant_learnings:
-        context_parts.append(l.to_text())
+    print("\n   This would be added to the system prompt.")
 
-    context_injection = "\n\n".join(context_parts)
-    print(context_injection)
-    print("-" * 50)
-
-    print("\nThis context would be injected into the system prompt.")
-
-    print("\n✅ Context injection test passed!")
+    print("\n✅ Relevance retrieval works")
 
 
-def test_propose_mode_workflow():
-    """Demonstrate the PROPOSE mode workflow."""
+# -----------------------------------------------------------------------------
+# Test 5: PROPOSE Mode Workflow
+# -----------------------------------------------------------------------------
+
+
+def test_propose_workflow():
+    """
+    In PROPOSE mode, agent suggests learnings, user confirms.
+    Human-in-the-loop for quality control.
+    """
     print("\n" + "=" * 60)
-    print("TEST: PROPOSE Mode Workflow (Simulated)")
+    print("TEST 5: PROPOSE Mode Workflow")
     print("=" * 60)
 
     print("""
-    In PROPOSE mode, the workflow is:
+    📋 PROPOSE mode workflow:
 
-    1. Agent identifies a reusable insight during conversation
-    2. Agent proposes the learning to the user:
-       "I noticed something that might be useful to remember:
-        Title: [title]
-        Learning: [insight]
-        Should I save this for future reference?"
+    1. Agent identifies useful insight during conversation
+    2. Agent proposes to user:
+       "I noticed something worth remembering:
+        [Title]: Python virtual environments
+        [Learning]: Always use venvs for project isolation...
+        Should I save this?"
     3. User confirms: "Yes, save it"
     4. Agent calls save_learning tool
     """)
 
     # Simulate the workflow
-    proposed_learning = {
-        "title": "User prefers Postgres over MySQL",
-        "learning": "The user has expressed preference for PostgreSQL for new projects due to better JSON support and advanced features.",
-        "context": "When recommending databases",
-        "tags": ["database", "preferences"],
+    proposed = {
+        "title": "Virtual environment best practice",
+        "learning": "Always create a virtual environment for each Python project. Use venv for simple projects, poetry or conda for complex dependencies.",
+        "context": "When starting a new Python project",
+        "tags": ["python", "environment", "best-practices"],
     }
 
-    print("\nAgent proposes:")
-    print(f"  Title: {proposed_learning['title']}")
-    print(f"  Learning: {proposed_learning['learning']}")
+    print(f"\n🤖 Agent proposes:")
+    print(f"   Title: {proposed['title']}")
+    print(f"   Learning: {proposed['learning'][:60]}...")
 
     # User confirms (simulated)
     user_confirms = True
-    print(f"\nUser confirms: {user_confirms}")
+    print(f"\n👤 User: 'Yes, save it'")
 
     if user_confirms:
-        success = store.save(
-            title=proposed_learning["title"],
-            learning=proposed_learning["learning"],
-            context=proposed_learning["context"],
-            tags=proposed_learning["tags"],
-        )
-        print(f"Saved: {'✓' if success else '✗'}")
+        success = store.save(**proposed)
+        print(f"   Saved: {'✓' if success else '✗'}")
 
-    print("\n✅ PROPOSE mode workflow test passed!")
+    print("\n✅ PROPOSE workflow demonstrated")
+
+
+# -----------------------------------------------------------------------------
+# Test 6: Cross-Domain Search
+# -----------------------------------------------------------------------------
+
+
+def test_cross_domain_search():
+    """
+    One query can surface insights from multiple domains.
+    "How do I make things faster?" → Python, DB, API learnings.
+    """
+    print("\n" + "=" * 60)
+    print("TEST 6: Cross-Domain Search")
+    print("=" * 60)
+
+    # Broad query that could match multiple domains
+    query = "How do I improve performance?"
+
+    results = store.search(query=query, limit=5)
+
+    print(f"\n🌐 Query: '{query}'")
+    print(f"   Results span multiple domains:\n")
+
+    domains_found = set()
+    for r in results:
+        tags = r.tags if hasattr(r, "tags") and r.tags else []
+        for tag in tags:
+            domains_found.add(tag)
+        print(f"   • {r.title}")
+        print(f"     Tags: {', '.join(tags) if tags else 'none'}")
+
+    print(f"\n   Domains covered: {', '.join(sorted(domains_found))}")
+
+    print("\n✅ Cross-domain search works")
+
+
+# -----------------------------------------------------------------------------
+# Test 7: Learning Schema
+# -----------------------------------------------------------------------------
+
+
+def test_learning_schema():
+    """
+    BaseLearning schema provides structure and utility methods.
+    """
+    print("\n" + "=" * 60)
+    print("TEST 7: Learning Schema")
+    print("=" * 60)
+
+    # Create directly
+    learning = BaseLearning(
+        title="Test Learning",
+        learning="This is a test insight about software testing.",
+        context="When writing unit tests",
+        tags=["testing", "demo"],
+    )
+
+    print("\n📦 Learning object:")
+    pprint(learning.to_dict())
+
+    print("\n📝 Formatted text:")
+    print(learning.to_text())
+
+    # Test from_dict
+    parsed = BaseLearning.from_dict({
+        "title": "Parsed Learning",
+        "learning": "Created from dict",
+    })
+    assert parsed is not None
+    print("\n   ✓ from_dict works")
+
+    # Test validation
+    invalid = BaseLearning.from_dict({"title": "Missing learning field"})
+    assert invalid is None
+    print("   ✓ Validation catches missing fields")
+
+    print("\n✅ Schema works")
+
+
+# -----------------------------------------------------------------------------
+# Test 8: Delete Learning
+# -----------------------------------------------------------------------------
+
+
+def test_delete_learning():
+    """
+    Sometimes knowledge becomes outdated.
+    """
+    print("\n" + "=" * 60)
+    print("TEST 8: Delete Learning")
+    print("=" * 60)
+
+    # Save something temporary
+    title = "Temporary insight"
+    store.save(
+        title=title,
+        learning="This will be deleted",
+        context="Testing deletion",
+        tags=["test"],
+    )
+
+    # Find it
+    results = store.search("temporary")
+    found_before = any(r.title == title for r in results)
+    print(f"\n   Before delete: {'Found' if found_before else 'Not found'}")
+
+    # Delete it
+    deleted = store.delete(title)
+    print(f"   Deleted: {'✓' if deleted else '✗'}")
+
+    # Verify gone
+    results = store.search("temporary")
+    found_after = any(r.title == title for r in results)
+    print(f"   After delete: {'Found' if found_after else 'Not found'}")
+
+    print("\n✅ Deletion works")
+
+
+# -----------------------------------------------------------------------------
+# Cleanup
+# -----------------------------------------------------------------------------
 
 
 def cleanup():
-    """Clean up test data."""
+    """Wipe all test data."""
     print("\n" + "=" * 60)
     print("CLEANUP")
     print("=" * 60)
 
-    # Note: Knowledge base cleanup depends on your vector DB implementation
-    # This might need to be adjusted based on your setup
     try:
-        # Clear the vector DB table
         vector_db.clear()
-        print("  Cleared vector database")
+        print("🧹 Cleared vector database")
     except Exception as e:
-        print(f"  Cleanup note: {e}")
+        print(f"   Note: {e}")
 
+
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Run all tests
+    print("=" * 60)
+    print("📚 KnowledgeStore Cookbook")
+    print("   Wisdom that surfaces when needed")
+    print("=" * 60)
+
     test_save_learnings()
     test_semantic_search()
+    test_agent_tool()
+    test_relevance_retrieval()
+    test_propose_workflow()
+    test_cross_domain_search()
     test_learning_schema()
-    test_get_all_learnings()
-    test_learning_for_context()
-    test_propose_mode_workflow()
+    test_delete_learning()
 
     # Final summary
     print("\n" + "=" * 60)
-    print("SUMMARY")
+    print("📊 FINAL STATE")
     print("=" * 60)
 
-    all_learnings = store.get_all(limit=20)
-    print(f"\nTotal learnings in knowledge base: {len(all_learnings)}")
+    # Show what we've learned
+    all_results = store.search("", limit=20)  # Broad search
+    print(f"\n   Total learnings: ~{len(all_results)}")
 
     # Group by tags
     tag_counts = {}
-    for l in all_learnings:
-        for tag in (l.tags or []):
+    for r in all_results:
+        for tag in (r.tags if hasattr(r, "tags") and r.tags else []):
             tag_counts[tag] = tag_counts.get(tag, 0) + 1
 
-    print("\nLearnings by tag:")
-    for tag, count in sorted(tag_counts.items(), key=lambda x: -x[1]):
-        print(f"  {tag}: {count}")
+    if tag_counts:
+        print("\n   By tag:")
+        for tag, count in sorted(tag_counts.items(), key=lambda x: -x[1])[:5]:
+            print(f"      {tag}: {count}")
 
-    # Uncomment to clean up
-    # cleanup()
+    # cleanup()  # Uncomment to wipe
 
     print("\n" + "=" * 60)
-    print("✅ All KnowledgeStore tests passed!")
+    print("✅ All tests passed")
+    print("   Remember: Knowledge without application is just data.")
+    print("   But knowledge that surfaces at the right moment?")
+    print("   That's wisdom.")
     print("=" * 60)

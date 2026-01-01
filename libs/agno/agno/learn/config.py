@@ -187,12 +187,11 @@ class KnowledgeConfig:
     via semantic search based on current query.
 
     Attributes:
-        db: Database backend for storage.
-        model: Model for extraction.
+        knowledge: Knowledge base instance (vector store) for storage.
+        model: Model for extraction (if using BACKGROUND mode).
         mode: How learning is extracted. Default: PROPOSE.
         extraction: Extraction settings (only if mode=BACKGROUND).
         schema: Custom schema for learning data.
-                Default: BaseLearning.
 
         # Agent tool
         enable_tool: Whether to provide save_learning tool to agent.
@@ -209,7 +208,7 @@ class KnowledgeConfig:
     """
 
     # Required fields
-    db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
+    knowledge: Optional[Any] = None  # agno.knowledge.Knowledge
     model: Optional["Model"] = None
 
     # Mode and extraction
