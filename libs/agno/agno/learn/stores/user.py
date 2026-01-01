@@ -60,9 +60,9 @@ class UserProfileStore(LearningStore):
         >>> # Background extraction
         >>> store.extract_and_save(messages, user_id="alice")
         >>>
-        >>> # Agent tool
-        >>> tool = store.get_agent_tool(user_id="alice")
-        >>> tool("Remember that user prefers dark mode")
+        >>> # Agent tools
+        >>> tools = store.get_agent_tools(user_id="alice")
+        >>> tools[0]("Remember that user prefers dark mode")
 
     Args:
         config: UserProfileConfig with all settings including db and model.
@@ -174,12 +174,13 @@ class UserProfileStore(LearningStore):
             return ""
 
         return (
-            dedent(f"""\
+            dedent("""\
             <user_profile>
             What you know about this user:
             """)
             + memories_text
             + dedent("""
+
             Use this to personalize responses. Current conversation takes precedence.
             </user_profile>""")
         )
@@ -211,7 +212,11 @@ class UserProfileStore(LearningStore):
         )
 
     async def aget_tools(
-        self, user_id: Optional[str] = None, agent_id: Optional[str] = None, team_id: Optional[str] = None, **kwargs
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        **kwargs,
     ) -> List[Callable]:
         """Async version of get_tools."""
         if not user_id or not self.config.enable_tool:
@@ -250,7 +255,7 @@ class UserProfileStore(LearningStore):
             set_log_level_to_info()
 
     # =========================================================================
-    # Agent Tool
+    # Agent Tools
     # =========================================================================
 
     def get_agent_tools(
@@ -950,7 +955,7 @@ class UserProfileStore(LearningStore):
         """)
 
         system_prompt = (
-            dedent(f"""\
+            dedent("""\
             You are a User Profile Manager. Your job is to maintain accurate, useful memories about the user.
 
             ## Your Task

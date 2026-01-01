@@ -21,8 +21,8 @@ from textwrap import dedent
 from typing import Any, Callable, List, Optional, Union
 
 from agno.learn.config import SessionContextConfig
-from agno.learn.schemas import BaseSessionContext
-from agno.learn.stores.base import LearningStore, from_dict_safe, to_dict_safe
+from agno.learn.schemas import SessionContext
+from agno.learn.stores.protocol import LearningStore, from_dict_safe, to_dict_safe
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -82,7 +82,7 @@ class SessionContextStore(LearningStore):
     _schema: Any = field(default=None, init=False)
 
     def __post_init__(self):
-        self._schema = self.config.schema or BaseSessionContext
+        self._schema = self.config.schema or SessionContext
 
     # =========================================================================
     # LearningStore Protocol Implementation
@@ -90,20 +90,20 @@ class SessionContextStore(LearningStore):
 
     @property
     def learning_type(self) -> str:
-        """String identifier for this learning type."""
+        """Unique identifier for this learning type."""
         return "session_context"
 
     @property
     def schema(self) -> Any:
-        """The schema class used for context."""
+        """Schema class used for context."""
         return self._schema
 
     def recall(
         self,
-        session_id: Optional[str] = None,
+        session_id: str,
         **kwargs,
     ) -> Optional[Any]:
-        """Retrieve session context for prompt injection.
+        """Retrieve session context from storage.
 
         Args:
             session_id: The session to retrieve context for (required).
@@ -118,7 +118,7 @@ class SessionContextStore(LearningStore):
 
     async def arecall(
         self,
-        session_id: Optional[str] = None,
+        session_id: str,
         **kwargs,
     ) -> Optional[Any]:
         """Async version of recall."""
@@ -129,7 +129,10 @@ class SessionContextStore(LearningStore):
     def process(
         self,
         messages: List[Any],
-        session_id: Optional[str] = None,
+        session_id: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         **kwargs,
     ) -> None:
         """Extract session context from messages.
@@ -137,31 +140,49 @@ class SessionContextStore(LearningStore):
         Args:
             messages: Conversation messages to analyze.
             session_id: The session to update context for (required).
+            user_id: Optional user context (stored in context).
+            agent_id: Optional agent context.
+            team_id: Optional team context.
             **kwargs: Additional context (ignored).
         """
-        if not session_id:
+        if not session_id or not messages:
             return
-        self.extract_and_save(messages=messages, session_id=session_id)
+        self.extract_and_save(
+            messages=messages,
+            session_id=session_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+        )
 
     async def aprocess(
         self,
         messages: List[Any],
-        session_id: Optional[str] = None,
+        session_id: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         **kwargs,
     ) -> None:
         """Async version of process."""
-        if not session_id:
+        if not session_id or not messages:
             return
-        await self.aextract_and_save(messages=messages, session_id=session_id)
+        await self.aextract_and_save(
+            messages=messages,
+            session_id=session_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+        )
 
-    def format_for_prompt(self, data: Any) -> str:
-        """Format session context for system prompt injection.
+    def build_context(self, data: Any) -> str:
+        """Build context for the agent.
 
         Args:
-            data: Session context data.
+            data: Session context data from recall().
 
         Returns:
-            Formatted XML string.
+            Context string to inject into the agent's system prompt, or empty string if no data.
         """
         if not data:
             return ""
@@ -170,22 +191,29 @@ class SessionContextStore(LearningStore):
         if hasattr(data, "get_context_text"):
             context_text = data.get_context_text()
         elif hasattr(data, "summary") and data.summary:
-            context_text = f"Summary: {data.summary}"
+            context_text = self._format_context(context=data)
 
         if not context_text:
             return ""
 
-        return dedent(f"""\
+        return (
+            dedent("""\
             <session_context>
             Earlier in this session:
-            {context_text}
+            """)
+            + context_text
+            + dedent("""
 
             Use this for continuity. Current conversation takes precedence.
-            </session_context>\
-        """)
+            </session_context>""")
+        )
 
     def get_tools(self, **kwargs) -> List[Callable]:
-        """Session context has no agent tools (system-managed only)."""
+        """Session context has no agent tools (system-managed only).
+
+        Returns:
+            Empty list - session context is managed by background extraction only.
+        """
         return []
 
     async def aget_tools(self, **kwargs) -> List[Callable]:
@@ -284,7 +312,14 @@ class SessionContextStore(LearningStore):
     # Write Operations
     # =========================================================================
 
-    def save(self, session_id: str, context: Any) -> None:
+    def save(
+        self,
+        session_id: str,
+        context: Any,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> None:
         """Save or replace session context.
 
         Note: Session context is REPLACED, not appended.
@@ -292,6 +327,9 @@ class SessionContextStore(LearningStore):
         Args:
             session_id: The unique session identifier.
             context: The context data to save.
+            user_id: Optional user context.
+            agent_id: Optional agent context.
+            team_id: Optional team context.
         """
         if not self.db or not context:
             return
@@ -305,6 +343,9 @@ class SessionContextStore(LearningStore):
                 id=self._build_context_id(session_id=session_id),
                 learning_type=self.learning_type,
                 session_id=session_id,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
                 content=content,
             )
             log_debug(f"Saved session context for session_id: {session_id}")
@@ -312,7 +353,14 @@ class SessionContextStore(LearningStore):
         except Exception as e:
             log_debug(f"Error saving session context: {e}")
 
-    async def asave(self, session_id: str, context: Any) -> None:
+    async def asave(
+        self,
+        session_id: str,
+        context: Any,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> None:
         """Async version of save."""
         if not self.db or not context:
             return
@@ -327,6 +375,9 @@ class SessionContextStore(LearningStore):
                     id=self._build_context_id(session_id=session_id),
                     learning_type=self.learning_type,
                     session_id=session_id,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
                     content=content,
                 )
             else:
@@ -334,6 +385,9 @@ class SessionContextStore(LearningStore):
                     id=self._build_context_id(session_id=session_id),
                     learning_type=self.learning_type,
                     session_id=session_id,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
                     content=content,
                 )
             log_debug(f"Saved session context for session_id: {session_id}")
@@ -415,6 +469,9 @@ class SessionContextStore(LearningStore):
         self,
         messages: List["Message"],
         session_id: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
     ) -> str:
         """Extract session context from messages and save.
 
@@ -423,6 +480,9 @@ class SessionContextStore(LearningStore):
         Args:
             messages: Conversation messages to analyze.
             session_id: The unique session identifier.
+            user_id: Optional user context.
+            agent_id: Optional agent context.
+            team_id: Optional team context.
 
         Returns:
             Response from model.
@@ -446,7 +506,12 @@ class SessionContextStore(LearningStore):
         self.context_updated = False
 
         # Get tools
-        tools = self._get_extraction_tools(session_id=session_id)
+        tools = self._get_extraction_tools(
+            session_id=session_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+        )
         tool_map = {func.__name__: func for func in tools}
 
         # Convert to Function objects for model
@@ -482,6 +547,9 @@ class SessionContextStore(LearningStore):
         self,
         messages: List["Message"],
         session_id: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
     ) -> str:
         """Async version of extract_and_save."""
         if self.model is None:
@@ -502,7 +570,12 @@ class SessionContextStore(LearningStore):
         self.context_updated = False
 
         # Get tools
-        tools = await self._aget_extraction_tools(session_id=session_id)
+        tools = await self._aget_extraction_tools(
+            session_id=session_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+        )
         tool_map = {func.__name__: func for func in tools}
 
         # Convert to Function objects for model
@@ -519,12 +592,12 @@ class SessionContextStore(LearningStore):
         )
 
         # Execute tool calls
-        if response.tool_calls:
+        if response.tool_executions:
             import asyncio
 
-            for tool_call in response.tool_calls:
-                tool_name = tool_call.function.name
-                tool_args = tool_call.function.arguments
+            for tool_exec in response.tool_executions:
+                tool_name = tool_exec.tool_name
+                tool_args = tool_exec.tool_args
                 if tool_name in tool_map:
                     try:
                         if asyncio.iscoroutinefunction(tool_map[tool_name]):
@@ -648,7 +721,7 @@ class SessionContextStore(LearningStore):
 
         if enable_planning:
             system_prompt = (
-                dedent(f"""\
+                dedent("""\
                 You are a Session Context Manager. Your job is to capture the current state of this conversation.
 
                 ## Your Task
@@ -659,7 +732,8 @@ class SessionContextStore(LearningStore):
                 4. **Progress**: Which steps have been completed? (if any)
 
                 ## Conversation
-                <conversation>""")
+                <conversation>
+            """)
                 + conversation_text
                 + dedent("""
                 </conversation>
@@ -671,7 +745,7 @@ class SessionContextStore(LearningStore):
                 - Only include goal/plan/progress if they're actually present in the conversation
                 - Don't invent or assume - capture what's actually there
 
-                """)
+            """)
                 + custom_instructions
                 + dedent("""
                 Use the save_session_context tool to save your analysis.\
@@ -679,7 +753,7 @@ class SessionContextStore(LearningStore):
             )
         else:
             system_prompt = (
-                dedent(f"""\
+                dedent("""\
                 You are a Session Context Manager. Your job is to summarize this conversation.
 
                 ## Your Task
@@ -691,7 +765,7 @@ class SessionContextStore(LearningStore):
 
                 ## Conversation
                 <conversation>
-                """)
+            """)
                 + conversation_text
                 + dedent("""
                 </conversation>
@@ -702,7 +776,7 @@ class SessionContextStore(LearningStore):
                 - Don't include trivial details
                 - Capture the essence, not every exchange
 
-                """)
+            """)
                 + custom_instructions
                 + dedent("""
                 Use the save_session_context tool to save your summary.\
@@ -737,7 +811,13 @@ class SessionContextStore(LearningStore):
 
         return functions
 
-    def _get_extraction_tools(self, session_id: str) -> List[Callable]:
+    def _get_extraction_tools(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> List[Callable]:
         """Get sync extraction tools for the model."""
         enable_planning = self.config.enable_planning
 
@@ -764,13 +844,26 @@ class SessionContextStore(LearningStore):
                     "summary": summary,
                 }
 
+                if user_id:
+                    context_data["user_id"] = user_id
+                if agent_id:
+                    context_data["agent_id"] = agent_id
+                if team_id:
+                    context_data["team_id"] = team_id
+
                 if enable_planning:
                     context_data["goal"] = goal
                     context_data["plan"] = plan or []
                     context_data["progress"] = progress or []
 
                 context = from_dict_safe(self.schema, context_data)
-                self.save(session_id=session_id, context=context)
+                self.save(
+                    session_id=session_id,
+                    context=context,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                )
                 log_debug(f"Session context saved: {summary[:50]}...")
                 return "Session context saved"
             except Exception as e:
@@ -779,7 +872,13 @@ class SessionContextStore(LearningStore):
 
         return [save_session_context]
 
-    async def _aget_extraction_tools(self, session_id: str) -> List[Callable]:
+    async def _aget_extraction_tools(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> List[Callable]:
         """Get async extraction tools for the model."""
         enable_planning = self.config.enable_planning
 
@@ -806,13 +905,26 @@ class SessionContextStore(LearningStore):
                     "summary": summary,
                 }
 
+                if user_id:
+                    context_data["user_id"] = user_id
+                if agent_id:
+                    context_data["agent_id"] = agent_id
+                if team_id:
+                    context_data["team_id"] = team_id
+
                 if enable_planning:
                     context_data["goal"] = goal
                     context_data["plan"] = plan or []
                     context_data["progress"] = progress or []
 
                 context = from_dict_safe(self.schema, context_data)
-                await self.asave(session_id=session_id, context=context)
+                await self.asave(
+                    session_id=session_id,
+                    context=context,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                )
                 log_debug(f"Session context saved: {summary[:50]}...")
                 return "Session context saved"
             except Exception as e:
