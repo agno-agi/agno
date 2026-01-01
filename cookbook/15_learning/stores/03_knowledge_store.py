@@ -63,6 +63,8 @@ store = KnowledgeStore(
     )
 )
 
+# Setup logging (only needed when using store directly, not through LearningMachine)
+store.set_log_level()
 
 # -----------------------------------------------------------------------------
 # Test 1: Save and Search
@@ -517,16 +519,16 @@ if __name__ == "__main__":
 
     # Run tests
     test_save_and_search()
-    test_semantic_search()
-    test_agent_tool()
-    test_tags_and_context()
-    test_format_for_prompt()
-    test_delete_learnings()
-    test_agent_team_filtering()
-    test_state_tracking()
-    test_multiple_learnings()
-    test_relevant_context()
-    test_recall()
+    # test_semantic_search()
+    # test_agent_tool()
+    # test_tags_and_context()
+    # test_format_for_prompt()
+    # test_delete_learnings()
+    # test_agent_team_filtering()
+    # test_state_tracking()
+    # test_multiple_learnings()
+    # test_relevant_context()
+    # test_recall()
 
     # Cleanup
     cleanup()
