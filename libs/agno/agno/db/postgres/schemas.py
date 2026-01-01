@@ -157,7 +157,7 @@ SPAN_TABLE_SCHEMA = {
     "created_at": {"type": String, "nullable": False, "index": True},  # ISO 8601 datetime string
 }
 
-LEARNING_TABLE_SCHEMA = {
+LEARNINGS_TABLE_SCHEMA = {
     "learning_id": {"type": String, "primary_key": True, "nullable": False},
     "learning_type": {"type": String, "nullable": False, "index": True},
     "user_id": {"type": String, "nullable": True, "index": True},
@@ -191,7 +191,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "versions": VERSIONS_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
         "spans": SPAN_TABLE_SCHEMA,
-        "learning": LEARNING_TABLE_SCHEMA,
+        "learnings": LEARNINGS_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

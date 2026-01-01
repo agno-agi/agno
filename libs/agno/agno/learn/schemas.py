@@ -8,20 +8,32 @@ All parsing is done via from_dict() which never raises.
 
 Base classes are designed to be extended - from_dict() and to_dict()
 automatically handle subclass fields via dataclasses.fields().
+
+Schema Hierarchy:
+- BaseUserProfile: Long-term user memory
+- BaseSessionContext: Current session state
+- BaseLearning: Reusable knowledge/insights
+- BaseDecision: Decision logs (Phase 2)
+- BaseFeedback: Behavioral feedback (Phase 2)
+- BaseInstructionUpdate: Self-improvement (Phase 3)
 """
 
 from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Dict, List, Optional
 
+# =============================================================================
+# Internal Helpers
+# =============================================================================
 
-def safe_get(data: Any, key: str, default: Any = None) -> Any:
+
+def _safe_get(data: Any, key: str, default: Any = None) -> Any:
     """Safely get a key from dict-like data."""
     if isinstance(data, dict):
         return data.get(key, default)
     return getattr(data, key, default)
 
 
-def parse_json(data: Any) -> Optional[Dict]:
+def _parse_json(data: Any) -> Optional[Dict]:
     """Parse JSON string to dict, or return dict as-is."""
     if data is None:
         return None
@@ -38,7 +50,7 @@ def parse_json(data: Any) -> Optional[Dict]:
 
 
 # =============================================================================
-# User Profile
+# User Profile Schema
 # =============================================================================
 
 
@@ -47,13 +59,20 @@ class BaseUserProfile:
     """Base schema for User Profile learning type.
 
     Captures long-term information about a user that persists
-    across sessions. Extend this class to add custom fields.
+    across sessions. Designed to be extended with custom fields.
 
-    Example:
+    Attributes:
+        user_id: Required unique identifier for the user.
+        name: User's name (if known).
+        preferred_name: How they prefer to be addressed.
+        memories: List of memory entries, each with 'id' and 'content'.
+
+    Example - Extending with custom fields:
         @dataclass
         class MyUserProfile(BaseUserProfile):
             company: Optional[str] = None
             role: Optional[str] = None
+            timezone: Optional[str] = None
     """
 
     user_id: str
@@ -73,10 +92,11 @@ class BaseUserProfile:
             return data
 
         try:
-            parsed = parse_json(data)
+            parsed = _parse_json(data)
             if not parsed:
                 return None
 
+            # user_id is required
             if not parsed.get("user_id"):
                 return None
 
@@ -95,25 +115,71 @@ class BaseUserProfile:
         except Exception:
             return {}
 
-    def add_memory(self, content: str, **kwargs) -> None:
-        """Add a new memory to the profile."""
+    def add_memory(self, content: str, **kwargs) -> str:
+        """Add a new memory to the profile.
+
+        Args:
+            content: The memory text to add.
+            **kwargs: Additional fields (source, timestamp, etc.)
+
+        Returns:
+            The generated memory ID.
+        """
+        import uuid
+
+        memory_id = str(uuid.uuid4())[:8]
+
         if content and content.strip():
-            self.memories.append({"content": content.strip(), **kwargs})
+            self.memories.append({"id": memory_id, "content": content.strip(), **kwargs})
+
+        return memory_id
+
+    def get_memory(self, memory_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific memory by ID."""
+        for mem in self.memories:
+            if isinstance(mem, dict) and mem.get("id") == memory_id:
+                return mem
+        return None
+
+    def update_memory(self, memory_id: str, content: str, **kwargs) -> bool:
+        """Update an existing memory.
+
+        Returns:
+            True if memory was found and updated, False otherwise.
+        """
+        for mem in self.memories:
+            if isinstance(mem, dict) and mem.get("id") == memory_id:
+                mem["content"] = content.strip()
+                mem.update(kwargs)
+                return True
+        return False
+
+    def delete_memory(self, memory_id: str) -> bool:
+        """Delete a memory by ID.
+
+        Returns:
+            True if memory was found and deleted, False otherwise.
+        """
+        original_len = len(self.memories)
+        self.memories = [mem for mem in self.memories if not (isinstance(mem, dict) and mem.get("id") == memory_id)]
+        return len(self.memories) < original_len
 
     def get_memories_text(self) -> str:
-        """Get all memories as a formatted string."""
+        """Get all memories as a formatted string for prompts."""
         if not self.memories:
             return ""
+
         lines = []
         for m in self.memories:
             content = m.get("content") if isinstance(m, dict) else str(m)
             if content:
                 lines.append(f"- {content}")
+
         return "\n".join(lines)
 
 
 # =============================================================================
-# Session Context
+# Session Context Schema
 # =============================================================================
 
 
@@ -122,7 +188,20 @@ class BaseSessionContext:
     """Base schema for Session Context learning type.
 
     Captures state and summary for the current session.
-    Extend this class to add custom fields.
+    Unlike UserProfile which accumulates, this is REPLACED on each update.
+
+    Attributes:
+        session_id: Required unique identifier for the session.
+        summary: What's happened in this session.
+        goal: What the user is trying to accomplish.
+        plan: Steps to achieve the goal.
+        progress: Which steps have been completed.
+
+    Example - Extending with custom fields:
+        @dataclass
+        class MySessionContext(BaseSessionContext):
+            mood: Optional[str] = None
+            blockers: List[str] = field(default_factory=list)
     """
 
     session_id: str
@@ -140,10 +219,11 @@ class BaseSessionContext:
             return data
 
         try:
-            parsed = parse_json(data)
+            parsed = _parse_json(data)
             if not parsed:
                 return None
 
+            # session_id is required
             if not parsed.get("session_id"):
                 return None
 
@@ -162,7 +242,7 @@ class BaseSessionContext:
             return {}
 
     def get_context_text(self) -> str:
-        """Get session context as a formatted string."""
+        """Get session context as a formatted string for prompts."""
         parts = []
 
         if self.summary:
@@ -177,13 +257,13 @@ class BaseSessionContext:
 
         if self.progress:
             progress_text = "\n".join(f"  ✓ {step}" for step in self.progress)
-            parts.append(f"Progress:\n{progress_text}")
+            parts.append(f"Completed:\n{progress_text}")
 
-        return "\n".join(parts)
+        return "\n\n".join(parts)
 
 
 # =============================================================================
-# Learned Knowledge
+# Learned Knowledge Schema
 # =============================================================================
 
 
@@ -191,8 +271,20 @@ class BaseSessionContext:
 class BaseLearning:
     """Base schema for Learned Knowledge learning type.
 
-    Captures reusable insights and patterns.
-    Extend this class to add custom fields.
+    Captures reusable insights and patterns that can be shared
+    across users and potentially across agents.
+
+    Attributes:
+        title: Short descriptive title.
+        learning: The actual insight or knowledge.
+        context: When/where this applies.
+        tags: Categories for this learning.
+
+    Example - Extending with custom fields:
+        @dataclass
+        class MyLearning(BaseLearning):
+            confidence: float = 1.0
+            source_conversation_id: Optional[str] = None
     """
 
     title: str
@@ -209,10 +301,11 @@ class BaseLearning:
             return data
 
         try:
-            parsed = parse_json(data)
+            parsed = _parse_json(data)
             if not parsed:
                 return None
 
+            # title and learning are required
             if not parsed.get("title") or not parsed.get("learning"):
                 return None
 
@@ -231,7 +324,7 @@ class BaseLearning:
             return {}
 
     def to_text(self) -> str:
-        """Convert learning to searchable text format."""
+        """Convert learning to searchable text format for vector storage."""
         parts = [f"Title: {self.title}", f"Learning: {self.learning}"]
         if self.context:
             parts.append(f"Context: {self.context}")
@@ -247,7 +340,10 @@ class BaseLearning:
 
 @dataclass
 class UserProfileExtractionResponse:
-    """Response model for user profile extraction from LLM."""
+    """Response model for user profile extraction from LLM.
+
+    Used internally by UserProfileStore during background extraction.
+    """
 
     name: Optional[str] = None
     preferred_name: Optional[str] = None
@@ -262,14 +358,14 @@ class UserProfileExtractionResponse:
             return data
 
         try:
-            parsed = parse_json(data)
+            parsed = _parse_json(data)
             if not parsed:
                 return None
 
             return cls(
-                name=safe_get(parsed, "name"),
-                preferred_name=safe_get(parsed, "preferred_name"),
-                new_memories=safe_get(parsed, "new_memories") or [],
+                name=_safe_get(parsed, "name"),
+                preferred_name=_safe_get(parsed, "preferred_name"),
+                new_memories=_safe_get(parsed, "new_memories") or [],
             )
         except Exception:
             return None
@@ -277,7 +373,7 @@ class UserProfileExtractionResponse:
 
 @dataclass
 class SessionSummaryExtractionResponse:
-    """Response model for summary-only extraction from LLM."""
+    """Response model for summary-only session extraction from LLM."""
 
     summary: str = ""
 
@@ -290,11 +386,11 @@ class SessionSummaryExtractionResponse:
             return data
 
         try:
-            parsed = parse_json(data)
+            parsed = _parse_json(data)
             if not parsed:
                 return None
 
-            return cls(summary=safe_get(parsed, "summary") or "")
+            return cls(summary=_safe_get(parsed, "summary") or "")
         except Exception:
             return None
 
@@ -317,28 +413,31 @@ class SessionPlanningExtractionResponse:
             return data
 
         try:
-            parsed = parse_json(data)
+            parsed = _parse_json(data)
             if not parsed:
                 return None
 
             return cls(
-                summary=safe_get(parsed, "summary") or "",
-                goal=safe_get(parsed, "goal"),
-                plan=safe_get(parsed, "plan"),
-                progress=safe_get(parsed, "progress"),
+                summary=_safe_get(parsed, "summary") or "",
+                goal=_safe_get(parsed, "goal"),
+                plan=_safe_get(parsed, "plan"),
+                progress=_safe_get(parsed, "progress"),
             )
         except Exception:
             return None
 
 
 # =============================================================================
-# Phase 2 Schemas
+# Phase 2 Schemas (Placeholders)
 # =============================================================================
 
 
 @dataclass
 class BaseDecision:
-    """Base schema for Decision Logs. (Phase 2)"""
+    """Base schema for Decision Logs. (Phase 2)
+
+    Records decisions made by the agent with reasoning and context.
+    """
 
     decision: str
     reasoning: Optional[str] = None
@@ -353,7 +452,7 @@ class BaseDecision:
             return data
 
         try:
-            parsed = parse_json(data)
+            parsed = _parse_json(data)
             if not parsed or not parsed.get("decision"):
                 return None
 
@@ -373,7 +472,10 @@ class BaseDecision:
 
 @dataclass
 class BaseFeedback:
-    """Base schema for Behavioral Feedback. (Phase 2)"""
+    """Base schema for Behavioral Feedback. (Phase 2)
+
+    Captures signals about what worked and what didn't.
+    """
 
     signal: str  # thumbs_up, thumbs_down, correction, regeneration
     learning: Optional[str] = None
@@ -387,7 +489,7 @@ class BaseFeedback:
             return data
 
         try:
-            parsed = parse_json(data)
+            parsed = _parse_json(data)
             if not parsed or not parsed.get("signal"):
                 return None
 
@@ -407,7 +509,10 @@ class BaseFeedback:
 
 @dataclass
 class BaseInstructionUpdate:
-    """Base schema for Self-Improvement. (Phase 4)"""
+    """Base schema for Self-Improvement. (Phase 3)
+
+    Proposes updates to agent instructions based on feedback patterns.
+    """
 
     current_instruction: str
     proposed_instruction: str
@@ -422,7 +527,7 @@ class BaseInstructionUpdate:
             return data
 
         try:
-            parsed = parse_json(data)
+            parsed = _parse_json(data)
             if not parsed:
                 return None
 

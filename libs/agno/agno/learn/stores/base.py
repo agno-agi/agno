@@ -1,119 +1,328 @@
 """
-LearningMachine Base Store
-==========================
-Abstract base class and utilities for learning stores.
+Base Learning Store
+===================
+Protocol and utilities for all learning stores - built-in and custom.
+
+The LearningStore protocol defines 4 required methods:
+- recall(): Retrieve relevant data for context injection
+- process(): Extract learnings from conversation
+- format_for_prompt(): Format data for system prompt
+- learning_type: String identifier for this learning type
+
+Plus optional methods:
+- get_tools(): Return tools to expose to agent
+- was_updated: Check if store was updated in last operation
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from dataclasses import asdict, dataclass, fields
+from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
+
+T = TypeVar("T")
 
 
-class BaseLearningStore(ABC):
-    """Abstract base class for learning storage backends.
+# =============================================================================
+# Helper Functions
+# =============================================================================
 
-    Each learning type has its own store implementation that handles:
-    - Retrieval (get/search)
-    - Storage (save/update)
-    - Extraction (using LLM to extract learnings from conversation)
 
-    Stores use dataclass schemas (not Pydantic) with from_dict()/to_dict()
-    methods that never raise exceptions.
+def from_dict_safe(cls: Type[T], data: Any) -> Optional[T]:
+    """Safely create a dataclass instance from dict-like data.
+
+    Works with any dataclass - automatically handles subclass fields.
+    Never raises - returns None on any failure.
+
+    Args:
+        cls: The dataclass type to instantiate.
+        data: Dict, JSON string, or existing instance.
+
+    Returns:
+        Instance of cls, or None if parsing fails.
+
+    Example:
+        >>> profile = from_dict_safe(BaseUserProfile, {"user_id": "123"})
+        >>> profile.user_id
+        '123'
     """
+    if data is None:
+        return None
 
-    @abstractmethod
-    def get(self, identifier: str) -> Optional[Any]:
-        """Retrieve a learning by its identifier.
-
-        Args:
-            identifier: The unique identifier (user_id, session_id, etc.)
-
-        Returns:
-            The learning data as a dataclass instance, or None if not found.
-        """
-        pass
-
-    @abstractmethod
-    async def aget(self, identifier: str) -> Optional[Any]:
-        """Async version of get."""
-        pass
-
-    @abstractmethod
-    def save(self, identifier: str, data: Any) -> None:
-        """Save or update a learning.
-
-        Args:
-            identifier: The unique identifier (user_id, session_id, etc.)
-            data: The learning data to save (dataclass instance).
-        """
-        pass
-
-    @abstractmethod
-    async def asave(self, identifier: str, data: Any) -> None:
-        """Async version of save."""
-        pass
-
-
-def to_dict_safe(obj: Any) -> Dict[str, Any]:
-    """Convert any object to dict safely.
-
-    Handles:
-    - Dataclasses with to_dict() method
-    - Plain dataclasses via asdict()
-    - Dicts (returned as-is)
-
-    Returns empty dict on failure.
-    """
-    if obj is None:
-        return {}
+    # Already the right type
+    if isinstance(data, cls):
+        return data
 
     try:
-        # Our schemas have to_dict()
-        if hasattr(obj, "to_dict"):
-            return obj.to_dict()
+        # Parse JSON string if needed
+        parsed = _parse_json(data)
+        if parsed is None:
+            return None
 
-        # Plain dataclass
-        from dataclasses import asdict, is_dataclass
+        # Get valid field names for this class
+        field_names = {f.name for f in fields(cls)}
 
-        if is_dataclass(obj) and not isinstance(obj, type):
-            return asdict(obj)
+        # Filter to only valid fields
+        kwargs = {k: v for k, v in parsed.items() if k in field_names}
 
+        return cls(**kwargs)
+    except Exception:
+        return None
+
+
+def to_dict_safe(obj: Any) -> Optional[Dict[str, Any]]:
+    """Safely convert a dataclass to dict.
+
+    Works with any dataclass. Never raises - returns None on failure.
+
+    Args:
+        obj: Dataclass instance to convert.
+
+    Returns:
+        Dict representation, or None if conversion fails.
+
+    Example:
+        >>> profile = BaseUserProfile(user_id="123")
+        >>> to_dict_safe(profile)
+        {'user_id': '123', 'name': None, ...}
+    """
+    if obj is None:
+        return None
+
+    try:
         # Already a dict
         if isinstance(obj, dict):
             return obj
 
-        return {}
+        # Has to_dict method
+        if hasattr(obj, "to_dict"):
+            return obj.to_dict()
+
+        # Is a dataclass
+        if hasattr(obj, "__dataclass_fields__"):
+            return asdict(obj)
+
+        # Has __dict__
+        if hasattr(obj, "__dict__"):
+            return dict(obj.__dict__)
+
+        return None
     except Exception:
-        return {}
+        return None
 
 
-def from_dict_safe(schema: Any, data: Any) -> Optional[Any]:
-    """Parse data into schema instance safely.
+def _parse_json(data: Any) -> Optional[Dict]:
+    """Parse JSON string to dict, or return dict as-is."""
+    if data is None:
+        return None
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, str):
+        import json
 
-    Handles:
-    - Schemas with from_dict() class method
-    - Plain dataclasses via constructor
+        try:
+            return json.loads(data)
+        except Exception:
+            return None
+    return None
 
-    Returns None on failure.
+
+# =============================================================================
+# Base Learning Store Protocol
+# =============================================================================
+
+
+@dataclass
+class LearningStore(ABC):
+    """Base protocol for all learning stores.
+
+    To create a custom learning type, subclass this and implement:
+    - recall(): Retrieve relevant data for context injection
+    - arecall(): Async version of recall
+    - process(): Extract learnings from conversation
+    - aprocess(): Async version of process
+    - format_for_prompt(): Format data for system prompt
+    - learning_type: Property returning string identifier
+
+    Optional overrides:
+    - get_tools(): Return tools to expose to agent
+    - aget_tools(): Async version of get_tools
+    - was_updated: Check if store was updated
+
+    Example - Custom Project Context Store:
+    ```python
+    @dataclass
+    class ProjectContextStore(LearningStore):
+        config: ProjectContextConfig = field(default_factory=ProjectContextConfig)
+
+        @property
+        def learning_type(self) -> str:
+            return "project_context"
+
+        def recall(self, project_id: str = None, **kwargs) -> Optional[ProjectContext]:
+            if not project_id:
+                return None
+            return self.get(project_id)
+
+        async def arecall(self, project_id: str = None, **kwargs) -> Optional[ProjectContext]:
+            if not project_id:
+                return None
+            return await self.aget(project_id)
+
+        def process(self, messages: List[Message], project_id: str = None, **kwargs) -> None:
+            if project_id:
+                self.extract_and_save(messages, project_id)
+
+        async def aprocess(self, messages: List[Message], project_id: str = None, **kwargs) -> None:
+            if project_id:
+                await self.aextract_and_save(messages, project_id)
+
+        def format_for_prompt(self, data: ProjectContext) -> str:
+            return f"<project_context>\\n{data.to_text()}\\n</project_context>"
+
+        def get_tools(self, project_id: str = None, **kwargs) -> List[Callable]:
+            if not project_id:
+                return []
+            return [self.get_update_tool(project_id)]
+    ```
     """
-    if data is None or schema is None:
-        return None
 
-    try:
-        # Our schemas have from_dict()
-        if hasattr(schema, "from_dict"):
-            return schema.from_dict(data)
+    # -------------------------------------------------------------------------
+    # Required: Core Protocol
+    # -------------------------------------------------------------------------
 
-        # Plain dataclass - try direct construction
-        from dataclasses import is_dataclass
+    @property
+    @abstractmethod
+    def learning_type(self) -> str:
+        """String identifier for this learning type.
 
-        if is_dataclass(schema):
-            if isinstance(data, str):
-                import json
+        Used for database storage and debugging.
+        Examples: "user_profile", "session_context", "project_context"
+        """
+        pass
 
-                data = json.loads(data)
-            if isinstance(data, dict):
-                return schema(**data)
+    @abstractmethod
+    def recall(self, **context) -> Optional[Any]:
+        """Retrieve relevant learnings given context.
 
-        return None
-    except Exception:
-        return None
+        Called before agent runs to inject context into prompt.
+
+        Args:
+            **context: Arbitrary context (user_id, session_id, project_id, etc.)
+                      Each store uses the context keys it needs.
+
+        Returns:
+            Retrieved data (schema instance), or None if nothing found.
+
+        Example:
+            >>> store.recall(user_id="alice", agent_id="support")
+            BaseUserProfile(user_id="alice", memories=[...])
+        """
+        pass
+
+    @abstractmethod
+    async def arecall(self, **context) -> Optional[Any]:
+        """Async version of recall."""
+        pass
+
+    @abstractmethod
+    def process(self, messages: List[Any], **context) -> None:
+        """Extract and save learnings from messages.
+
+        Called after agent runs to update learnings based on conversation.
+
+        Args:
+            messages: Conversation messages to analyze.
+            **context: Arbitrary context (user_id, session_id, etc.)
+
+        Example:
+            >>> store.process(messages, user_id="alice")
+            # Extracts user info and saves to profile
+        """
+        pass
+
+    @abstractmethod
+    async def aprocess(self, messages: List[Any], **context) -> None:
+        """Async version of process."""
+        pass
+
+    @abstractmethod
+    def format_for_prompt(self, data: Any) -> str:
+        """Format recalled data for system prompt injection.
+
+        Takes the data returned by recall() and formats it as XML
+        suitable for including in a system prompt.
+
+        Args:
+            data: Data returned from recall().
+
+        Returns:
+            Formatted string with XML tags, or empty string if no data.
+
+        Example:
+            >>> store.format_for_prompt(profile)
+            '<user_profile>\\nUser is a software engineer...\\n</user_profile>'
+        """
+        pass
+
+    # -------------------------------------------------------------------------
+    # Optional: Agent Tools
+    # -------------------------------------------------------------------------
+
+    def get_tools(self, **context) -> List[Callable]:
+        """Get tools to expose to agent.
+
+        Override to provide agent tools for this learning type.
+
+        Args:
+            **context: Arbitrary context (user_id, session_id, etc.)
+
+        Returns:
+            List of callable tools, or empty list if none.
+
+        Example:
+            >>> tools = store.get_tools(user_id="alice")
+            >>> tools[0].__name__
+            'update_user_memory'
+        """
+        return []
+
+    async def aget_tools(self, **context) -> List[Callable]:
+        """Async version of get_tools.
+
+        Default implementation calls sync version.
+        Override if async tool creation is needed.
+        """
+        return self.get_tools(**context)
+
+    # -------------------------------------------------------------------------
+    # Optional: State Tracking
+    # -------------------------------------------------------------------------
+
+    @property
+    def was_updated(self) -> bool:
+        """Check if store was updated in last operation.
+
+        Useful for knowing whether extraction found new information.
+        Override in subclass to track actual state.
+
+        Returns:
+            True if last process() call made changes, False otherwise.
+        """
+        return False
+
+    # -------------------------------------------------------------------------
+    # Optional: Lifecycle Hooks
+    # -------------------------------------------------------------------------
+
+    def on_conversation_start(self, **context) -> None:
+        """Called when a new conversation starts.
+
+        Override for setup logic like loading initial state.
+        """
+        pass
+
+    def on_conversation_end(self, **context) -> None:
+        """Called when conversation ends.
+
+        Override for cleanup logic like final extraction.
+        """
+        pass

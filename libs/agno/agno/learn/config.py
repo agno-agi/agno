@@ -5,6 +5,14 @@ Enums and configuration classes for the unified learning system.
 
 Uses dataclasses instead of Pydantic BaseModels to avoid runtime
 overhead and validation errors that could break agents mid-run.
+
+Configuration Hierarchy:
+- LearningMode: How learning is extracted (BACKGROUND, AGENTIC, PROPOSE, HITL)
+- ExtractionTiming: When extraction runs (BEFORE, PARALLEL, AFTER)
+- ExtractionConfig: Settings for background extraction
+- UserProfileConfig: Config for user profile learning
+- SessionContextConfig: Config for session context learning
+- KnowledgeConfig: Config for learned knowledge
 """
 
 from dataclasses import dataclass, field
@@ -16,14 +24,23 @@ if TYPE_CHECKING:
     from agno.models.base import Model
 
 
+# =============================================================================
+# Enums
+# =============================================================================
+
+
 class LearningMode(Enum):
     """How learning is extracted and saved.
 
     Attributes:
         BACKGROUND: Automatically extract and save learnings in the background.
-        AGENTIC: Learning extraction is agent driven via tool usage.
-        PROPOSE: Agent proposes learning in chat, user confirms.
-        HITL: Background extracts and queues for human approval.
+                   No user interaction needed. Best for user profiles.
+        AGENTIC: Learning extraction is agent-driven via tool usage.
+                Agent decides when to save learnings using provided tools.
+        PROPOSE: Agent proposes learning in chat, user confirms before saving.
+                Best for explicit knowledge capture with user validation.
+        HITL: Human-in-the-loop. Background extracts and queues for human approval.
+              Best for sensitive or high-stakes learning types.
     """
 
     BACKGROUND = "background"
@@ -37,6 +54,7 @@ class ExtractionTiming(Enum):
 
     Attributes:
         BEFORE: Runs before LLM call. Adds latency before response.
+               Use when you need fresh context for the response.
         PARALLEL: Runs while LLM generates response. Fast, but may
                  duplicate if agent also saves learnings via tool.
         AFTER: Runs after response is returned. Slower, but can
@@ -48,9 +66,16 @@ class ExtractionTiming(Enum):
     AFTER = "after"
 
 
+# =============================================================================
+# Extraction Configuration
+# =============================================================================
+
+
 @dataclass
 class ExtractionConfig:
     """Configuration for learning extraction.
+
+    Controls when and how often background extraction runs.
 
     Attributes:
         timing: When to run extraction relative to LLM response.
@@ -60,6 +85,11 @@ class ExtractionConfig:
 
     timing: ExtractionTiming = ExtractionTiming.PARALLEL
     run_after_messages: int = 1
+
+
+# =============================================================================
+# Learning Type Configurations
+# =============================================================================
 
 
 @dataclass
@@ -73,16 +103,15 @@ class UserProfileConfig:
 
     Attributes:
         db: Database backend for storage.
-        model: Model for extraction.
+        model: Model for extraction (required for BACKGROUND mode).
         mode: How learning is extracted. Default: BACKGROUND.
-        extraction: Extraction settings.
-        schema: Custom schema for user profile data.
-                Default: BaseUserProfile.
+        extraction: Extraction timing settings.
+        schema: Custom schema for user profile data. Default: BaseUserProfile.
 
         # Agent tool
         enable_tool: Whether to provide update_user_memory tool to agent.
 
-        # Internal extraction tools
+        # Internal extraction tools (used by background extraction)
         enable_add: Allow adding new profile entries.
         enable_update: Allow updating existing entries.
         enable_delete: Allow deleting entries.
@@ -92,6 +121,15 @@ class UserProfileConfig:
         system_message: Full override for extraction system message.
         instructions: Custom instructions for what to capture.
         additional_instructions: Extra instructions appended to default.
+
+    Example:
+        >>> config = UserProfileConfig(
+        ...     db=my_db,
+        ...     model=my_model,
+        ...     mode=LearningMode.BACKGROUND,
+        ...     enable_tool=True,
+        ...     instructions="Focus on professional preferences only.",
+        ... )
     """
 
     # Required fields
@@ -110,7 +148,7 @@ class UserProfileConfig:
     enable_add: bool = True
     enable_update: bool = True
     enable_delete: bool = True
-    enable_clear: bool = False
+    enable_clear: bool = False  # Dangerous - disabled by default
 
     # Prompt customization
     system_message: Optional[str] = None
@@ -133,9 +171,8 @@ class SessionContextConfig:
     Attributes:
         db: Database backend for storage.
         model: Model for extraction.
-        extraction: Extraction settings.
-        schema: Custom schema for session context data.
-                Default: BaseSessionContext.
+        extraction: Extraction timing settings.
+        schema: Custom schema for session context. Default: BaseSessionContext.
 
         # Feature flags
         enable_planning: If True, extract goal/plan/progress in addition
@@ -151,6 +188,13 @@ class SessionContextConfig:
         system_message: Full override for extraction system message.
         instructions: Custom instructions for extraction.
         additional_instructions: Extra instructions appended to default.
+
+    Example:
+        >>> config = SessionContextConfig(
+        ...     db=my_db,
+        ...     model=my_model,
+        ...     enable_planning=True,  # Track goals and progress
+        ... )
     """
 
     # Required fields
@@ -191,7 +235,7 @@ class KnowledgeConfig:
         model: Model for extraction (if using BACKGROUND mode).
         mode: How learning is extracted. Default: PROPOSE.
         extraction: Extraction settings (only if mode=BACKGROUND).
-        schema: Custom schema for learning data.
+        schema: Custom schema for learning data. Default: BaseLearning.
 
         # Agent tool
         enable_tool: Whether to provide save_learning tool to agent.
@@ -205,6 +249,13 @@ class KnowledgeConfig:
         system_message: Full override for extraction system message.
         instructions: Custom instructions for what makes a good learning.
         additional_instructions: Extra instructions appended to default.
+
+    Example:
+        >>> config = KnowledgeConfig(
+        ...     knowledge=my_knowledge_base,
+        ...     mode=LearningMode.PROPOSE,  # Agent proposes, user confirms
+        ...     enable_tool=True,
+        ... )
     """
 
     # Required fields
@@ -228,6 +279,11 @@ class KnowledgeConfig:
     system_message: Optional[str] = None
     instructions: Optional[str] = None
     additional_instructions: Optional[str] = None
+
+
+# =============================================================================
+# Phase 2 Configurations (Placeholders)
+# =============================================================================
 
 
 @dataclass
@@ -304,7 +360,7 @@ class SelfImprovementConfig:
     Note: mode is fixed to HITL. No agent tool - self-improvement
     is system-managed with human approval.
 
-    Note: Deferred to Phase 4.
+    Note: Deferred to Phase 3.
     """
 
     # Required fields

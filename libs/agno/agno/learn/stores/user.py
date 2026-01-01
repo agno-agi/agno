@@ -2,6 +2,16 @@
 User Profile Store
 ==================
 Storage backend for User Profile learning type.
+
+Stores long-term memories about users that persist across sessions.
+Memories ACCUMULATE over time - new info is added, not replaced.
+
+Key Features:
+- Manual memory addition via add_memory()
+- Background extraction from conversations
+- Agent tool for in-conversation updates
+- Multi-user isolation (each user has their own profile)
+- Agent/team context for different perspectives on same user
 """
 
 import uuid
@@ -11,12 +21,9 @@ from os import getenv
 from textwrap import dedent
 from typing import Any, Callable, List, Optional, Union
 
-from agno.db.base import AsyncBaseDb, BaseDb
 from agno.learn.config import UserProfileConfig
 from agno.learn.schemas import BaseUserProfile
-from agno.learn.stores.base import BaseLearningStore, from_dict_safe, to_dict_safe
-from agno.models.message import Message
-from agno.tools.function import Function
+from agno.learn.stores.base import LearningStore, from_dict_safe, to_dict_safe
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -24,40 +31,232 @@ from agno.utils.log import (
     set_log_level_to_info,
 )
 
+# Conditional imports for type checking
+try:
+    from agno.db.base import AsyncBaseDb, BaseDb
+    from agno.models.message import Message
+    from agno.tools.function import Function
+except ImportError:
+    pass
+
 
 @dataclass
-class UserProfileStore(BaseLearningStore):
+class UserProfileStore(LearningStore):
     """Storage backend for User Profile learning type.
 
     Handles retrieval, storage, and extraction of user profiles.
     Profiles are stored per user_id and persist across sessions.
 
+    Usage:
+        >>> store = UserProfileStore(config=UserProfileConfig(db=db, model=model))
+        >>>
+        >>> # Manual memory addition
+        >>> store.add_memory("alice", "User is a software engineer")
+        >>>
+        >>> # Get profile
+        >>> profile = store.get("alice")
+        >>> print(profile.get_memories_text())
+        >>>
+        >>> # Background extraction
+        >>> store.extract_and_save(messages, user_id="alice")
+        >>>
+        >>> # Agent tool
+        >>> tool = store.get_agent_tool(user_id="alice")
+        >>> tool("Remember that user prefers dark mode")
+
     Args:
         config: UserProfileConfig with all settings including db and model.
+        debug_mode: Enable debug logging.
     """
 
     config: UserProfileConfig = field(default_factory=UserProfileConfig)
-
-    # Debug mode
     debug_mode: bool = False
 
     # State tracking (internal)
-    profile_updated: bool = False
+    profile_updated: bool = field(default=False, init=False)
+    _schema: Any = field(default=None, init=False)
 
     def __post_init__(self):
-        self.schema = self.config.schema or BaseUserProfile
+        self._schema = self.config.schema or BaseUserProfile
 
-    # --- Properties for cleaner access ---
+    # =========================================================================
+    # LearningStore Protocol Implementation
+    # =========================================================================
 
     @property
-    def db(self) -> Optional[Union[BaseDb, AsyncBaseDb]]:
+    def learning_type(self) -> str:
+        """String identifier for this learning type."""
+        return "user_profile"
+
+    @property
+    def schema(self) -> Any:
+        """The schema class used for profiles."""
+        return self._schema
+
+    def recall(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        **kwargs,
+    ) -> Optional[Any]:
+        """Retrieve user profile for context injection.
+
+        Args:
+            user_id: The user to retrieve profile for (required).
+            agent_id: Optional agent context.
+            team_id: Optional team context.
+            **kwargs: Additional context (ignored).
+
+        Returns:
+            User profile, or None if not found.
+        """
+        if not user_id:
+            return None
+        return self.get(user_id, agent_id=agent_id, team_id=team_id)
+
+    async def arecall(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        **kwargs,
+    ) -> Optional[Any]:
+        """Async version of recall."""
+        if not user_id:
+            return None
+        return await self.aget(user_id, agent_id=agent_id, team_id=team_id)
+
+    def process(
+        self,
+        messages: List[Any],
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        **kwargs,
+    ) -> None:
+        """Extract user profile from messages.
+
+        Args:
+            messages: Conversation messages to analyze.
+            user_id: The user to update profile for (required).
+            agent_id: Optional agent context.
+            team_id: Optional team context.
+            **kwargs: Additional context (ignored).
+        """
+        if not user_id:
+            return
+        self.extract_and_save(
+            messages=messages,
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+        )
+
+    async def aprocess(
+        self,
+        messages: List[Any],
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        **kwargs,
+    ) -> None:
+        """Async version of process."""
+        if not user_id:
+            return
+        await self.aextract_and_save(
+            messages=messages,
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+        )
+
+    def format_for_prompt(self, data: Any) -> str:
+        """Format user profile for system prompt injection.
+
+        Args:
+            data: User profile data.
+
+        Returns:
+            Formatted XML string.
+        """
+        if not data:
+            return ""
+
+        memories_text = None
+        if hasattr(data, "get_memories_text"):
+            memories_text = data.get_memories_text()
+        elif hasattr(data, "memories") and data.memories:
+            memories_text = "\n".join(f"- {m.get('content', str(m))}" for m in data.memories)
+
+        if not memories_text:
+            return ""
+
+        return dedent(f"""\
+            <user_profile>
+            What you know about this user:
+            {memories_text}
+
+            Use this to personalize responses. Current conversation takes precedence.
+            </user_profile>
+        """)
+
+    def get_tools(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        **kwargs,
+    ) -> List[Callable]:
+        """Get tools to expose to agent.
+
+        Args:
+            user_id: The user context (required for tool to work).
+            agent_id: Optional agent context.
+            team_id: Optional team context.
+            **kwargs: Additional context (ignored).
+
+        Returns:
+            List containing update_user_memory tool if enabled.
+        """
+        if not user_id or not self.config.enable_tool:
+            return []
+        return [self.get_agent_tool(user_id, agent_id=agent_id, team_id=team_id)]
+
+    async def aget_tools(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        **kwargs,
+    ) -> List[Callable]:
+        """Async version of get_tools."""
+        if not user_id or not self.config.enable_tool:
+            return []
+        return [await self.aget_agent_tool(user_id, agent_id=agent_id, team_id=team_id)]
+
+    @property
+    def was_updated(self) -> bool:
+        """Check if profile was updated in last operation."""
+        return self.profile_updated
+
+    # =========================================================================
+    # Properties
+    # =========================================================================
+
+    @property
+    def db(self) -> Optional[Union["BaseDb", "AsyncBaseDb"]]:
+        """Database backend."""
         return self.config.db
 
     @property
     def model(self):
+        """Model for extraction."""
         return self.config.model
 
-    # --- Debug/Logging ---
+    # =========================================================================
+    # Debug/Logging
+    # =========================================================================
 
     def set_log_level(self):
         """Set log level based on debug_mode or environment variable."""
@@ -67,11 +266,9 @@ class UserProfileStore(BaseLearningStore):
         else:
             set_log_level_to_info()
 
-    def initialize(self):
-        """Initialize the store (sets up logging)."""
-        self.set_log_level()
-
-    # --- Agent Tool ---
+    # =========================================================================
+    # Agent Tool
+    # =========================================================================
 
     def get_agent_tool(
         self,
@@ -140,7 +337,9 @@ class UserProfileStore(BaseLearningStore):
 
         return update_user_memory
 
-    # --- Read Operations ---
+    # =========================================================================
+    # Read Operations
+    # =========================================================================
 
     def get(
         self,
@@ -161,12 +360,9 @@ class UserProfileStore(BaseLearningStore):
         if not self.db:
             return None
 
-        if isinstance(self.db, AsyncBaseDb):
-            raise ValueError("get() is not supported with an async DB. Please use aget() instead.")
-
         try:
             result = self.db.get_learning(
-                learning_type="user_profile",
+                learning_type=self.learning_type,
                 user_id=user_id,
                 agent_id=agent_id,
                 team_id=team_id,
@@ -192,16 +388,16 @@ class UserProfileStore(BaseLearningStore):
             return None
 
         try:
-            if isinstance(self.db, AsyncBaseDb):
+            if hasattr(self.db, "aget_learning"):
                 result = await self.db.aget_learning(
-                    learning_type="user_profile",
+                    learning_type=self.learning_type,
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
                 )
             else:
                 result = self.db.get_learning(
-                    learning_type="user_profile",
+                    learning_type=self.learning_type,
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
@@ -216,7 +412,9 @@ class UserProfileStore(BaseLearningStore):
             log_debug(f"Error retrieving user profile: {e}")
             return None
 
-    # --- Write Operations ---
+    # =========================================================================
+    # Write Operations
+    # =========================================================================
 
     def save(
         self,
@@ -236,9 +434,6 @@ class UserProfileStore(BaseLearningStore):
         if not self.db or not profile:
             return
 
-        if isinstance(self.db, AsyncBaseDb):
-            raise ValueError("save() is not supported with an async DB. Please use asave() instead.")
-
         try:
             content = to_dict_safe(profile)
             if not content:
@@ -246,7 +441,7 @@ class UserProfileStore(BaseLearningStore):
 
             self.db.upsert_learning(
                 id=self._build_profile_id(user_id, agent_id, team_id),
-                learning_type="user_profile",
+                learning_type=self.learning_type,
                 user_id=user_id,
                 agent_id=agent_id,
                 team_id=team_id,
@@ -273,10 +468,10 @@ class UserProfileStore(BaseLearningStore):
             if not content:
                 return
 
-            if isinstance(self.db, AsyncBaseDb):
+            if hasattr(self.db, "aupsert_learning"):
                 await self.db.aupsert_learning(
                     id=self._build_profile_id(user_id, agent_id, team_id),
-                    learning_type="user_profile",
+                    learning_type=self.learning_type,
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
@@ -285,7 +480,7 @@ class UserProfileStore(BaseLearningStore):
             else:
                 self.db.upsert_learning(
                     id=self._build_profile_id(user_id, agent_id, team_id),
-                    learning_type="user_profile",
+                    learning_type=self.learning_type,
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
@@ -296,7 +491,9 @@ class UserProfileStore(BaseLearningStore):
         except Exception as e:
             log_debug(f"Error saving user profile: {e}")
 
-    # --- Delete Operations ---
+    # =========================================================================
+    # Delete Operations
+    # =========================================================================
 
     def delete(
         self,
@@ -317,9 +514,6 @@ class UserProfileStore(BaseLearningStore):
         if not self.db:
             return False
 
-        if isinstance(self.db, AsyncBaseDb):
-            raise ValueError("delete() is not supported with an async DB. Please use adelete() instead.")
-
         try:
             profile_id = self._build_profile_id(user_id, agent_id, team_id)
             return self.db.delete_learning(id=profile_id)
@@ -339,7 +533,7 @@ class UserProfileStore(BaseLearningStore):
 
         try:
             profile_id = self._build_profile_id(user_id, agent_id, team_id)
-            if isinstance(self.db, AsyncBaseDb):
+            if hasattr(self.db, "adelete_learning"):
                 return await self.db.adelete_learning(id=profile_id)
             else:
                 return self.db.delete_learning(id=profile_id)
@@ -362,9 +556,6 @@ class UserProfileStore(BaseLearningStore):
         """
         if not self.db:
             return
-
-        if isinstance(self.db, AsyncBaseDb):
-            raise ValueError("clear() is not supported with an async DB. Please use aclear() instead.")
 
         try:
             empty_profile = self.schema(user_id=user_id)
@@ -390,7 +581,9 @@ class UserProfileStore(BaseLearningStore):
         except Exception as e:
             log_debug(f"Error clearing user profile: {e}")
 
-    # --- Memory Operations ---
+    # =========================================================================
+    # Memory Operations
+    # =========================================================================
 
     def add_memory(
         self,
@@ -398,7 +591,8 @@ class UserProfileStore(BaseLearningStore):
         memory: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-    ) -> None:
+        **kwargs,
+    ) -> Optional[str]:
         """Add a single memory to the user's profile.
 
         Args:
@@ -406,24 +600,27 @@ class UserProfileStore(BaseLearningStore):
             memory: The memory text to add.
             agent_id: Optional agent context.
             team_id: Optional team context.
-        """
-        if isinstance(self.db, AsyncBaseDb):
-            raise ValueError("add_memory() is not supported with an async DB. Please use aadd_memory() instead.")
+            **kwargs: Additional fields for the memory.
 
-        profile = self.get(user_id, agent_id=agent_id, team_id=team_id)
+        Returns:
+            The memory ID if added, None otherwise.
+        """
+        profile = self.get(user_id=user_id, agent_id=agent_id, team_id=team_id)
 
         if profile is None:
             profile = self.schema(user_id=user_id)
 
+        memory_id = None
         if hasattr(profile, "add_memory"):
-            profile.add_memory(memory)
+            memory_id = profile.add_memory(memory, **kwargs)
         elif hasattr(profile, "memories"):
             memory_id = str(uuid.uuid4())[:8]
-            profile.memories.append({"id": memory_id, "content": memory})
+            profile.memories.append({"id": memory_id, "content": memory, **kwargs})
 
-        print(f"about to upsert profile: {profile}")
-        self.save(user_id, profile, agent_id=agent_id, team_id=team_id)
+        self.save(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
         log_debug(f"Added memory for user {user_id}: {memory[:50]}...")
+
+        return memory_id
 
     async def aadd_memory(
         self,
@@ -431,27 +628,33 @@ class UserProfileStore(BaseLearningStore):
         memory: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-    ) -> None:
+        **kwargs,
+    ) -> Optional[str]:
         """Async version of add_memory."""
-        profile = await self.aget(user_id, agent_id=agent_id, team_id=team_id)
+        profile = await self.aget(user_id=user_id, agent_id=agent_id, team_id=team_id)
 
         if profile is None:
             profile = self.schema(user_id=user_id)
 
+        memory_id = None
         if hasattr(profile, "add_memory"):
-            profile.add_memory(memory)
+            memory_id = profile.add_memory(memory, **kwargs)
         elif hasattr(profile, "memories"):
             memory_id = str(uuid.uuid4())[:8]
-            profile.memories.append({"id": memory_id, "content": memory})
+            profile.memories.append({"id": memory_id, "content": memory, **kwargs})
 
-        await self.asave(user_id, profile, agent_id=agent_id, team_id=team_id)
+        await self.asave(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
         log_debug(f"Added memory for user {user_id}: {memory[:50]}...")
 
-    # --- Extraction Operations ---
+        return memory_id
+
+    # =========================================================================
+    # Extraction Operations
+    # =========================================================================
 
     def extract_and_save(
         self,
-        messages: List[Message],
+        messages: List["Message"],
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
@@ -477,18 +680,13 @@ class UserProfileStore(BaseLearningStore):
             log_warning("No DB provided for user profile store")
             return "No DB provided for user profile store"
 
-        if isinstance(self.db, AsyncBaseDb):
-            raise ValueError(
-                "extract_and_save() is not supported with an async DB. Please use aextract_and_save() instead."
-            )
-
         log_debug("UserProfileStore: Extracting user profile", center=True)
 
         # Reset state
         self.profile_updated = False
 
         # Get existing profile
-        existing_profile = self.get(user_id, agent_id=agent_id, team_id=team_id)
+        existing_profile = self.get(user_id=user_id, agent_id=agent_id, team_id=team_id)
         existing_data = self._profile_to_memory_list(existing_profile)
 
         # Build input string from messages
@@ -504,10 +702,10 @@ class UserProfileStore(BaseLearningStore):
         tool_map = {func.__name__: func for func in tools}
 
         # Convert to Function objects for model
-        functions = self._determine_tools_for_model(tools)
+        functions = self._build_functions_for_model(tools)
 
         # Prepare messages for model
-        messages_for_model: List[Message] = [
+        messages_for_model = [
             self._get_system_message(existing_data),
             *messages,
         ]
@@ -524,25 +722,29 @@ class UserProfileStore(BaseLearningStore):
             for tool_call in response.tool_calls:
                 tool_name = tool_call.function.name
                 tool_args = tool_call.function.arguments
+                log_debug(f"Executing tool: {tool_name} with args: {tool_args}")
                 if tool_name in tool_map:
                     try:
-                        tool_map[tool_name](**tool_args)
+                        result = tool_map[tool_name](**tool_args)
+                        log_debug(f"Tool result: {result}")
                         self.profile_updated = True
                     except Exception as e:
                         log_warning(f"Error executing {tool_name}: {e}")
 
         log_debug("UserProfileStore: Extraction complete", center=True)
 
-        return response.content or "Profile updated" if self.profile_updated else "No updates needed"
+        return response.content or ("Profile updated" if self.profile_updated else "No updates needed")
 
     async def aextract_and_save(
         self,
-        messages: List[Message],
+        messages: List["Message"],
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> str:
         """Async version of extract_and_save."""
+        self.set_log_level()
+
         if self.model is None:
             log_warning("No model provided for user profile extraction")
             return "No model provided for user profile extraction"
@@ -564,27 +766,19 @@ class UserProfileStore(BaseLearningStore):
         input_string = self._messages_to_input_string(messages)
 
         # Get tools
-        if isinstance(self.db, AsyncBaseDb):
-            tools = await self._aget_extraction_tools(
-                user_id=user_id,
-                input_string=input_string,
-                agent_id=agent_id,
-                team_id=team_id,
-            )
-        else:
-            tools = self._get_extraction_tools(
-                user_id=user_id,
-                input_string=input_string,
-                agent_id=agent_id,
-                team_id=team_id,
-            )
+        tools = await self._aget_extraction_tools(
+            user_id=user_id,
+            input_string=input_string,
+            agent_id=agent_id,
+            team_id=team_id,
+        )
         tool_map = {func.__name__: func for func in tools}
 
         # Convert to Function objects for model
-        functions = self._determine_tools_for_model(tools)
+        functions = self._build_functions_for_model(tools)
 
         # Prepare messages for model
-        messages_for_model: List[Message] = [
+        messages_for_model = [
             self._get_system_message(existing_data),
             *messages,
         ]
@@ -598,26 +792,30 @@ class UserProfileStore(BaseLearningStore):
 
         # Execute tool calls
         if response.tool_calls:
+            import asyncio
+
             for tool_call in response.tool_calls:
                 tool_name = tool_call.function.name
                 tool_args = tool_call.function.arguments
+                log_debug(f"Executing tool: {tool_name} with args: {tool_args}")
                 if tool_name in tool_map:
                     try:
-                        import asyncio
-
                         if asyncio.iscoroutinefunction(tool_map[tool_name]):
-                            await tool_map[tool_name](**tool_args)
+                            result = await tool_map[tool_name](**tool_args)
                         else:
-                            tool_map[tool_name](**tool_args)
+                            result = tool_map[tool_name](**tool_args)
+                        log_debug(f"Tool result: {result}")
                         self.profile_updated = True
                     except Exception as e:
                         log_warning(f"Error executing {tool_name}: {e}")
 
         log_debug("UserProfileStore: Extraction complete", center=True)
 
-        return response.content or "Profile updated" if self.profile_updated else "No updates needed"
+        return response.content or ("Profile updated" if self.profile_updated else "No updates needed")
 
-    # --- Update Operations (called by agent tool) ---
+    # =========================================================================
+    # Update Operations (called by agent tool)
+    # =========================================================================
 
     def run_user_profile_update(
         self,
@@ -639,6 +837,8 @@ class UserProfileStore(BaseLearningStore):
         Returns:
             Response from model.
         """
+        from agno.models.message import Message
+
         messages = [Message(role="user", content=task)]
         return self.extract_and_save(
             messages=messages,
@@ -655,6 +855,8 @@ class UserProfileStore(BaseLearningStore):
         team_id: Optional[str] = None,
     ) -> str:
         """Async version of run_user_profile_update."""
+        from agno.models.message import Message
+
         messages = [Message(role="user", content=task)]
         return await self.aextract_and_save(
             messages=messages,
@@ -663,7 +865,9 @@ class UserProfileStore(BaseLearningStore):
             team_id=team_id,
         )
 
-    # --- Private Helpers ---
+    # =========================================================================
+    # Private Helpers
+    # =========================================================================
 
     def _build_profile_id(
         self,
@@ -686,7 +890,6 @@ class UserProfileStore(BaseLearningStore):
 
         memories = []
 
-        # Add memories from profile
         if hasattr(profile, "memories") and profile.memories:
             for mem in profile.memories:
                 if isinstance(mem, dict):
@@ -699,35 +902,40 @@ class UserProfileStore(BaseLearningStore):
 
         return memories
 
-    def _messages_to_input_string(self, messages: List[Message]) -> str:
+    def _messages_to_input_string(self, messages: List["Message"]) -> str:
         """Convert messages to input string."""
         if len(messages) == 1:
             return messages[0].get_content_string()
         else:
             return "\n".join([f"{m.role}: {m.get_content_string()}" for m in messages if m.content])
 
-    def _determine_tools_for_model(self, tools: List[Callable]) -> List[Union[Function, dict]]:
+    def _build_functions_for_model(self, tools: List[Callable]) -> List["Function"]:
         """Convert callables to Functions for model."""
-        _function_names: List[str] = []
-        _functions: List[Union[Function, dict]] = []
+        from agno.tools.function import Function
+
+        functions = []
+        seen_names = set()
 
         for tool in tools:
             try:
-                function_name = tool.__name__
-                if function_name in _function_names:
+                name = tool.__name__
+                if name in seen_names:
                     continue
-                _function_names.append(function_name)
+                seen_names.add(name)
+
                 func = Function.from_callable(tool, strict=True)
                 func.strict = True
-                _functions.append(func)
+                functions.append(func)
                 log_debug(f"Added function {func.name}")
             except Exception as e:
                 log_warning(f"Could not add function {tool}: {e}")
 
-        return _functions
+        return functions
 
-    def _get_system_message(self, existing_data: List[dict]) -> Message:
+    def _get_system_message(self, existing_data: List[dict]) -> "Message":
         """Build system message for extraction."""
+        from agno.models.message import Message
+
         # Full override from config
         if self.config.system_message is not None:
             return Message(role="system", content=self.config.system_message)
@@ -843,7 +1051,7 @@ class UserProfileStore(BaseLearningStore):
                 Confirmation message.
             """
             try:
-                profile = self.get(user_id, agent_id=agent_id, team_id=team_id)
+                profile = self.get(user_id=user_id, agent_id=agent_id, team_id=team_id)
                 if profile is None:
                     profile = self.schema(user_id=user_id)
 
@@ -857,7 +1065,7 @@ class UserProfileStore(BaseLearningStore):
                         }
                     )
 
-                self.save(user_id, profile, agent_id=agent_id, team_id=team_id)
+                self.save(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
                 log_debug(f"Memory added: {memory[:50]}...")
                 return f"Memory saved: {memory}"
             except Exception as e:
@@ -875,7 +1083,7 @@ class UserProfileStore(BaseLearningStore):
                 Confirmation message.
             """
             try:
-                profile = self.get(user_id, agent_id=agent_id, team_id=team_id)
+                profile = self.get(user_id=user_id, agent_id=agent_id, team_id=team_id)
                 if profile is None:
                     return "No profile found"
 
@@ -884,7 +1092,7 @@ class UserProfileStore(BaseLearningStore):
                         if isinstance(mem, dict) and mem.get("id") == memory_id:
                             mem["content"] = memory
                             mem["source"] = input_string[:200] if input_string else None
-                            self.save(user_id, profile, agent_id=agent_id, team_id=team_id)
+                            self.save(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
                             log_debug(f"Memory updated: {memory_id}")
                             return f"Memory updated: {memory}"
                     return f"Memory {memory_id} not found"
@@ -904,7 +1112,7 @@ class UserProfileStore(BaseLearningStore):
                 Confirmation message.
             """
             try:
-                profile = self.get(user_id, agent_id=agent_id, team_id=team_id)
+                profile = self.get(user_id=user_id, agent_id=agent_id, team_id=team_id)
                 if profile is None:
                     return "No profile found"
 
@@ -914,7 +1122,7 @@ class UserProfileStore(BaseLearningStore):
                         mem for mem in profile.memories if not (isinstance(mem, dict) and mem.get("id") == memory_id)
                     ]
                     if len(profile.memories) < original_len:
-                        self.save(user_id, profile, agent_id=agent_id, team_id=team_id)
+                        self.save(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
                         log_debug(f"Memory deleted: {memory_id}")
                         return f"Memory {memory_id} deleted"
                     return f"Memory {memory_id} not found"
@@ -931,7 +1139,7 @@ class UserProfileStore(BaseLearningStore):
                 Confirmation message.
             """
             try:
-                self.clear(user_id, agent_id=agent_id, team_id=team_id)
+                self.clear(user_id=user_id, agent_id=agent_id, team_id=team_id)
                 log_debug("All memories cleared")
                 return "All memories cleared"
             except Exception as e:
@@ -947,6 +1155,7 @@ class UserProfileStore(BaseLearningStore):
             functions.append(delete_memory)
         if self.config.enable_clear:
             functions.append(clear_all_memories)
+
         return functions
 
     async def _aget_extraction_tools(
@@ -968,7 +1177,7 @@ class UserProfileStore(BaseLearningStore):
                 Confirmation message.
             """
             try:
-                profile = await self.aget(user_id, agent_id=agent_id, team_id=team_id)
+                profile = await self.aget(user_id=user_id, agent_id=agent_id, team_id=team_id)
                 if profile is None:
                     profile = self.schema(user_id=user_id)
 
@@ -982,7 +1191,7 @@ class UserProfileStore(BaseLearningStore):
                         }
                     )
 
-                await self.asave(user_id, profile, agent_id=agent_id, team_id=team_id)
+                await self.asave(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
                 log_debug(f"Memory added: {memory[:50]}...")
                 return f"Memory saved: {memory}"
             except Exception as e:
@@ -1000,7 +1209,7 @@ class UserProfileStore(BaseLearningStore):
                 Confirmation message.
             """
             try:
-                profile = await self.aget(user_id, agent_id=agent_id, team_id=team_id)
+                profile = await self.aget(user_id=user_id, agent_id=agent_id, team_id=team_id)
                 if profile is None:
                     return "No profile found"
 
@@ -1009,7 +1218,7 @@ class UserProfileStore(BaseLearningStore):
                         if isinstance(mem, dict) and mem.get("id") == memory_id:
                             mem["content"] = memory
                             mem["source"] = input_string[:200] if input_string else None
-                            await self.asave(user_id, profile, agent_id=agent_id, team_id=team_id)
+                            await self.asave(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
                             log_debug(f"Memory updated: {memory_id}")
                             return f"Memory updated: {memory}"
                     return f"Memory {memory_id} not found"
@@ -1029,7 +1238,7 @@ class UserProfileStore(BaseLearningStore):
                 Confirmation message.
             """
             try:
-                profile = await self.aget(user_id, agent_id=agent_id, team_id=team_id)
+                profile = await self.aget(user_id=user_id, agent_id=agent_id, team_id=team_id)
                 if profile is None:
                     return "No profile found"
 
@@ -1039,7 +1248,7 @@ class UserProfileStore(BaseLearningStore):
                         mem for mem in profile.memories if not (isinstance(mem, dict) and mem.get("id") == memory_id)
                     ]
                     if len(profile.memories) < original_len:
-                        await self.asave(user_id, profile, agent_id=agent_id, team_id=team_id)
+                        await self.asave(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
                         log_debug(f"Memory deleted: {memory_id}")
                         return f"Memory {memory_id} deleted"
                     return f"Memory {memory_id} not found"
@@ -1056,7 +1265,7 @@ class UserProfileStore(BaseLearningStore):
                 Confirmation message.
             """
             try:
-                await self.aclear(user_id, agent_id=agent_id, team_id=team_id)
+                await self.aclear(user_id=user_id, agent_id=agent_id, team_id=team_id)
                 log_debug("All memories cleared")
                 return "All memories cleared"
             except Exception as e:
@@ -1072,4 +1281,5 @@ class UserProfileStore(BaseLearningStore):
             functions.append(delete_memory)
         if self.config.enable_clear:
             functions.append(clear_all_memories)
+
         return functions

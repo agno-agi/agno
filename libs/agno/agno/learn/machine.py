@@ -3,20 +3,26 @@ LearningMachine
 ===============
 Unified learning system for Agno agents.
 
-Ties together three types of learning (Phase 1):
+Ties together multiple learning types into one cohesive system:
 - User Profile: Long-term memory about users
 - Session Context: State and summary for current session
 - Learned Knowledge: Reusable insights with semantic search
+- Custom stores: Developer-defined learning types
 
 Future phases:
 - Decision Logs: Why decisions were made (Phase 2)
 - Behavioral Feedback: What worked, what didn't (Phase 2)
-- Self-Improvement: Evolved instructions (Phase 4)
+- Self-Improvement: Evolved instructions (Phase 3)
+
+Three DX levels:
+1. Dead Simple: Agent(model=model, db=db, learning=True)
+2. Pick What You Want: LearningMachine(db=db, user_profile=True, session_context=True)
+3. Full Control: LearningMachine(db=db, user_profile=UserProfileConfig(...), ...)
 """
 
 from dataclasses import dataclass, field
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.learn.config import (
     KnowledgeConfig,
@@ -24,6 +30,7 @@ from agno.learn.config import (
     SessionContextConfig,
     UserProfileConfig,
 )
+from agno.learn.stores.base import LearningStore
 from agno.utils.log import log_debug, log_warning
 
 
@@ -31,61 +38,68 @@ from agno.utils.log import log_debug, log_warning
 class LearningMachine:
     """Unified learning system for agents.
 
-        LearningMachine consolidates multiple learning types into one
-        configurable system with consistent patterns for storage,
-        retrieval, and lifecycle management.
+    LearningMachine consolidates multiple learning types into one
+    configurable system with consistent patterns for storage,
+    retrieval, and lifecycle management.
 
-        Three levels of DX:
+    Three levels of DX:
 
-        1. Dead Simple:
+    1. Dead Simple:
     ```python
-            agent = Agent(model=model, db=db, learning=True)
+        agent = Agent(model=model, db=db, learning=True)
     ```
 
-        2. Pick What You Want:
+    2. Pick What You Want:
     ```python
-            agent = Agent(
-                model=model,
-                db=db,
-                learning=LearningMachine(
-                    db=db,
-                    model=model,
-                    knowledge=kb,
-                    user_profile=True,
-                    session_context=True,
-                    learned_knowledge=True,
-                ),
-            )
+        learning = LearningMachine(
+            db=db,
+            model=model,
+            knowledge=kb,
+            user_profile=True,
+            session_context=True,
+            learned_knowledge=True,
+        )
     ```
 
-        3. Full Control:
+    3. Full Control:
     ```python
-            agent = Agent(
-                model=model,
-                db=db,
-                learning=LearningMachine(
-                    db=db,
-                    model=model,
-                    knowledge=kb,
-                    user_profile=UserProfileConfig(
-                        mode=LearningMode.BACKGROUND,
-                        extraction=ExtractionConfig(timing=ExtractionTiming.PARALLEL),
-                        enable_tool=True,
-                    ),
-                    session_context=SessionContextConfig(enable_planning=True),
-                    learned_knowledge=KnowledgeConfig(mode=LearningMode.PROPOSE),
-                ),
-            )
+        learning = LearningMachine(
+            db=db,
+            model=model,
+            knowledge=kb,
+            user_profile=UserProfileConfig(
+                mode=LearningMode.BACKGROUND,
+                enable_tool=True,
+            ),
+            session_context=SessionContextConfig(enable_planning=True),
+            learned_knowledge=KnowledgeConfig(mode=LearningMode.PROPOSE),
+        )
     ```
 
-        Args:
-            db: Database connection for user profile and session context.
-            model: LLM model for extraction.
-            knowledge: Knowledge base for learned knowledge (vector search).
-            instructions: Custom instructions (appended to defaults).
-            user_profile: User Profile config. True=defaults, False=disabled.
-            session_context: Session Context config. True=defaults, False=disabled.
-            learned_knowledge: Learned Knowledge config. True=defaults, False=disabled.
+    4. Custom Stores:
+    ```python
+        learning = LearningMachine(
+            db=db,
+            model=model,
+            custom_stores={
+                "project": ProjectContextStore(config=...),
+                "style": ConversationStyleStore(config=...),
+            },
+        )
+
+        # Or register dynamically
+        learning.register("project", ProjectContextStore(config=...))
+    ```
+
+    Args:
+        db: Database connection for user profile and session context.
+        model: LLM model for extraction.
+        knowledge: Knowledge base for learned knowledge (vector search).
+        instructions: Custom instructions (appended to defaults).
+        user_profile: User Profile config. True=defaults, False=disabled.
+        session_context: Session Context config. True=defaults, False=disabled.
+        learned_knowledge: Learned Knowledge config. True=defaults, False=disabled.
+        custom_stores: Dict of custom learning stores to register.
     """
 
     # Core dependencies
@@ -101,6 +115,9 @@ class LearningMachine:
     session_context: Union[bool, SessionContextConfig] = True
     learned_knowledge: Union[bool, KnowledgeConfig] = True
 
+    # Custom stores (developer-defined)
+    custom_stores: Dict[str, LearningStore] = field(default_factory=dict)
+
     # Phase 2+ (disabled by default)
     decision_logs: Union[bool, None] = False
     behavioral_feedback: Union[bool, None] = False
@@ -111,10 +128,8 @@ class LearningMachine:
     _session_context_config: Optional[SessionContextConfig] = field(default=None, init=False)
     _knowledge_config: Optional[KnowledgeConfig] = field(default=None, init=False)
 
-    # Internal: stores (initialized lazily)
-    _user_profile_store: Optional[Any] = field(default=None, init=False)
-    _session_context_store: Optional[Any] = field(default=None, init=False)
-    _knowledge_store: Optional[Any] = field(default=None, init=False)
+    # Internal: all stores (built-in + custom)
+    _stores: Dict[str, LearningStore] = field(default_factory=dict, init=False)
     _stores_initialized: bool = field(default=False, init=False)
 
     def __post_init__(self):
@@ -133,7 +148,6 @@ class LearningMachine:
         elif self.user_profile is False or self.user_profile is None:
             self._user_profile_config = None
         elif isinstance(self.user_profile, UserProfileConfig):
-            # Inject db/model if not set
             self._user_profile_config = self.user_profile
             if self._user_profile_config.db is None:
                 self._user_profile_config.db = self.db
@@ -177,112 +191,180 @@ class LearningMachine:
 
         # User Profile Store
         if self._user_profile_config and self._user_profile_config.db:
-            from agno.learn.stores.user_profile import UserProfileStore
+            from agno.learn.stores.user import UserProfileStore
 
-            self._user_profile_store = UserProfileStore(config=self._user_profile_config)
+            self._stores["user_profile"] = UserProfileStore(config=self._user_profile_config)
 
         # Session Context Store
         if self._session_context_config and self._session_context_config.db:
-            from agno.learn.stores.session_context import SessionContextStore
+            from agno.learn.stores.session import SessionContextStore
 
-            self._session_context_store = SessionContextStore(config=self._session_context_config)
+            self._stores["session_context"] = SessionContextStore(config=self._session_context_config)
 
         # Knowledge Store
         if self._knowledge_config and self._knowledge_config.knowledge:
             from agno.learn.stores.knowledge import KnowledgeStore
 
-            self._knowledge_store = KnowledgeStore(config=self._knowledge_config)
+            self._stores["learned_knowledge"] = KnowledgeStore(config=self._knowledge_config)
+
+        # Register custom stores
+        for name, store in self.custom_stores.items():
+            self._stores[name] = store
 
         self._stores_initialized = True
 
-    # --- Properties ---
+    # =========================================================================
+    # Store Access
+    # =========================================================================
 
     @property
-    def user_profile_store(self):
+    def stores(self) -> Dict[str, LearningStore]:
+        """Get all registered stores."""
+        self._init_stores()
+        return self._stores
+
+    @property
+    def user_profile_store(self) -> Optional[LearningStore]:
         """Get the user profile store (lazy init)."""
         self._init_stores()
-        return self._user_profile_store
+        return self._stores.get("user_profile")
 
     @property
-    def session_context_store(self):
+    def session_context_store(self) -> Optional[LearningStore]:
         """Get the session context store (lazy init)."""
         self._init_stores()
-        return self._session_context_store
+        return self._stores.get("session_context")
 
     @property
-    def knowledge_store(self):
+    def knowledge_store(self) -> Optional[LearningStore]:
         """Get the knowledge store (lazy init)."""
         self._init_stores()
-        return self._knowledge_store
+        return self._stores.get("learned_knowledge")
 
-    # -------------------------------------------------------------------------
+    # Config properties
+    @property
+    def user_profile_config(self) -> Optional[UserProfileConfig]:
+        """Get resolved user profile config."""
+        return self._user_profile_config
+
+    @property
+    def session_context_config(self) -> Optional[SessionContextConfig]:
+        """Get resolved session context config."""
+        return self._session_context_config
+
+    @property
+    def knowledge_config(self) -> Optional[KnowledgeConfig]:
+        """Get resolved knowledge config."""
+        return self._knowledge_config
+
+    # =========================================================================
+    # Custom Store Registration
+    # =========================================================================
+
+    def register(self, name: str, store: LearningStore) -> "LearningMachine":
+        """Register a custom learning store.
+
+        Args:
+            name: Unique name for this learning type.
+            store: The store instance.
+
+        Returns:
+            Self for chaining.
+
+        Example:
+        ```python
+            learning = LearningMachine(db=db, model=model)
+            learning.register("project", ProjectContextStore(config=...))
+            learning.register("style", ConversationStyleStore(config=...))
+        ```
+        """
+        self._init_stores()
+        self._stores[name] = store
+        self.custom_stores[name] = store
+        return self
+
+    def get_store(self, name: str) -> Optional[LearningStore]:
+        """Get a store by name.
+
+        Args:
+            name: The store name (e.g., "user_profile", "project").
+
+        Returns:
+            The store instance, or None if not found.
+        """
+        self._init_stores()
+        return self._stores.get(name)
+
+    # =========================================================================
     # Public API
-    # -------------------------------------------------------------------------
+    # =========================================================================
 
     def get_tools(
         self,
         user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        **kwargs,
     ) -> List[Callable]:
-        """Get tools to expose to the agent.
+        """Get tools from ALL stores.
 
         Args:
             user_id: User ID for user profile tool.
+            session_id: Session ID (not used, session has no tool).
             agent_id: Optional agent context.
             team_id: Optional team context.
+            **kwargs: Additional context for custom stores.
 
         Returns:
             List of tool functions.
         """
+        self._init_stores()
         tools = []
 
-        # User Profile tool
-        if self._user_profile_config and self._user_profile_config.enable_tool and self.user_profile_store and user_id:
-            tools.append(
-                self.user_profile_store.get_agent_tool(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                )
-            )
+        context = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            **kwargs,
+        }
 
-        # Knowledge tool
-        if self._knowledge_config and self._knowledge_config.enable_tool and self.knowledge_store:
-            tools.append(
-                self.knowledge_store.get_agent_tool(
-                    agent_id=agent_id,
-                    team_id=team_id,
-                )
-            )
+        for name, store in self._stores.items():
+            try:
+                store_tools = store.get_tools(**context)
+                tools.extend(store_tools)
+            except Exception as e:
+                log_warning(f"Error getting tools from {name}: {e}")
 
         return tools
 
     async def aget_tools(
         self,
         user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        **kwargs,
     ) -> List[Callable]:
         """Async version of get_tools."""
+        self._init_stores()
         tools = []
 
-        if self._user_profile_config and self._user_profile_config.enable_tool and self.user_profile_store and user_id:
-            tools.append(
-                await self.user_profile_store.aget_agent_tool(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                )
-            )
+        context = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            **kwargs,
+        }
 
-        if self._knowledge_config and self._knowledge_config.enable_tool and self.knowledge_store:
-            tools.append(
-                await self.knowledge_store.aget_agent_tool(
-                    agent_id=agent_id,
-                    team_id=team_id,
-                )
-            )
+        for name, store in self._stores.items():
+            try:
+                store_tools = await store.aget_tools(**context)
+                tools.extend(store_tools)
+            except Exception as e:
+                log_warning(f"Error getting tools from {name}: {e}")
 
         return tools
 
@@ -304,8 +386,9 @@ class LearningMachine:
         message: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        **kwargs,
     ) -> Dict[str, Any]:
-        """Retrieve relevant learnings before agent runs.
+        """Retrieve relevant learnings from ALL stores before agent runs.
 
         Args:
             user_id: User ID for user profile retrieval.
@@ -313,37 +396,30 @@ class LearningMachine:
             message: Current message for semantic search.
             agent_id: Optional agent context.
             team_id: Optional team context.
+            **kwargs: Additional context for custom stores.
 
         Returns:
-            Dictionary with retrieved learnings by type.
+            Dictionary with retrieved learnings by store name.
         """
+        self._init_stores()
         results: Dict[str, Any] = {}
 
-        # User Profile
-        if self.user_profile_store and user_id:
-            profile = self.user_profile_store.get(
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-            )
-            if profile:
-                results["user_profile"] = profile
+        context = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "message": message,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            **kwargs,
+        }
 
-        # Session Context
-        if self.session_context_store and session_id:
-            context = self.session_context_store.get(session_id=session_id)
-            if context:
-                results["session_context"] = context
-
-        # Learned Knowledge (semantic search)
-        if self.knowledge_store and message:
-            learnings = self.knowledge_store.search(
-                query=message,
-                agent_id=agent_id,
-                team_id=team_id,
-            )
-            if learnings:
-                results["learned_knowledge"] = learnings
+        for name, store in self._stores.items():
+            try:
+                data = store.recall(**context)
+                if data:
+                    results[name] = data
+            except Exception as e:
+                log_warning(f"Error in recall from {name}: {e}")
 
         return results
 
@@ -354,32 +430,28 @@ class LearningMachine:
         message: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        **kwargs,
     ) -> Dict[str, Any]:
         """Async version of recall."""
+        self._init_stores()
         results: Dict[str, Any] = {}
 
-        if self.user_profile_store and user_id:
-            profile = await self.user_profile_store.aget(
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-            )
-            if profile:
-                results["user_profile"] = profile
+        context = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "message": message,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            **kwargs,
+        }
 
-        if self.session_context_store and session_id:
-            context = await self.session_context_store.aget(session_id=session_id)
-            if context:
-                results["session_context"] = context
-
-        if self.knowledge_store and message:
-            learnings = await self.knowledge_store.asearch(
-                query=message,
-                agent_id=agent_id,
-                team_id=team_id,
-            )
-            if learnings:
-                results["learned_knowledge"] = learnings
+        for name, store in self._stores.items():
+            try:
+                data = await store.arecall(**context)
+                if data:
+                    results[name] = data
+            except Exception as e:
+                log_warning(f"Error in recall from {name}: {e}")
 
         return results
 
@@ -390,8 +462,9 @@ class LearningMachine:
         session_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        **kwargs,
     ) -> None:
-        """Extract and save learnings after agent runs.
+        """Extract and save learnings from ALL stores after agent runs.
 
         Called in background based on timing config.
 
@@ -401,36 +474,36 @@ class LearningMachine:
             session_id: Session ID for session context extraction.
             agent_id: Optional agent context.
             team_id: Optional team context.
+            **kwargs: Additional context for custom stores.
         """
+        self._init_stores()
+
         if not messages:
             return
 
-        # User Profile extraction (BACKGROUND mode only)
-        if (
-            self.user_profile_store
-            and user_id
-            and self._user_profile_config
-            and self._user_profile_config.mode == LearningMode.BACKGROUND
-        ):
-            try:
-                self.user_profile_store.extract_and_save(
-                    messages=messages,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                )
-            except Exception as e:
-                log_warning(f"Error in user profile extraction: {e}")
+        context = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            **kwargs,
+        }
 
-        # Session Context extraction (always BACKGROUND)
-        if self.session_context_store and session_id:
+        for name, store in self._stores.items():
             try:
-                self.session_context_store.extract_and_save(
-                    messages=messages,
-                    session_id=session_id,
-                )
+                # Only process if mode is BACKGROUND (for built-in stores)
+                should_process = True
+
+                if name == "user_profile" and self._user_profile_config:
+                    should_process = self._user_profile_config.mode == LearningMode.BACKGROUND
+                elif name == "learned_knowledge" and self._knowledge_config:
+                    should_process = self._knowledge_config.mode == LearningMode.BACKGROUND
+                # Session context is always BACKGROUND
+
+                if should_process:
+                    store.process(messages, **context)
             except Exception as e:
-                log_warning(f"Error in session context extraction: {e}")
+                log_warning(f"Error in process for {name}: {e}")
 
     async def aprocess(
         self,
@@ -439,40 +512,40 @@ class LearningMachine:
         session_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        **kwargs,
     ) -> None:
         """Async version of process."""
+        self._init_stores()
+
         if not messages:
             return
 
-        # User Profile extraction
-        if (
-            self.user_profile_store
-            and user_id
-            and self._user_profile_config
-            and self._user_profile_config.mode == LearningMode.BACKGROUND
-        ):
-            try:
-                await self.user_profile_store.aextract_and_save(
-                    messages=messages,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                )
-            except Exception as e:
-                log_warning(f"Error in user profile extraction: {e}")
+        context = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            **kwargs,
+        }
 
-        # Session Context extraction
-        if self.session_context_store and session_id:
+        for name, store in self._stores.items():
             try:
-                await self.session_context_store.aextract_and_save(
-                    messages=messages,
-                    session_id=session_id,
-                )
+                should_process = True
+
+                if name == "user_profile" and self._user_profile_config:
+                    should_process = self._user_profile_config.mode == LearningMode.BACKGROUND
+                elif name == "learned_knowledge" and self._knowledge_config:
+                    should_process = self._knowledge_config.mode == LearningMode.BACKGROUND
+
+                if should_process:
+                    await store.aprocess(messages, **context)
             except Exception as e:
-                log_warning(f"Error in session context extraction: {e}")
+                log_warning(f"Error in process for {name}: {e}")
 
     def format_recall_for_context(self, recall_results: Dict[str, Any]) -> str:
         """Format recall results for inclusion in system prompt.
+
+        Uses each store's format_for_prompt() method.
 
         Args:
             recall_results: Results from recall().
@@ -480,108 +553,46 @@ class LearningMachine:
         Returns:
             Formatted string for system prompt.
         """
+        self._init_stores()
         parts = []
 
-        # User Profile
-        if "user_profile" in recall_results:
-            profile = recall_results["user_profile"]
-            memories_text = None
-
-            if hasattr(profile, "get_memories_text"):
-                memories_text = profile.get_memories_text()
-            elif hasattr(profile, "memories") and profile.memories:
-                memories_text = "\n".join(f"- {m.get('content', str(m))}" for m in profile.memories)
-
-            if memories_text:
-                parts.append(
-                    dedent(f"""\
-                    <user_profile>
-                    What you know about this user:
-                    {memories_text}
-
-                    Use this to personalize responses. Current conversation takes precedence.
-                    </user_profile>
-                """)
-                )
-
-        # Session Context
-        if "session_context" in recall_results:
-            context = recall_results["session_context"]
-            context_text = None
-
-            if hasattr(context, "get_context_text"):
-                context_text = context.get_context_text()
-            elif hasattr(context, "summary") and context.summary:
-                context_text = f"Summary: {context.summary}"
-
-            if context_text:
-                parts.append(
-                    dedent(f"""\
-                    <session_context>
-                    Earlier in this session:
-                    {context_text}
-
-                    Use this for continuity. Current conversation takes precedence.
-                    </session_context>
-                """)
-                )
-
-        # Learned Knowledge
-        if "learned_knowledge" in recall_results:
-            learnings = recall_results["learned_knowledge"]
-            if learnings:
-                learnings_parts = []
-                for i, learning in enumerate(learnings, 1):
-                    if hasattr(learning, "to_text"):
-                        learnings_parts.append(f"{i}. {learning.to_text()}")
-                    elif hasattr(learning, "title") and hasattr(learning, "learning"):
-                        learnings_parts.append(f"{i}. **{learning.title}**: {learning.learning}")
-                    else:
-                        learnings_parts.append(f"{i}. {learning}")
-
-                learnings_text = "\n".join(learnings_parts)
-
-                parts.append(
-                    dedent(f"""\
-                    <relevant_learnings>
-                    Insights from past interactions:
-                    {learnings_text}
-
-                    Apply where appropriate.
-                    </relevant_learnings>
-                """)
-                )
+        for name, data in recall_results.items():
+            store = self._stores.get(name)
+            if store and data:
+                try:
+                    formatted = store.format_for_prompt(data)
+                    if formatted:
+                        parts.append(formatted)
+                except Exception as e:
+                    log_warning(f"Error formatting {name}: {e}")
 
         return "\n".join(parts)
 
-    # -------------------------------------------------------------------------
+    # =========================================================================
     # State Tracking
-    # -------------------------------------------------------------------------
+    # =========================================================================
 
     @property
     def profile_updated(self) -> bool:
         """Check if user profile was updated in last extraction."""
-        if self.user_profile_store:
-            return self.user_profile_store.profile_updated
-        return False
+        store = self.user_profile_store
+        return store.was_updated if store else False
 
     @property
     def context_updated(self) -> bool:
         """Check if session context was updated in last extraction."""
-        if self.session_context_store:
-            return self.session_context_store.context_updated
-        return False
+        store = self.session_context_store
+        return store.was_updated if store else False
 
     @property
     def learning_saved(self) -> bool:
         """Check if a learning was saved in last operation."""
-        if self.knowledge_store:
-            return self.knowledge_store.learning_saved
-        return False
+        store = self.knowledge_store
+        return store.was_updated if store else False
 
-    # -------------------------------------------------------------------------
+    # =========================================================================
     # Private Methods
-    # -------------------------------------------------------------------------
+    # =========================================================================
 
     def _build_instructions(self) -> str:
         """Build learning instructions for the system prompt."""
@@ -654,9 +665,9 @@ class LearningMachine:
         """)
 
 
-# -------------------------------------------------------------------------
+# =============================================================================
 # Convenience Factory
-# -------------------------------------------------------------------------
+# =============================================================================
 
 
 def create_learning_machine(
@@ -675,6 +686,16 @@ def create_learning_machine(
 
     Returns:
         Configured LearningMachine instance.
+
+    Example:
+    ```python
+        learning = create_learning_machine(
+            db=my_db,
+            model=my_model,
+            user_profile=True,
+            session_context=True,
+        )
+    ```
     """
     return LearningMachine(
         db=db,

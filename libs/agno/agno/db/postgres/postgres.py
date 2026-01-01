@@ -346,13 +346,13 @@ class PostgresDb(BaseDb):
             )
             return self.spans_table
 
-        if table_type == "learning":
-            self.learning_table = self._get_or_create_table(
-                table_name=self.learning_table_name,
-                table_type="learning",
+        if table_type == "learnings":
+            self.learnings_table = self._get_or_create_table(
+                table_name=self.learnings_table_name,
+                table_type="learnings",
                 create_table_if_not_found=create_table_if_not_found,
             )
-            return self.learning_table
+            return self.learnings_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 

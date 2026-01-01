@@ -2,28 +2,25 @@
 User Profile Store Cookbook
 ===========================
 
-"The measure of intelligence is the ability to change." - Albert Einstein
-
 This cookbook demonstrates the UserProfileStore - a system for remembering
 what matters about users across conversations. Not just facts, but patterns.
 Not just data, but understanding.
 
-Tests:
+This cookbook showcases:
 1. Manual memory addition - The simplest path
 2. Background extraction - Let the model find what matters
 3. Agent tool - Give agents the power to remember
-4. Multi-user isolation - Your memories are yours alone
-5. Custom instructions - Shape what gets captured
-6. Incremental updates - Knowledge compounds
-7. Delete and clear - The right to be forgotten
-8. State tracking - Know when things changed
-9. Entity context - Different agents, different perspectives
+4. Direct update - Run updates without agent wrapper
+5. Delete and clear - The right to be forgotten
+6. Entity context - Different agents, different perspectives
+7. Custom instructions - Shape what gets captured
+8. Incremental updates - Knowledge compounds
+9. State tracking - Know when things changed
 10. Deep extraction - Values, style, expertise (the good stuff)
 """
 
 from agno.db.postgres import PostgresDb
-from agno.learn.config import UserProfileConfig
-from agno.learn.stores import UserProfileStore
+from agno.learn import UserProfileConfig, UserProfileStore
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
@@ -38,7 +35,7 @@ db = PostgresDb(
 )
 model = OpenAIChat(id="gpt-5.2")
 
-# The store - where memories live
+# Setup the store - where memories live
 store = UserProfileStore(
     config=UserProfileConfig(
         db=db,
@@ -49,6 +46,9 @@ store = UserProfileStore(
         enable_clear=False,  # Make them ask twice before nuking everything
     )
 )
+
+# Setup logging (only needed when using store directly, not through LearningMachine)
+store.set_log_level()
 
 # Our cast of characters
 USER_ALICE = "alice@example.com"
@@ -135,7 +135,7 @@ def test_background_extraction():
     response = store.extract_and_save(messages=messages, user_id=USER_CHARLIE)
 
     print(f"\n📝 Extraction response: {response}")
-    print(f"🔄 Profile updated: {store.profile_updated}")
+    print(f"🔄 Profile updated: {store.was_updated}")  # Protocol property
 
     # What did we learn?
     profile = store.get(USER_CHARLIE)
@@ -168,6 +168,10 @@ def test_agent_tool():
     # Get the tool (this is what you'd give to an agent)
     update_memory = store.get_agent_tool(user_id=test_user)
 
+    # Inspect the tool
+    print(f"\n🔧 Tool name: {update_memory.__name__}")
+    print(f"   Tool doc: {update_memory.__doc__[:100]}...")
+
     # Agent calls the tool
     result = update_memory("User's favorite color is blue")
     print(f"\n🔧 Tool result: {result}")
@@ -194,7 +198,7 @@ def test_agent_tool():
 # -----------------------------------------------------------------------------
 
 
-def test_run_user_profile_update():
+def test_direct_update():
     """
     Sometimes you want to run an update without the agent wrapper.
     Same power, direct access.
@@ -208,6 +212,11 @@ def test_run_user_profile_update():
     # Start with a fact
     store.add_memory(test_user, "User works at Meta")
 
+    profile_before = store.get(test_user)
+    print(f"\n📋 Profile before update:")
+    if profile_before:
+        pprint(profile_before.to_dict())
+
     # Life changes...
     result = store.run_user_profile_update(
         task="User has left Meta and joined Anthropic as a researcher",
@@ -215,12 +224,12 @@ def test_run_user_profile_update():
     )
 
     print(f"\n📝 Update result: {result}")
-    print(f"🔄 Profile updated: {store.profile_updated}")
+    print(f"🔄 Profile updated: {store.was_updated}")
 
-    profile = store.get(test_user)
+    profile_after = store.get(test_user)
     print(f"\n📋 Profile after career change:")
-    if profile:
-        pprint(profile.to_dict())
+    if profile_after:
+        pprint(profile_after.to_dict())
 
     print("\n✅ Direct update works")
 
@@ -260,6 +269,8 @@ def test_delete_and_clear():
 
     # Delete = profile gone entirely
     deleted = store.delete(test_user)
+    print(f"🗑️  Delete returned: {deleted}")
+
     profile = store.get(test_user)
     print(f"🗑️  After delete: {profile}")
 
@@ -366,6 +377,8 @@ def test_custom_instructions():
             assert "hiking" not in content, "No hiking!"
             assert "sushi" not in content, "No sushi!"
 
+        print("\n   ✅ Personal info filtered out")
+
     print("\n✅ Custom instructions respected")
 
 
@@ -438,8 +451,8 @@ def test_state_tracking():
     ]
 
     store.extract_and_save(messages=messages_useful, user_id="useful@example.com")
-    print(f"\n🎯 After useful message: profile_updated = {store.profile_updated}")
-    assert store.profile_updated, "Should have updated"
+    print(f"\n🎯 After useful message: was_updated = {store.was_updated}")
+    assert store.was_updated, "Should have updated"
 
     # Message with nothing to extract
     messages_empty = [
@@ -447,8 +460,9 @@ def test_state_tracking():
     ]
 
     store.extract_and_save(messages=messages_empty, user_id="empty@example.com")
-    print(f"🌧️  After weather question: profile_updated = {store.profile_updated}")
+    print(f"🌧️  After weather question: was_updated = {store.was_updated}")
     # This one is tricky - depends on model interpretation
+    # Model might not call any tools, so was_updated could be False
 
     print("\n✅ State tracking works")
 
@@ -466,6 +480,8 @@ def test_deep_extraction():
     print("\n" + "=" * 60)
     print("TEST 10: Deep Extraction")
     print("=" * 60)
+
+    test_user = "deep@example.com"
 
     # A rich conversation revealing personality
     messages = [
@@ -493,9 +509,9 @@ def test_deep_extraction():
         ),
     ]
 
-    store.extract_and_save(messages=messages, user_id="deep@example.com")
+    store.extract_and_save(messages=messages, user_id=test_user)
 
-    profile = store.get("deep@example.com")
+    profile = store.get(test_user)
     print(f"\n🧠 Deep profile:")
     if profile:
         pprint(profile.to_dict())
@@ -522,6 +538,43 @@ def test_deep_extraction():
 
 
 # -----------------------------------------------------------------------------
+# Test 11: Format for Prompt
+# -----------------------------------------------------------------------------
+
+
+def test_format_for_prompt():
+    """
+    Test the format_for_prompt method for system prompt injection.
+    """
+    print("\n" + "=" * 60)
+    print("TEST 11: Format for Prompt")
+    print("=" * 60)
+
+    test_user = "prompt_test@example.com"
+
+    # Add some memories
+    store.add_memory(test_user, "User is a backend engineer")
+    store.add_memory(test_user, "User prefers detailed explanations")
+    store.add_memory(test_user, "User uses Rust and Go")
+
+    # Get profile and format it
+    profile = store.get(test_user)
+    formatted = store.format_for_prompt(profile)
+
+    print(f"\n📝 Formatted for system prompt:")
+    print("-" * 40)
+    print(formatted)
+    print("-" * 40)
+
+    # Should be XML formatted
+    assert "<user_profile>" in formatted
+    assert "</user_profile>" in formatted
+    assert "backend engineer" in formatted
+
+    print("\n✅ Format for prompt works")
+
+
+# -----------------------------------------------------------------------------
 # Cleanup
 # -----------------------------------------------------------------------------
 
@@ -545,6 +598,7 @@ def cleanup():
         "useful@example.com",
         "empty@example.com",
         "deep@example.com",
+        "prompt_test@example.com",
     ]
 
     for user_id in test_users:
@@ -568,16 +622,18 @@ if __name__ == "__main__":
     print("   Testing memory that matters")
     print("=" * 60)
 
-    test_manual_memory_addition()
-    # test_background_extraction()
+    # Run the tests you want
+    # test_manual_memory_addition()
+    test_background_extraction()
     # test_agent_tool()
-    # test_run_user_profile_update()
+    # test_direct_update()
     # test_delete_and_clear()
     # test_entity_context()
     # test_custom_instructions()
     # test_incremental_update()
     # test_state_tracking()
     # test_deep_extraction()
+    # test_format_for_prompt()
 
     # Final summary
     print("\n" + "=" * 60)
@@ -592,10 +648,10 @@ if __name__ == "__main__":
                 content = m.get("content", str(m))
                 print(f"  • {content[:60]}{'...' if len(content) > 60 else ''}")
 
-    # cleanup()  # Uncomment to wipe
+    cleanup()
 
     print("\n" + "=" * 60)
-    print("✅ All tests passed")
+    print("✅ All tests complete")
     print("   Remember: it's not about storing data.")
     print("   It's about understanding people.")
     print("=" * 60)
