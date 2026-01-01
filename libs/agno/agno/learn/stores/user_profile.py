@@ -139,9 +139,7 @@ class UserProfileStore(BaseLearningStore):
             return None
 
         if isinstance(self.db, AsyncBaseDb):
-            raise ValueError(
-                "get() is not supported with an async DB. Please use aget() instead."
-            )
+            raise ValueError("get() is not supported with an async DB. Please use aget() instead.")
 
         try:
             result = self.db.get_learning(
@@ -216,9 +214,7 @@ class UserProfileStore(BaseLearningStore):
             return
 
         if isinstance(self.db, AsyncBaseDb):
-            raise ValueError(
-                "save() is not supported with an async DB. Please use asave() instead."
-            )
+            raise ValueError("save() is not supported with an async DB. Please use asave() instead.")
 
         try:
             content = to_dict_safe(profile)
@@ -299,9 +295,7 @@ class UserProfileStore(BaseLearningStore):
             return False
 
         if isinstance(self.db, AsyncBaseDb):
-            raise ValueError(
-                "delete() is not supported with an async DB. Please use adelete() instead."
-            )
+            raise ValueError("delete() is not supported with an async DB. Please use adelete() instead.")
 
         try:
             profile_id = self._build_profile_id(user_id, agent_id, team_id)
@@ -347,9 +341,7 @@ class UserProfileStore(BaseLearningStore):
             return
 
         if isinstance(self.db, AsyncBaseDb):
-            raise ValueError(
-                "clear() is not supported with an async DB. Please use aclear() instead."
-            )
+            raise ValueError("clear() is not supported with an async DB. Please use aclear() instead.")
 
         try:
             empty_profile = self.schema(user_id=user_id)
@@ -393,9 +385,7 @@ class UserProfileStore(BaseLearningStore):
             team_id: Optional team context.
         """
         if isinstance(self.db, AsyncBaseDb):
-            raise ValueError(
-                "add_memory() is not supported with an async DB. Please use aadd_memory() instead."
-            )
+            raise ValueError("add_memory() is not supported with an async DB. Please use aadd_memory() instead.")
 
         profile = self.get(user_id, agent_id=agent_id, team_id=team_id)
 
@@ -590,6 +580,7 @@ class UserProfileStore(BaseLearningStore):
                 if tool_name in tool_map:
                     try:
                         import asyncio
+
                         if asyncio.iscoroutinefunction(tool_map[tool_name]):
                             await tool_map[tool_name](**tool_args)
                         else:
@@ -689,11 +680,7 @@ class UserProfileStore(BaseLearningStore):
         if len(messages) == 1:
             return messages[0].get_content_string()
         else:
-            return "\n".join([
-                f"{m.role}: {m.get_content_string()}"
-                for m in messages
-                if m.content
-            ])
+            return "\n".join([f"{m.role}: {m.get_content_string()}" for m in messages if m.content])
 
     def _determine_tools_for_model(self, tools: List[Callable]) -> List[Union[Function, dict]]:
         """Convert callables to Functions for model."""
@@ -838,11 +825,13 @@ class UserProfileStore(BaseLearningStore):
 
                 if hasattr(profile, "memories"):
                     memory_id = str(uuid.uuid4())[:8]
-                    profile.memories.append({
-                        "id": memory_id,
-                        "content": memory,
-                        "source": input_string[:200] if input_string else None,
-                    })
+                    profile.memories.append(
+                        {
+                            "id": memory_id,
+                            "content": memory,
+                            "source": input_string[:200] if input_string else None,
+                        }
+                    )
 
                 self.save(user_id, profile, agent_id=agent_id, team_id=team_id)
                 log_debug(f"Memory added: {memory[:50]}...")
@@ -898,8 +887,7 @@ class UserProfileStore(BaseLearningStore):
                 if hasattr(profile, "memories"):
                     original_len = len(profile.memories)
                     profile.memories = [
-                        mem for mem in profile.memories
-                        if not (isinstance(mem, dict) and mem.get("id") == memory_id)
+                        mem for mem in profile.memories if not (isinstance(mem, dict) and mem.get("id") == memory_id)
                     ]
                     if len(profile.memories) < original_len:
                         self.save(user_id, profile, agent_id=agent_id, team_id=team_id)
@@ -962,11 +950,13 @@ class UserProfileStore(BaseLearningStore):
 
                 if hasattr(profile, "memories"):
                     memory_id = str(uuid.uuid4())[:8]
-                    profile.memories.append({
-                        "id": memory_id,
-                        "content": memory,
-                        "source": input_string[:200] if input_string else None,
-                    })
+                    profile.memories.append(
+                        {
+                            "id": memory_id,
+                            "content": memory,
+                            "source": input_string[:200] if input_string else None,
+                        }
+                    )
 
                 await self.asave(user_id, profile, agent_id=agent_id, team_id=team_id)
                 log_debug(f"Memory added: {memory[:50]}...")
@@ -1022,8 +1012,7 @@ class UserProfileStore(BaseLearningStore):
                 if hasattr(profile, "memories"):
                     original_len = len(profile.memories)
                     profile.memories = [
-                        mem for mem in profile.memories
-                        if not (isinstance(mem, dict) and mem.get("id") == memory_id)
+                        mem for mem in profile.memories if not (isinstance(mem, dict) and mem.get("id") == memory_id)
                     ]
                     if len(profile.memories) < original_len:
                         await self.asave(user_id, profile, agent_id=agent_id, team_id=team_id)

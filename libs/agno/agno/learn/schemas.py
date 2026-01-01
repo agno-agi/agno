@@ -29,6 +29,7 @@ def parse_json(data: Any) -> Optional[Dict]:
         return data
     if isinstance(data, str):
         import json
+
         try:
             return json.loads(data)
         except Exception:

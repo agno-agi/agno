@@ -73,6 +73,7 @@ def to_dict_safe(obj: Any) -> Dict[str, Any]:
 
         # Plain dataclass
         from dataclasses import asdict, is_dataclass
+
         if is_dataclass(obj) and not isinstance(obj, type):
             return asdict(obj)
 
@@ -104,9 +105,11 @@ def from_dict_safe(schema: Any, data: Any) -> Optional[Any]:
 
         # Plain dataclass - try direct construction
         from dataclasses import is_dataclass
+
         if is_dataclass(schema):
             if isinstance(data, str):
                 import json
+
                 data = json.loads(data)
             if isinstance(data, dict):
                 return schema(**data)

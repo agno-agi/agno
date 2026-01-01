@@ -170,6 +170,7 @@ LEARNING_TABLE_SCHEMA = {
     "updated_at": {"type": BigInteger, "nullable": True},
 }
 
+
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.

@@ -3,10 +3,12 @@ LearningMachine
 ===============
 Unified learning system for Agno agents.
 
-Ties together six types of learning:
+Ties together three types of learning (Phase 1):
 - User Profile: Long-term memory about users
 - Session Context: State and summary for current session
 - Learned Knowledge: Reusable insights with semantic search
+
+Future phases:
 - Decision Logs: Why decisions were made (Phase 2)
 - Behavioral Feedback: What worked, what didn't (Phase 2)
 - Self-Improvement: Evolved instructions (Phase 4)
@@ -16,17 +18,12 @@ from dataclasses import dataclass, field
 from textwrap import dedent
 from typing import Any, Callable, Dict, List, Optional, Type, Union
 
-from pydantic import BaseModel
-
 from agno.learn.config import (
-    BackgroundConfig,
-    ExecutionTiming,
     KnowledgeConfig,
     LearningMode,
     SessionContextConfig,
     UserProfileConfig,
 )
-from agno.learn.schemas import DefaultLearning, DefaultSessionContext, DefaultUserProfile
 from agno.utils.log import log_debug, log_warning
 
 
@@ -34,159 +31,171 @@ from agno.utils.log import log_debug, log_warning
 class LearningMachine:
     """Unified learning system for agents.
 
-    LearningMachine consolidates multiple learning types into one
-    configurable system with consistent patterns for storage,
-    retrieval, and lifecycle management.
+        LearningMachine consolidates multiple learning types into one
+        configurable system with consistent patterns for storage,
+        retrieval, and lifecycle management.
 
-    Three levels of DX:
+        Three levels of DX:
 
-    1. Dead Simple:
-        ```python
-        agent = Agent(model=model, db=db, learning=True)
-        ```
+        1. Dead Simple:
+    ```python
+            agent = Agent(model=model, db=db, learning=True)
+    ```
 
-    2. Pick What You Want:
-        ```python
-        agent = Agent(
-            model=model,
-            db=db,
-            learning=LearningMachine(
+        2. Pick What You Want:
+    ```python
+            agent = Agent(
+                model=model,
                 db=db,
-                knowledge=kb,
-                user_profile=True,
-                session_context=True,
-                learned_knowledge=True,
-            ),
-        )
-        ```
-
-    3. Full Control:
-        ```python
-        agent = Agent(
-            model=model,
-            db=db,
-            learning=LearningMachine(
-                db=db,
-                knowledge=kb,
-                user_profile=UserProfileConfig(
-                    mode=LearningMode.BACKGROUND,
-                    background=BackgroundConfig(timing=ExecutionTiming.PARALLEL),
-                    enable_tool=True,
+                learning=LearningMachine(
+                    db=db,
+                    model=model,
+                    knowledge=kb,
+                    user_profile=True,
+                    session_context=True,
+                    learned_knowledge=True,
                 ),
-                session_context=SessionContextConfig(enable_planning=True),
-                learned_knowledge=KnowledgeConfig(mode=LearningMode.PROPOSE),
-            ),
-        )
-        ```
+            )
+    ```
 
-    Args:
-        db: Database connection for user profile and session context.
-        knowledge: Knowledge base for learned knowledge (vector search).
-        model: LLM model for extraction (uses agent's model if not provided).
-        instructions: Custom instructions (appended to defaults).
-        user_profile: User Profile config. True=defaults, False=disabled.
-        session_context: Session Context config. True=defaults, False=disabled.
-        learned_knowledge: Learned Knowledge config. True=defaults, False=disabled.
-        decision_logs: Decision Logs config (Phase 2).
-        behavioral_feedback: Behavioral Feedback config (Phase 2).
-        self_improvement: Self-Improvement config (Phase 4).
+        3. Full Control:
+    ```python
+            agent = Agent(
+                model=model,
+                db=db,
+                learning=LearningMachine(
+                    db=db,
+                    model=model,
+                    knowledge=kb,
+                    user_profile=UserProfileConfig(
+                        mode=LearningMode.BACKGROUND,
+                        extraction=ExtractionConfig(timing=ExtractionTiming.PARALLEL),
+                        enable_tool=True,
+                    ),
+                    session_context=SessionContextConfig(enable_planning=True),
+                    learned_knowledge=KnowledgeConfig(mode=LearningMode.PROPOSE),
+                ),
+            )
+    ```
+
+        Args:
+            db: Database connection for user profile and session context.
+            model: LLM model for extraction.
+            knowledge: Knowledge base for learned knowledge (vector search).
+            instructions: Custom instructions (appended to defaults).
+            user_profile: User Profile config. True=defaults, False=disabled.
+            session_context: Session Context config. True=defaults, False=disabled.
+            learned_knowledge: Learned Knowledge config. True=defaults, False=disabled.
     """
 
-    # Database for user profile and session context
+    # Core dependencies
     db: Optional[Any] = None
-
-    # Knowledge base for learned knowledge
-    knowledge: Optional[Any] = None
-
-    # Model for extraction (uses agent's model if not provided)
     model: Optional[Any] = None
+    knowledge: Optional[Any] = None
 
     # Custom instructions
     instructions: Optional[str] = None
 
-    # Learning type configs
+    # Learning type configs (bool or config object)
     user_profile: Union[bool, UserProfileConfig] = True
     session_context: Union[bool, SessionContextConfig] = True
     learned_knowledge: Union[bool, KnowledgeConfig] = True
 
-    # Phase 2 (disabled by default)
+    # Phase 2+ (disabled by default)
     decision_logs: Union[bool, None] = False
     behavioral_feedback: Union[bool, None] = False
-
-    # Phase 4 (disabled by default)
     self_improvement: Union[bool, None] = False
 
-    # Internal state (set in __post_init__)
-    user_profile_config: Optional[UserProfileConfig] = field(default=None, init=False)
-    session_context_config: Optional[SessionContextConfig] = field(default=None, init=False)
-    knowledge_config: Optional[KnowledgeConfig] = field(default=None, init=False)
+    # Internal: resolved configs (set in __post_init__)
+    _user_profile_config: Optional[UserProfileConfig] = field(default=None, init=False)
+    _session_context_config: Optional[SessionContextConfig] = field(default=None, init=False)
+    _knowledge_config: Optional[KnowledgeConfig] = field(default=None, init=False)
 
-    # Stores (initialized lazily)
+    # Internal: stores (initialized lazily)
     _user_profile_store: Optional[Any] = field(default=None, init=False)
     _session_context_store: Optional[Any] = field(default=None, init=False)
     _knowledge_store: Optional[Any] = field(default=None, init=False)
     _stores_initialized: bool = field(default=False, init=False)
 
     def __post_init__(self):
-        """Initialize configs after dataclass creation."""
-        # Normalize configs
-        self.user_profile_config = self._normalize_config(
-            self.user_profile, UserProfileConfig, UserProfileConfig()
-        )
-        self.session_context_config = self._normalize_config(
-            self.session_context, SessionContextConfig, SessionContextConfig()
-        )
-        self.knowledge_config = self._normalize_config(
-            self.learned_knowledge, KnowledgeConfig, KnowledgeConfig()
-        )
+        """Initialize and resolve configs."""
+        self._resolve_configs()
 
-    def _normalize_config(
-        self,
-        value: Union[bool, BaseModel, None],
-        config_class: Type[BaseModel],
-        default: BaseModel,
-    ) -> Optional[BaseModel]:
-        """Convert bool to config or return None if disabled."""
-        if value is True:
-            return default
-        elif value is False or value is None:
-            return None
-        elif isinstance(value, config_class):
-            return value
-        else:
-            raise ValueError(f"Expected bool or {config_class.__name__}, got {type(value)}")
+    def _resolve_configs(self) -> None:
+        """Convert bool/config inputs to fully resolved configs with dependencies."""
+
+        # User Profile
+        if self.user_profile is True:
+            self._user_profile_config = UserProfileConfig(
+                db=self.db,
+                model=self.model,
+            )
+        elif self.user_profile is False or self.user_profile is None:
+            self._user_profile_config = None
+        elif isinstance(self.user_profile, UserProfileConfig):
+            # Inject db/model if not set
+            self._user_profile_config = self.user_profile
+            if self._user_profile_config.db is None:
+                self._user_profile_config.db = self.db
+            if self._user_profile_config.model is None:
+                self._user_profile_config.model = self.model
+
+        # Session Context
+        if self.session_context is True:
+            self._session_context_config = SessionContextConfig(
+                db=self.db,
+                model=self.model,
+            )
+        elif self.session_context is False or self.session_context is None:
+            self._session_context_config = None
+        elif isinstance(self.session_context, SessionContextConfig):
+            self._session_context_config = self.session_context
+            if self._session_context_config.db is None:
+                self._session_context_config.db = self.db
+            if self._session_context_config.model is None:
+                self._session_context_config.model = self.model
+
+        # Learned Knowledge
+        if self.learned_knowledge is True:
+            self._knowledge_config = KnowledgeConfig(
+                knowledge=self.knowledge,
+                model=self.model,
+            )
+        elif self.learned_knowledge is False or self.learned_knowledge is None:
+            self._knowledge_config = None
+        elif isinstance(self.learned_knowledge, KnowledgeConfig):
+            self._knowledge_config = self.learned_knowledge
+            if self._knowledge_config.knowledge is None:
+                self._knowledge_config.knowledge = self.knowledge
+            if self._knowledge_config.model is None:
+                self._knowledge_config.model = self.model
 
     def _init_stores(self) -> None:
         """Initialize storage backends (lazy initialization)."""
         if self._stores_initialized:
             return
 
-        from agno.learn.stores.knowledge import KnowledgeStore
-        from agno.learn.stores.session_context import SessionContextStore
-        from agno.learn.stores.user_profile import UserProfileStore
-
         # User Profile Store
-        if self.user_profile_config and self.db:
-            self._user_profile_store = UserProfileStore(
-                db=self.db,
-                config=self.user_profile_config,
-            )
+        if self._user_profile_config and self._user_profile_config.db:
+            from agno.learn.stores.user_profile import UserProfileStore
+
+            self._user_profile_store = UserProfileStore(config=self._user_profile_config)
 
         # Session Context Store
-        if self.session_context_config and self.db:
-            self._session_context_store = SessionContextStore(
-                db=self.db,
-                config=self.session_context_config,
-            )
+        if self._session_context_config and self._session_context_config.db:
+            from agno.learn.stores.session_context import SessionContextStore
+
+            self._session_context_store = SessionContextStore(config=self._session_context_config)
 
         # Knowledge Store
-        if self.knowledge_config and self.knowledge:
-            self._knowledge_store = KnowledgeStore(
-                knowledge=self.knowledge,
-                config=self.knowledge_config,
-            )
+        if self._knowledge_config and self._knowledge_config.knowledge:
+            from agno.learn.stores.knowledge import KnowledgeStore
+
+            self._knowledge_store = KnowledgeStore(config=self._knowledge_config)
 
         self._stores_initialized = True
+
+    # --- Properties ---
 
     @property
     def user_profile_store(self):
@@ -210,34 +219,75 @@ class LearningMachine:
     # Public API
     # -------------------------------------------------------------------------
 
-    def get_tools(self, user_id: Optional[str] = None) -> List[Callable]:
-        """Return tools to give to the agent.
+    def get_tools(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> List[Callable]:
+        """Get tools to expose to the agent.
 
         Args:
-            user_id: User ID for user memory tool.
+            user_id: User ID for user profile tool.
+            agent_id: Optional agent context.
+            team_id: Optional team context.
 
         Returns:
             List of tool functions.
         """
         tools = []
 
-        # User Profile tool: save_user_memory
-        if (self.user_profile_config and
-            self.user_profile_config.enable_tool and
-            self.user_profile_store and
-            user_id):
-            tools.append(self._create_save_user_memory_tool(user_id))
+        # User Profile tool
+        if self._user_profile_config and self._user_profile_config.enable_tool and self.user_profile_store and user_id:
+            tools.append(
+                self.user_profile_store.get_agent_tool(
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                )
+            )
 
-        # Learned Knowledge tool: save_learning
-        if (self.knowledge_config and
-            self.knowledge_config.enable_tool and
-            self.knowledge_store):
-            tools.append(self._create_save_learning_tool())
+        # Knowledge tool
+        if self._knowledge_config and self._knowledge_config.enable_tool and self.knowledge_store:
+            tools.append(
+                self.knowledge_store.get_agent_tool(
+                    agent_id=agent_id,
+                    team_id=team_id,
+                )
+            )
+
+        return tools
+
+    async def aget_tools(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> List[Callable]:
+        """Async version of get_tools."""
+        tools = []
+
+        if self._user_profile_config and self._user_profile_config.enable_tool and self.user_profile_store and user_id:
+            tools.append(
+                await self.user_profile_store.aget_agent_tool(
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                )
+            )
+
+        if self._knowledge_config and self._knowledge_config.enable_tool and self.knowledge_store:
+            tools.append(
+                await self.knowledge_store.aget_agent_tool(
+                    agent_id=agent_id,
+                    team_id=team_id,
+                )
+            )
 
         return tools
 
     def get_system_prompt_injection(self) -> str:
-        """Return instructions to inject into system prompt.
+        """Get instructions to inject into system prompt.
 
         Returns:
             XML-formatted learning instructions.
@@ -252,6 +302,8 @@ class LearningMachine:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         message: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Retrieve relevant learnings before agent runs.
 
@@ -259,6 +311,8 @@ class LearningMachine:
             user_id: User ID for user profile retrieval.
             session_id: Session ID for session context retrieval.
             message: Current message for semantic search.
+            agent_id: Optional agent context.
+            team_id: Optional team context.
 
         Returns:
             Dictionary with retrieved learnings by type.
@@ -267,19 +321,27 @@ class LearningMachine:
 
         # User Profile
         if self.user_profile_store and user_id:
-            profile = self.user_profile_store.get(user_id)
+            profile = self.user_profile_store.get(
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+            )
             if profile:
                 results["user_profile"] = profile
 
         # Session Context
         if self.session_context_store and session_id:
-            context = self.session_context_store.get(session_id)
+            context = self.session_context_store.get(session_id=session_id)
             if context:
                 results["session_context"] = context
 
         # Learned Knowledge (semantic search)
         if self.knowledge_store and message:
-            learnings = self.knowledge_store.search(message)
+            learnings = self.knowledge_store.search(
+                query=message,
+                agent_id=agent_id,
+                team_id=team_id,
+            )
             if learnings:
                 results["learned_knowledge"] = learnings
 
@@ -290,22 +352,32 @@ class LearningMachine:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         message: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Async version of recall."""
         results: Dict[str, Any] = {}
 
         if self.user_profile_store and user_id:
-            profile = await self.user_profile_store.aget(user_id)
+            profile = await self.user_profile_store.aget(
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+            )
             if profile:
                 results["user_profile"] = profile
 
         if self.session_context_store and session_id:
-            context = await self.session_context_store.aget(session_id)
+            context = await self.session_context_store.aget(session_id=session_id)
             if context:
                 results["session_context"] = context
 
         if self.knowledge_store and message:
-            learnings = await self.knowledge_store.asearch(message)
+            learnings = await self.knowledge_store.asearch(
+                query=message,
+                agent_id=agent_id,
+                team_id=team_id,
+            )
             if learnings:
                 results["learned_knowledge"] = learnings
 
@@ -313,93 +385,88 @@ class LearningMachine:
 
     def process(
         self,
+        messages: List[Any],
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        messages: Optional[List] = None,
-        model: Optional[Any] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
     ) -> None:
         """Extract and save learnings after agent runs.
 
         Called in background based on timing config.
 
         Args:
+            messages: Conversation messages to analyze.
             user_id: User ID for user profile extraction.
             session_id: Session ID for session context extraction.
-            messages: Conversation messages to analyze.
-            model: LLM model for extraction.
+            agent_id: Optional agent context.
+            team_id: Optional team context.
         """
-        extraction_model = model or self.model
-        if not extraction_model:
-            log_warning("LearningMachine.process: No model available for extraction")
-            return
-
         if not messages:
             return
 
         # User Profile extraction (BACKGROUND mode only)
-        if (self.user_profile_store and
-            user_id and
-            self.user_profile_config and
-            self.user_profile_config.mode == LearningMode.BACKGROUND):
+        if (
+            self.user_profile_store
+            and user_id
+            and self._user_profile_config
+            and self._user_profile_config.mode == LearningMode.BACKGROUND
+        ):
             try:
                 self.user_profile_store.extract_and_save(
-                    user_id=user_id,
                     messages=messages,
-                    model=extraction_model,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
                 )
             except Exception as e:
                 log_warning(f"Error in user profile extraction: {e}")
 
         # Session Context extraction (always BACKGROUND)
-        if self.session_context_store and session_id and self.session_context_config:
+        if self.session_context_store and session_id:
             try:
                 self.session_context_store.extract_and_save(
-                    session_id=session_id,
                     messages=messages,
-                    model=extraction_model,
-                    enable_planning=self.session_context_config.enable_planning,
+                    session_id=session_id,
                 )
             except Exception as e:
                 log_warning(f"Error in session context extraction: {e}")
 
     async def aprocess(
         self,
+        messages: List[Any],
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        messages: Optional[List] = None,
-        model: Optional[Any] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
     ) -> None:
         """Async version of process."""
-        extraction_model = model or self.model
-        if not extraction_model:
-            log_warning("LearningMachine.aprocess: No model available for extraction")
-            return
-
         if not messages:
             return
 
         # User Profile extraction
-        if (self.user_profile_store and
-            user_id and
-            self.user_profile_config and
-            self.user_profile_config.mode == LearningMode.BACKGROUND):
+        if (
+            self.user_profile_store
+            and user_id
+            and self._user_profile_config
+            and self._user_profile_config.mode == LearningMode.BACKGROUND
+        ):
             try:
                 await self.user_profile_store.aextract_and_save(
-                    user_id=user_id,
                     messages=messages,
-                    model=extraction_model,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
                 )
             except Exception as e:
                 log_warning(f"Error in user profile extraction: {e}")
 
         # Session Context extraction
-        if self.session_context_store and session_id and self.session_context_config:
+        if self.session_context_store and session_id:
             try:
                 await self.session_context_store.aextract_and_save(
-                    session_id=session_id,
                     messages=messages,
-                    model=extraction_model,
-                    enable_planning=self.session_context_config.enable_planning,
+                    session_id=session_id,
                 )
             except Exception as e:
                 log_warning(f"Error in session context extraction: {e}")
@@ -418,99 +485,128 @@ class LearningMachine:
         # User Profile
         if "user_profile" in recall_results:
             profile = recall_results["user_profile"]
-            if hasattr(profile, 'get_memories_text'):
+            memories_text = None
+
+            if hasattr(profile, "get_memories_text"):
                 memories_text = profile.get_memories_text()
-            elif hasattr(profile, 'memories') and profile.memories:
-                memories_text = "\n".join(
-                    f"- {m.get('content', str(m))}" for m in profile.memories
-                )
-            else:
-                memories_text = None
+            elif hasattr(profile, "memories") and profile.memories:
+                memories_text = "\n".join(f"- {m.get('content', str(m))}" for m in profile.memories)
 
             if memories_text:
-                parts.append(dedent(f"""\
+                parts.append(
+                    dedent(f"""\
                     <user_profile>
-                    You have information about this user from previous interactions:
+                    What you know about this user:
                     {memories_text}
 
-                    Use this to personalize your responses. Prefer information from the current conversation over past memories.
+                    Use this to personalize responses. Current conversation takes precedence.
                     </user_profile>
-                """))
+                """)
+                )
 
         # Session Context
         if "session_context" in recall_results:
             context = recall_results["session_context"]
-            if hasattr(context, 'get_context_text'):
+            context_text = None
+
+            if hasattr(context, "get_context_text"):
                 context_text = context.get_context_text()
-            elif hasattr(context, 'summary') and context.summary:
+            elif hasattr(context, "summary") and context.summary:
                 context_text = f"Summary: {context.summary}"
-            else:
-                context_text = None
 
             if context_text:
-                parts.append(dedent(f"""\
+                parts.append(
+                    dedent(f"""\
                     <session_context>
-                    Here is context from earlier in this session:
+                    Earlier in this session:
                     {context_text}
 
-                    Use this to maintain continuity. Current conversation takes precedence.
+                    Use this for continuity. Current conversation takes precedence.
                     </session_context>
-                """))
+                """)
+                )
 
         # Learned Knowledge
         if "learned_knowledge" in recall_results:
             learnings = recall_results["learned_knowledge"]
             if learnings:
-                learnings_text = ""
+                learnings_parts = []
                 for i, learning in enumerate(learnings, 1):
-                    if hasattr(learning, 'to_text'):
-                        learnings_text += f"\n{i}. {learning.to_text()}"
-                    elif hasattr(learning, 'title') and hasattr(learning, 'learning'):
-                        learnings_text += f"\n{i}. {learning.title}: {learning.learning}"
+                    if hasattr(learning, "to_text"):
+                        learnings_parts.append(f"{i}. {learning.to_text()}")
+                    elif hasattr(learning, "title") and hasattr(learning, "learning"):
+                        learnings_parts.append(f"{i}. **{learning.title}**: {learning.learning}")
                     else:
-                        learnings_text += f"\n{i}. {learning}"
+                        learnings_parts.append(f"{i}. {learning}")
 
-                parts.append(dedent(f"""\
+                learnings_text = "\n".join(learnings_parts)
+
+                parts.append(
+                    dedent(f"""\
                     <relevant_learnings>
-                    The following learnings from past interactions may be relevant:
+                    Insights from past interactions:
                     {learnings_text}
 
-                    Apply these insights where appropriate.
+                    Apply where appropriate.
                     </relevant_learnings>
-                """))
+                """)
+                )
 
         return "\n".join(parts)
+
+    # -------------------------------------------------------------------------
+    # State Tracking
+    # -------------------------------------------------------------------------
+
+    @property
+    def profile_updated(self) -> bool:
+        """Check if user profile was updated in last extraction."""
+        if self.user_profile_store:
+            return self.user_profile_store.profile_updated
+        return False
+
+    @property
+    def context_updated(self) -> bool:
+        """Check if session context was updated in last extraction."""
+        if self.session_context_store:
+            return self.session_context_store.context_updated
+        return False
+
+    @property
+    def learning_saved(self) -> bool:
+        """Check if a learning was saved in last operation."""
+        if self.knowledge_store:
+            return self.knowledge_store.learning_saved
+        return False
 
     # -------------------------------------------------------------------------
     # Private Methods
     # -------------------------------------------------------------------------
 
     def _build_instructions(self) -> str:
-        """Build default learning instructions for the system prompt."""
+        """Build learning instructions for the system prompt."""
         sections = []
 
-        # Only add instructions if we have enabled features
-        enabled_features = []
-        if self.user_profile_config:
-            enabled_features.append("user profile")
-        if self.session_context_config:
-            enabled_features.append("session context")
-        if self.knowledge_config:
-            enabled_features.append("learned knowledge")
+        # Check what's enabled
+        has_user_profile = self._user_profile_config is not None
+        has_session_context = self._session_context_config is not None
+        has_knowledge = self._knowledge_config is not None
 
-        if not enabled_features:
+        if not (has_user_profile or has_session_context or has_knowledge):
             return ""
 
         sections.append("You are a learning agent that improves over time.")
 
         # Tools section
         tool_lines = []
-        if self.user_profile_config and self.user_profile_config.enable_tool:
+
+        if has_user_profile and self._user_profile_config.enable_tool:
             tool_lines.append(
-                "- `save_user_memory(memory)`: Save a memory about the current user. "
-                "Use this to remember important information like preferences, context, or facts."
+                "- `update_user_memory(task)`: Update information about the user. "
+                "Use to save, update, or forget user details like preferences and context."
             )
-        if self.knowledge_config and self.knowledge_config.enable_tool:
+
+        if has_knowledge and self._knowledge_config.enable_tool:
             tool_lines.append(
                 "- `save_learning(title, learning, context, tags)`: Save a reusable insight. "
                 "Only call after user confirms a proposed learning."
@@ -520,7 +616,7 @@ class LearningMachine:
             sections.append("## Learning Tools\n" + "\n".join(tool_lines))
 
         # PROPOSE mode instructions
-        if self.knowledge_config and self.knowledge_config.mode == LearningMode.PROPOSE:
+        if has_knowledge and self._knowledge_config.mode == LearningMode.PROPOSE:
             sections.append(self._get_propose_instructions())
 
         # Custom instructions
@@ -547,100 +643,25 @@ class LearningMachine:
             Save this? (yes/no)
             ---
 
-            Only call `save_learning` AFTER the user confirms with "yes".
+            Only call `save_learning` AFTER the user confirms.
 
             What makes a good learning:
             - **Specific**: "Check expense ratio AND tracking error" not "Look at metrics"
-            - **Actionable**: Can be directly applied in future queries
+            - **Actionable**: Can be directly applied in future
             - **Generalizable**: Useful beyond this specific question
 
             Most conversations won't produce a learning. That's expected.
         """)
 
-    def _create_save_user_memory_tool(self, user_id: str) -> Callable:
-        """Create the save_user_memory tool function."""
-        store = self.user_profile_store
 
-        def save_user_memory(memory: str) -> str:
-            """Save a memory about the current user.
-
-            Use this to remember important information about the user like:
-            - Personal facts (name, occupation, location)
-            - Preferences (communication style, interests)
-            - Context (current projects, goals)
-
-            Args:
-                memory: The memory to save about the user.
-
-            Returns:
-                Confirmation message.
-            """
-            if not memory or not memory.strip():
-                return "Cannot save empty memory."
-
-            try:
-                store.add_memory(user_id=user_id, memory=memory.strip())
-                return f"Memory saved: {memory.strip()}"
-            except Exception as e:
-                return f"Failed to save memory: {e}"
-
-        return save_user_memory
-
-    def _create_save_learning_tool(self) -> Callable:
-        """Create the save_learning tool function."""
-        store = self.knowledge_store
-
-        def save_learning(
-            title: str,
-            learning: str,
-            context: Optional[str] = None,
-            tags: Optional[List[str]] = None,
-        ) -> str:
-            """Save a reusable learning to the knowledge base.
-
-            Only call this AFTER the user has confirmed they want to save.
-
-            A learning should be:
-            - Specific and actionable
-            - Applicable to future similar tasks
-            - Based on what actually worked
-
-            Args:
-                title: Short descriptive title (e.g., "API rate limit handling")
-                learning: The actual insight (be specific!)
-                context: When/why this applies (optional)
-                tags: Relevant tags for retrieval (optional)
-
-            Returns:
-                Confirmation message.
-            """
-            if not title or not title.strip():
-                return "Cannot save: title is required."
-            if not learning or not learning.strip():
-                return "Cannot save: learning content is required."
-            if len(learning.strip()) < 20:
-                return "Cannot save: learning is too short. Be more specific."
-
-            try:
-                success = store.save(
-                    title=title.strip(),
-                    learning=learning.strip(),
-                    context=context.strip() if context else None,
-                    tags=tags or [],
-                )
-                if success:
-                    return f"Learning saved: '{title.strip()}'"
-                else:
-                    return "Failed to save learning."
-            except Exception as e:
-                return f"Failed to save learning: {e}"
-
-        return save_learning
+# -------------------------------------------------------------------------
+# Convenience Factory
+# -------------------------------------------------------------------------
 
 
-# Convenience function for creating LearningMachine with defaults
 def create_learning_machine(
     db=None,
+    model=None,
     knowledge=None,
     **kwargs,
 ) -> LearningMachine:
@@ -648,6 +669,7 @@ def create_learning_machine(
 
     Args:
         db: Database connection.
+        model: LLM model for extraction.
         knowledge: Knowledge base for learned knowledge.
         **kwargs: Additional config overrides.
 
@@ -656,6 +678,7 @@ def create_learning_machine(
     """
     return LearningMachine(
         db=db,
+        model=model,
         knowledge=knowledge,
         **kwargs,
     )

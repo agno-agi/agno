@@ -1,8 +1,7 @@
-from agno.learn.machine import LearningMachine, create_learning_machine
 from agno.learn.config import (
-    BackgroundConfig,
     DecisionLogConfig,
-    ExecutionTiming,
+    ExtractionConfig,
+    ExtractionTiming,
     FeedbackConfig,
     KnowledgeConfig,
     LearningMode,
@@ -10,13 +9,14 @@ from agno.learn.config import (
     SessionContextConfig,
     UserProfileConfig,
 )
+from agno.learn.machine import LearningMachine, create_learning_machine
 from agno.learn.schemas import (
-    DefaultDecision,
-    DefaultFeedback,
-    DefaultInstructionUpdate,
-    DefaultLearning,
-    DefaultSessionContext,
-    DefaultUserProfile,
+    BaseDecision,
+    BaseFeedback,
+    BaseInstructionUpdate,
+    BaseLearning,
+    BaseSessionContext,
+    BaseUserProfile,
 )
 
 __all__ = [
@@ -25,9 +25,9 @@ __all__ = [
     "create_learning_machine",
     # Enums
     "LearningMode",
-    "ExecutionTiming",
+    "ExtractionTiming",
     # Configs
-    "BackgroundConfig",
+    "ExtractionConfig",
     "UserProfileConfig",
     "SessionContextConfig",
     "KnowledgeConfig",
@@ -35,10 +35,10 @@ __all__ = [
     "FeedbackConfig",
     "SelfImprovementConfig",
     # Schemas
-    "DefaultUserProfile",
-    "DefaultSessionContext",
-    "DefaultLearning",
-    "DefaultDecision",
-    "DefaultFeedback",
-    "DefaultInstructionUpdate",
+    "BaseUserProfile",
+    "BaseSessionContext",
+    "BaseLearning",
+    "BaseDecision",
+    "BaseFeedback",
+    "BaseInstructionUpdate",
 ]

@@ -125,7 +125,10 @@ def test_background_extraction():
         Message(role="assistant", content="Nice to meet you Charlie! How can I help?"),
         Message(role="user", content="I'm working on our payments API documentation."),
         Message(role="assistant", content="Happy to help with docs. What do you need?"),
-        Message(role="user", content="I prefer concise explanations with code examples. I use TypeScript."),
+        Message(
+            role="user",
+            content="I prefer concise explanations with code examples. I use TypeScript.",
+        ),
     ]
 
     # Extract what matters
@@ -398,7 +401,9 @@ def test_incremental_update():
     messages_2 = [
         Message(role="user", content="I'm working on Vision Pro UI."),
         Message(role="assistant", content="Exciting!"),
-        Message(role="user", content="I specialize in spatial design and 3D interfaces."),
+        Message(
+            role="user", content="I specialize in spatial design and 3D interfaces."
+        ),
     ]
 
     store.extract_and_save(messages=messages_2, user_id=test_user)
@@ -469,7 +474,10 @@ def test_deep_extraction():
             content="I've been thinking about our AI safety work. I believe in being direct "
             "about risks, even when it's uncomfortable. Too many researchers hedge.",
         ),
-        Message(role="assistant", content="That's a principled stance. What drives that view?"),
+        Message(
+            role="assistant",
+            content="That's a principled stance. What drives that view?",
+        ),
         Message(
             role="user",
             content="I worked at DeepMind for 5 years. Saw too much 'we'll figure it out later.' "
@@ -498,7 +506,9 @@ def test_deep_extraction():
         checks = {
             "values": any(x in all_content for x in ["direct", "principled", "risks"]),
             "career": any(x in all_content for x in ["deepmind", "anthropic"]),
-            "style": any(x in all_content for x in ["first-principles", "fundamentals"]),
+            "style": any(
+                x in all_content for x in ["first-principles", "fundamentals"]
+            ),
             "prefs": any(x in all_content for x in ["async", "slack"]),
             "frustrations": any(x in all_content for x in ["frustrated", "jargon"]),
         }

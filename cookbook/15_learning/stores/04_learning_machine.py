@@ -13,20 +13,20 @@ Features tested:
 """
 
 from agno.db.postgres import PostgresDb
-from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.pgvector import PgVector
 from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.learn import (
-    LearningMachine,
-    LearningMode,
     BackgroundConfig,
     ExecutionTiming,
-    UserProfileConfig,
-    SessionContextConfig,
     KnowledgeConfig,
+    LearningMachine,
+    LearningMode,
+    SessionContextConfig,
+    UserProfileConfig,
 )
-from agno.models.openai import OpenAIChat
 from agno.models.message import Message
+from agno.models.openai import OpenAIChat
+from agno.vectordb.pgvector import PgVector
 from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -157,11 +157,14 @@ def test_recall():
     print("\nSeeding test data...")
 
     # Add user profile
-    lm._user_profile_store.add_memory(user_id, "Software engineer specializing in Python")
+    lm._user_profile_store.add_memory(
+        user_id, "Software engineer specializing in Python"
+    )
     lm._user_profile_store.add_memory(user_id, "Prefers concise explanations")
 
     # Add session context
     from agno.learn.schemas import DefaultSessionContext
+
     context = DefaultSessionContext(
         session_id=session_id,
         summary="Working on API optimization project",
@@ -211,9 +214,17 @@ def test_process():
     messages = [
         Message(role="user", content="Hi, I'm Alex from the DevOps team at Acme Corp."),
         Message(role="assistant", content="Hello Alex! How can I help you today?"),
-        Message(role="user", content="I need help setting up a CI/CD pipeline for our new microservices."),
-        Message(role="assistant", content="I can help with that. What's your current setup?"),
-        Message(role="user", content="We're using GitHub Actions and want to deploy to Kubernetes."),
+        Message(
+            role="user",
+            content="I need help setting up a CI/CD pipeline for our new microservices.",
+        ),
+        Message(
+            role="assistant", content="I can help with that. What's your current setup?"
+        ),
+        Message(
+            role="user",
+            content="We're using GitHub Actions and want to deploy to Kubernetes.",
+        ),
     ]
 
     test_user = "process_test_user@example.com"
@@ -296,12 +307,12 @@ def test_tools_generation():
 
     print(f"\nGenerated {len(tools)} tools:")
     for tool in tools:
-        name = tool.__name__ if hasattr(tool, '__name__') else str(tool)
+        name = tool.__name__ if hasattr(tool, "__name__") else str(tool)
         print(f"  - {name}")
 
     # Test tool functions
     print("\nTesting save_user_memory tool...")
-    save_memory_tool = next((t for t in tools if 'memory' in str(t).lower()), None)
+    save_memory_tool = next((t for t in tools if "memory" in str(t).lower()), None)
     if save_memory_tool:
         # Call the tool
         result = save_memory_tool("Test memory from tool")

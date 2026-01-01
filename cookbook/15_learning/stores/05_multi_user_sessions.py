@@ -16,14 +16,15 @@ have its own context.
 """
 
 import asyncio
+
 from agno.db.postgres import PostgresDb
 from agno.learn import (
     LearningMachine,
-    UserProfileConfig,
     SessionContextConfig,
+    UserProfileConfig,
 )
-from agno.models.openai import OpenAIChat
 from agno.models.message import Message
+from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -55,10 +56,7 @@ def simulate_conversation(user_id: str, session_id: str, messages: list):
     print(f"\n  [{user_id}] Session: {session_id}")
 
     # Convert to Message objects
-    msg_objects = [
-        Message(role=m["role"], content=m["content"])
-        for m in messages
-    ]
+    msg_objects = [Message(role=m["role"], content=m["content"]) for m in messages]
 
     # Run extraction
     learning.process(
@@ -84,12 +82,27 @@ def run_conversations():
         user_id=alice_id,
         session_id=alice_session_1,
         messages=[
-            {"role": "user", "content": "Hi! I'm Alice, a senior engineer at Stripe. I need help planning a new payment gateway."},
-            {"role": "assistant", "content": "Hello Alice! I'd be happy to help with your payment gateway project. What are the key requirements?"},
-            {"role": "user", "content": "We need to support multiple currencies, have sub-100ms latency, and handle 10k TPS."},
-            {"role": "assistant", "content": "Those are solid requirements. Let me suggest a phased approach..."},
-            {"role": "user", "content": "I prefer working with Go for high-performance systems. Also, we use PostgreSQL for persistence."},
-        ]
+            {
+                "role": "user",
+                "content": "Hi! I'm Alice, a senior engineer at Stripe. I need help planning a new payment gateway.",
+            },
+            {
+                "role": "assistant",
+                "content": "Hello Alice! I'd be happy to help with your payment gateway project. What are the key requirements?",
+            },
+            {
+                "role": "user",
+                "content": "We need to support multiple currencies, have sub-100ms latency, and handle 10k TPS.",
+            },
+            {
+                "role": "assistant",
+                "content": "Those are solid requirements. Let me suggest a phased approach...",
+            },
+            {
+                "role": "user",
+                "content": "I prefer working with Go for high-performance systems. Also, we use PostgreSQL for persistence.",
+            },
+        ],
     )
 
     # Alice - Session 2: Code Review
@@ -99,9 +112,15 @@ def run_conversations():
         messages=[
             {"role": "user", "content": "Can you review this error handling code?"},
             {"role": "assistant", "content": "Sure, please share the code."},
-            {"role": "user", "content": "func handleError(err error) { if err != nil { log.Fatal(err) } }"},
-            {"role": "assistant", "content": "Using log.Fatal in production code is usually not ideal. Consider returning errors instead."},
-        ]
+            {
+                "role": "user",
+                "content": "func handleError(err error) { if err != nil { log.Fatal(err) } }",
+            },
+            {
+                "role": "assistant",
+                "content": "Using log.Fatal in production code is usually not ideal. Consider returning errors instead.",
+            },
+        ],
     )
 
     # Bob - Session 1: Debugging
@@ -109,12 +128,27 @@ def run_conversations():
         user_id=bob_id,
         session_id=bob_session_1,
         messages=[
-            {"role": "user", "content": "Hey, I'm Bob. I'm debugging a memory leak in our Node.js app."},
-            {"role": "assistant", "content": "Hi Bob! Memory leaks in Node can be tricky. What symptoms are you seeing?"},
-            {"role": "user", "content": "The heap keeps growing even with low traffic. I've already checked for event listener leaks."},
-            {"role": "assistant", "content": "Good that you checked event listeners. Let's look at closures and global variables next."},
-            {"role": "user", "content": "I'm using VSCode with the built-in debugger. Any tips for heap snapshots?"},
-        ]
+            {
+                "role": "user",
+                "content": "Hey, I'm Bob. I'm debugging a memory leak in our Node.js app.",
+            },
+            {
+                "role": "assistant",
+                "content": "Hi Bob! Memory leaks in Node can be tricky. What symptoms are you seeing?",
+            },
+            {
+                "role": "user",
+                "content": "The heap keeps growing even with low traffic. I've already checked for event listener leaks.",
+            },
+            {
+                "role": "assistant",
+                "content": "Good that you checked event listeners. Let's look at closures and global variables next.",
+            },
+            {
+                "role": "user",
+                "content": "I'm using VSCode with the built-in debugger. Any tips for heap snapshots?",
+            },
+        ],
     )
 
     # Carol - Session 1: Architecture Discussion
@@ -122,14 +156,32 @@ def run_conversations():
         user_id=carol_id,
         session_id=carol_session_1,
         messages=[
-            {"role": "user", "content": "Hi, I'm Carol, the tech lead at a fintech startup."},
+            {
+                "role": "user",
+                "content": "Hi, I'm Carol, the tech lead at a fintech startup.",
+            },
             {"role": "assistant", "content": "Hello Carol! How can I help you today?"},
-            {"role": "user", "content": "We're debating between microservices and a modular monolith."},
-            {"role": "assistant", "content": "Great question. For a startup, I often recommend starting with a modular monolith."},
-            {"role": "user", "content": "That makes sense. We're a small team of 5 engineers."},
-            {"role": "assistant", "content": "With 5 engineers, a monolith will definitely reduce operational overhead."},
-            {"role": "user", "content": "We're using Python with FastAPI. What about async patterns?"},
-        ]
+            {
+                "role": "user",
+                "content": "We're debating between microservices and a modular monolith.",
+            },
+            {
+                "role": "assistant",
+                "content": "Great question. For a startup, I often recommend starting with a modular monolith.",
+            },
+            {
+                "role": "user",
+                "content": "That makes sense. We're a small team of 5 engineers.",
+            },
+            {
+                "role": "assistant",
+                "content": "With 5 engineers, a monolith will definitely reduce operational overhead.",
+            },
+            {
+                "role": "user",
+                "content": "We're using Python with FastAPI. What about async patterns?",
+            },
+        ],
     )
 
 
@@ -177,7 +229,9 @@ def verify_session_isolation():
         context = learning._session_context_store.get(session_id)
         print(f"\n{description} ({session_id}):")
         if context:
-            print(f"  Summary: {context.summary[:80] if context.summary else 'None'}...")
+            print(
+                f"  Summary: {context.summary[:80] if context.summary else 'None'}..."
+            )
             if context.goal:
                 print(f"  Goal: {context.goal[:60]}...")
             if context.plan:
@@ -189,7 +243,9 @@ def verify_session_isolation():
     ctx_1 = learning._session_context_store.get(alice_session_1)
     ctx_2 = learning._session_context_store.get(alice_session_2)
     if ctx_1 and ctx_2:
-        assert ctx_1.summary != ctx_2.summary, "Sessions should have different summaries"
+        assert ctx_1.summary != ctx_2.summary, (
+            "Sessions should have different summaries"
+        )
         print("\n✓ Session contexts are properly isolated")
 
 
@@ -211,7 +267,9 @@ def test_recall_for_user():
     if alice_recall.get("user_profile"):
         print(f"  User profile: {alice_recall['user_profile'].memories[:2]}...")
     if alice_recall.get("session_context"):
-        print(f"  Session context: {alice_recall['session_context'].summary[:60] if alice_recall['session_context'].summary else 'None'}...")
+        print(
+            f"  Session context: {alice_recall['session_context'].summary[:60] if alice_recall['session_context'].summary else 'None'}..."
+        )
 
     # Bob asks a question
     print("\nBob asks: 'How do I take a heap snapshot?'")
@@ -225,7 +283,9 @@ def test_recall_for_user():
     if bob_recall.get("user_profile"):
         print(f"  User profile: {bob_recall['user_profile'].memories[:2]}...")
     if bob_recall.get("session_context"):
-        print(f"  Session context: {bob_recall['session_context'].summary[:60] if bob_recall['session_context'].summary else 'None'}...")
+        print(
+            f"  Session context: {bob_recall['session_context'].summary[:60] if bob_recall['session_context'].summary else 'None'}..."
+        )
 
     # Verify correct data
     if alice_recall.get("user_profile") and bob_recall.get("user_profile"):
@@ -233,8 +293,9 @@ def test_recall_for_user():
         bob_data = str(bob_recall["user_profile"].to_dict()).lower()
 
         # Alice's recall shouldn't have Node.js stuff
-        assert "node" not in alice_data or "stripe" in alice_data, \
+        assert "node" not in alice_data or "stripe" in alice_data, (
             "Alice's recall should be about her context"
+        )
 
         print("\n✓ Recall returns correct data per user")
 

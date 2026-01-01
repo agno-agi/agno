@@ -81,12 +81,24 @@ def test_basic_summary():
     print("=" * 60)
 
     messages = [
-        Message(role="user", content="I need help researching LLM fine-tuning techniques."),
-        Message(role="assistant", content="I can help with that. What's your use case?"),
-        Message(role="user", content="I want to fine-tune Llama 3 for code generation."),
-        Message(role="assistant", content="Great choice. You'll want to look at LoRA and QLoRA for efficient fine-tuning."),
+        Message(
+            role="user", content="I need help researching LLM fine-tuning techniques."
+        ),
+        Message(
+            role="assistant", content="I can help with that. What's your use case?"
+        ),
+        Message(
+            role="user", content="I want to fine-tune Llama 3 for code generation."
+        ),
+        Message(
+            role="assistant",
+            content="Great choice. You'll want to look at LoRA and QLoRA for efficient fine-tuning.",
+        ),
         Message(role="user", content="What datasets should I use?"),
-        Message(role="assistant", content="For code generation, consider CodeAlpaca, CodeSearchNet, or The Stack."),
+        Message(
+            role="assistant",
+            content="For code generation, consider CodeAlpaca, CodeSearchNet, or The Stack.",
+        ),
     ]
 
     response = store.extract_and_save(
@@ -122,11 +134,22 @@ def test_planning_mode():
 
     messages = [
         Message(role="user", content="I want to build a REST API for my todo app."),
-        Message(role="assistant", content="Great! Let's break this down. What features do you need?"),
-        Message(role="user", content="Basic CRUD, user auth, and categories for todos."),
-        Message(role="assistant", content="Here's a plan: 1) Set up FastAPI, 2) Create models, 3) CRUD endpoints, 4) JWT auth, 5) Categories."),
+        Message(
+            role="assistant",
+            content="Great! Let's break this down. What features do you need?",
+        ),
+        Message(
+            role="user", content="Basic CRUD, user auth, and categories for todos."
+        ),
+        Message(
+            role="assistant",
+            content="Here's a plan: 1) Set up FastAPI, 2) Create models, 3) CRUD endpoints, 4) JWT auth, 5) Categories.",
+        ),
         Message(role="user", content="Perfect. I've done steps 1 and 2 already."),
-        Message(role="assistant", content="Excellent! Next up: CRUD endpoints. Want to start with creating todos?"),
+        Message(
+            role="assistant",
+            content="Excellent! Next up: CRUD endpoints. Want to start with creating todos?",
+        ),
     ]
 
     response = planning_store.extract_and_save(
@@ -145,7 +168,9 @@ def test_planning_mode():
         print(f"\n   Summary: {context.summary[:80] if context.summary else 'None'}...")
         print(f"   Goal: {context.goal or 'Not identified'}")
         print(f"   Plan: {len(context.plan) if context.plan else 0} steps")
-        print(f"   Progress: {len(context.progress) if context.progress else 0} completed")
+        print(
+            f"   Progress: {len(context.progress) if context.progress else 0} completed"
+        )
 
     print("\n✅ Planning mode works")
 
@@ -216,7 +241,9 @@ def test_context_replacement():
     # First conversation: Python
     messages_1 = [
         Message(role="user", content="Let's talk about Python decorators."),
-        Message(role="assistant", content="Decorators are functions that modify functions."),
+        Message(
+            role="assistant", content="Decorators are functions that modify functions."
+        ),
         Message(role="user", content="How do I write one?"),
     ]
 
@@ -364,13 +391,20 @@ def test_state_tracking():
 
     # Meaningful conversation
     messages_meaningful = [
-        Message(role="user", content="I'm building a recommendation system for movies."),
+        Message(
+            role="user", content="I'm building a recommendation system for movies."
+        ),
         Message(role="assistant", content="Collaborative filtering or content-based?"),
-        Message(role="user", content="Hybrid approach. I have user ratings and movie metadata."),
+        Message(
+            role="user",
+            content="Hybrid approach. I have user ratings and movie metadata.",
+        ),
     ]
 
     store.extract_and_save(messages=messages_meaningful, session_id="track_test_1")
-    print(f"\n🎯 After meaningful conversation: context_updated = {store.context_updated}")
+    print(
+        f"\n🎯 After meaningful conversation: context_updated = {store.context_updated}"
+    )
     assert store.context_updated, "Should have updated"
 
     # Trivial conversation
@@ -423,7 +457,10 @@ def test_multi_turn_evolution():
     # Turn 2: More details
     messages_2 = [
         Message(role="user", content="I want to scrape job listings from LinkedIn."),
-        Message(role="assistant", content="That's tricky - LinkedIn blocks scrapers. Let's use their API or try Selenium."),
+        Message(
+            role="assistant",
+            content="That's tricky - LinkedIn blocks scrapers. Let's use their API or try Selenium.",
+        ),
     ]
     all_messages.extend(messages_2)
 
@@ -437,7 +474,10 @@ def test_multi_turn_evolution():
     # Turn 3: Decision made
     messages_3 = [
         Message(role="user", content="Let's use Selenium. What's the plan?"),
-        Message(role="assistant", content="1) Set up Selenium, 2) Login flow, 3) Navigate to jobs, 4) Extract data, 5) Save to CSV."),
+        Message(
+            role="assistant",
+            content="1) Set up Selenium, 2) Login flow, 3) Navigate to jobs, 4) Extract data, 5) Save to CSV.",
+        ),
         Message(role="user", content="I've got Selenium installed."),
     ]
     all_messages.extend(messages_3)

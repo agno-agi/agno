@@ -72,9 +72,7 @@ class SessionContextStore(BaseLearningStore):
             return None
 
         if isinstance(self.db, AsyncBaseDb):
-            raise ValueError(
-                "get() is not supported with an async DB. Please use aget() instead."
-            )
+            raise ValueError("get() is not supported with an async DB. Please use aget() instead.")
 
         try:
             result = self.db.get_learning(
@@ -132,9 +130,7 @@ class SessionContextStore(BaseLearningStore):
             return
 
         if isinstance(self.db, AsyncBaseDb):
-            raise ValueError(
-                "save() is not supported with an async DB. Please use asave() instead."
-            )
+            raise ValueError("save() is not supported with an async DB. Please use asave() instead.")
 
         try:
             content = to_dict_safe(context)
@@ -196,9 +192,7 @@ class SessionContextStore(BaseLearningStore):
             return False
 
         if isinstance(self.db, AsyncBaseDb):
-            raise ValueError(
-                "delete() is not supported with an async DB. Please use adelete() instead."
-            )
+            raise ValueError("delete() is not supported with an async DB. Please use adelete() instead.")
 
         try:
             return self.db.delete_learning(id=f"session_context_{session_id}")
@@ -230,9 +224,7 @@ class SessionContextStore(BaseLearningStore):
             return
 
         if isinstance(self.db, AsyncBaseDb):
-            raise ValueError(
-                "clear() is not supported with an async DB. Please use aclear() instead."
-            )
+            raise ValueError("clear() is not supported with an async DB. Please use aclear() instead.")
 
         try:
             empty_context = self.schema(session_id=session_id)
@@ -281,8 +273,7 @@ class SessionContextStore(BaseLearningStore):
 
         if isinstance(self.db, AsyncBaseDb):
             raise ValueError(
-                "extract_and_save() is not supported with an async DB. "
-                "Please use aextract_and_save() instead."
+                "extract_and_save() is not supported with an async DB. Please use aextract_and_save() instead."
             )
 
         # Skip if no meaningful messages
@@ -379,6 +370,7 @@ class SessionContextStore(BaseLearningStore):
                 if tool_name in tool_map:
                     try:
                         import asyncio
+
                         if asyncio.iscoroutinefunction(tool_map[tool_name]):
                             await tool_map[tool_name](**tool_args)
                         else:
@@ -636,7 +628,7 @@ class SessionContextStore(BaseLearningStore):
             parts.append(f"Current Goal: {context.goal}")
 
         if hasattr(context, "plan") and context.plan:
-            plan_text = "\n".join(f"  {i+1}. {step}" for i, step in enumerate(context.plan))
+            plan_text = "\n".join(f"  {i + 1}. {step}" for i, step in enumerate(context.plan))
             parts.append(f"Plan:\n{plan_text}")
 
         if hasattr(context, "progress") and context.progress:
@@ -660,7 +652,7 @@ class SessionContextStore(BaseLearningStore):
             parts.append(f"Current Goal: {context.goal}")
 
         if hasattr(context, "plan") and context.plan:
-            plan_text = "\n".join(f"  {i+1}. {step}" for i, step in enumerate(context.plan))
+            plan_text = "\n".join(f"  {i + 1}. {step}" for i, step in enumerate(context.plan))
             parts.append(f"Plan:\n{plan_text}")
 
         if hasattr(context, "progress") and context.progress:

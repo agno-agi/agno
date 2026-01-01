@@ -338,10 +338,12 @@ def test_learning_schema():
     print(learning.to_text())
 
     # Test from_dict
-    parsed = BaseLearning.from_dict({
-        "title": "Parsed Learning",
-        "learning": "Created from dict",
-    })
+    parsed = BaseLearning.from_dict(
+        {
+            "title": "Parsed Learning",
+            "learning": "Created from dict",
+        }
+    )
     assert parsed is not None
     print("\n   ✓ from_dict works")
 
@@ -441,7 +443,7 @@ if __name__ == "__main__":
     # Group by tags
     tag_counts = {}
     for r in all_results:
-        for tag in (r.tags if hasattr(r, "tags") and r.tags else []):
+        for tag in r.tags if hasattr(r, "tags") and r.tags else []:
             tag_counts[tag] = tag_counts.get(tag, 0) + 1
 
     if tag_counts:
