@@ -16,6 +16,7 @@ Key Features:
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+from os import getenv
 from textwrap import dedent
 from typing import Any, Callable, List, Optional, Union
 
@@ -70,6 +71,7 @@ class SessionContextStore(LearningStore):
 
     Args:
         config: SessionContextConfig with all settings including db and model.
+        debug_mode: Enable debug logging.
     """
 
     config: SessionContextConfig = field(default_factory=SessionContextConfig)
@@ -300,7 +302,7 @@ class SessionContextStore(LearningStore):
                 return
 
             self.db.upsert_learning(
-                id=f"session_context_{session_id}",
+                id=self._build_context_id(session_id=session_id),
                 learning_type=self.learning_type,
                 session_id=session_id,
                 content=content,
@@ -322,14 +324,14 @@ class SessionContextStore(LearningStore):
 
             if hasattr(self.db, "aupsert_learning"):
                 await self.db.aupsert_learning(
-                    id=f"session_context_{session_id}",
+                    id=self._build_context_id(session_id=session_id),
                     learning_type=self.learning_type,
                     session_id=session_id,
                     content=content,
                 )
             else:
                 self.db.upsert_learning(
-                    id=f"session_context_{session_id}",
+                    id=self._build_context_id(session_id=session_id),
                     learning_type=self.learning_type,
                     session_id=session_id,
                     content=content,
@@ -356,7 +358,8 @@ class SessionContextStore(LearningStore):
             return False
 
         try:
-            return self.db.delete_learning(id=f"session_context_{session_id}")
+            context_id = self._build_context_id(session_id=session_id)
+            return self.db.delete_learning(id=context_id)
         except Exception as e:
             log_debug(f"Error deleting session context: {e}")
             return False
@@ -367,10 +370,11 @@ class SessionContextStore(LearningStore):
             return False
 
         try:
+            context_id = self._build_context_id(session_id=session_id)
             if hasattr(self.db, "adelete_learning"):
-                return await self.db.adelete_learning(id=f"session_context_{session_id}")
+                return await self.db.adelete_learning(id=context_id)
             else:
-                return self.db.delete_learning(id=f"session_context_{session_id}")
+                return self.db.delete_learning(id=context_id)
         except Exception as e:
             log_debug(f"Error deleting session context: {e}")
             return False
@@ -515,12 +519,12 @@ class SessionContextStore(LearningStore):
         )
 
         # Execute tool calls
-        if response.tool_executions:
+        if response.tool_calls:
             import asyncio
 
-            for tool_exec in response.tool_executions:
-                tool_name = tool_exec.tool_name
-                tool_args = tool_exec.tool_args
+            for tool_call in response.tool_calls:
+                tool_name = tool_call.function.name
+                tool_args = tool_call.function.arguments
                 if tool_name in tool_map:
                     try:
                         if asyncio.iscoroutinefunction(tool_map[tool_name]):
@@ -579,6 +583,10 @@ class SessionContextStore(LearningStore):
     # =========================================================================
     # Private Helpers
     # =========================================================================
+
+    def _build_context_id(self, session_id: str) -> str:
+        """Build a unique context ID."""
+        return f"session_context_{session_id}"
 
     def _has_meaningful_messages(self, messages: List["Message"]) -> bool:
         """Check if there are meaningful messages to summarize."""
@@ -639,7 +647,8 @@ class SessionContextStore(LearningStore):
         custom_instructions = self.config.instructions or ""
 
         if enable_planning:
-            system_prompt = dedent(f"""\
+            system_prompt = (
+                dedent(f"""\
                 You are a Session Context Manager. Your job is to capture the current state of this conversation.
 
                 ## Your Task
@@ -650,7 +659,9 @@ class SessionContextStore(LearningStore):
                 4. **Progress**: Which steps have been completed? (if any)
 
                 ## Conversation
-                <conversation>
+                <conversation>""")
+                + conversation_text
+                + dedent("""\
                 {conversation_text}
                 </conversation>
 
@@ -661,12 +672,16 @@ class SessionContextStore(LearningStore):
                 - Only include goal/plan/progress if they're actually present in the conversation
                 - Don't invent or assume - capture what's actually there
 
-                {custom_instructions}
+                """)
+                + custom_instructions
+                + dedent("""\
 
                 Use the save_session_context tool to save your analysis.\
             """)
+            )
         else:
-            system_prompt = dedent(f"""\
+            system_prompt = (
+                dedent(f"""\
                 You are a Session Context Manager. Your job is to summarize this conversation.
 
                 ## Your Task
@@ -678,7 +693,9 @@ class SessionContextStore(LearningStore):
 
                 ## Conversation
                 <conversation>
-                {conversation_text}
+                """)
+                + conversation_text
+                + dedent("""\
                 </conversation>
 
                 ## Guidelines
@@ -687,10 +704,13 @@ class SessionContextStore(LearningStore):
                 - Don't include trivial details
                 - Capture the essence, not every exchange
 
-                {custom_instructions}
+                """)
+                + custom_instructions
+                + dedent("""\
 
                 Use the save_session_context tool to save your summary.\
             """)
+            )
 
         if self.config.additional_instructions:
             system_prompt += f"\n\n{self.config.additional_instructions}"

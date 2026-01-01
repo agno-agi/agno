@@ -28,7 +28,7 @@ Tests:
 from agno.db.postgres import PostgresDb
 from agno.learn import SessionContextConfig, SessionContextStore
 from agno.models.message import Message
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from rich.pretty import pprint
 
 # -----------------------------------------------------------------------------
@@ -39,7 +39,7 @@ db = PostgresDb(
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     learnings_table="agno_learnings",
 )
-model = OpenAIChat(id="gpt-4o-mini")
+model = OpenAIResponses(id="gpt-5.2")
 
 # Summary-only store (default)
 summary_store = SessionContextStore(
@@ -59,6 +59,9 @@ planning_store = SessionContextStore(
     )
 )
 
+# Setup logging (only needed when using store directly, not through LearningMachine)
+summary_store.set_log_level()
+planning_store.set_log_level()
 
 # -----------------------------------------------------------------------------
 # Test 1: Basic Summary Extraction
@@ -79,10 +82,20 @@ def test_basic_summary():
     messages = [
         Message(role="user", content="Hi, I need help debugging my Python code."),
         Message(role="assistant", content="I'd be happy to help! What's the issue?"),
-        Message(role="user", content="I'm getting a KeyError when accessing a dictionary."),
-        Message(role="assistant", content="That usually means the key doesn't exist. Can you show me the code?"),
-        Message(role="user", content="Here it is: data['user_name'] - but data is empty."),
-        Message(role="assistant", content="That's the issue - check if the key exists first with .get()"),
+        Message(
+            role="user", content="I'm getting a KeyError when accessing a dictionary."
+        ),
+        Message(
+            role="assistant",
+            content="That usually means the key doesn't exist. Can you show me the code?",
+        ),
+        Message(
+            role="user", content="Here it is: data['user_name'] - but data is empty."
+        ),
+        Message(
+            role="assistant",
+            content="That's the issue - check if the key exists first with .get()",
+        ),
     ]
 
     # Extract and save
@@ -124,10 +137,18 @@ def test_planning_mode():
     messages = [
         Message(role="user", content="I want to deploy my app to production today."),
         Message(role="assistant", content="Let's make a plan. What kind of app is it?"),
-        Message(role="user", content="It's a FastAPI backend with a Postgres database."),
-        Message(role="assistant", content="Great! Here's our plan:\n1. Run tests\n2. Build Docker image\n3. Push to registry\n4. Deploy to Kubernetes"),
+        Message(
+            role="user", content="It's a FastAPI backend with a Postgres database."
+        ),
+        Message(
+            role="assistant",
+            content="Great! Here's our plan:\n1. Run tests\n2. Build Docker image\n3. Push to registry\n4. Deploy to Kubernetes",
+        ),
         Message(role="user", content="Tests are passing!"),
-        Message(role="assistant", content="Perfect! Let's move on to building the Docker image."),
+        Message(
+            role="assistant",
+            content="Perfect! Let's move on to building the Docker image.",
+        ),
     ]
 
     # Extract with planning enabled
@@ -171,8 +192,14 @@ def test_summary_vs_planning():
     messages = [
         Message(role="user", content="I need to migrate my database to a new schema."),
         Message(role="assistant", content="Alright, let's plan this carefully."),
-        Message(role="user", content="The new schema adds a 'created_at' timestamp to all tables."),
-        Message(role="assistant", content="Steps: 1) Backup database 2) Write migration script 3) Test on staging 4) Apply to production"),
+        Message(
+            role="user",
+            content="The new schema adds a 'created_at' timestamp to all tables.",
+        ),
+        Message(
+            role="assistant",
+            content="Steps: 1) Backup database 2) Write migration script 3) Test on staging 4) Apply to production",
+        ),
         Message(role="user", content="I've already done the backup."),
     ]
 
@@ -232,7 +259,9 @@ def test_context_replacement():
     messages_2 = [
         Message(role="user", content="Actually, let's switch to discussing databases."),
         Message(role="assistant", content="Sure! What database topics interest you?"),
-        Message(role="user", content="I'm curious about PostgreSQL performance tuning."),
+        Message(
+            role="user", content="I'm curious about PostgreSQL performance tuning."
+        ),
     ]
 
     summary_store.extract_and_save(messages=messages_2, session_id=session_id)
@@ -313,7 +342,10 @@ def test_format_for_prompt():
     # Create context with planning
     messages = [
         Message(role="user", content="I want to build a CLI tool for file management."),
-        Message(role="assistant", content="Great idea! Let's plan: 1) Design commands 2) Implement parser 3) Add tests"),
+        Message(
+            role="assistant",
+            content="Great idea! Let's plan: 1) Design commands 2) Implement parser 3) Add tests",
+        ),
         Message(role="user", content="I've finished designing the commands."),
     ]
 
@@ -473,17 +505,42 @@ def test_long_conversation():
     # A longer conversation
     messages = [
         Message(role="user", content="I want to build an e-commerce platform."),
-        Message(role="assistant", content="Great! What are the main features you need?"),
-        Message(role="user", content="Product catalog, shopping cart, checkout, and user accounts."),
-        Message(role="assistant", content="Let's break this down. For the product catalog, do you need categories and search?"),
+        Message(
+            role="assistant", content="Great! What are the main features you need?"
+        ),
+        Message(
+            role="user",
+            content="Product catalog, shopping cart, checkout, and user accounts.",
+        ),
+        Message(
+            role="assistant",
+            content="Let's break this down. For the product catalog, do you need categories and search?",
+        ),
         Message(role="user", content="Yes, both. Also filters by price and rating."),
-        Message(role="assistant", content="Good. For the shopping cart, should it persist across sessions?"),
-        Message(role="user", content="Yes, logged-in users should see their cart on any device."),
-        Message(role="assistant", content="That means we need user authentication and cart storage in the database."),
+        Message(
+            role="assistant",
+            content="Good. For the shopping cart, should it persist across sessions?",
+        ),
+        Message(
+            role="user",
+            content="Yes, logged-in users should see their cart on any device.",
+        ),
+        Message(
+            role="assistant",
+            content="That means we need user authentication and cart storage in the database.",
+        ),
         Message(role="user", content="Makes sense. What about payments?"),
-        Message(role="assistant", content="I'd recommend Stripe for payments. It handles most edge cases."),
-        Message(role="user", content="Perfect. Let's start with the product catalog first."),
-        Message(role="assistant", content="Agreed. First step: design the product data model."),
+        Message(
+            role="assistant",
+            content="I'd recommend Stripe for payments. It handles most edge cases.",
+        ),
+        Message(
+            role="user", content="Perfect. Let's start with the product catalog first."
+        ),
+        Message(
+            role="assistant",
+            content="Agreed. First step: design the product data model.",
+        ),
     ]
 
     planning_store.extract_and_save(messages=messages, session_id=session_id)
@@ -533,7 +590,9 @@ def test_custom_instructions():
         Message(role="assistant", content="Great! Ready to help."),
         Message(role="user", content="We decided to use PostgreSQL over MySQL."),
         Message(role="assistant", content="Good choice for complex queries."),
-        Message(role="user", content="Thanks! Also, we'll deploy on AWS instead of GCP."),
+        Message(
+            role="user", content="Thanks! Also, we'll deploy on AWS instead of GCP."
+        ),
     ]
 
     custom_store.extract_and_save(messages=messages, session_id=session_id)
@@ -598,16 +657,16 @@ if __name__ == "__main__":
 
     # Run tests
     test_basic_summary()
-    test_planning_mode()
-    test_summary_vs_planning()
-    test_context_replacement()
-    test_delete_and_clear()
-    test_format_for_prompt()
-    test_multi_session_isolation()
-    test_empty_messages()
-    test_state_tracking()
-    test_long_conversation()
-    test_custom_instructions()
+    # test_planning_mode()
+    # test_summary_vs_planning()
+    # test_context_replacement()
+    # test_delete_and_clear()
+    # test_format_for_prompt()
+    # test_multi_session_isolation()
+    # test_empty_messages()
+    # test_state_tracking()
+    # test_long_conversation()
+    # test_custom_instructions()
 
     # Cleanup
     cleanup()
