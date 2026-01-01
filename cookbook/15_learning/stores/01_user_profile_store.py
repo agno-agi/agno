@@ -23,7 +23,7 @@ Tests:
 
 from agno.db.postgres import PostgresDb
 from agno.learn.config import UserProfileConfig
-from agno.learn.stores.user_profile import UserProfileStore
+from agno.learn.stores import UserProfileStore
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint

@@ -10,8 +10,8 @@ from agno.learn.stores.base import (
     to_dict_safe,
 )
 from agno.learn.stores.knowledge import KnowledgeStore
-from agno.learn.stores.session_context import SessionContextStore
-from agno.learn.stores.user_profile import UserProfileStore
+from agno.learn.stores.session import SessionContextStore
+from agno.learn.stores.user import UserProfileStore
 
 __all__ = [
     "BaseLearningStore",

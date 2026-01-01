@@ -7,6 +7,7 @@ Storage backend for User Profile learning type.
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
+from os import getenv
 from textwrap import dedent
 from typing import Any, Callable, List, Optional, Union
 
@@ -16,7 +17,12 @@ from agno.learn.schemas import BaseUserProfile
 from agno.learn.stores.base import BaseLearningStore, from_dict_safe, to_dict_safe
 from agno.models.message import Message
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import (
+    log_debug,
+    log_warning,
+    set_log_level_to_debug,
+    set_log_level_to_info,
+)
 
 
 @dataclass
@@ -31,6 +37,9 @@ class UserProfileStore(BaseLearningStore):
     """
 
     config: UserProfileConfig = field(default_factory=UserProfileConfig)
+
+    # Debug mode
+    debug_mode: bool = False
 
     # State tracking (internal)
     profile_updated: bool = False
@@ -47,6 +56,20 @@ class UserProfileStore(BaseLearningStore):
     @property
     def model(self):
         return self.config.model
+
+    # --- Debug/Logging ---
+
+    def set_log_level(self):
+        """Set log level based on debug_mode or environment variable."""
+        if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
+            self.debug_mode = True
+            set_log_level_to_debug()
+        else:
+            set_log_level_to_info()
+
+    def initialize(self):
+        """Initialize the store (sets up logging)."""
+        self.set_log_level()
 
     # --- Agent Tool ---
 
@@ -399,7 +422,7 @@ class UserProfileStore(BaseLearningStore):
             profile.memories.append({"id": memory_id, "content": memory})
 
         print(f"about to upsert profile: {profile}")
-        self.save(user_id, profile,  agent_id=agent_id, team_id=team_id)
+        self.save(user_id, profile, agent_id=agent_id, team_id=team_id)
         log_debug(f"Added memory for user {user_id}: {memory[:50]}...")
 
     async def aadd_memory(
