@@ -1,21 +1,21 @@
 """
 LearningMachine Schemas
 =======================
-Base dataclasses for each learning type.
+Dataclasses for each learning type.
 
 Uses pure dataclasses to avoid runtime overhead.
 All parsing is done via from_dict() which never raises.
 
-Base classes are designed to be extended - from_dict() and to_dict()
+Classes are designed to be extended - from_dict() and to_dict()
 automatically handle subclass fields via dataclasses.fields().
 
-Schema Hierarchy:
-- BaseUserProfile: Long-term user memory
-- BaseSessionContext: Current session state
-- BaseLearning: Reusable knowledge/insights
-- BaseDecision: Decision logs (Phase 2)
-- BaseFeedback: Behavioral feedback (Phase 2)
-- BaseInstructionUpdate: Self-improvement (Phase 3)
+Schemas:
+- UserProfile: Long-term user memory
+- SessionContext: Current session state
+- Learning: Reusable knowledge/insights
+- Decision: Decision logs (Phase 2)
+- Feedback: Behavioral feedback (Phase 2)
+- InstructionUpdate: Self-improvement (Phase 3)
 """
 
 from dataclasses import asdict, dataclass, field, fields
@@ -55,8 +55,8 @@ def _parse_json(data: Any) -> Optional[Dict]:
 
 
 @dataclass
-class BaseUserProfile:
-    """Base schema for User Profile learning type.
+class UserProfile:
+    """Schema for User Profile learning type.
 
     Captures long-term information about a user that persists
     across sessions. Designed to be extended with custom fields.
@@ -66,10 +66,14 @@ class BaseUserProfile:
         name: User's name (if known).
         preferred_name: How they prefer to be addressed.
         memories: List of memory entries, each with 'id' and 'content'.
+        agent_id: Which agent created this profile.
+        team_id: Which team created this profile.
+        created_at: When the profile was created (ISO format).
+        updated_at: When the profile was last updated (ISO format).
 
     Example - Extending with custom fields:
         @dataclass
-        class MyUserProfile(BaseUserProfile):
+        class MyUserProfile(UserProfile):
             company: Optional[str] = None
             role: Optional[str] = None
             timezone: Optional[str] = None
@@ -79,9 +83,13 @@ class BaseUserProfile:
     name: Optional[str] = None
     preferred_name: Optional[str] = None
     memories: List[Dict[str, Any]] = field(default_factory=list)
+    agent_id: Optional[str] = None
+    team_id: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
     @classmethod
-    def from_dict(cls, data: Any) -> Optional["BaseUserProfile"]:
+    def from_dict(cls, data: Any) -> Optional["UserProfile"]:
         """Parse from dict/JSON, returning None on any failure.
 
         Works with subclasses - automatically handles additional fields.
@@ -184,34 +192,44 @@ class BaseUserProfile:
 
 
 @dataclass
-class BaseSessionContext:
-    """Base schema for Session Context learning type.
+class SessionContext:
+    """Schema for Session Context learning type.
 
     Captures state and summary for the current session.
     Unlike UserProfile which accumulates, this is REPLACED on each update.
 
     Attributes:
         session_id: Required unique identifier for the session.
+        user_id: Which user this session belongs to.
         summary: What's happened in this session.
         goal: What the user is trying to accomplish.
         plan: Steps to achieve the goal.
         progress: Which steps have been completed.
+        agent_id: Which agent is running this session.
+        team_id: Which team is running this session.
+        created_at: When the session started (ISO format).
+        updated_at: When the context was last updated (ISO format).
 
     Example - Extending with custom fields:
         @dataclass
-        class MySessionContext(BaseSessionContext):
+        class MySessionContext(SessionContext):
             mood: Optional[str] = None
             blockers: List[str] = field(default_factory=list)
     """
 
     session_id: str
+    user_id: Optional[str] = None
     summary: Optional[str] = None
     goal: Optional[str] = None
     plan: Optional[List[str]] = None
     progress: Optional[List[str]] = None
+    agent_id: Optional[str] = None
+    team_id: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
     @classmethod
-    def from_dict(cls, data: Any) -> Optional["BaseSessionContext"]:
+    def from_dict(cls, data: Any) -> Optional["SessionContext"]:
         """Parse from dict/JSON, returning None on any failure."""
         if data is None:
             return None
@@ -268,8 +286,8 @@ class BaseSessionContext:
 
 
 @dataclass
-class BaseLearning:
-    """Base schema for Learned Knowledge learning type.
+class Learning:
+    """Schema for Learned Knowledge learning type.
 
     Captures reusable insights and patterns that can be shared
     across users and potentially across agents.
@@ -279,10 +297,14 @@ class BaseLearning:
         learning: The actual insight or knowledge.
         context: When/where this applies.
         tags: Categories for this learning.
+        agent_id: Which agent created this learning.
+        team_id: Which team created this learning.
+        created_at: When the learning was created (ISO format).
+        updated_at: When the learning was last updated (ISO format).
 
     Example - Extending with custom fields:
         @dataclass
-        class MyLearning(BaseLearning):
+        class MyLearning(Learning):
             confidence: float = 1.0
             source_conversation_id: Optional[str] = None
     """
@@ -291,9 +313,13 @@ class BaseLearning:
     learning: str
     context: Optional[str] = None
     tags: List[str] = field(default_factory=list)
+    agent_id: Optional[str] = None
+    team_id: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
     @classmethod
-    def from_dict(cls, data: Any) -> Optional["BaseLearning"]:
+    def from_dict(cls, data: Any) -> Optional["Learning"]:
         """Parse from dict/JSON, returning None on any failure."""
         if data is None:
             return None
@@ -433,8 +459,8 @@ class SessionPlanningExtractionResponse:
 
 
 @dataclass
-class BaseDecision:
-    """Base schema for Decision Logs. (Phase 2)
+class Decision:
+    """Schema for Decision Logs. (Phase 2)
 
     Records decisions made by the agent with reasoning and context.
     """
@@ -443,9 +469,12 @@ class BaseDecision:
     reasoning: Optional[str] = None
     context: Optional[str] = None
     outcome: Optional[str] = None
+    agent_id: Optional[str] = None
+    team_id: Optional[str] = None
+    created_at: Optional[str] = None
 
     @classmethod
-    def from_dict(cls, data: Any) -> Optional["BaseDecision"]:
+    def from_dict(cls, data: Any) -> Optional["Decision"]:
         if data is None:
             return None
         if isinstance(data, cls):
@@ -471,8 +500,8 @@ class BaseDecision:
 
 
 @dataclass
-class BaseFeedback:
-    """Base schema for Behavioral Feedback. (Phase 2)
+class Feedback:
+    """Schema for Behavioral Feedback. (Phase 2)
 
     Captures signals about what worked and what didn't.
     """
@@ -480,9 +509,12 @@ class BaseFeedback:
     signal: str  # thumbs_up, thumbs_down, correction, regeneration
     learning: Optional[str] = None
     context: Optional[str] = None
+    agent_id: Optional[str] = None
+    team_id: Optional[str] = None
+    created_at: Optional[str] = None
 
     @classmethod
-    def from_dict(cls, data: Any) -> Optional["BaseFeedback"]:
+    def from_dict(cls, data: Any) -> Optional["Feedback"]:
         if data is None:
             return None
         if isinstance(data, cls):
@@ -508,8 +540,8 @@ class BaseFeedback:
 
 
 @dataclass
-class BaseInstructionUpdate:
-    """Base schema for Self-Improvement. (Phase 3)
+class InstructionUpdate:
+    """Schema for Self-Improvement. (Phase 3)
 
     Proposes updates to agent instructions based on feedback patterns.
     """
@@ -518,9 +550,12 @@ class BaseInstructionUpdate:
     proposed_instruction: str
     reasoning: str
     evidence: Optional[List[str]] = None
+    agent_id: Optional[str] = None
+    team_id: Optional[str] = None
+    created_at: Optional[str] = None
 
     @classmethod
-    def from_dict(cls, data: Any) -> Optional["BaseInstructionUpdate"]:
+    def from_dict(cls, data: Any) -> Optional["InstructionUpdate"]:
         if data is None:
             return None
         if isinstance(data, cls):

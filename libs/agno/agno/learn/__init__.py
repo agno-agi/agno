@@ -25,6 +25,10 @@ Quick Start:
         model=model,
         user_profile=UserProfileConfig(
             mode=LearningMode.BACKGROUND,
+            extraction=ExtractionConfig(
+                timing=ExtractionTiming.PARALLEL,
+                run_after_messages=2,
+            ),
             enable_tool=True,
         ),
     )
@@ -33,7 +37,7 @@ Quick Start:
 Components:
 - LearningMachine: Main orchestrator
 - Configs: UserProfileConfig, SessionContextConfig, KnowledgeConfig
-- Schemas: BaseUserProfile, BaseSessionContext, BaseLearning
+- Schemas: UserProfile, SessionContext, Learning
 - Stores: UserProfileStore, SessionContextStore, KnowledgeStore
 """
 
@@ -55,12 +59,12 @@ from agno.learn.machine import LearningMachine, create_learning_machine
 
 # Schemas
 from agno.learn.schemas import (
-    BaseDecision,
-    BaseFeedback,
-    BaseInstructionUpdate,
-    BaseLearning,
-    BaseSessionContext,
-    BaseUserProfile,
+    Decision,
+    Feedback,
+    InstructionUpdate,
+    Learning,
+    SessionContext,
+    UserProfile,
 )
 
 # Stores
@@ -89,12 +93,12 @@ __all__ = [
     "FeedbackConfig",
     "SelfImprovementConfig",
     # Schemas
-    "BaseUserProfile",
-    "BaseSessionContext",
-    "BaseLearning",
-    "BaseDecision",
-    "BaseFeedback",
-    "BaseInstructionUpdate",
+    "UserProfile",
+    "SessionContext",
+    "Learning",
+    "Decision",
+    "Feedback",
+    "InstructionUpdate",
     # Stores
     "LearningStore",
     "UserProfileStore",

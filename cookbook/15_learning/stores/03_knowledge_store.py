@@ -51,7 +51,10 @@ vector_db = PgVector(
 )
 
 # Knowledge base
-knowledge_base = Knowledge(vector_db=vector_db)
+knowledge_base = Knowledge(
+    name="Knowledge Store",
+    vector_db=vector_db,
+)
 
 # Knowledge store
 store = KnowledgeStore(

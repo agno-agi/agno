@@ -13,9 +13,9 @@ Think of it as:
 - Knowledge = reusable insights that apply anywhere
 
 Key Features:
+- TWO agent tools: save_learning and search_learnings
 - Semantic search for relevant learnings
-- Agent tool for saving new learnings (AGENTIC mode)
-- PROPOSE mode for user confirmation before saving
+- AGENTIC mode: agent decides when to search/save
 - Shareable across users and agents
 """
 
@@ -43,10 +43,14 @@ class KnowledgeStore(LearningStore):
     Uses a Knowledge base with vector embeddings for semantic search.
     Learnings are stored and retrieved based on relevance to queries.
 
+    Provides TWO tools to the agent:
+    1. save_learning - Save reusable insights
+    2. search_learnings - Find relevant learnings via semantic search
+
     Key differences from other stores:
     - No user_id/session_id scoping - knowledge is shared
     - Semantic search instead of direct lookup
-    - Agent tool for saving learnings in AGENTIC mode
+    - Agent actively searches (not auto-injected)
 
     Usage:
         >>> store = KnowledgeStore(config=KnowledgeConfig(knowledge=kb))
@@ -62,9 +66,9 @@ class KnowledgeStore(LearningStore):
         >>> # Search for relevant learnings
         >>> results = store.search("How do I optimize my async code?")
         >>>
-        >>> # Agent tool
-        >>> tool = store.get_agent_tool()
-        >>> tool("Python decorators", "Use functools.wraps to preserve metadata")
+        >>> # Get tools for agent
+        >>> tools = store.get_tools()
+        >>> # tools = [save_learning, search_learnings]
 
     Args:
         config: KnowledgeConfig with all settings including knowledge base.
@@ -105,6 +109,9 @@ class KnowledgeStore(LearningStore):
         **kwargs,
     ) -> Optional[List[Any]]:
         """Retrieve relevant learnings via semantic search.
+
+        Note: In AGENTIC mode, the agent uses search_learnings tool instead.
+        This method is for programmatic access or BACKGROUND mode.
 
         Args:
             message: Current user message to find relevant learnings for.
@@ -158,12 +165,12 @@ class KnowledgeStore(LearningStore):
         messages: List[Any],
         **kwargs,
     ) -> None:
-        """Knowledge extraction is typically AGENTIC or PROPOSE, not BACKGROUND.
+        """Knowledge extraction is typically AGENTIC, not BACKGROUND.
 
         This method is a no-op for KnowledgeStore. Learnings are saved
         via the agent tool or explicit save() calls.
         """
-        # Knowledge is typically saved via agent tool, not background extraction
+        # Knowledge is saved via agent tool, not background extraction
         pass
 
     async def aprocess(
@@ -175,13 +182,16 @@ class KnowledgeStore(LearningStore):
         pass
 
     def format_for_prompt(self, data: Any) -> str:
-        """Format learnings for system prompt injection.
+        """Format learnings for display or injection.
+
+        Note: In AGENTIC mode, the agent searches and uses results directly.
+        This is mainly for formatting search results.
 
         Args:
-            data: List of learning objects from recall().
+            data: List of learning objects.
 
         Returns:
-            Formatted XML string.
+            Formatted string.
         """
         if not data:
             return ""
@@ -201,18 +211,7 @@ class KnowledgeStore(LearningStore):
         if not parts:
             return ""
 
-        learnings_text = "\n".join(parts)
-
-        return (
-            dedent(f"""\
-            <relevant_learnings>
-            Insights from past interactions:
-            """)
-            + learnings_text
-            + dedent("""
-            Apply where appropriate.
-            </relevant_learnings>""")
-        )
+        return "\n".join(parts)
 
     def get_tools(
         self,
@@ -222,17 +221,27 @@ class KnowledgeStore(LearningStore):
     ) -> List[Callable]:
         """Get tools to expose to agent.
 
+        Returns TWO tools:
+        1. save_learning - Save reusable insights
+        2. search_learnings - Find relevant learnings
+
         Args:
             agent_id: Optional agent context.
             team_id: Optional team context.
             **kwargs: Additional context (ignored).
 
         Returns:
-            List containing save_learning tool if enabled.
+            List of callable tools.
         """
-        if not self.config.enable_tool:
-            return []
-        return [self.get_agent_tool(agent_id=agent_id, team_id=team_id)]
+        tools = []
+
+        if self.config.enable_tool:
+            tools.append(self._get_save_learning_tool(agent_id=agent_id, team_id=team_id))
+
+        if self.config.enable_search:
+            tools.append(self._get_search_learnings_tool(agent_id=agent_id, team_id=team_id))
+
+        return tools
 
     async def aget_tools(
         self,
@@ -241,9 +250,15 @@ class KnowledgeStore(LearningStore):
         **kwargs,
     ) -> List[Callable]:
         """Async version of get_tools."""
-        if not self.config.enable_tool:
-            return []
-        return [await self.aget_agent_tool(agent_id=agent_id, team_id=team_id)]
+        tools = []
+
+        if self.config.enable_tool:
+            tools.append(await self._aget_save_learning_tool(agent_id=agent_id, team_id=team_id))
+
+        if self.config.enable_search:
+            tools.append(await self._aget_search_learnings_tool(agent_id=agent_id, team_id=team_id))
+
+        return tools
 
     @property
     def was_updated(self) -> bool:
@@ -277,19 +292,15 @@ class KnowledgeStore(LearningStore):
             set_log_level_to_info()
 
     # =========================================================================
-    # Agent Tool
+    # Tool: save_learning
     # =========================================================================
 
-    def get_agent_tool(
+    def _get_save_learning_tool(
         self,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> Callable:
-        """Get the tool to expose to the agent.
-
-        Returns a callable that the agent can use to save learnings.
-        Used in AGENTIC mode.
-        """
+        """Get the save_learning tool for the agent."""
 
         def save_learning(
             title: str,
@@ -297,11 +308,16 @@ class KnowledgeStore(LearningStore):
             context: Optional[str] = None,
             tags: Optional[List[str]] = None,
         ) -> str:
-            """Save a reusable insight or learning.
+            """Save a reusable insight or learning to the knowledge base.
 
             Use this when you discover something that would be useful to
             remember for future conversations - patterns, best practices,
-            user preferences that apply broadly, or insights from problem-solving.
+            solutions to problems, or insights from the current interaction.
+
+            Good learnings are:
+            - Reusable across different contexts
+            - Specific and actionable
+            - Not user-specific (use user memory for that)
 
             Args:
                 title: Short descriptive title (e.g., "Python async best practices")
@@ -322,17 +338,17 @@ class KnowledgeStore(LearningStore):
             )
             if success:
                 self.learning_saved = True
-                return f"Learning saved: {title}"
-            return "Failed to save learning"
+                return f"✅ Learning saved: {title}"
+            return "❌ Failed to save learning"
 
         return save_learning
 
-    async def aget_agent_tool(
+    async def _aget_save_learning_tool(
         self,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> Callable:
-        """Get the async tool to expose to the agent."""
+        """Get the async save_learning tool for the agent."""
 
         async def save_learning(
             title: str,
@@ -340,11 +356,16 @@ class KnowledgeStore(LearningStore):
             context: Optional[str] = None,
             tags: Optional[List[str]] = None,
         ) -> str:
-            """Save a reusable insight or learning.
+            """Save a reusable insight or learning to the knowledge base.
 
             Use this when you discover something that would be useful to
             remember for future conversations - patterns, best practices,
-            user preferences that apply broadly, or insights from problem-solving.
+            solutions to problems, or insights from the current interaction.
+
+            Good learnings are:
+            - Reusable across different contexts
+            - Specific and actionable
+            - Not user-specific (use user memory for that)
 
             Args:
                 title: Short descriptive title (e.g., "Python async best practices")
@@ -365,10 +386,115 @@ class KnowledgeStore(LearningStore):
             )
             if success:
                 self.learning_saved = True
-                return f"Learning saved: {title}"
-            return "Failed to save learning"
+                return f"✅ Learning saved: {title}"
+            return "❌ Failed to save learning"
 
         return save_learning
+
+    # =========================================================================
+    # Tool: search_learnings
+    # =========================================================================
+
+    def _get_search_learnings_tool(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> Callable:
+        """Get the search_learnings tool for the agent."""
+
+        def search_learnings(
+            query: str,
+            limit: int = 5,
+        ) -> str:
+            """Search for relevant learnings in the knowledge base.
+
+            Use this when you need to recall insights, patterns, or solutions
+            that may have been learned in previous conversations. The search
+            uses semantic similarity to find relevant learnings.
+
+            Args:
+                query: What you're looking for (e.g., "database performance tips")
+                limit: Maximum number of results to return (default: 5)
+
+            Returns:
+                Formatted list of relevant learnings, or message if none found.
+            """
+            results = self.search(
+                query=query,
+                limit=limit,
+                agent_id=agent_id,
+                team_id=team_id,
+            )
+
+            if not results:
+                return "No relevant learnings found."
+
+            formatted = self.format_for_prompt(data=results)
+            return f"Found {len(results)} relevant learning(s):\n\n{formatted}"
+
+        return search_learnings
+
+    async def _aget_search_learnings_tool(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> Callable:
+        """Get the async search_learnings tool for the agent."""
+
+        async def search_learnings(
+            query: str,
+            limit: int = 5,
+        ) -> str:
+            """Search for relevant learnings in the knowledge base.
+
+            Use this when you need to recall insights, patterns, or solutions
+            that may have been learned in previous conversations. The search
+            uses semantic similarity to find relevant learnings.
+
+            Args:
+                query: What you're looking for (e.g., "database performance tips")
+                limit: Maximum number of results to return (default: 5)
+
+            Returns:
+                Formatted list of relevant learnings, or message if none found.
+            """
+            results = await self.asearch(
+                query=query,
+                limit=limit,
+                agent_id=agent_id,
+                team_id=team_id,
+            )
+
+            if not results:
+                return "No relevant learnings found."
+
+            formatted = self.format_for_prompt(data=results)
+            return f"Found {len(results)} relevant learning(s):\n\n{formatted}"
+
+        return search_learnings
+
+    # =========================================================================
+    # Backwards Compatibility: get_agent_tool
+    # =========================================================================
+
+    def get_agent_tool(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> Callable:
+        """Get the save_learning tool (backwards compatibility).
+
+        Prefer using get_tools() which returns both save and search tools.
+        """
+        return self._get_save_learning_tool(agent_id=agent_id, team_id=team_id)
+
+    async def aget_agent_tool(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> Callable:
+        """Async version of get_agent_tool (backwards compatibility)."""
+        return await self._aget_save_learning_tool(agent_id=agent_id, team_id=team_id)
 
     # =========================================================================
     # Search Operations
@@ -485,6 +611,8 @@ class KnowledgeStore(LearningStore):
             return False
 
         try:
+            from agno.knowledge.reader.text_reader import TextReader
+
             learning_data = {
                 "title": title.strip(),
                 "learning": learning.strip(),
@@ -492,7 +620,7 @@ class KnowledgeStore(LearningStore):
                 "tags": tags or [],
                 "agent_id": agent_id,
                 "team_id": team_id,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             }
 
             # Create schema instance
@@ -501,13 +629,12 @@ class KnowledgeStore(LearningStore):
             # Convert to text for vector storage
             text_content = self._to_text_content(learning=learning_obj)
 
-            # Build a unique ID
-            learning_id = self._build_learning_id(title=title)
-
             # Add to knowledge base
-            self.knowledge.load_text(
-                text=text_content,
-                id=learning_id,
+            self.knowledge.add_content(
+                name=learning_data["title"],
+                text_content=text_content,
+                reader=TextReader(),
+                skip_if_exists=True,
             )
 
             log_debug(f"Saved learning: {title}")
@@ -532,6 +659,8 @@ class KnowledgeStore(LearningStore):
             return False
 
         try:
+            from agno.knowledge.reader.text_reader import TextReader
+
             learning_data = {
                 "title": title.strip(),
                 "learning": learning.strip(),
@@ -539,22 +668,26 @@ class KnowledgeStore(LearningStore):
                 "tags": tags or [],
                 "agent_id": agent_id,
                 "team_id": team_id,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             }
 
             learning_obj = self.schema(**learning_data)
             text_content = self._to_text_content(learning=learning_obj)
-            learning_id = self._build_learning_id(title=title)
 
-            if hasattr(self.knowledge, "aload_text"):
-                await self.knowledge.aload_text(
-                    text=text_content,
-                    id=learning_id,
+            # Add to knowledge base (async if available)
+            if hasattr(self.knowledge, "aadd_content"):
+                await self.knowledge.aadd_content(
+                    name=learning_data["title"],
+                    text_content=text_content,
+                    reader=TextReader(),
+                    skip_if_exists=True,
                 )
             else:
-                self.knowledge.load_text(
-                    text=text_content,
-                    id=learning_id,
+                self.knowledge.add_content(
+                    name=learning_data["title"],
+                    text_content=text_content,
+                    reader=TextReader(),
+                    skip_if_exists=True,
                 )
 
             log_debug(f"Saved learning: {title}")
@@ -618,42 +751,16 @@ class KnowledgeStore(LearningStore):
             return False
 
     # =========================================================================
-    # Utility Methods
-    # =========================================================================
-
-    def get_relevant_context(
-        self,
-        query: str,
-        limit: int = 3,
-    ) -> str:
-        """Get formatted learnings for injection into prompts.
-
-        Args:
-            query: The query to find relevant learnings for.
-            limit: Maximum number of learnings to include.
-
-        Returns:
-            Formatted string suitable for system prompts.
-        """
-        learnings = self.search(query=query, limit=limit)
-        return self.format_for_prompt(data=learnings)
-
-    async def aget_relevant_context(
-        self,
-        query: str,
-        limit: int = 3,
-    ) -> str:
-        """Async version of get_relevant_context."""
-        learnings = await self.asearch(query=query, limit=limit)
-        return self.format_for_prompt(data=learnings)
-
-    # =========================================================================
-    # Private Helpers
+    # ID Builder
     # =========================================================================
 
     def _build_learning_id(self, title: str) -> str:
         """Build a unique learning ID from title."""
         return f"learning_{title.lower().replace(' ', '_')[:50]}"
+
+    # =========================================================================
+    # Private Helpers
+    # =========================================================================
 
     def _parse_result(self, result: Any) -> Optional[Any]:
         """Parse a search result into a learning object."""
@@ -704,7 +811,7 @@ class KnowledgeStore(LearningStore):
         return json.dumps(learning_dict, ensure_ascii=False)
 
     def _format_single_learning(self, learning: Any) -> str:
-        """Format a single learning for prompt injection."""
+        """Format a single learning for display."""
         parts = []
 
         if hasattr(learning, "title") and learning.title:
@@ -716,4 +823,8 @@ class KnowledgeStore(LearningStore):
         if hasattr(learning, "context") and learning.context:
             parts.append(f"_Context: {learning.context}_")
 
-        return "\n".join(parts)
+        if hasattr(learning, "tags") and learning.tags:
+            tags_str = ", ".join(learning.tags)
+            parts.append(f"_Tags: {tags_str}_")
+
+        return "\n   ".join(parts)

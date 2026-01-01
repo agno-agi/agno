@@ -6,7 +6,7 @@ Enums and configuration classes for the unified learning system.
 Uses dataclasses instead of Pydantic BaseModels to avoid runtime
 overhead and validation errors that could break agents mid-run.
 
-Configuration Hierarchy:
+Configurations:
 - LearningMode: How learning is extracted (BACKGROUND, AGENTIC, PROPOSE, HITL)
 - ExtractionTiming: When extraction runs (BEFORE, PARALLEL, AFTER)
 - ExtractionConfig: Settings for background extraction
@@ -106,7 +106,7 @@ class UserProfileConfig:
         model: Model for extraction (required for BACKGROUND mode).
         mode: How learning is extracted. Default: BACKGROUND.
         extraction: Extraction timing settings.
-        schema: Custom schema for user profile data. Default: BaseUserProfile.
+        schema: Custom schema for user profile data. Default: UserProfile.
 
         # Agent tool
         enable_tool: Whether to provide update_user_memory tool to agent.
@@ -127,6 +127,10 @@ class UserProfileConfig:
         ...     db=my_db,
         ...     model=my_model,
         ...     mode=LearningMode.BACKGROUND,
+        ...     extraction=ExtractionConfig(
+        ...         timing=ExtractionTiming.PARALLEL,
+        ...         run_after_messages=2,
+        ...     ),
         ...     enable_tool=True,
         ...     instructions="Focus on professional preferences only.",
         ... )
@@ -172,7 +176,7 @@ class SessionContextConfig:
         db: Database backend for storage.
         model: Model for extraction.
         extraction: Extraction timing settings.
-        schema: Custom schema for session context. Default: BaseSessionContext.
+        schema: Custom schema for session context. Default: SessionContext.
 
         # Feature flags
         enable_planning: If True, extract goal/plan/progress in addition
@@ -193,6 +197,10 @@ class SessionContextConfig:
         >>> config = SessionContextConfig(
         ...     db=my_db,
         ...     model=my_model,
+        ...     extraction=ExtractionConfig(
+        ...         timing=ExtractionTiming.AFTER,
+        ...         run_after_messages=5,
+        ...     ),
         ...     enable_planning=True,  # Track goals and progress
         ... )
     """
@@ -233,12 +241,13 @@ class KnowledgeConfig:
     Attributes:
         knowledge: Knowledge base instance (vector store) for storage.
         model: Model for extraction (if using BACKGROUND mode).
-        mode: How learning is extracted. Default: PROPOSE.
+        mode: How learning is extracted. Default: AGENTIC.
         extraction: Extraction settings (only if mode=BACKGROUND).
-        schema: Custom schema for learning data. Default: BaseLearning.
+        schema: Custom schema for learning data. Default: Learning.
 
-        # Agent tool
+        # Agent tools
         enable_tool: Whether to provide save_learning tool to agent.
+        enable_search: Whether to provide search_learnings tool to agent.
 
         # Internal extraction tools
         enable_add: Allow adding new learnings.
@@ -253,8 +262,9 @@ class KnowledgeConfig:
     Example:
         >>> config = KnowledgeConfig(
         ...     knowledge=my_knowledge_base,
-        ...     mode=LearningMode.PROPOSE,  # Agent proposes, user confirms
+        ...     mode=LearningMode.AGENTIC,  # Agent saves via tool
         ...     enable_tool=True,
+        ...     enable_search=True,
         ... )
     """
 
@@ -263,12 +273,13 @@ class KnowledgeConfig:
     model: Optional["Model"] = None
 
     # Mode and extraction
-    mode: LearningMode = LearningMode.PROPOSE
+    mode: LearningMode = LearningMode.AGENTIC
     extraction: Optional[ExtractionConfig] = None
     schema: Optional[Type[Any]] = None
 
-    # Agent tool
-    enable_tool: bool = True
+    # Agent tools
+    enable_tool: bool = True  # save_learning tool
+    enable_search: bool = True  # search_learnings tool
 
     # Internal extraction tools
     enable_add: bool = True
