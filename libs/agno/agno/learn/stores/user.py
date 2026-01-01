@@ -22,8 +22,8 @@ from textwrap import dedent
 from typing import Any, Callable, List, Optional, Union
 
 from agno.learn.config import UserProfileConfig
-from agno.learn.schemas import BaseUserProfile
-from agno.learn.stores.base import LearningStore, from_dict_safe, to_dict_safe
+from agno.learn.schemas import UserProfile
+from agno.learn.stores.protocol import LearningStore, from_dict_safe, to_dict_safe
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -77,7 +77,7 @@ class UserProfileStore(LearningStore):
     _schema: Any = field(default=None, init=False)
 
     def __post_init__(self):
-        self._schema = self.config.schema or BaseUserProfile
+        self._schema = self.config.schema or UserProfile
 
     # =========================================================================
     # LearningStore Protocol Implementation
@@ -85,22 +85,18 @@ class UserProfileStore(LearningStore):
 
     @property
     def learning_type(self) -> str:
-        """String identifier for this learning type."""
+        """Unique identifier for this learning type."""
         return "user_profile"
 
     @property
     def schema(self) -> Any:
-        """The schema class used for profiles."""
+        """Schema class used for profiles."""
         return self._schema
 
     def recall(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        **kwargs,
+        self, user_id: str, agent_id: Optional[str] = None, team_id: Optional[str] = None, **kwargs
     ) -> Optional[Any]:
-        """Retrieve user profile for context injection.
+        """Retrieve user profile from storage.
 
         Args:
             user_id: The user to retrieve profile for (required).
@@ -113,14 +109,14 @@ class UserProfileStore(LearningStore):
         """
         if not user_id:
             return None
-        return self.get(user_id=user_id, agent_id=agent_id, team_id=team_id)
+        return self.get(
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+        )
 
     async def arecall(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        **kwargs,
+        self, user_id: str, agent_id: Optional[str] = None, team_id: Optional[str] = None, **kwargs
     ) -> Optional[Any]:
         """Async version of recall."""
         if not user_id:
@@ -128,12 +124,7 @@ class UserProfileStore(LearningStore):
         return await self.aget(user_id=user_id, agent_id=agent_id, team_id=team_id)
 
     def process(
-        self,
-        messages: List[Any],
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        **kwargs,
+        self, messages: List[Any], user_id: str, agent_id: Optional[str] = None, team_id: Optional[str] = None, **kwargs
     ) -> None:
         """Extract user profile from messages.
 
@@ -144,7 +135,7 @@ class UserProfileStore(LearningStore):
             team_id: Optional team context.
             **kwargs: Additional context (ignored).
         """
-        if not user_id:
+        if not user_id or not messages:
             return
         self.extract_and_save(
             messages=messages,
@@ -154,31 +145,21 @@ class UserProfileStore(LearningStore):
         )
 
     async def aprocess(
-        self,
-        messages: List[Any],
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        **kwargs,
+        self, messages: List[Any], user_id: str, agent_id: Optional[str] = None, team_id: Optional[str] = None, **kwargs
     ) -> None:
         """Async version of process."""
-        if not user_id:
+        if not user_id or not messages:
             return
-        await self.aextract_and_save(
-            messages=messages,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-        )
+        await self.aextract_and_save(messages=messages, user_id=user_id, agent_id=agent_id, team_id=team_id)
 
-    def format_for_prompt(self, data: Any) -> str:
-        """Format user profile for system prompt injection.
+    def build_context(self, data: Any) -> str:
+        """Build context for the agent.
 
         Args:
-            data: User profile data.
+            data: User profile data from recall().
 
         Returns:
-            Formatted XML string.
+            Context string to inject into the agent's system prompt, or empty string if no data.
         """
         if not data:
             return ""
@@ -223,19 +204,19 @@ class UserProfileStore(LearningStore):
         """
         if not user_id or not self.config.enable_tool:
             return []
-        return [self.get_agent_tool(user_id=user_id, agent_id=agent_id, team_id=team_id)]
+        return self.get_agent_tools(
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+        )
 
     async def aget_tools(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        **kwargs,
+        self, user_id: Optional[str] = None, agent_id: Optional[str] = None, team_id: Optional[str] = None, **kwargs
     ) -> List[Callable]:
         """Async version of get_tools."""
         if not user_id or not self.config.enable_tool:
             return []
-        return [await self.aget_agent_tool(user_id=user_id, agent_id=agent_id, team_id=team_id)]
+        return await self.aget_agent_tools(user_id=user_id, agent_id=agent_id, team_id=team_id)
 
     @property
     def was_updated(self) -> bool:
@@ -272,15 +253,15 @@ class UserProfileStore(LearningStore):
     # Agent Tool
     # =========================================================================
 
-    def get_agent_tool(
+    def get_agent_tools(
         self,
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-    ) -> Callable:
-        """Get the tool to expose to the agent.
+    ) -> List[Callable]:
+        """Get the tools to expose to the agent.
 
-        Returns a callable that the agent can use to update user memory.
+        Returns a list of callable tools that the agent can use to update user memory.
         """
 
         def update_user_memory(task: str) -> str:
@@ -305,15 +286,15 @@ class UserProfileStore(LearningStore):
                 team_id=team_id,
             )
 
-        return update_user_memory
+        return [update_user_memory]
 
-    async def aget_agent_tool(
+    async def aget_agent_tools(
         self,
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-    ) -> Callable:
-        """Get the async tool to expose to the agent."""
+    ) -> List[Callable]:
+        """Get the async tools to expose to the agent."""
 
         async def update_user_memory(task: str) -> str:
             """Update information about the user.
@@ -337,7 +318,7 @@ class UserProfileStore(LearningStore):
                 team_id=team_id,
             )
 
-        return update_user_memory
+        return [update_user_memory]
 
     # =========================================================================
     # Read Operations
@@ -968,7 +949,8 @@ class UserProfileStore(LearningStore):
             - Inferences or assumptions not directly stated\
         """)
 
-        system_prompt = dedent(f"""\
+        system_prompt = (
+            dedent(f"""\
             You are a User Profile Manager. Your job is to maintain accurate, useful memories about the user.
 
             ## Your Task
@@ -976,7 +958,9 @@ class UserProfileStore(LearningStore):
             Only save information that will be genuinely useful in future conversations.
 
             ## What To Capture
-            {profile_capture_instructions}
+        """)
+            + profile_capture_instructions
+            + dedent("""
 
             ## How To Write Entries
             - Write in third person: "User is..." or "User prefers..."
@@ -992,6 +976,7 @@ class UserProfileStore(LearningStore):
 
             ## Existing Profile\
         """)
+        )
 
         if existing_data:
             system_prompt += "\nThe user already has these memories saved:\n"

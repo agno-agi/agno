@@ -61,7 +61,7 @@ class LearningStore(ABC):
         Examples:
             "user_profile"
             "session_context"
-            "learned_knowledge"
+            "learnings"
             "project_context"
         """
         pass
@@ -93,7 +93,7 @@ class LearningStore(ABC):
         Each store interprets context differently:
         - UserProfileStore uses user_id
         - SessionContextStore uses session_id
-        - KnowledgeStore uses message for semantic search
+        - LearningsStore uses message for semantic search
 
         Args:
             **context: Arbitrary context. Common keys:
@@ -123,24 +123,20 @@ class LearningStore(ABC):
     # -------------------------------------------------------------------------
 
     @abstractmethod
-    def process(self, messages: List[Any], **context) -> None:
-        """Extract and save learnings from messages.
-
-        Called after agent runs to update learnings based on conversation.
-        This is where background extraction happens.
+    def process(self, **context) -> None:
+        """Extract and save learnings to storage.
 
         Args:
-            messages: Conversation messages to analyze.
-            **context: Arbitrary context (user_id, session_id, etc.)
+            **context: Arbitrary context (messages, user_id, session_id, etc.)
 
         Example:
-            >>> store.process(messages, user_id="alice")
+            >>> store.process(messages=messages, user_id="alice")
             # Extracts user info and saves to profile
         """
         pass
 
     @abstractmethod
-    async def aprocess(self, messages: List[Any], **context) -> None:
+    async def aprocess(self, **context) -> None:
         """Async version of process."""
         pass
 
@@ -150,12 +146,12 @@ class LearningStore(ABC):
 
     @abstractmethod
     def build_context(self, data: Any) -> str:
-        """Build context string for system prompt.
+        """Build context for the agent.
 
         Takes data from recall() and builds a string to inject into
         the agent's system prompt. This could be:
         - Formatted data (UserProfile, SessionContext)
-        - Instructions for using tools (Knowledge in AGENTIC mode)
+        - Instructions for using tools (Learnings in AGENTIC mode)
         - Any other context the agent needs
 
         Args:
@@ -171,7 +167,7 @@ class LearningStore(ABC):
 
         Example - Instruction context:
             >>> store.build_context(None)
-            '<knowledge_instructions>\\nUse search_learnings to find relevant knowledge.\\n</knowledge_instructions>'
+            '<learnings_instructions>\\nUse search_learnings to find relevant knowledge.\\n</learnings_instructions>'
         """
         pass
 
