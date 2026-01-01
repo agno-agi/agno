@@ -398,7 +398,8 @@ class UserProfileStore(BaseLearningStore):
             memory_id = str(uuid.uuid4())[:8]
             profile.memories.append({"id": memory_id, "content": memory})
 
-        self.save(user_id, profile, agent_id=agent_id, team_id=team_id)
+        print(f"about to upsert profile: {profile}")
+        self.save(user_id, profile,  agent_id=agent_id, team_id=team_id)
         log_debug(f"Added memory for user {user_id}: {memory[:50]}...")
 
     async def aadd_memory(
