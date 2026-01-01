@@ -113,7 +113,7 @@ class UserProfileStore(LearningStore):
         """
         if not user_id:
             return None
-        return self.get(user_id, agent_id=agent_id, team_id=team_id)
+        return self.get(user_id=user_id, agent_id=agent_id, team_id=team_id)
 
     async def arecall(
         self,
@@ -125,7 +125,7 @@ class UserProfileStore(LearningStore):
         """Async version of recall."""
         if not user_id:
             return None
-        return await self.aget(user_id, agent_id=agent_id, team_id=team_id)
+        return await self.aget(user_id=user_id, agent_id=agent_id, team_id=team_id)
 
     def process(
         self,
@@ -198,7 +198,7 @@ class UserProfileStore(LearningStore):
             {memories_text}
 
             Use this to personalize responses. Current conversation takes precedence.
-            </user_profile>
+            </user_profile>\
         """)
 
     def get_tools(
@@ -221,7 +221,7 @@ class UserProfileStore(LearningStore):
         """
         if not user_id or not self.config.enable_tool:
             return []
-        return [self.get_agent_tool(user_id, agent_id=agent_id, team_id=team_id)]
+        return [self.get_agent_tool(user_id=user_id, agent_id=agent_id, team_id=team_id)]
 
     async def aget_tools(
         self,
@@ -233,7 +233,7 @@ class UserProfileStore(LearningStore):
         """Async version of get_tools."""
         if not user_id or not self.config.enable_tool:
             return []
-        return [await self.aget_agent_tool(user_id, agent_id=agent_id, team_id=team_id)]
+        return [await self.aget_agent_tool(user_id=user_id, agent_id=agent_id, team_id=team_id)]
 
     @property
     def was_updated(self) -> bool:
@@ -440,7 +440,7 @@ class UserProfileStore(LearningStore):
                 return
 
             self.db.upsert_learning(
-                id=self._build_profile_id(user_id, agent_id, team_id),
+                id=self._build_profile_id(user_id=user_id, agent_id=agent_id, team_id=team_id),
                 learning_type=self.learning_type,
                 user_id=user_id,
                 agent_id=agent_id,
@@ -470,7 +470,7 @@ class UserProfileStore(LearningStore):
 
             if hasattr(self.db, "aupsert_learning"):
                 await self.db.aupsert_learning(
-                    id=self._build_profile_id(user_id, agent_id, team_id),
+                    id=self._build_profile_id(user_id=user_id, agent_id=agent_id, team_id=team_id),
                     learning_type=self.learning_type,
                     user_id=user_id,
                     agent_id=agent_id,
@@ -479,7 +479,7 @@ class UserProfileStore(LearningStore):
                 )
             else:
                 self.db.upsert_learning(
-                    id=self._build_profile_id(user_id, agent_id, team_id),
+                    id=self._build_profile_id(user_id=user_id, agent_id=agent_id, team_id=team_id),
                     learning_type=self.learning_type,
                     user_id=user_id,
                     agent_id=agent_id,
@@ -515,7 +515,7 @@ class UserProfileStore(LearningStore):
             return False
 
         try:
-            profile_id = self._build_profile_id(user_id, agent_id, team_id)
+            profile_id = self._build_profile_id(user_id=user_id, agent_id=agent_id, team_id=team_id)
             return self.db.delete_learning(id=profile_id)
         except Exception as e:
             log_debug(f"Error deleting user profile: {e}")
@@ -532,7 +532,7 @@ class UserProfileStore(LearningStore):
             return False
 
         try:
-            profile_id = self._build_profile_id(user_id, agent_id, team_id)
+            profile_id = self._build_profile_id(user_id=user_id, agent_id=agent_id, team_id=team_id)
             if hasattr(self.db, "adelete_learning"):
                 return await self.db.adelete_learning(id=profile_id)
             else:
@@ -559,7 +559,7 @@ class UserProfileStore(LearningStore):
 
         try:
             empty_profile = self.schema(user_id=user_id)
-            self.save(user_id, empty_profile, agent_id=agent_id, team_id=team_id)
+            self.save(user_id=user_id, profile=empty_profile, agent_id=agent_id, team_id=team_id)
             log_debug(f"Cleared user profile for user_id: {user_id}")
         except Exception as e:
             log_debug(f"Error clearing user profile: {e}")
@@ -576,7 +576,7 @@ class UserProfileStore(LearningStore):
 
         try:
             empty_profile = self.schema(user_id=user_id)
-            await self.asave(user_id, empty_profile, agent_id=agent_id, team_id=team_id)
+            await self.asave(user_id=user_id, profile=empty_profile, agent_id=agent_id, team_id=team_id)
             log_debug(f"Cleared user profile for user_id: {user_id}")
         except Exception as e:
             log_debug(f"Error clearing user profile: {e}")
@@ -687,10 +687,10 @@ class UserProfileStore(LearningStore):
 
         # Get existing profile
         existing_profile = self.get(user_id=user_id, agent_id=agent_id, team_id=team_id)
-        existing_data = self._profile_to_memory_list(existing_profile)
+        existing_data = self._profile_to_memory_list(profile=existing_profile)
 
         # Build input string from messages
-        input_string = self._messages_to_input_string(messages)
+        input_string = self._messages_to_input_string(messages=messages)
 
         # Get tools
         tools = self._get_extraction_tools(
@@ -702,11 +702,11 @@ class UserProfileStore(LearningStore):
         tool_map = {func.__name__: func for func in tools}
 
         # Convert to Function objects for model
-        functions = self._build_functions_for_model(tools)
+        functions = self._build_functions_for_model(tools=tools)
 
         # Prepare messages for model
         messages_for_model = [
-            self._get_system_message(existing_data),
+            self._get_system_message(existing_data=existing_data),
             *messages,
         ]
 
@@ -722,11 +722,9 @@ class UserProfileStore(LearningStore):
             for tool_exec in response.tool_executions:
                 tool_name = tool_exec.tool_name
                 tool_args = tool_exec.tool_args
-                log_debug(f"Executing tool: {tool_name} with args: {tool_args}")
                 if tool_name in tool_map:
                     try:
-                        result = tool_map[tool_name](**tool_args)
-                        log_debug(f"Tool result: {result}")
+                        tool_map[tool_name](**tool_args)
                         self.profile_updated = True
                     except Exception as e:
                         log_warning(f"Error executing {tool_name}: {e}")
@@ -743,8 +741,6 @@ class UserProfileStore(LearningStore):
         team_id: Optional[str] = None,
     ) -> str:
         """Async version of extract_and_save."""
-        self.set_log_level()
-
         if self.model is None:
             log_warning("No model provided for user profile extraction")
             return "No model provided for user profile extraction"
@@ -759,11 +755,11 @@ class UserProfileStore(LearningStore):
         self.profile_updated = False
 
         # Get existing profile
-        existing_profile = await self.aget(user_id, agent_id=agent_id, team_id=team_id)
-        existing_data = self._profile_to_memory_list(existing_profile)
+        existing_profile = await self.aget(user_id=user_id, agent_id=agent_id, team_id=team_id)
+        existing_data = self._profile_to_memory_list(profile=existing_profile)
 
         # Build input string from messages
-        input_string = self._messages_to_input_string(messages)
+        input_string = self._messages_to_input_string(messages=messages)
 
         # Get tools
         tools = await self._aget_extraction_tools(
@@ -775,11 +771,11 @@ class UserProfileStore(LearningStore):
         tool_map = {func.__name__: func for func in tools}
 
         # Convert to Function objects for model
-        functions = self._build_functions_for_model(tools)
+        functions = self._build_functions_for_model(tools=tools)
 
         # Prepare messages for model
         messages_for_model = [
-            self._get_system_message(existing_data),
+            self._get_system_message(existing_data=existing_data),
             *messages,
         ]
 
@@ -791,20 +787,18 @@ class UserProfileStore(LearningStore):
         )
 
         # Execute tool calls
-        if response.tool_calls:
+        if response.tool_executions:
             import asyncio
 
-            for tool_call in response.tool_calls:
-                tool_name = tool_call.function.name
-                tool_args = tool_call.function.arguments
-                log_debug(f"Executing tool: {tool_name} with args: {tool_args}")
+            for tool_exec in response.tool_executions:
+                tool_name = tool_exec.tool_name
+                tool_args = tool_exec.tool_args
                 if tool_name in tool_map:
                     try:
                         if asyncio.iscoroutinefunction(tool_map[tool_name]):
-                            result = await tool_map[tool_name](**tool_args)
+                            await tool_map[tool_name](**tool_args)
                         else:
-                            result = tool_map[tool_name](**tool_args)
-                        log_debug(f"Tool result: {result}")
+                            tool_map[tool_name](**tool_args)
                         self.profile_updated = True
                     except Exception as e:
                         log_warning(f"Error executing {tool_name}: {e}")
@@ -969,11 +963,10 @@ class UserProfileStore(LearningStore):
             Do NOT capture:
             - One-time events unless they reveal a pattern
             - Trivial details unlikely to matter in future conversations
-            - Inferences or assumptions not directly stated
+            - Inferences or assumptions not directly stated\
         """)
 
-        system_prompt = (
-            dedent(f"""\
+        system_prompt = dedent(f"""\
             You are a User Profile Manager. Your job is to maintain accurate, useful memories about the user.
 
             ## Your Task
@@ -981,9 +974,7 @@ class UserProfileStore(LearningStore):
             Only save information that will be genuinely useful in future conversations.
 
             ## What To Capture
-        """)
-            + profile_capture_instructions
-            + dedent("""\
+            {profile_capture_instructions}
 
             ## How To Write Entries
             - Write in third person: "User is..." or "User prefers..."
@@ -997,9 +988,8 @@ class UserProfileStore(LearningStore):
             Good: "User mentioned going to the gym today"
             Bad: "User goes to the gym regularly" (don't infer patterns from single mentions)
 
-            ## Existing Profile
+            ## Existing Profile\
         """)
-        )
 
         if existing_data:
             system_prompt += "\nThe user already has these memories saved:\n"
@@ -1009,10 +999,7 @@ class UserProfileStore(LearningStore):
         else:
             system_prompt += "\nNo existing memories for this user.\n"
 
-        system_prompt += dedent("""\
-
-            ## Available Actions
-        """)
+        system_prompt += "\n## Available Actions\n"
 
         if self.config.enable_add:
             system_prompt += "- `add_memory`: Add a new memory about the user\n"
@@ -1023,8 +1010,7 @@ class UserProfileStore(LearningStore):
         if self.config.enable_clear:
             system_prompt += "- `clear_all_memories`: Remove all memories (use sparingly)\n"
 
-        system_prompt += dedent("""\
-
+        system_prompt += dedent("""
             ## Important
             - Only take action if there's genuinely useful information to save
             - It's fine to do nothing if the conversation has no profile-relevant content
@@ -1032,7 +1018,7 @@ class UserProfileStore(LearningStore):
         """)
 
         if self.config.additional_instructions:
-            system_prompt += f"\n{self.config.additional_instructions}"
+            system_prompt += f"\n\n{self.config.additional_instructions}"
 
         return Message(role="system", content=system_prompt)
 

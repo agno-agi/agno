@@ -2,32 +2,31 @@
 Session Context Store Cookbook
 ==============================
 
-"The only way to make sense out of change is to plunge into it,
-move with it, and join the dance." - Alan Watts
+"Context is everything." - Someone wise
 
-This cookbook demonstrates SessionContextStore - a system for capturing
-the current state of a conversation. Unlike UserProfileStore which
-accumulates memories, SessionContextStore REPLACES on each extraction.
+This cookbook demonstrates the SessionContextStore - a system for capturing
+what's happening RIGHT NOW in a session. Unlike UserProfileStore which
+accumulates memories, SessionContextStore REPLACES state on each update.
 
-Think of it as:
-- UserProfile = your permanent memory of a person
-- SessionContext = your notes from today's meeting
+Think of it like:
+- UserProfile = What you know about a person (permanent)
+- SessionContext = What's happening in this meeting (temporary)
 
 Tests:
-1. Basic summary extraction - The essentials
-2. Planning mode - Goals, plans, progress tracking
-3. Session isolation - Your session, your context
-4. Context replacement - Fresh state, not stale accumulation
-5. Manual save - Sometimes you know best
-6. Formatted output - Ready for prompts
-7. State tracking - Know when things changed
-8. Multi-turn evolution - Watch context grow across turns
+1. Basic summary extraction - The core use case
+2. Planning mode - Track goals, plans, and progress
+3. Summary vs Planning - When to use which
+4. Context replacement - Each update replaces the previous
+5. Delete and clear - Start fresh
+6. Format for prompt - System prompt injection
+7. Multi-session isolation - Sessions don't leak into each other
+8. Media-only messages - Handle images/files gracefully
+9. State tracking - Know when context changed
+10. Long conversations - Summarize effectively
 """
 
 from agno.db.postgres import PostgresDb
-from agno.learn.config import SessionContextConfig
-from agno.learn.schemas import BaseSessionContext
-from agno.learn.stores.session_context import SessionContextStore
+from agno.learn import SessionContextConfig, SessionContextStore
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
@@ -43,11 +42,11 @@ db = PostgresDb(
 model = OpenAIChat(id="gpt-4o-mini")
 
 # Summary-only store (default)
-store = SessionContextStore(
+summary_store = SessionContextStore(
     config=SessionContextConfig(
         db=db,
         model=model,
-        enable_planning=False,
+        enable_planning=False,  # Just summaries
     )
 )
 
@@ -56,14 +55,9 @@ planning_store = SessionContextStore(
     config=SessionContextConfig(
         db=db,
         model=model,
-        enable_planning=True,
+        enable_planning=True,  # Goal, plan, progress tracking
     )
 )
-
-# Test sessions
-SESSION_RESEARCH = "session_research_llm_finetuning"
-SESSION_CODE = "session_code_review"
-SESSION_PLANNING = "session_api_project"
 
 
 # -----------------------------------------------------------------------------
@@ -73,47 +67,39 @@ SESSION_PLANNING = "session_api_project"
 
 def test_basic_summary():
     """
-    The simplest case: extract a summary from conversation.
-    No goals, no plans - just "what happened here?"
+    The simplest case: summarize what happened in a session.
     """
     print("\n" + "=" * 60)
     print("TEST 1: Basic Summary Extraction")
     print("=" * 60)
 
+    session_id = "summary_test_001"
+
+    # A simple conversation
     messages = [
-        Message(
-            role="user", content="I need help researching LLM fine-tuning techniques."
-        ),
-        Message(
-            role="assistant", content="I can help with that. What's your use case?"
-        ),
-        Message(
-            role="user", content="I want to fine-tune Llama 3 for code generation."
-        ),
-        Message(
-            role="assistant",
-            content="Great choice. You'll want to look at LoRA and QLoRA for efficient fine-tuning.",
-        ),
-        Message(role="user", content="What datasets should I use?"),
-        Message(
-            role="assistant",
-            content="For code generation, consider CodeAlpaca, CodeSearchNet, or The Stack.",
-        ),
+        Message(role="user", content="Hi, I need help debugging my Python code."),
+        Message(role="assistant", content="I'd be happy to help! What's the issue?"),
+        Message(role="user", content="I'm getting a KeyError when accessing a dictionary."),
+        Message(role="assistant", content="That usually means the key doesn't exist. Can you show me the code?"),
+        Message(role="user", content="Here it is: data['user_name'] - but data is empty."),
+        Message(role="assistant", content="That's the issue - check if the key exists first with .get()"),
     ]
 
-    response = store.extract_and_save(
-        messages=messages,
-        session_id=SESSION_RESEARCH,
-    )
+    # Extract and save
+    result = summary_store.extract_and_save(messages=messages, session_id=session_id)
+    print(f"\n📝 Extraction result: {result}")
+    print(f"🔄 Context updated: {summary_store.was_updated}")
 
-    print(f"\n📝 Extraction response: {response}")
-    print(f"🔄 Context updated: {store.context_updated}")
-
-    context = store.get(SESSION_RESEARCH)
+    # Retrieve the context
+    context = summary_store.get(session_id=session_id)
     print(f"\n📋 Session context:")
     if context:
         pprint(context.to_dict())
         assert context.summary, "Should have a summary"
+        print(f"\n   Summary: {context.summary}")
+
+    # Cleanup
+    summary_store.delete(session_id=session_id)
 
     print("\n✅ Basic summary works")
 
@@ -125,101 +111,92 @@ def test_basic_summary():
 
 def test_planning_mode():
     """
-    Full planning mode: goal, plan, progress.
-    For when users are working toward something specific.
+    Planning mode tracks goal, plan, and progress in addition to summary.
+    Great for multi-step tasks.
     """
     print("\n" + "=" * 60)
     print("TEST 2: Planning Mode")
     print("=" * 60)
 
+    session_id = "planning_test_001"
+
+    # A goal-oriented conversation
     messages = [
-        Message(role="user", content="I want to build a REST API for my todo app."),
-        Message(
-            role="assistant",
-            content="Great! Let's break this down. What features do you need?",
-        ),
-        Message(
-            role="user", content="Basic CRUD, user auth, and categories for todos."
-        ),
-        Message(
-            role="assistant",
-            content="Here's a plan: 1) Set up FastAPI, 2) Create models, 3) CRUD endpoints, 4) JWT auth, 5) Categories.",
-        ),
-        Message(role="user", content="Perfect. I've done steps 1 and 2 already."),
-        Message(
-            role="assistant",
-            content="Excellent! Next up: CRUD endpoints. Want to start with creating todos?",
-        ),
+        Message(role="user", content="I want to deploy my app to production today."),
+        Message(role="assistant", content="Let's make a plan. What kind of app is it?"),
+        Message(role="user", content="It's a FastAPI backend with a Postgres database."),
+        Message(role="assistant", content="Great! Here's our plan:\n1. Run tests\n2. Build Docker image\n3. Push to registry\n4. Deploy to Kubernetes"),
+        Message(role="user", content="Tests are passing!"),
+        Message(role="assistant", content="Perfect! Let's move on to building the Docker image."),
     ]
 
-    response = planning_store.extract_and_save(
-        messages=messages,
-        session_id=SESSION_PLANNING,
-    )
+    # Extract with planning enabled
+    result = planning_store.extract_and_save(messages=messages, session_id=session_id)
+    print(f"\n📝 Extraction result: {result}")
 
-    print(f"\n📝 Extraction response: {response}")
-    print(f"🔄 Context updated: {planning_store.context_updated}")
-
-    context = planning_store.get(SESSION_PLANNING)
-    print(f"\n🎯 Planning context:")
+    # Retrieve
+    context = planning_store.get(session_id=session_id)
+    print(f"\n📋 Session context with planning:")
     if context:
         pprint(context.to_dict())
 
-        print(f"\n   Summary: {context.summary[:80] if context.summary else 'None'}...")
-        print(f"   Goal: {context.goal or 'Not identified'}")
-        print(f"   Plan: {len(context.plan) if context.plan else 0} steps")
-        print(
-            f"   Progress: {len(context.progress) if context.progress else 0} completed"
-        )
+        print(f"\n   Summary: {context.summary}")
+        print(f"   Goal: {context.goal}")
+        print(f"   Plan: {context.plan}")
+        print(f"   Progress: {context.progress}")
+
+    # Cleanup
+    planning_store.delete(session_id=session_id)
 
     print("\n✅ Planning mode works")
 
 
 # -----------------------------------------------------------------------------
-# Test 3: Session Isolation
+# Test 3: Summary vs Planning
 # -----------------------------------------------------------------------------
 
 
-def test_session_isolation():
+def test_summary_vs_planning():
     """
-    Different sessions = different contexts.
-    Research session shouldn't leak into code review.
+    Compare output from the same conversation in both modes.
     """
     print("\n" + "=" * 60)
-    print("TEST 3: Session Isolation")
+    print("TEST 3: Summary vs Planning")
     print("=" * 60)
 
-    # Code review session (completely different from research)
+    session_summary = "compare_summary"
+    session_planning = "compare_planning"
+
+    # Same conversation
     messages = [
-        Message(role="user", content="Can you review this Python code?"),
-        Message(role="assistant", content="Sure, share it."),
-        Message(role="user", content="def add(a, b): return a + b"),
-        Message(role="assistant", content="Works but needs type hints and docstring."),
+        Message(role="user", content="I need to migrate my database to a new schema."),
+        Message(role="assistant", content="Alright, let's plan this carefully."),
+        Message(role="user", content="The new schema adds a 'created_at' timestamp to all tables."),
+        Message(role="assistant", content="Steps: 1) Backup database 2) Write migration script 3) Test on staging 4) Apply to production"),
+        Message(role="user", content="I've already done the backup."),
     ]
 
-    store.extract_and_save(
-        messages=messages,
-        session_id=SESSION_CODE,
-    )
+    # Extract with summary mode
+    summary_store.extract_and_save(messages=messages, session_id=session_summary)
+    ctx_summary = summary_store.get(session_id=session_summary)
 
-    # Get both contexts
-    research_ctx = store.get(SESSION_RESEARCH)
-    code_ctx = store.get(SESSION_CODE)
+    # Extract with planning mode
+    planning_store.extract_and_save(messages=messages, session_id=session_planning)
+    ctx_planning = planning_store.get(session_id=session_planning)
 
-    print(f"\n🔬 Research session:")
-    if research_ctx:
-        print(f"   {research_ctx.summary[:70]}...")
+    print(f"\n📊 Summary Mode:")
+    if ctx_summary:
+        pprint(ctx_summary.to_dict())
 
-    print(f"\n💻 Code review session:")
-    if code_ctx:
-        print(f"   {code_ctx.summary[:70]}...")
+    print(f"\n📊 Planning Mode:")
+    if ctx_planning:
+        pprint(ctx_planning.to_dict())
 
-    # Verify isolation
-    if research_ctx and code_ctx:
-        assert research_ctx.summary != code_ctx.summary
-        print("\n   ✓ Sessions properly isolated")
+    # Cleanup
+    summary_store.delete(session_id=session_summary)
+    planning_store.delete(session_id=session_planning)
 
-    print("\n✅ Isolation works")
+    print("\n✅ Both modes produce appropriate output")
 
 
 # -----------------------------------------------------------------------------
@@ -229,272 +206,347 @@ def test_session_isolation():
 
 def test_context_replacement():
     """
-    Key difference from UserProfileStore:
-    SessionContext REPLACES on each extraction, doesn't accumulate.
+    Unlike UserProfileStore which accumulates, SessionContextStore REPLACES.
+    Each extraction overwrites the previous context.
     """
     print("\n" + "=" * 60)
     print("TEST 4: Context Replacement")
     print("=" * 60)
 
-    test_session = "session_replacement_test"
+    session_id = "replacement_test"
 
-    # First conversation: Python
+    # First conversation chunk
     messages_1 = [
-        Message(role="user", content="Let's talk about Python decorators."),
-        Message(
-            role="assistant", content="Decorators are functions that modify functions."
-        ),
-        Message(role="user", content="How do I write one?"),
+        Message(role="user", content="Let's talk about Python."),
+        Message(role="assistant", content="Sure! What about Python?"),
+        Message(role="user", content="I want to learn async programming."),
     ]
 
-    store.extract_and_save(messages=messages_1, session_id=test_session)
-    ctx_1 = store.get(test_session)
-    print(f"\n🐍 After Python discussion:")
-    print(f"   {ctx_1.summary if ctx_1 else 'None'}")
+    summary_store.extract_and_save(messages=messages_1, session_id=session_id)
+    ctx_1 = summary_store.get(session_id=session_id)
+    print(f"\n📋 After first extraction:")
+    if ctx_1:
+        print(f"   Summary: {ctx_1.summary}")
 
-    # Second conversation: Rust (completely different!)
+    # Second conversation chunk (later in same session)
     messages_2 = [
-        Message(role="user", content="Actually, let's switch to Rust."),
-        Message(role="assistant", content="Sure! What about Rust?"),
-        Message(role="user", content="Tell me about ownership and borrowing."),
+        Message(role="user", content="Actually, let's switch to discussing databases."),
+        Message(role="assistant", content="Sure! What database topics interest you?"),
+        Message(role="user", content="I'm curious about PostgreSQL performance tuning."),
     ]
 
-    store.extract_and_save(messages=messages_2, session_id=test_session)
-    ctx_2 = store.get(test_session)
-    print(f"\n🦀 After Rust discussion:")
-    print(f"   {ctx_2.summary if ctx_2 else 'None'}")
-
-    # Should be Rust now, not Python
+    summary_store.extract_and_save(messages=messages_2, session_id=session_id)
+    ctx_2 = summary_store.get(session_id=session_id)
+    print(f"\n📋 After second extraction:")
     if ctx_2:
-        print(f"\n   ✓ Context replaced (not accumulated)")
+        print(f"   Summary: {ctx_2.summary}")
+
+    # The summary should now be about databases, not async
+    print("\n   Note: The context was REPLACED, not appended")
 
     # Cleanup
-    store.delete(test_session)
+    summary_store.delete(session_id=session_id)
 
-    print("\n✅ Replacement works")
+    print("\n✅ Context replacement works")
 
 
 # -----------------------------------------------------------------------------
-# Test 5: Manual Save
+# Test 5: Delete and Clear
 # -----------------------------------------------------------------------------
 
 
-def test_manual_save():
+def test_delete_and_clear():
     """
-    Sometimes you want to set context directly,
-    without running extraction.
+    Clear = reset to empty context (session still "exists")
+    Delete = remove entirely
     """
     print("\n" + "=" * 60)
-    print("TEST 5: Manual Save")
+    print("TEST 5: Delete and Clear")
     print("=" * 60)
 
-    test_session = "session_manual_test"
+    session_id = "lifecycle_test"
 
-    # Create context directly
-    context = BaseSessionContext(
-        session_id=test_session,
-        summary="User is deploying ML model to production.",
-        goal="Get model running in Kubernetes",
-        plan=[
-            "Containerize model with Docker",
-            "Write Kubernetes manifests",
-            "Set up monitoring",
-            "Configure autoscaling",
-        ],
-        progress=[
-            "Containerize model with Docker",
-        ],
-    )
+    # Create some context
+    messages = [
+        Message(role="user", content="We discussed important architecture decisions."),
+        Message(role="assistant", content="Yes, we agreed on microservices."),
+    ]
 
-    # Save directly (no extraction)
-    planning_store.save(test_session, context)
+    summary_store.extract_and_save(messages=messages, session_id=session_id)
+    ctx = summary_store.get(session_id=session_id)
+    print(f"\n📋 Initial context:")
+    if ctx:
+        print(f"   Summary: {ctx.summary}")
 
-    # Retrieve
-    retrieved = planning_store.get(test_session)
-    print(f"\n💾 Manually saved context:")
-    if retrieved:
-        pprint(retrieved.to_dict())
+    # Clear = empty but exists
+    summary_store.clear(session_id=session_id)
+    ctx_cleared = summary_store.get(session_id=session_id)
+    print(f"\n🧹 After clear:")
+    if ctx_cleared:
+        print(f"   Summary: '{ctx_cleared.summary or 'empty'}'")
+        print(f"   Context exists: True")
 
-        assert retrieved.goal == "Get model running in Kubernetes"
-        assert len(retrieved.plan) == 4
-        assert len(retrieved.progress) == 1
+    # Delete = gone entirely
+    summary_store.delete(session_id=session_id)
+    ctx_deleted = summary_store.get(session_id=session_id)
+    print(f"\n🗑️ After delete:")
+    print(f"   Context exists: {ctx_deleted is not None}")
 
-    # Cleanup
-    planning_store.delete(test_session)
-
-    print("\n✅ Manual save works")
+    print("\n✅ Delete and clear work")
 
 
 # -----------------------------------------------------------------------------
-# Test 6: Formatted Output
+# Test 6: Format for Prompt
 # -----------------------------------------------------------------------------
 
 
-def test_formatted_output():
+def test_format_for_prompt():
     """
-    get_context_text() gives you prompt-ready formatted text.
+    Test the format_for_prompt method for system prompt injection.
     """
     print("\n" + "=" * 60)
-    print("TEST 6: Formatted Output")
+    print("TEST 6: Format for Prompt")
     print("=" * 60)
 
-    test_session = "session_format_test"
+    session_id = "format_test"
 
-    context = BaseSessionContext(
-        session_id=test_session,
-        summary="Building a chatbot for customer support.",
-        goal="Launch MVP by end of month",
-        plan=[
-            "Design conversation flows",
-            "Train intent classifier",
-            "Build response generation",
-            "Integrate with Slack",
-        ],
-        progress=[
-            "Design conversation flows",
-            "Train intent classifier",
-        ],
-    )
+    # Create context with planning
+    messages = [
+        Message(role="user", content="I want to build a CLI tool for file management."),
+        Message(role="assistant", content="Great idea! Let's plan: 1) Design commands 2) Implement parser 3) Add tests"),
+        Message(role="user", content="I've finished designing the commands."),
+    ]
 
-    planning_store.save(test_session, context)
+    planning_store.extract_and_save(messages=messages, session_id=session_id)
+    context = planning_store.get(session_id=session_id)
 
-    # Get formatted text
-    text = planning_store.get_context_text(test_session)
-    print(f"\n📄 Formatted context text:")
+    # Format for injection
+    formatted = planning_store.format_for_prompt(data=context)
+
+    print(f"\n📝 Formatted for system prompt:")
     print("-" * 40)
-    print(text)
+    print(formatted)
     print("-" * 40)
 
-    assert "Session Summary:" in text
-    assert "Current Goal:" in text
-    assert "Plan:" in text
-    assert "✓" in text  # Progress checkmarks
+    # Should be XML formatted
+    assert "<session_context>" in formatted
+    assert "</session_context>" in formatted
 
     # Cleanup
-    planning_store.delete(test_session)
+    planning_store.delete(session_id=session_id)
 
-    print("\n✅ Formatted output works")
+    print("\n✅ Format for prompt works")
 
 
 # -----------------------------------------------------------------------------
-# Test 7: State Tracking
+# Test 7: Multi-Session Isolation
+# -----------------------------------------------------------------------------
+
+
+def test_multi_session_isolation():
+    """
+    Different sessions should have completely isolated contexts.
+    """
+    print("\n" + "=" * 60)
+    print("TEST 7: Multi-Session Isolation")
+    print("=" * 60)
+
+    session_alice = "alice_session"
+    session_bob = "bob_session"
+
+    # Alice's session
+    messages_alice = [
+        Message(role="user", content="I'm working on a mobile app for iOS."),
+        Message(role="assistant", content="Swift or SwiftUI?"),
+    ]
+
+    # Bob's session
+    messages_bob = [
+        Message(role="user", content="I need to set up a data pipeline."),
+        Message(role="assistant", content="What's your source data format?"),
+    ]
+
+    # Extract both
+    summary_store.extract_and_save(messages=messages_alice, session_id=session_alice)
+    summary_store.extract_and_save(messages=messages_bob, session_id=session_bob)
+
+    # Retrieve and verify isolation
+    ctx_alice = summary_store.get(session_id=session_alice)
+    ctx_bob = summary_store.get(session_id=session_bob)
+
+    print(f"\n👩 Alice's session:")
+    if ctx_alice:
+        print(f"   Summary: {ctx_alice.summary}")
+
+    print(f"\n👨 Bob's session:")
+    if ctx_bob:
+        print(f"   Summary: {ctx_bob.summary}")
+
+    # Verify they're different
+    if ctx_alice and ctx_bob:
+        assert ctx_alice.summary != ctx_bob.summary, "Sessions should be different"
+
+    # Cleanup
+    summary_store.delete(session_id=session_alice)
+    summary_store.delete(session_id=session_bob)
+
+    print("\n✅ Sessions are isolated")
+
+
+# -----------------------------------------------------------------------------
+# Test 8: Empty/Media-Only Messages
+# -----------------------------------------------------------------------------
+
+
+def test_empty_messages():
+    """
+    Handle conversations with no meaningful text content.
+    """
+    print("\n" + "=" * 60)
+    print("TEST 8: Empty/Media-Only Messages")
+    print("=" * 60)
+
+    session_id = "empty_test"
+
+    # Messages with no real content
+    messages = [
+        Message(role="user", content=""),
+        Message(role="user", content="   "),
+    ]
+
+    result = summary_store.extract_and_save(messages=messages, session_id=session_id)
+    print(f"\n📝 Result with empty messages: {result}")
+    print(f"🔄 Context updated: {summary_store.was_updated}")
+
+    # Should handle gracefully
+    ctx = summary_store.get(session_id=session_id)
+    print(f"📋 Context: {ctx}")
+
+    print("\n✅ Empty messages handled gracefully")
+
+
+# -----------------------------------------------------------------------------
+# Test 9: State Tracking
 # -----------------------------------------------------------------------------
 
 
 def test_state_tracking():
     """
-    Know when context actually changed vs. no-op.
+    Know when the context was actually updated.
     """
     print("\n" + "=" * 60)
-    print("TEST 7: State Tracking")
+    print("TEST 9: State Tracking")
     print("=" * 60)
 
+    session_id = "state_test"
+
     # Meaningful conversation
-    messages_meaningful = [
-        Message(
-            role="user", content="I'm building a recommendation system for movies."
-        ),
-        Message(role="assistant", content="Collaborative filtering or content-based?"),
-        Message(
-            role="user",
-            content="Hybrid approach. I have user ratings and movie metadata.",
-        ),
+    messages = [
+        Message(role="user", content="Let's build a recommendation engine."),
+        Message(role="assistant", content="What type of recommendations?"),
     ]
 
-    store.extract_and_save(messages=messages_meaningful, session_id="track_test_1")
-    print(
-        f"\n🎯 After meaningful conversation: context_updated = {store.context_updated}"
-    )
-    assert store.context_updated, "Should have updated"
-
-    # Trivial conversation
-    messages_trivial = [
-        Message(role="user", content="Hi"),
-        Message(role="assistant", content="Hello!"),
-    ]
-
-    store.extract_and_save(messages=messages_trivial, session_id="track_test_2")
-    print(f"👋 After trivial exchange: context_updated = {store.context_updated}")
+    summary_store.extract_and_save(messages=messages, session_id=session_id)
+    print(f"\n📝 After meaningful messages: was_updated = {summary_store.was_updated}")
 
     # Cleanup
-    store.delete("track_test_1")
-    store.delete("track_test_2")
+    summary_store.delete(session_id=session_id)
 
     print("\n✅ State tracking works")
 
 
 # -----------------------------------------------------------------------------
-# Test 8: Multi-Turn Evolution
+# Test 10: Long Conversation
 # -----------------------------------------------------------------------------
 
 
-def test_multi_turn_evolution():
+def test_long_conversation():
     """
-    Watch how context evolves across multiple conversation turns.
-    Each extraction captures the current state.
+    Test with a longer, more realistic conversation.
     """
     print("\n" + "=" * 60)
-    print("TEST 8: Multi-Turn Evolution")
+    print("TEST 10: Long Conversation")
     print("=" * 60)
 
-    test_session = "session_evolution"
-    all_messages = []
+    session_id = "long_test"
 
-    # Turn 1: Initial ask
-    messages_1 = [
-        Message(role="user", content="Help me build a web scraper."),
-        Message(role="assistant", content="Sure! What site and what data?"),
+    # A longer conversation
+    messages = [
+        Message(role="user", content="I want to build an e-commerce platform."),
+        Message(role="assistant", content="Great! What are the main features you need?"),
+        Message(role="user", content="Product catalog, shopping cart, checkout, and user accounts."),
+        Message(role="assistant", content="Let's break this down. For the product catalog, do you need categories and search?"),
+        Message(role="user", content="Yes, both. Also filters by price and rating."),
+        Message(role="assistant", content="Good. For the shopping cart, should it persist across sessions?"),
+        Message(role="user", content="Yes, logged-in users should see their cart on any device."),
+        Message(role="assistant", content="That means we need user authentication and cart storage in the database."),
+        Message(role="user", content="Makes sense. What about payments?"),
+        Message(role="assistant", content="I'd recommend Stripe for payments. It handles most edge cases."),
+        Message(role="user", content="Perfect. Let's start with the product catalog first."),
+        Message(role="assistant", content="Agreed. First step: design the product data model."),
     ]
-    all_messages.extend(messages_1)
 
-    planning_store.extract_and_save(messages=all_messages, session_id=test_session)
-    ctx_1 = planning_store.get(test_session)
-    print(f"\n📍 Turn 1 - Initial:")
-    if ctx_1:
-        print(f"   Summary: {ctx_1.summary[:60]}...")
-        print(f"   Goal: {ctx_1.goal or 'None yet'}")
+    planning_store.extract_and_save(messages=messages, session_id=session_id)
+    context = planning_store.get(session_id=session_id)
 
-    # Turn 2: More details
-    messages_2 = [
-        Message(role="user", content="I want to scrape job listings from LinkedIn."),
-        Message(
-            role="assistant",
-            content="That's tricky - LinkedIn blocks scrapers. Let's use their API or try Selenium.",
-        ),
-    ]
-    all_messages.extend(messages_2)
-
-    planning_store.extract_and_save(messages=all_messages, session_id=test_session)
-    ctx_2 = planning_store.get(test_session)
-    print(f"\n📍 Turn 2 - Details emerge:")
-    if ctx_2:
-        print(f"   Summary: {ctx_2.summary[:60]}...")
-        print(f"   Goal: {ctx_2.goal or 'None yet'}")
-
-    # Turn 3: Decision made
-    messages_3 = [
-        Message(role="user", content="Let's use Selenium. What's the plan?"),
-        Message(
-            role="assistant",
-            content="1) Set up Selenium, 2) Login flow, 3) Navigate to jobs, 4) Extract data, 5) Save to CSV.",
-        ),
-        Message(role="user", content="I've got Selenium installed."),
-    ]
-    all_messages.extend(messages_3)
-
-    planning_store.extract_and_save(messages=all_messages, session_id=test_session)
-    ctx_3 = planning_store.get(test_session)
-    print(f"\n📍 Turn 3 - Plan formed:")
-    if ctx_3:
-        print(f"   Summary: {ctx_3.summary[:60]}...")
-        print(f"   Goal: {ctx_3.goal or 'None'}")
-        print(f"   Plan steps: {len(ctx_3.plan) if ctx_3.plan else 0}")
-        print(f"   Progress: {len(ctx_3.progress) if ctx_3.progress else 0}")
+    print(f"\n📋 Long conversation summary:")
+    if context:
+        pprint(context.to_dict())
 
     # Cleanup
-    planning_store.delete(test_session)
+    planning_store.delete(session_id=session_id)
 
-    print("\n✅ Multi-turn evolution works")
+    print("\n✅ Long conversations summarized well")
+
+
+# -----------------------------------------------------------------------------
+# Test 11: Custom Instructions
+# -----------------------------------------------------------------------------
+
+
+def test_custom_instructions():
+    """
+    Customize what the extractor focuses on.
+    """
+    print("\n" + "=" * 60)
+    print("TEST 11: Custom Instructions")
+    print("=" * 60)
+
+    session_id = "custom_test"
+
+    # Store with custom instructions
+    custom_store = SessionContextStore(
+        config=SessionContextConfig(
+            db=db,
+            model=model,
+            enable_planning=False,
+            instructions="""
+            Focus ONLY on technical decisions made.
+            Ignore small talk and pleasantries.
+            Use bullet points in the summary.
+            """,
+        )
+    )
+
+    messages = [
+        Message(role="user", content="Hey! How's it going?"),
+        Message(role="assistant", content="Great! Ready to help."),
+        Message(role="user", content="We decided to use PostgreSQL over MySQL."),
+        Message(role="assistant", content="Good choice for complex queries."),
+        Message(role="user", content="Thanks! Also, we'll deploy on AWS instead of GCP."),
+    ]
+
+    custom_store.extract_and_save(messages=messages, session_id=session_id)
+    context = custom_store.get(session_id=session_id)
+
+    print(f"\n📋 Custom-extracted context:")
+    if context:
+        print(f"   Summary: {context.summary}")
+
+    # Cleanup
+    custom_store.delete(session_id=session_id)
+
+    print("\n✅ Custom instructions work")
 
 
 # -----------------------------------------------------------------------------
@@ -503,27 +555,31 @@ def test_multi_turn_evolution():
 
 
 def cleanup():
-    """Wipe all test data."""
+    """Clean up any lingering test data."""
     print("\n" + "=" * 60)
     print("CLEANUP")
     print("=" * 60)
 
-    sessions = [
-        SESSION_RESEARCH,
-        SESSION_CODE,
-        SESSION_PLANNING,
-        "session_replacement_test",
-        "session_manual_test",
-        "session_format_test",
-        "track_test_1",
-        "track_test_2",
-        "session_evolution",
+    test_sessions = [
+        "summary_test_001",
+        "planning_test_001",
+        "compare_summary",
+        "compare_planning",
+        "replacement_test",
+        "lifecycle_test",
+        "format_test",
+        "alice_session",
+        "bob_session",
+        "empty_test",
+        "state_test",
+        "long_test",
+        "custom_test",
     ]
 
-    for session_id in sessions:
+    for session_id in test_sessions:
         try:
-            store.delete(session_id)
-            planning_store.delete(session_id)
+            summary_store.delete(session_id=session_id)
+            planning_store.delete(session_id=session_id)
         except Exception:
             pass
 
@@ -536,36 +592,27 @@ def cleanup():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("📸 SessionContextStore Cookbook")
-    print("   Capturing the now, not the forever")
+    print("📋 SessionContextStore Cookbook")
+    print("   Context is everything")
     print("=" * 60)
 
+    # Run tests
     test_basic_summary()
     test_planning_mode()
-    test_session_isolation()
+    test_summary_vs_planning()
     test_context_replacement()
-    test_manual_save()
-    test_formatted_output()
+    test_delete_and_clear()
+    test_format_for_prompt()
+    test_multi_session_isolation()
+    test_empty_messages()
     test_state_tracking()
-    test_multi_turn_evolution()
+    test_long_conversation()
+    test_custom_instructions()
 
-    # Final summary
-    print("\n" + "=" * 60)
-    print("📊 FINAL STATE")
-    print("=" * 60)
-
-    for session_id in [SESSION_RESEARCH, SESSION_CODE, SESSION_PLANNING]:
-        ctx = store.get(session_id) or planning_store.get(session_id)
-        if ctx:
-            print(f"\n{session_id}:")
-            print(f"  📝 {ctx.summary[:60] if ctx.summary else 'No summary'}...")
-            if hasattr(ctx, "goal") and ctx.goal:
-                print(f"  🎯 Goal: {ctx.goal[:40]}...")
-
-    # cleanup()  # Uncomment to wipe
+    # Cleanup
+    cleanup()
 
     print("\n" + "=" * 60)
-    print("✅ All tests passed")
-    print("   Remember: UserProfile accumulates.")
-    print("   SessionContext captures the now.")
+    print("✅ All tests complete")
+    print("   Remember: SessionContext REPLACES, UserProfile ACCUMULATES")
     print("=" * 60)

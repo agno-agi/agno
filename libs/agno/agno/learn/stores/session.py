@@ -22,7 +22,12 @@ from typing import Any, Callable, List, Optional, Union
 from agno.learn.config import SessionContextConfig
 from agno.learn.schemas import BaseSessionContext
 from agno.learn.stores.base import LearningStore, from_dict_safe, to_dict_safe
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import (
+    log_debug,
+    log_warning,
+    set_log_level_to_debug,
+    set_log_level_to_info,
+)
 
 # Conditional imports for type checking
 try:
@@ -68,6 +73,7 @@ class SessionContextStore(LearningStore):
     """
 
     config: SessionContextConfig = field(default_factory=SessionContextConfig)
+    debug_mode: bool = False
 
     # State tracking (internal)
     context_updated: bool = field(default=False, init=False)
@@ -106,7 +112,7 @@ class SessionContextStore(LearningStore):
         """
         if not session_id:
             return None
-        return self.get(session_id)
+        return self.get(session_id=session_id)
 
     async def arecall(
         self,
@@ -116,7 +122,7 @@ class SessionContextStore(LearningStore):
         """Async version of recall."""
         if not session_id:
             return None
-        return await self.aget(session_id)
+        return await self.aget(session_id=session_id)
 
     def process(
         self,
@@ -173,7 +179,7 @@ class SessionContextStore(LearningStore):
             {context_text}
 
             Use this for continuity. Current conversation takes precedence.
-            </session_context>
+            </session_context>\
         """)
 
     def get_tools(self, **kwargs) -> List[Callable]:
@@ -202,6 +208,18 @@ class SessionContextStore(LearningStore):
     def model(self):
         """Model for extraction."""
         return self.config.model
+
+    # =========================================================================
+    # Debug/Logging
+    # =========================================================================
+
+    def set_log_level(self):
+        """Set log level based on debug_mode or environment variable."""
+        if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
+            self.debug_mode = True
+            set_log_level_to_debug()
+        else:
+            set_log_level_to_info()
 
     # =========================================================================
     # Read Operations
@@ -368,7 +386,7 @@ class SessionContextStore(LearningStore):
 
         try:
             empty_context = self.schema(session_id=session_id)
-            self.save(session_id, empty_context)
+            self.save(session_id=session_id, context=empty_context)
             log_debug(f"Cleared session context for session_id: {session_id}")
         except Exception as e:
             log_debug(f"Error clearing session context: {e}")
@@ -380,7 +398,7 @@ class SessionContextStore(LearningStore):
 
         try:
             empty_context = self.schema(session_id=session_id)
-            await self.asave(session_id, empty_context)
+            await self.asave(session_id=session_id, context=empty_context)
             log_debug(f"Cleared session context for session_id: {session_id}")
         except Exception as e:
             log_debug(f"Error clearing session context: {e}")
@@ -414,7 +432,7 @@ class SessionContextStore(LearningStore):
             return "No DB provided for session context store"
 
         # Skip if no meaningful messages
-        if not self._has_meaningful_messages(messages):
+        if not self._has_meaningful_messages(messages=messages):
             log_debug("No meaningful messages to summarize")
             return "No meaningful messages to summarize"
 
@@ -428,10 +446,10 @@ class SessionContextStore(LearningStore):
         tool_map = {func.__name__: func for func in tools}
 
         # Convert to Function objects for model
-        functions = self._build_functions_for_model(tools)
+        functions = self._build_functions_for_model(tools=tools)
 
         # Build prompt
-        messages_for_model = self._build_extraction_messages(messages)
+        messages_for_model = self._build_extraction_messages(messages=messages)
 
         # Generate response (model will call tool)
         model_copy = deepcopy(self.model)
@@ -441,10 +459,10 @@ class SessionContextStore(LearningStore):
         )
 
         # Execute tool calls
-        if response.tool_calls:
-            for tool_call in response.tool_calls:
-                tool_name = tool_call.function.name
-                tool_args = tool_call.function.arguments
+        if response.tool_executions:
+            for tool_exec in response.tool_executions:
+                tool_name = tool_exec.tool_name
+                tool_args = tool_exec.tool_args
                 if tool_name in tool_map:
                     try:
                         tool_map[tool_name](**tool_args)
@@ -470,7 +488,7 @@ class SessionContextStore(LearningStore):
             log_warning("No DB provided for session context store")
             return "No DB provided for session context store"
 
-        if not self._has_meaningful_messages(messages):
+        if not self._has_meaningful_messages(messages=messages):
             log_debug("No meaningful messages to summarize")
             return "No meaningful messages to summarize"
 
@@ -484,10 +502,10 @@ class SessionContextStore(LearningStore):
         tool_map = {func.__name__: func for func in tools}
 
         # Convert to Function objects for model
-        functions = self._build_functions_for_model(tools)
+        functions = self._build_functions_for_model(tools=tools)
 
         # Build prompt
-        messages_for_model = self._build_extraction_messages(messages)
+        messages_for_model = self._build_extraction_messages(messages=messages)
 
         # Generate response (model will call tool)
         model_copy = deepcopy(self.model)
@@ -497,12 +515,12 @@ class SessionContextStore(LearningStore):
         )
 
         # Execute tool calls
-        if response.tool_calls:
+        if response.tool_executions:
             import asyncio
 
-            for tool_call in response.tool_calls:
-                tool_name = tool_call.function.name
-                tool_args = tool_call.function.arguments
+            for tool_exec in response.tool_executions:
+                tool_name = tool_exec.tool_name
+                tool_args = tool_exec.tool_args
                 if tool_name in tool_map:
                     try:
                         if asyncio.iscoroutinefunction(tool_map[tool_name]):
@@ -530,13 +548,13 @@ class SessionContextStore(LearningStore):
         Returns:
             Formatted string suitable for system prompts.
         """
-        context = self.get(session_id)
-        return self._format_context(context) if context else ""
+        context = self.get(session_id=session_id)
+        return self._format_context(context=context) if context else ""
 
     async def aget_context_text(self, session_id: str) -> str:
         """Async version of get_context_text."""
-        context = await self.aget(session_id)
-        return self._format_context(context) if context else ""
+        context = await self.aget(session_id=session_id)
+        return self._format_context(context=context) if context else ""
 
     def _format_context(self, context: Any) -> str:
         """Format a context object to text."""
@@ -602,10 +620,10 @@ class SessionContextStore(LearningStore):
         """Build the extraction prompt for the LLM."""
         from agno.models.message import Message
 
-        conversation_text = self._messages_to_conversation_text(messages)
+        conversation_text = self._messages_to_conversation_text(messages=messages)
 
         return [
-            self._get_system_message(conversation_text),
+            self._get_system_message(conversation_text=conversation_text),
             Message(role="user", content="Analyze the conversation and save the session context."),
         ]
 
@@ -645,7 +663,7 @@ class SessionContextStore(LearningStore):
 
                 {custom_instructions}
 
-                Use the save_session_context tool to save your analysis.
+                Use the save_session_context tool to save your analysis.\
             """)
         else:
             system_prompt = dedent(f"""\
@@ -671,11 +689,11 @@ class SessionContextStore(LearningStore):
 
                 {custom_instructions}
 
-                Use the save_session_context tool to save your summary.
+                Use the save_session_context tool to save your summary.\
             """)
 
         if self.config.additional_instructions:
-            system_prompt += f"\n{self.config.additional_instructions}"
+            system_prompt += f"\n\n{self.config.additional_instructions}"
 
         return Message(role="system", content=system_prompt)
 
@@ -735,7 +753,7 @@ class SessionContextStore(LearningStore):
                     context_data["progress"] = progress or []
 
                 context = from_dict_safe(self.schema, context_data)
-                self.save(session_id, context)
+                self.save(session_id=session_id, context=context)
                 log_debug(f"Session context saved: {summary[:50]}...")
                 return "Session context saved"
             except Exception as e:
@@ -777,7 +795,7 @@ class SessionContextStore(LearningStore):
                     context_data["progress"] = progress or []
 
                 context = from_dict_safe(self.schema, context_data)
-                await self.asave(session_id, context)
+                await self.asave(session_id=session_id, context=context)
                 log_debug(f"Session context saved: {summary[:50]}...")
                 return "Session context saved"
             except Exception as e:
