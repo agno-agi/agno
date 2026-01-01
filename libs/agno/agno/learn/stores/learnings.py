@@ -1,33 +1,36 @@
 """
-Knowledge Store
+Learnings Store
 ===============
 Storage backend for Learned Knowledge learning type.
 
 Unlike UserProfileStore (per-user) and SessionContextStore (per-session),
-KnowledgeStore uses semantic search to find relevant learnings across
+LearningsStore uses semantic search to find relevant learnings across
 all stored knowledge.
 
 Think of it as:
 - UserProfile = what you know about a person
 - SessionContext = what happened in this meeting
-- Knowledge = reusable insights that apply anywhere
+- Learnings = reusable insights that apply anywhere
 
 Key Features:
 - TWO agent tools: save_learning and search_learnings
 - Semantic search for relevant learnings
 - AGENTIC mode: agent decides when to search/save
+- PROPOSE mode: agent proposes, user approves before saving
+- BACKGROUND mode: automatic extraction with duplicate detection
 - Shareable across users and agents
 """
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from os import getenv
 from textwrap import dedent
 from typing import Any, Callable, List, Optional
 
-from agno.learn.config import KnowledgeConfig, LearningMode
-from agno.learn.schemas import BaseLearning
-from agno.learn.stores.base import LearningStore, to_dict_safe
+from agno.learn.config import LearningMode, LearningsConfig
+from agno.learn.schemas import Learning
+from agno.learn.stores.protocol import LearningStore, to_dict_safe
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -37,7 +40,7 @@ from agno.utils.log import (
 
 
 @dataclass
-class KnowledgeStore(LearningStore):
+class LearningsStore(LearningStore):
     """Storage backend for Learned Knowledge learning type.
 
     Uses a Knowledge base with vector embeddings for semantic search.
@@ -52,8 +55,13 @@ class KnowledgeStore(LearningStore):
     - Semantic search instead of direct lookup
     - Agent actively searches (not auto-injected)
 
+    Modes:
+    - AGENTIC (default): Agent calls save_learning directly when it discovers insights
+    - PROPOSE: Agent proposes learnings, user approves before saving
+    - BACKGROUND: Automatic extraction with duplicate detection
+
     Usage:
-        >>> store = KnowledgeStore(config=KnowledgeConfig(knowledge=kb))
+        >>> store = LearningsStore(config=LearningsConfig(knowledge=kb))
         >>>
         >>> # Save a learning
         >>> store.save(
@@ -67,15 +75,15 @@ class KnowledgeStore(LearningStore):
         >>> results = store.search("How do I optimize my async code?")
         >>>
         >>> # Get tools for agent
-        >>> tools = store.get_tools()
+        >>> tools = store.get_agent_tools()
         >>> # tools = [save_learning, search_learnings]
 
     Args:
-        config: KnowledgeConfig with all settings including knowledge base.
+        config: LearningsConfig with all settings including knowledge base.
         debug_mode: Enable debug logging.
     """
 
-    config: KnowledgeConfig = field(default_factory=KnowledgeConfig)
+    config: LearningsConfig = field(default_factory=LearningsConfig)
     debug_mode: bool = False
 
     # State tracking (internal)
@@ -83,7 +91,7 @@ class KnowledgeStore(LearningStore):
     _schema: Any = field(default=None, init=False)
 
     def __post_init__(self):
-        self._schema = self.config.schema or BaseLearning
+        self._schema = self.config.schema or Learning
 
     # =========================================================================
     # LearningStore Protocol Implementation
@@ -91,12 +99,12 @@ class KnowledgeStore(LearningStore):
 
     @property
     def learning_type(self) -> str:
-        """String identifier for this learning type."""
-        return "learned_knowledge"
+        """Unique identifier for this learning type."""
+        return "learnings"
 
     @property
     def schema(self) -> Any:
-        """The schema class used for learnings."""
+        """Schema class used for learnings."""
         return self._schema
 
     def recall(
@@ -163,54 +171,205 @@ class KnowledgeStore(LearningStore):
     def process(
         self,
         messages: List[Any],
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         **kwargs,
     ) -> None:
-        """Knowledge extraction is typically AGENTIC, not BACKGROUND.
+        """Extract learnings from conversation in BACKGROUND mode.
 
-        This method is a no-op for KnowledgeStore. Learnings are saved
-        via the agent tool or explicit save() calls.
+        Searches existing learnings first to avoid duplicates, then
+        extracts and saves new insights.
+
+        Args:
+            messages: Conversation messages to analyze.
+            agent_id: Optional agent context.
+            team_id: Optional team context.
+            **kwargs: Additional context (ignored).
         """
-        # Knowledge is saved via agent tool, not background extraction
-        pass
+        if self.config.mode != LearningMode.BACKGROUND:
+            # In AGENTIC/PROPOSE mode, agent handles saving via tools
+            return
+
+        if not messages or not self.model or not self.knowledge:
+            return
+
+        self.extract_and_save(
+            messages=messages,
+            agent_id=agent_id,
+            team_id=team_id,
+        )
 
     async def aprocess(
         self,
         messages: List[Any],
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         **kwargs,
     ) -> None:
-        """Async version of process (no-op for knowledge)."""
-        pass
+        """Async version of process."""
+        if self.config.mode != LearningMode.BACKGROUND:
+            return
 
-    def format_for_prompt(self, data: Any) -> str:
-        """Format learnings for display or injection.
+        if not messages or not self.model or not self.knowledge:
+            return
 
-        Note: In AGENTIC mode, the agent searches and uses results directly.
-        This is mainly for formatting search results.
+        await self.aextract_and_save(
+            messages=messages,
+            agent_id=agent_id,
+            team_id=team_id,
+        )
+
+    def build_context(self, data: Any) -> str:
+        """Build context with tool usage instructions for the agent.
+
+        Provides mode-specific guidance:
+        - AGENTIC: Agent can save directly
+        - PROPOSE: Agent proposes, user approves
 
         Args:
-            data: List of learning objects.
+            data: List of learning objects from recall() (may be None).
 
         Returns:
-            Formatted string.
+            Formatted context string with tool instructions.
         """
+        mode = self.config.mode
+
+        if mode == LearningMode.PROPOSE:
+            return self._build_propose_mode_context(data=data)
+        elif mode == LearningMode.AGENTIC:
+            return self._build_agentic_mode_context(data=data)
+        else:
+            # BACKGROUND mode - no agent instructions needed
+            return self._build_background_mode_context(data=data)
+
+    def _build_agentic_mode_context(self, data: Any) -> str:
+        """Build context for AGENTIC mode."""
+        instructions = dedent("""\
+            <learnings_system>
+            ## Knowledge Tools
+
+            You have access to a knowledge base of reusable learnings:
+
+            | Tool | Purpose |
+            |------|---------|
+            | `search_learnings` | Find relevant prior insights before answering |
+            | `save_learning` | Store a new reusable insight |
+
+            ## Workflow
+
+            1. **Search First** — Before complex tasks, call `search_learnings` with key concepts from the query.
+               Apply any relevant learnings naturally: "Based on a prior insight..." or "A previous pattern suggests..."
+
+            2. **Work** — Complete the task using available tools and information.
+
+            3. **Reflect** — After answering, consider: did this reveal a genuinely reusable insight?
+               Most queries will NOT produce a learning. That's expected.
+
+            4. **Save** — If you discovered something worth preserving, call `save_learning` directly.
+
+            ## What Makes a Good Learning
+
+            Save if it's:
+            - **Specific**: "When comparing ETFs, check expense ratio AND tracking error" not "Look at metrics"
+            - **Actionable**: Can be directly applied to future similar tasks
+            - **Generalizable**: Useful beyond this specific question
+
+            Do NOT save: Raw facts, one-off answers, summaries, obvious information, or user-specific details.
+            </learnings_system>\
+        """)
+
+        if data:
+            learnings = data if isinstance(data, list) else [data]
+            if learnings:
+                formatted = self._format_learnings_for_context(learnings=learnings)
+                instructions += f"\n\n<prior_learnings>\n{formatted}\n</prior_learnings>"
+
+        return instructions
+
+    def _build_propose_mode_context(self, data: Any) -> str:
+        """Build context for PROPOSE mode."""
+        instructions = dedent("""\
+            <learnings_system>
+            ## Knowledge Tools
+
+            You have access to a knowledge base of reusable learnings:
+
+            | Tool | Purpose |
+            |------|---------|
+            | `search_learnings` | Find relevant prior insights before answering |
+            | `save_learning` | Store a new insight (REQUIRES user approval first) |
+
+            ## Workflow
+
+            1. **Search First** — Before complex tasks, call `search_learnings` with key concepts.
+               Apply relevant learnings naturally in your response.
+
+            2. **Work** — Complete the task using available tools and information.
+
+            3. **Reflect** — After answering, consider: did this reveal a genuinely reusable insight?
+               Most queries will NOT produce a learning. That's expected.
+
+            4. **Propose** — If you have a genuine insight, propose it at the end of your response:
+
+            ---
+            **Proposed Learning**
+
+            **Title:** [concise, descriptive title]
+            **Context:** [when this applies]
+            **Learning:** [the insight — specific and actionable]
+
+            Save this learning? (yes/no)
+            ---
+
+            5. **Wait for Approval** — Only call `save_learning` AFTER the user says "yes".
+               If user says "no", acknowledge and move on. Never re-propose the same learning.
+
+            ## What Makes a Good Learning
+
+            Propose if it's:
+            - **Specific**: "When comparing ETFs, check expense ratio AND tracking error" not "Look at metrics"
+            - **Actionable**: Can be directly applied to future similar tasks
+            - **Generalizable**: Useful beyond this specific question
+
+            Do NOT propose: Raw facts, one-off answers, summaries, obvious information, or user-specific details.
+            </learnings_system>\
+        """)
+
+        if data:
+            learnings = data if isinstance(data, list) else [data]
+            if learnings:
+                formatted = self._format_learnings_for_context(learnings=learnings)
+                instructions += f"\n\n<prior_learnings>\n{formatted}\n</prior_learnings>"
+
+        return instructions
+
+    def _build_background_mode_context(self, data: Any) -> str:
+        """Build context for BACKGROUND mode (just show relevant learnings)."""
         if not data:
             return ""
 
-        # Handle single learning or list
         learnings = data if isinstance(data, list) else [data]
-
         if not learnings:
             return ""
 
+        formatted = self._format_learnings_for_context(learnings=learnings)
+        return dedent(f"""\
+            <relevant_learnings>
+            Previously learned insights that may be relevant:
+
+            {formatted}
+
+            Use these if helpful. Current conversation takes precedence.
+            </relevant_learnings>\
+        """)
+
+    def _format_learnings_for_context(self, learnings: List[Any]) -> str:
+        """Format learnings for inclusion in context."""
         parts = []
         for i, learning in enumerate(learnings, 1):
             formatted = self._format_single_learning(learning=learning)
             if formatted:
                 parts.append(f"{i}. {formatted}")
-
-        if not parts:
-            return ""
-
         return "\n".join(parts)
 
     def get_tools(
@@ -221,27 +380,15 @@ class KnowledgeStore(LearningStore):
     ) -> List[Callable]:
         """Get tools to expose to agent.
 
-        Returns TWO tools:
-        1. save_learning - Save reusable insights
-        2. search_learnings - Find relevant learnings
-
         Args:
             agent_id: Optional agent context.
             team_id: Optional team context.
             **kwargs: Additional context (ignored).
 
         Returns:
-            List of callable tools.
+            List of callable tools (delegates to get_agent_tools).
         """
-        tools = []
-
-        if self.config.enable_tool:
-            tools.append(self._get_save_learning_tool(agent_id=agent_id, team_id=team_id))
-
-        if self.config.enable_search:
-            tools.append(self._get_search_learnings_tool(agent_id=agent_id, team_id=team_id))
-
-        return tools
+        return self.get_agent_tools(agent_id=agent_id, team_id=team_id)
 
     async def aget_tools(
         self,
@@ -250,15 +397,7 @@ class KnowledgeStore(LearningStore):
         **kwargs,
     ) -> List[Callable]:
         """Async version of get_tools."""
-        tools = []
-
-        if self.config.enable_tool:
-            tools.append(await self._aget_save_learning_tool(agent_id=agent_id, team_id=team_id))
-
-        if self.config.enable_search:
-            tools.append(await self._aget_search_learnings_tool(agent_id=agent_id, team_id=team_id))
-
-        return tools
+        return await self.aget_agent_tools(agent_id=agent_id, team_id=team_id)
 
     @property
     def was_updated(self) -> bool:
@@ -292,15 +431,63 @@ class KnowledgeStore(LearningStore):
             set_log_level_to_info()
 
     # =========================================================================
+    # Agent Tools
+    # =========================================================================
+
+    def get_agent_tools(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> List[Callable]:
+        """Get the tools to expose to the agent.
+
+        Returns TWO tools:
+        1. save_learning - Save reusable insights
+        2. search_learnings - Find relevant learnings
+
+        Args:
+            agent_id: Optional agent context.
+            team_id: Optional team context.
+
+        Returns:
+            List of callable tools.
+        """
+        tools = []
+
+        if self.config.enable_search:
+            tools.append(self._create_search_learnings_tool(agent_id=agent_id, team_id=team_id))
+
+        if self.config.enable_tool:
+            tools.append(self._create_save_learning_tool(agent_id=agent_id, team_id=team_id))
+
+        return tools
+
+    async def aget_agent_tools(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> List[Callable]:
+        """Async version of get_agent_tools."""
+        tools = []
+
+        if self.config.enable_search:
+            tools.append(self._create_async_search_learnings_tool(agent_id=agent_id, team_id=team_id))
+
+        if self.config.enable_tool:
+            tools.append(self._create_async_save_learning_tool(agent_id=agent_id, team_id=team_id))
+
+        return tools
+
+    # =========================================================================
     # Tool: save_learning
     # =========================================================================
 
-    def _get_save_learning_tool(
+    def _create_save_learning_tool(
         self,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> Callable:
-        """Get the save_learning tool for the agent."""
+        """Create the save_learning tool for the agent."""
 
         def save_learning(
             title: str,
@@ -338,17 +525,17 @@ class KnowledgeStore(LearningStore):
             )
             if success:
                 self.learning_saved = True
-                return f"✅ Learning saved: {title}"
-            return "❌ Failed to save learning"
+                return f"Learning saved: {title}"
+            return "Failed to save learning"
 
         return save_learning
 
-    async def _aget_save_learning_tool(
+    def _create_async_save_learning_tool(
         self,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> Callable:
-        """Get the async save_learning tool for the agent."""
+        """Create the async save_learning tool for the agent."""
 
         async def save_learning(
             title: str,
@@ -386,8 +573,8 @@ class KnowledgeStore(LearningStore):
             )
             if success:
                 self.learning_saved = True
-                return f"✅ Learning saved: {title}"
-            return "❌ Failed to save learning"
+                return f"Learning saved: {title}"
+            return "Failed to save learning"
 
         return save_learning
 
@@ -395,12 +582,12 @@ class KnowledgeStore(LearningStore):
     # Tool: search_learnings
     # =========================================================================
 
-    def _get_search_learnings_tool(
+    def _create_search_learnings_tool(
         self,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> Callable:
-        """Get the search_learnings tool for the agent."""
+        """Create the search_learnings tool for the agent."""
 
         def search_learnings(
             query: str,
@@ -429,17 +616,17 @@ class KnowledgeStore(LearningStore):
             if not results:
                 return "No relevant learnings found."
 
-            formatted = self.format_for_prompt(data=results)
+            formatted = self._format_learnings_list(learnings=results)
             return f"Found {len(results)} relevant learning(s):\n\n{formatted}"
 
         return search_learnings
 
-    async def _aget_search_learnings_tool(
+    def _create_async_search_learnings_tool(
         self,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> Callable:
-        """Get the async search_learnings tool for the agent."""
+        """Create the async search_learnings tool for the agent."""
 
         async def search_learnings(
             query: str,
@@ -468,33 +655,10 @@ class KnowledgeStore(LearningStore):
             if not results:
                 return "No relevant learnings found."
 
-            formatted = self.format_for_prompt(data=results)
+            formatted = self._format_learnings_list(learnings=results)
             return f"Found {len(results)} relevant learning(s):\n\n{formatted}"
 
         return search_learnings
-
-    # =========================================================================
-    # Backwards Compatibility: get_agent_tool
-    # =========================================================================
-
-    def get_agent_tool(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-    ) -> Callable:
-        """Get the save_learning tool (backwards compatibility).
-
-        Prefer using get_tools() which returns both save and search tools.
-        """
-        return self._get_save_learning_tool(agent_id=agent_id, team_id=team_id)
-
-    async def aget_agent_tool(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-    ) -> Callable:
-        """Async version of get_agent_tool (backwards compatibility)."""
-        return await self._aget_save_learning_tool(agent_id=agent_id, team_id=team_id)
 
     # =========================================================================
     # Search Operations
@@ -521,7 +685,7 @@ class KnowledgeStore(LearningStore):
             List of learning objects matching the query.
         """
         if not self.knowledge:
-            log_warning("KnowledgeStore: No knowledge base configured")
+            log_warning("LearningsStore: No knowledge base configured")
             return []
 
         try:
@@ -554,7 +718,7 @@ class KnowledgeStore(LearningStore):
     ) -> List[Any]:
         """Async version of search."""
         if not self.knowledge:
-            log_warning("KnowledgeStore: No knowledge base configured")
+            log_warning("LearningsStore: No knowledge base configured")
             return []
 
         try:
@@ -607,7 +771,7 @@ class KnowledgeStore(LearningStore):
             True if saved successfully, False otherwise.
         """
         if not self.knowledge:
-            log_warning("KnowledgeStore: No knowledge base configured")
+            log_warning("LearningsStore: No knowledge base configured")
             return False
 
         try:
@@ -655,7 +819,7 @@ class KnowledgeStore(LearningStore):
     ) -> bool:
         """Async version of save."""
         if not self.knowledge:
-            log_warning("KnowledgeStore: No knowledge base configured")
+            log_warning("LearningsStore: No knowledge base configured")
             return False
 
         try:
@@ -751,16 +915,301 @@ class KnowledgeStore(LearningStore):
             return False
 
     # =========================================================================
-    # ID Builder
+    # Background Extraction (for BACKGROUND mode)
     # =========================================================================
 
-    def _build_learning_id(self, title: str) -> str:
-        """Build a unique learning ID from title."""
-        return f"learning_{title.lower().replace(' ', '_')[:50]}"
+    def extract_and_save(
+        self,
+        messages: List[Any],
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> str:
+        """Extract learnings from conversation and save (with duplicate detection).
+
+        Args:
+            messages: Conversation messages to analyze.
+            agent_id: Optional agent context.
+            team_id: Optional team context.
+
+        Returns:
+            Status message.
+        """
+        log_debug("LearningsStore: Extracting learnings (background)", center=True)
+
+        # Reset state
+        self.learning_saved = False
+
+        # Build conversation text for context
+        conversation_text = self._messages_to_text(messages=messages)
+        if not conversation_text:
+            return "No meaningful content to extract from"
+
+        # Search existing learnings to avoid duplicates
+        existing_learnings = self.search(query=conversation_text[:500], limit=10)
+        existing_summary = self._summarize_existing(learnings=existing_learnings)
+
+        # Get extraction tools
+        tools = self._get_extraction_tools(agent_id=agent_id, team_id=team_id)
+        tool_map = {func.__name__: func for func in tools}
+
+        # Build functions for model
+        functions = self._build_functions_for_model(tools=tools)
+
+        # Build extraction messages
+        messages_for_model = self._build_extraction_messages(
+            conversation_text=conversation_text,
+            existing_summary=existing_summary,
+        )
+
+        # Generate response
+        model_copy = deepcopy(self.model)
+        response = model_copy.response(
+            messages=messages_for_model,
+            tools=functions,
+        )
+
+        # Execute tool calls
+        if response.tool_executions:
+            for tool_exec in response.tool_executions:
+                tool_name = tool_exec.tool_name
+                tool_args = tool_exec.tool_args
+                if tool_name in tool_map:
+                    try:
+                        tool_map[tool_name](**tool_args)
+                        self.learning_saved = True
+                    except Exception as e:
+                        log_warning(f"Error executing {tool_name}: {e}")
+
+        log_debug("LearningsStore: Extraction complete", center=True)
+        return response.content or ("Learning saved" if self.learning_saved else "No new learnings")
+
+    async def aextract_and_save(
+        self,
+        messages: List[Any],
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> str:
+        """Async version of extract_and_save."""
+        log_debug("LearningsStore: Extracting learnings (background, async)", center=True)
+
+        self.learning_saved = False
+
+        conversation_text = self._messages_to_text(messages=messages)
+        if not conversation_text:
+            return "No meaningful content to extract from"
+
+        existing_learnings = await self.asearch(query=conversation_text[:500], limit=10)
+        existing_summary = self._summarize_existing(learnings=existing_learnings)
+
+        tools = self._get_async_extraction_tools(agent_id=agent_id, team_id=team_id)
+        tool_map = {func.__name__: func for func in tools}
+
+        functions = self._build_functions_for_model(tools=tools)
+
+        messages_for_model = self._build_extraction_messages(
+            conversation_text=conversation_text,
+            existing_summary=existing_summary,
+        )
+
+        model_copy = deepcopy(self.model)
+        response = await model_copy.aresponse(
+            messages=messages_for_model,
+            tools=functions,
+        )
+
+        if response.tool_executions:
+            import asyncio
+
+            for tool_exec in response.tool_executions:
+                tool_name = tool_exec.tool_name
+                tool_args = tool_exec.tool_args
+                if tool_name in tool_map:
+                    try:
+                        if asyncio.iscoroutinefunction(tool_map[tool_name]):
+                            await tool_map[tool_name](**tool_args)
+                        else:
+                            tool_map[tool_name](**tool_args)
+                        self.learning_saved = True
+                    except Exception as e:
+                        log_warning(f"Error executing {tool_name}: {e}")
+
+        log_debug("LearningsStore: Extraction complete", center=True)
+        return response.content or ("Learning saved" if self.learning_saved else "No new learnings")
+
+    def _build_extraction_messages(
+        self,
+        conversation_text: str,
+        existing_summary: str,
+    ) -> List[Any]:
+        """Build messages for extraction model."""
+        from agno.models.message import Message
+
+        system_prompt = dedent("""\
+            You are a Learning Extractor. Your job is to identify reusable insights from conversations.
+
+            ## Your Task
+            Review the conversation and determine if it contains any genuinely reusable learnings.
+            Most conversations will NOT contain learnings worth saving. That's expected.
+
+            ## What Makes a Good Learning
+            - **Specific**: Concrete and detailed, not vague
+            - **Actionable**: Can be directly applied in future situations
+            - **Generalizable**: Useful beyond this specific conversation
+            - **Novel**: Not already captured in existing learnings
+
+            ## What to Skip
+            - Raw facts or data points
+            - User-specific information (preferences, names, etc.)
+            - One-off answers or summaries
+            - Obvious or well-known information
+            - Anything similar to existing learnings
+
+        """)
+
+        if existing_summary:
+            system_prompt += f"""## Existing Learnings (DO NOT DUPLICATE)
+{existing_summary}
+
+"""
+
+        system_prompt += dedent("""\
+            ## Instructions
+            - Only call save_learning if you find a genuinely novel, reusable insight
+            - It's perfectly fine to do nothing if there's nothing worth saving
+            - Quality over quantity - one good learning beats many weak ones\
+        """)
+
+        return [
+            Message(role="system", content=system_prompt),
+            Message(role="user", content=f"Review this conversation for reusable learnings:\n\n{conversation_text}"),
+        ]
+
+    def _get_extraction_tools(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> List[Callable]:
+        """Get sync extraction tools."""
+
+        def save_learning(
+            title: str,
+            learning: str,
+            context: Optional[str] = None,
+            tags: Optional[List[str]] = None,
+        ) -> str:
+            """Save a reusable learning.
+
+            Args:
+                title: Short descriptive title.
+                learning: The actual insight.
+                context: When this applies.
+                tags: Categories.
+
+            Returns:
+                Confirmation.
+            """
+            success = self.save(
+                title=title,
+                learning=learning,
+                context=context,
+                tags=tags,
+                agent_id=agent_id,
+                team_id=team_id,
+            )
+            return f"Saved: {title}" if success else "Failed to save"
+
+        return [save_learning]
+
+    def _get_async_extraction_tools(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> List[Callable]:
+        """Get async extraction tools."""
+
+        async def save_learning(
+            title: str,
+            learning: str,
+            context: Optional[str] = None,
+            tags: Optional[List[str]] = None,
+        ) -> str:
+            """Save a reusable learning.
+
+            Args:
+                title: Short descriptive title.
+                learning: The actual insight.
+                context: When this applies.
+                tags: Categories.
+
+            Returns:
+                Confirmation.
+            """
+            success = await self.asave(
+                title=title,
+                learning=learning,
+                context=context,
+                tags=tags,
+                agent_id=agent_id,
+                team_id=team_id,
+            )
+            return f"Saved: {title}" if success else "Failed to save"
+
+        return [save_learning]
+
+    def _build_functions_for_model(self, tools: List[Callable]) -> List[Any]:
+        """Convert callables to Functions for model."""
+        from agno.tools.function import Function
+
+        functions = []
+        seen_names = set()
+
+        for tool in tools:
+            try:
+                name = tool.__name__
+                if name in seen_names:
+                    continue
+                seen_names.add(name)
+
+                func = Function.from_callable(tool, strict=True)
+                func.strict = True
+                functions.append(func)
+            except Exception as e:
+                log_warning(f"Could not add function {tool}: {e}")
+
+        return functions
+
+    def _messages_to_text(self, messages: List[Any]) -> str:
+        """Convert messages to text for extraction."""
+        parts = []
+        for msg in messages:
+            if msg.role == "user":
+                content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
+                if content and content.strip():
+                    parts.append(f"User: {content}")
+            elif msg.role in ["assistant", "model"]:
+                content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
+                if content and content.strip():
+                    parts.append(f"Assistant: {content}")
+        return "\n".join(parts)
+
+    def _summarize_existing(self, learnings: List[Any]) -> str:
+        """Summarize existing learnings to help avoid duplicates."""
+        if not learnings:
+            return ""
+
+        parts = []
+        for learning in learnings[:5]:  # Limit to top 5
+            if hasattr(learning, "title") and hasattr(learning, "learning"):
+                parts.append(f"- {learning.title}: {learning.learning[:100]}...")
+        return "\n".join(parts)
 
     # =========================================================================
     # Private Helpers
     # =========================================================================
+
+    def _build_learning_id(self, title: str) -> str:
+        """Build a unique learning ID from title."""
+        return f"learning_{title.lower().replace(' ', '_')[:32]}"
 
     def _parse_result(self, result: Any) -> Optional[Any]:
         """Parse a search result into a learning object."""
@@ -828,3 +1277,12 @@ class KnowledgeStore(LearningStore):
             parts.append(f"_Tags: {tags_str}_")
 
         return "\n   ".join(parts)
+
+    def _format_learnings_list(self, learnings: List[Any]) -> str:
+        """Format a list of learnings for tool output."""
+        parts = []
+        for i, learning in enumerate(learnings, 1):
+            formatted = self._format_single_learning(learning=learning)
+            if formatted:
+                parts.append(f"{i}. {formatted}")
+        return "\n".join(parts)
