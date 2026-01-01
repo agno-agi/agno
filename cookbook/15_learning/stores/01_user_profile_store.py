@@ -22,7 +22,7 @@ This cookbook showcases:
 from agno.db.postgres import PostgresDb
 from agno.learn import UserProfileConfig, UserProfileStore
 from agno.models.message import Message
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from rich.pretty import pprint
 
 # -----------------------------------------------------------------------------
@@ -33,7 +33,7 @@ db = PostgresDb(
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     learnings_table="agno_learnings",
 )
-model = OpenAIChat(id="gpt-5.2")
+model = OpenAIResponses(id="gpt-5.2")
 
 # Setup the store - where memories live
 store = UserProfileStore(
