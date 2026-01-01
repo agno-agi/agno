@@ -15,10 +15,13 @@ Think of it as:
 Key Features:
 - TWO agent tools: save_learning and search_learnings
 - Semantic search for relevant learnings
-- AGENTIC mode: agent decides when to search/save
-- PROPOSE mode: agent proposes, user approves before saving
-- BACKGROUND mode: automatic extraction with duplicate detection
 - Shareable across users and agents
+
+Supported Modes:
+- AGENTIC: Agent calls save_learning directly when it discovers insights
+- PROPOSE: Agent proposes learnings, user approves before saving
+- BACKGROUND: Automatic extraction with duplicate detection
+- HITL: Not supported (use PROPOSE for soft human-in-the-loop approval)
 """
 
 from copy import deepcopy
@@ -92,6 +95,15 @@ class LearningsStore(LearningStore):
 
     def __post_init__(self):
         self._schema = self.config.schema or Learning
+
+        # Warn if HITL mode is used - not implemented, use PROPOSE instead
+        if self.config.mode == LearningMode.HITL:
+            log_warning(
+                "LearningsStore does not support HITL mode. "
+                "Use PROPOSE mode for human-in-the-loop approval. "
+                "Falling back to PROPOSE mode."
+            )
+            # Behavior will be like PROPOSE since we don't change config
 
     # =========================================================================
     # LearningStore Protocol Implementation
@@ -193,7 +205,7 @@ class LearningsStore(LearningStore):
         if not messages or not self.model or not self.knowledge:
             return
 
-        self.extract_and_save(
+        self._extract_and_save(
             messages=messages,
             agent_id=agent_id,
             team_id=team_id,
@@ -213,7 +225,7 @@ class LearningsStore(LearningStore):
         if not messages or not self.model or not self.knowledge:
             return
 
-        await self.aextract_and_save(
+        await self._aextract_and_save(
             messages=messages,
             agent_id=agent_id,
             team_id=team_id,
@@ -918,7 +930,7 @@ class LearningsStore(LearningStore):
     # Background Extraction (for BACKGROUND mode)
     # =========================================================================
 
-    def extract_and_save(
+    def _extract_and_save(
         self,
         messages: List[Any],
         agent_id: Optional[str] = None,
@@ -983,13 +995,13 @@ class LearningsStore(LearningStore):
         log_debug("LearningsStore: Extraction complete", center=True)
         return response.content or ("Learning saved" if self.learning_saved else "No new learnings")
 
-    async def aextract_and_save(
+    async def _aextract_and_save(
         self,
         messages: List[Any],
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> str:
-        """Async version of extract_and_save."""
+        """Async version of _extract_and_save."""
         log_debug("LearningsStore: Extracting learnings (background, async)", center=True)
 
         self.learning_saved = False
