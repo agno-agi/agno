@@ -12,7 +12,7 @@ Configurations:
 - ExtractionConfig: Settings for background extraction
 - UserProfileConfig: Config for user profile learning
 - SessionContextConfig: Config for session context learning
-- KnowledgeConfig: Config for learned knowledge
+- LearningsConfig: Config for learned knowledge
 """
 
 from dataclasses import dataclass, field
@@ -229,7 +229,7 @@ class SessionContextConfig:
 
 
 @dataclass
-class KnowledgeConfig:
+class LearningsConfig:
     """Configuration for Learned Knowledge learning type.
 
     Learned Knowledge captures reusable insights and patterns that
@@ -260,7 +260,7 @@ class KnowledgeConfig:
         additional_instructions: Extra instructions appended to default.
 
     Example:
-        >>> config = KnowledgeConfig(
+        >>> config = LearningsConfig(
         ...     knowledge=my_knowledge_base,
         ...     mode=LearningMode.AGENTIC,  # Agent saves via tool
         ...     enable_tool=True,
