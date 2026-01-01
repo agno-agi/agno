@@ -623,17 +623,17 @@ if __name__ == "__main__":
     print("=" * 60)
 
     # Run the tests you want
-    # test_manual_memory_addition()
+    test_manual_memory_addition()
     test_background_extraction()
-    # test_agent_tool()
-    # test_direct_update()
-    # test_delete_and_clear()
-    # test_entity_context()
-    # test_custom_instructions()
-    # test_incremental_update()
-    # test_state_tracking()
-    # test_deep_extraction()
-    # test_format_for_prompt()
+    test_agent_tool()
+    test_direct_update()
+    test_delete_and_clear()
+    test_entity_context()
+    test_custom_instructions()
+    test_incremental_update()
+    test_state_tracking()
+    test_deep_extraction()
+    test_format_for_prompt()
 
     # Final summary
     print("\n" + "=" * 60)

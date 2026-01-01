@@ -718,10 +718,10 @@ class UserProfileStore(LearningStore):
         )
 
         # Execute tool calls
-        if response.tool_calls:
-            for tool_call in response.tool_calls:
-                tool_name = tool_call.function.name
-                tool_args = tool_call.function.arguments
+        if response.tool_executions:
+            for tool_exec in response.tool_executions:
+                tool_name = tool_exec.tool_name
+                tool_args = tool_exec.tool_args
                 log_debug(f"Executing tool: {tool_name} with args: {tool_args}")
                 if tool_name in tool_map:
                     try:
@@ -972,7 +972,8 @@ class UserProfileStore(LearningStore):
             - Inferences or assumptions not directly stated
         """)
 
-        system_prompt = dedent(f"""\
+        system_prompt = (
+            dedent(f"""\
             You are a User Profile Manager. Your job is to maintain accurate, useful memories about the user.
 
             ## Your Task
@@ -980,7 +981,9 @@ class UserProfileStore(LearningStore):
             Only save information that will be genuinely useful in future conversations.
 
             ## What To Capture
-            {profile_capture_instructions}
+        """)
+            + profile_capture_instructions
+            + dedent("""\
 
             ## How To Write Entries
             - Write in third person: "User is..." or "User prefers..."
@@ -996,6 +999,7 @@ class UserProfileStore(LearningStore):
 
             ## Existing Profile
         """)
+        )
 
         if existing_data:
             system_prompt += "\nThe user already has these memories saved:\n"
@@ -1024,7 +1028,7 @@ class UserProfileStore(LearningStore):
             ## Important
             - Only take action if there's genuinely useful information to save
             - It's fine to do nothing if the conversation has no profile-relevant content
-            - Quality over quantity - fewer accurate memories beats many vague ones
+            - Quality over quantity - fewer accurate memories beats many vague ones\
         """)
 
         if self.config.additional_instructions:
