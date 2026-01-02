@@ -1,6 +1,6 @@
 """
 Learned Knowledge Store
-===============
+=======================
 Storage backend for Learned Knowledge learning type.
 
 Stores reusable insights that apply across users and agents.
@@ -28,8 +28,8 @@ from os import getenv
 from textwrap import dedent
 from typing import Any, Callable, List, Optional
 
-from agno.learn.config import LearningMode, LearningsConfig
-from agno.learn.schemas import Learning
+from agno.learn.config import LearnedKnowledgeConfig, LearningMode
+from agno.learn.schemas import LearnedKnowledge
 from agno.learn.stores.protocol import LearningStore
 from agno.learn.utils import to_dict_safe
 from agno.utils.log import (
@@ -62,7 +62,7 @@ class LearnedKnowledgeStore(LearningStore):
     - BACKGROUND: Automatic extraction with duplicate detection
 
     Usage:
-        >>> store = LearningsStore(config=LearningsConfig(knowledge=kb))
+        >>> store = LearnedKnowledgeStore(config=LearnedKnowledgeConfig(knowledge=kb))
         >>>
         >>> # Save a learning
         >>> store.save(
@@ -77,14 +77,14 @@ class LearnedKnowledgeStore(LearningStore):
         >>>
         >>> # Get tools for agent
         >>> tools = store.get_agent_tools()
-        >>> # tools = [save_learning, search_learnings]
+        >>> # tools = [search_learnings, save_learning]
 
     Args:
-        config: LearningsConfig with all settings including knowledge base.
+        config: LearnedKnowledgeConfig with all settings including knowledge base.
         debug_mode: Enable debug logging.
     """
 
-    config: LearningsConfig = field(default_factory=LearningsConfig)
+    config: LearnedKnowledgeConfig = field(default_factory=LearnedKnowledgeConfig)
     debug_mode: bool = False
 
     # State tracking (internal)
@@ -92,12 +92,12 @@ class LearnedKnowledgeStore(LearningStore):
     _schema: Any = field(default=None, init=False)
 
     def __post_init__(self):
-        self._schema = self.config.schema or Learning
+        self._schema = self.config.schema or LearnedKnowledge
 
         # Warn if HITL mode is used - not implemented, use PROPOSE instead
         if self.config.mode == LearningMode.HITL:
             log_warning(
-                "LearningsStore does not support HITL mode. "
+                "LearnedKnowledgeStore does not support HITL mode. "
                 "Use PROPOSE mode for human-in-the-loop approval. "
                 "Falling back to PROPOSE mode."
             )
@@ -196,7 +196,6 @@ class LearnedKnowledgeStore(LearningStore):
             team_id: Optional team context.
             **kwargs: Additional context (ignored).
         """
-
         if self.config.mode != LearningMode.BACKGROUND:
             # In AGENTIC/PROPOSE mode, agent handles saving via tools
             return
@@ -453,8 +452,8 @@ class LearnedKnowledgeStore(LearningStore):
         """Get the tools to expose to the agent.
 
         Returns TWO tools:
-        1. save_learning - Save reusable insights
-        2. search_learnings - Find relevant learnings
+        1. search_learnings - Find relevant learnings
+        2. save_learning - Save reusable insights
 
         Args:
             agent_id: Optional agent context.
@@ -468,7 +467,7 @@ class LearnedKnowledgeStore(LearningStore):
         if self.config.enable_search:
             tools.append(self._create_search_learnings_tool(agent_id=agent_id, team_id=team_id))
 
-        if self.config.enable_tool:
+        if self.config.enable_save:
             tools.append(self._create_save_learning_tool(agent_id=agent_id, team_id=team_id))
 
         return tools
@@ -484,7 +483,7 @@ class LearnedKnowledgeStore(LearningStore):
         if self.config.enable_search:
             tools.append(self._create_async_search_learnings_tool(agent_id=agent_id, team_id=team_id))
 
-        if self.config.enable_tool:
+        if self.config.enable_save:
             tools.append(self._create_async_save_learning_tool(agent_id=agent_id, team_id=team_id))
 
         return tools
@@ -696,7 +695,7 @@ class LearnedKnowledgeStore(LearningStore):
             List of learning objects matching the query.
         """
         if not self.knowledge:
-            log_warning("LearningsStore: No knowledge base configured")
+            log_warning("LearnedKnowledgeStore.search: no knowledge base configured")
             return []
 
         try:
@@ -713,11 +712,11 @@ class LearnedKnowledgeStore(LearningStore):
                         continue
                     learnings.append(learning)
 
-            log_debug(f"Found {len(learnings)} learnings for query: {query[:50]}...")
+            log_debug(f"LearnedKnowledgeStore.search: found {len(learnings)} learnings for query: {query[:50]}...")
             return learnings
 
         except Exception as e:
-            log_warning(f"Error searching knowledge base: {e}")
+            log_warning(f"LearnedKnowledgeStore.search failed: {e}")
             return []
 
     async def asearch(
@@ -729,7 +728,7 @@ class LearnedKnowledgeStore(LearningStore):
     ) -> List[Any]:
         """Async version of search."""
         if not self.knowledge:
-            log_warning("LearningsStore: No knowledge base configured")
+            log_warning("LearnedKnowledgeStore.asearch: no knowledge base configured")
             return []
 
         try:
@@ -748,11 +747,11 @@ class LearnedKnowledgeStore(LearningStore):
                         continue
                     learnings.append(learning)
 
-            log_debug(f"Found {len(learnings)} learnings for query: {query[:50]}...")
+            log_debug(f"LearnedKnowledgeStore.asearch: found {len(learnings)} learnings for query: {query[:50]}...")
             return learnings
 
         except Exception as e:
-            log_warning(f"Error searching knowledge base: {e}")
+            log_warning(f"LearnedKnowledgeStore.asearch failed: {e}")
             return []
 
     # =========================================================================
@@ -782,7 +781,7 @@ class LearnedKnowledgeStore(LearningStore):
             True if saved successfully, False otherwise.
         """
         if not self.knowledge:
-            log_warning("LearningsStore: No knowledge base configured")
+            log_warning("LearnedKnowledgeStore.save: no knowledge base configured")
             return False
 
         try:
@@ -812,11 +811,11 @@ class LearnedKnowledgeStore(LearningStore):
                 skip_if_exists=True,
             )
 
-            log_debug(f"Saved learning: {title}")
+            log_debug(f"LearnedKnowledgeStore.save: saved learning '{title}'")
             return True
 
         except Exception as e:
-            log_warning(f"Error saving learning: {e}")
+            log_warning(f"LearnedKnowledgeStore.save failed: {e}")
             return False
 
     async def asave(
@@ -830,7 +829,7 @@ class LearnedKnowledgeStore(LearningStore):
     ) -> bool:
         """Async version of save."""
         if not self.knowledge:
-            log_warning("LearningsStore: No knowledge base configured")
+            log_warning("LearnedKnowledgeStore.asave: no knowledge base configured")
             return False
 
         try:
@@ -865,11 +864,11 @@ class LearnedKnowledgeStore(LearningStore):
                     skip_if_exists=True,
                 )
 
-            log_debug(f"Saved learning: {title}")
+            log_debug(f"LearnedKnowledgeStore.asave: saved learning '{title}'")
             return True
 
         except Exception as e:
-            log_warning(f"Error saving learning: {e}")
+            log_warning(f"LearnedKnowledgeStore.asave failed: {e}")
             return False
 
     # =========================================================================
@@ -892,14 +891,14 @@ class LearnedKnowledgeStore(LearningStore):
             learning_id = self._build_learning_id(title=title)
             if hasattr(self.knowledge, "delete"):
                 self.knowledge.delete(id=learning_id)
-                log_debug(f"Deleted learning: {title}")
+                log_debug(f"LearnedKnowledgeStore.delete: deleted learning '{title}'")
                 return True
             else:
-                log_warning("Knowledge base does not support deletion")
+                log_warning("LearnedKnowledgeStore.delete: knowledge base does not support deletion")
                 return False
 
         except Exception as e:
-            log_warning(f"Error deleting learning: {e}")
+            log_warning(f"LearnedKnowledgeStore.delete failed: {e}")
             return False
 
     async def adelete(self, title: str) -> bool:
@@ -911,18 +910,18 @@ class LearnedKnowledgeStore(LearningStore):
             learning_id = self._build_learning_id(title=title)
             if hasattr(self.knowledge, "adelete"):
                 await self.knowledge.adelete(id=learning_id)
-                log_debug(f"Deleted learning: {title}")
+                log_debug(f"LearnedKnowledgeStore.adelete: deleted learning '{title}'")
                 return True
             elif hasattr(self.knowledge, "delete"):
                 self.knowledge.delete(id=learning_id)
-                log_debug(f"Deleted learning: {title}")
+                log_debug(f"LearnedKnowledgeStore.adelete: deleted learning '{title}'")
                 return True
             else:
-                log_warning("Knowledge base does not support deletion")
+                log_warning("LearnedKnowledgeStore.adelete: knowledge base does not support deletion")
                 return False
 
         except Exception as e:
-            log_warning(f"Error deleting learning: {e}")
+            log_warning(f"LearnedKnowledgeStore.adelete failed: {e}")
             return False
 
     # =========================================================================
@@ -945,7 +944,7 @@ class LearnedKnowledgeStore(LearningStore):
         Returns:
             Status message.
         """
-        log_debug("LearningsStore: Extracting learnings (background)", center=True)
+        log_debug("LearnedKnowledgeStore: Extracting learnings (background)", center=True)
 
         # Reset state
         self.learning_saved = False
@@ -982,7 +981,7 @@ class LearnedKnowledgeStore(LearningStore):
         if response.tool_executions:
             self.learning_saved = True
 
-        log_debug("LearningsStore: Extraction complete", center=True)
+        log_debug("LearnedKnowledgeStore: Extraction complete", center=True)
         return response.content or ("Learning saved" if self.learning_saved else "No new learnings")
 
     async def _aextract_and_save(
@@ -992,7 +991,7 @@ class LearnedKnowledgeStore(LearningStore):
         team_id: Optional[str] = None,
     ) -> str:
         """Async version of _extract_and_save."""
-        log_debug("LearningsStore: Extracting learnings (background, async)", center=True)
+        log_debug("LearnedKnowledgeStore: Extracting learnings (background, async)", center=True)
 
         self.learning_saved = False
 
@@ -1022,7 +1021,7 @@ class LearnedKnowledgeStore(LearningStore):
         if response.tool_executions:
             self.learning_saved = True
 
-        log_debug("LearningsStore: Extraction complete", center=True)
+        log_debug("LearnedKnowledgeStore: Extraction complete", center=True)
         return response.content or ("Learning saved" if self.learning_saved else "No new learnings")
 
     def _build_extraction_messages(
@@ -1238,7 +1237,7 @@ class LearnedKnowledgeStore(LearningStore):
             return None
 
         except Exception as e:
-            log_warning(f"Failed to parse search result: {e}")
+            log_warning(f"LearnedKnowledgeStore._parse_result failed: {e}")
             return None
 
     def _to_text_content(self, learning: Any) -> str:
@@ -1285,10 +1284,10 @@ class LearnedKnowledgeStore(LearningStore):
         has_knowledge = self.knowledge is not None
         has_model = self.model is not None
         return (
-            f"LearningsStore("
+            f"LearnedKnowledgeStore("
             f"mode={self.config.mode.value}, "
             f"knowledge={has_knowledge}, "
             f"model={has_model}, "
-            f"enable_tool={self.config.enable_tool}, "
+            f"enable_save={self.config.enable_save}, "
             f"enable_search={self.config.enable_search})"
         )

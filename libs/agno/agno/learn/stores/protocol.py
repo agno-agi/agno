@@ -1,215 +1,117 @@
 """
-Learning Protocol
-=================
-The interface that all learning stores must implement.
+Learning Store Protocol
+=======================
+Defines the interface that all learning stores must implement.
 
-A LearningStore handles four core operations:
-1. recall() - Retrieve learnings from storage
-2. process() - Extract and save learnings to storage
-3. build_context() - Build context for the agent
-4. get_tools() - Provide tools to the agent (optional)
-
-This is THE protocol for extending LearningMachine with custom learning types.
-Implement this to create stores for project context, team preferences,
-domain knowledge, or any other learning type your agents need.
+This protocol enables:
+- Consistent API across different learning types
+- Easy addition of custom stores
+- Type safety with Protocol typing
 """
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Type
-
-# =============================================================================
-# Learning Protocol
-# =============================================================================
+from typing import Any, Callable, List, Optional, Protocol, runtime_checkable
 
 
-@dataclass
-class LearningStore(ABC):
-    """Protocol for all learning stores.
+@runtime_checkable
+class LearningStore(Protocol):
+    """Protocol that all learning stores must implement.
 
-    Implement this to create custom learning types for LearningMachine.
+    A learning store handles one type of learning (user profile, session context,
+    learned knowledge, etc.) and provides methods for:
 
-    Required Methods:
-        learning_type: Unique string identifier for this learning type.
-        recall(): Retrieve learnings from storage.
-        arecall(): Async version of recall.
-        process(): Extract and save learnings to storage.
-        aprocess(): Async version of process.
-        build_context(): Build context for the agent.
-
-    Optional Methods:
-        schema: Schema class for introspection.
-        get_tools(): Return tools to expose to agent.
-        aget_tools(): Async version of get_tools.
-        was_updated: Check if store was updated in last operation.
+    - recall: Retrieve relevant data for the current context
+    - process: Extract and save learnings from conversations
+    - build_context: Format data for inclusion in agent prompts
+    - get_tools: Provide tools for agent interaction
     """
 
-    # -------------------------------------------------------------------------
-    # Required: Identity
-    # -------------------------------------------------------------------------
-
     @property
-    @abstractmethod
     def learning_type(self) -> str:
         """Unique identifier for this learning type.
 
-        Used for database storage, logging, and debugging.
+        Used for storage keys and logging.
 
-        Examples:
-            "user_profile"
-            "session_context"
-            "learnings"
-            "project_context"
+        Returns:
+            String identifier (e.g., "user_profile", "session_context")
         """
-        pass
-
-    # -------------------------------------------------------------------------
-    # Optional: Schema
-    # -------------------------------------------------------------------------
+        ...
 
     @property
-    def schema(self) -> Optional[Type[Any]]:
-        """Schema class this store uses.
-
-        Override to enable introspection by LearningMachine.
+    def schema(self) -> Any:
+        """Schema class used for this learning type.
 
         Returns:
-            The dataclass type (e.g., UserProfile, SessionContext),
-            or None if not applicable.
+            The dataclass or schema class for this learning type.
         """
-        return None
+        ...
 
-    # -------------------------------------------------------------------------
-    # Required: Recall
-    # -------------------------------------------------------------------------
-
-    @abstractmethod
-    def recall(self, **context) -> Optional[Any]:
-        """Retrieve learnings from storage.
-
-        Each store interprets context differently:
-        - UserProfileStore uses user_id
-        - SessionContextStore uses session_id
-        - LearningsStore uses message for semantic search
+    def recall(self, **kwargs) -> Optional[Any]:
+        """Retrieve relevant data for the current context.
 
         Args:
-            **context: Arbitrary context. Common keys:
-                - user_id: User identifier
-                - session_id: Session identifier
-                - agent_id: Agent identifier
-                - team_id: Team identifier
-                - message: Current message (for semantic search)
+            **kwargs: Context including user_id, session_id, message, etc.
 
         Returns:
-            Retrieved data (schema instance, list, etc.),
-            or None if nothing found.
-
-        Example:
-            >>> store.recall(user_id="alice")
-            UserProfile(user_id="alice", name="Alice", ...)
+            Retrieved data (schema instance, list, or None if not found).
         """
-        pass
+        ...
 
-    @abstractmethod
-    async def arecall(self, **context) -> Optional[Any]:
+    async def arecall(self, **kwargs) -> Optional[Any]:
         """Async version of recall."""
-        pass
+        ...
 
-    # -------------------------------------------------------------------------
-    # Required: Process
-    # -------------------------------------------------------------------------
+    def process(self, messages: List[Any], **kwargs) -> None:
+        """Extract and save learnings from messages.
 
-    @abstractmethod
-    def process(self, **context) -> None:
-        """Extract and save learnings to storage.
+        Called after a conversation to extract learnings.
 
         Args:
-            **context: Arbitrary context (messages, user_id, session_id, etc.)
-
-        Example:
-            >>> store.process(messages=messages, user_id="alice")
-            # Extracts user info and saves to profile
+            messages: Conversation messages to analyze.
+            **kwargs: Context including user_id, session_id, etc.
         """
-        pass
+        ...
 
-    @abstractmethod
-    async def aprocess(self, **context) -> None:
+    async def aprocess(self, messages: List[Any], **kwargs) -> None:
         """Async version of process."""
-        pass
+        ...
 
-    # -------------------------------------------------------------------------
-    # Required: Build Context
-    # -------------------------------------------------------------------------
-
-    @abstractmethod
     def build_context(self, data: Any) -> str:
-        """Build context for the agent.
+        """Build context string for agent prompts.
 
-        Takes data from recall() and builds a string to inject into
-        the agent's system prompt. This could be:
-        - Formatted data (UserProfile, SessionContext)
-        - Instructions for using tools (Learnings in AGENTIC mode)
-        - Any other context the agent needs
+        Formats the recalled data into a string that can be
+        injected into the agent's system prompt.
 
         Args:
-            data: Data returned from recall(), or None.
+            data: Data returned from recall().
 
         Returns:
-            Context string (typically XML-formatted),
-            or empty string if no context to add.
-
-        Example - Data context:
-            >>> store.build_context(profile)
-            '<user_profile>\\nName: Alice\\n- Prefers concise answers\\n</user_profile>'
-
-        Example - Instruction context:
-            >>> store.build_context(None)
-            '<learnings_instructions>\\nUse search_learnings to find relevant knowledge.\\n</learnings_instructions>'
+            Formatted context string, or empty string if no data.
         """
-        pass
+        ...
 
-    # -------------------------------------------------------------------------
-    # Optional: Agent Tools
-    # -------------------------------------------------------------------------
+    def get_tools(self, **kwargs) -> List[Callable]:
+        """Get tools to expose to the agent.
 
-    def get_tools(self, **context) -> List[Callable]:
-        """Get tools to expose to agent.
-
-        Override to provide agent tools for this learning type.
+        Returns callable tools that the agent can use to interact
+        with this learning type (e.g., update_user_memory, search_learnings).
 
         Args:
-            **context: Arbitrary context (user_id, session_id, etc.)
+            **kwargs: Context including user_id, session_id, etc.
 
         Returns:
-            List of callable tools, or empty list if none.
-
-        Example:
-            >>> tools = store.get_tools(user_id="alice")
-            >>> [t.__name__ for t in tools]
-            ['update_user_memory']
+            List of callable tools, or empty list if no tools.
         """
-        return []
+        ...
 
-    async def aget_tools(self, **context) -> List[Callable]:
-        """Async version of get_tools.
-
-        Default implementation calls sync version.
-        Override if async tool creation is needed.
-        """
-        return self.get_tools(**context)
-
-    # -------------------------------------------------------------------------
-    # Optional: State Tracking
-    # -------------------------------------------------------------------------
+    async def aget_tools(self, **kwargs) -> List[Callable]:
+        """Async version of get_tools."""
+        ...
 
     @property
     def was_updated(self) -> bool:
-        """Check if store was updated in last operation.
-
-        Useful for knowing whether process() found new information.
-        Override in subclass to track actual state.
+        """Check if the store was updated in the last operation.
 
         Returns:
-            True if last process() call made changes, False otherwise.
+            True if data was saved/updated, False otherwise.
         """
-        return False
+        ...

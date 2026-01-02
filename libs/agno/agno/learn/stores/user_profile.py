@@ -413,7 +413,7 @@ class UserProfileStore(LearningStore):
             return None
 
         except Exception as e:
-            log_debug(f"Error retrieving user profile: {e}")
+            log_debug(f"UserProfileStore.get failed for user_id={user_id}: {e}")
             return None
 
     async def aget(
@@ -448,7 +448,7 @@ class UserProfileStore(LearningStore):
             return None
 
         except Exception as e:
-            log_debug(f"Error retrieving user profile: {e}")
+            log_debug(f"UserProfileStore.aget failed for user_id={user_id}: {e}")
             return None
 
     # =========================================================================
@@ -486,10 +486,10 @@ class UserProfileStore(LearningStore):
                 team_id=team_id,
                 content=content,
             )
-            log_debug(f"Saved user profile for user_id: {user_id}")
+            log_debug(f"UserProfileStore.save: saved profile for user_id={user_id}")
 
         except Exception as e:
-            log_debug(f"Error saving user profile: {e}")
+            log_debug(f"UserProfileStore.save failed for user_id={user_id}: {e}")
 
     async def asave(
         self,
@@ -525,10 +525,10 @@ class UserProfileStore(LearningStore):
                     team_id=team_id,
                     content=content,
                 )
-            log_debug(f"Saved user profile for user_id: {user_id}")
+            log_debug(f"UserProfileStore.asave: saved profile for user_id={user_id}")
 
         except Exception as e:
-            log_debug(f"Error saving user profile: {e}")
+            log_debug(f"UserProfileStore.asave failed for user_id={user_id}: {e}")
 
     # =========================================================================
     # Delete Operations
@@ -557,7 +557,7 @@ class UserProfileStore(LearningStore):
             profile_id = self._build_profile_id(user_id=user_id, agent_id=agent_id, team_id=team_id)
             return self.db.delete_learning(id=profile_id)
         except Exception as e:
-            log_debug(f"Error deleting user profile: {e}")
+            log_debug(f"UserProfileStore.delete failed for user_id={user_id}: {e}")
             return False
 
     async def adelete(
@@ -577,7 +577,7 @@ class UserProfileStore(LearningStore):
             else:
                 return self.db.delete_learning(id=profile_id)
         except Exception as e:
-            log_debug(f"Error deleting user profile: {e}")
+            log_debug(f"UserProfileStore.adelete failed for user_id={user_id}: {e}")
             return False
 
     def clear(
@@ -599,9 +599,9 @@ class UserProfileStore(LearningStore):
         try:
             empty_profile = self.schema(user_id=user_id)
             self.save(user_id=user_id, profile=empty_profile, agent_id=agent_id, team_id=team_id)
-            log_debug(f"Cleared user profile for user_id: {user_id}")
+            log_debug(f"UserProfileStore.clear: cleared profile for user_id={user_id}")
         except Exception as e:
-            log_debug(f"Error clearing user profile: {e}")
+            log_debug(f"UserProfileStore.clear failed for user_id={user_id}: {e}")
 
     async def aclear(
         self,
@@ -616,9 +616,9 @@ class UserProfileStore(LearningStore):
         try:
             empty_profile = self.schema(user_id=user_id)
             await self.asave(user_id=user_id, profile=empty_profile, agent_id=agent_id, team_id=team_id)
-            log_debug(f"Cleared user profile for user_id: {user_id}")
+            log_debug(f"UserProfileStore.aclear: cleared profile for user_id={user_id}")
         except Exception as e:
-            log_debug(f"Error clearing user profile: {e}")
+            log_debug(f"UserProfileStore.aclear failed for user_id={user_id}: {e}")
 
     # =========================================================================
     # Memory Operations
@@ -657,7 +657,7 @@ class UserProfileStore(LearningStore):
             profile.memories.append({"id": memory_id, "content": memory, **kwargs})
 
         self.save(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
-        log_debug(f"Added memory for user {user_id}: {memory[:50]}...")
+        log_debug(f"UserProfileStore.add_memory: added memory for user_id={user_id}")
 
         return memory_id
 
@@ -683,7 +683,7 @@ class UserProfileStore(LearningStore):
             profile.memories.append({"id": memory_id, "content": memory, **kwargs})
 
         await self.asave(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
-        log_debug(f"Added memory for user {user_id}: {memory[:50]}...")
+        log_debug(f"UserProfileStore.aadd_memory: added memory for user_id={user_id}")
 
         return memory_id
 
@@ -712,11 +712,11 @@ class UserProfileStore(LearningStore):
             Response from model.
         """
         if self.model is None:
-            log_warning("No model provided for user profile extraction")
+            log_warning("UserProfileStore.extract_and_save: no model provided")
             return "No model provided for user profile extraction"
 
         if not self.db:
-            log_warning("No DB provided for user profile store")
+            log_warning("UserProfileStore.extract_and_save: no database provided")
             return "No DB provided for user profile store"
 
         log_debug("UserProfileStore: Extracting user profile", center=True)
@@ -772,11 +772,11 @@ class UserProfileStore(LearningStore):
     ) -> str:
         """Async version of extract_and_save."""
         if self.model is None:
-            log_warning("No model provided for user profile extraction")
+            log_warning("UserProfileStore.aextract_and_save: no model provided")
             return "No model provided for user profile extraction"
 
         if not self.db:
-            log_warning("No DB provided for user profile store")
+            log_warning("UserProfileStore.aextract_and_save: no database provided")
             return "No DB provided for user profile store"
 
         log_debug("UserProfileStore: Extracting user profile (async)", center=True)

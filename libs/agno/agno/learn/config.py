@@ -109,7 +109,7 @@ class UserProfileConfig:
         schema: Custom schema for user profile data. Default: UserProfile.
 
         # Agent tool
-        agentic_update: Whether to provide update_user_memory tool to agent.
+        enable_tool: Whether to provide update_user_memory tool to agent.
 
         # Internal extraction tools
         enable_add: Allow adding new profile entries.
@@ -146,7 +146,7 @@ class UserProfileConfig:
     schema: Optional[Type[Any]] = None
 
     # Agent tools
-    agentic_update: bool = False
+    enable_tool: bool = False
 
     # Internal extraction tools
     enable_add: bool = True
@@ -230,11 +230,11 @@ class SessionContextConfig:
     additional_instructions: Optional[str] = None
 
     def __repr__(self) -> str:
-        return f"SessionContextConfig(enable_planning={self.enable_planning})"
+        return f"SessionContextConfig(mode={self.mode.value}, enable_planning={self.enable_planning})"
 
 
 @dataclass
-class LearningsConfig:
+class LearnedKnowledgeConfig:
     """Configuration for Learned Knowledge learning type.
 
     Learned Knowledge captures reusable insights and patterns that
@@ -252,11 +252,11 @@ class LearningsConfig:
         model: Model for extraction (if using BACKGROUND mode).
         mode: How learning is extracted. Default: AGENTIC.
         extraction: Extraction settings (only if mode=BACKGROUND).
-        schema: Custom schema for learning data. Default: Learning.
+        schema: Custom schema for learning data. Default: LearnedKnowledge.
 
         # Agent tools
-        agentic_save: Whether to provide save_learning tool to agent.
-        agentic_search: Whether to provide search_learnings tool to agent.
+        enable_save: Whether to provide save_learning tool to agent.
+        enable_search: Whether to provide search_learnings tool to agent.
 
         # Internal extraction tools
         enable_add: Allow adding new learnings.
@@ -269,11 +269,11 @@ class LearningsConfig:
         additional_instructions: Extra instructions appended to default.
 
     Example:
-        >>> config = LearningsConfig(
+        >>> config = LearnedKnowledgeConfig(
         ...     knowledge=my_knowledge_base,  # Required!
         ...     mode=LearningMode.AGENTIC,    # Agent saves via tool
-        ...     agentic_save=True,
-        ...     agentic_search=True,
+        ...     enable_save=True,
+        ...     enable_search=True,
         ... )
     """
 
@@ -289,8 +289,8 @@ class LearningsConfig:
     schema: Optional[Type[Any]] = None
 
     # Agent tools
-    agentic_save: bool = True  # save_learning tool
-    agentic_search: bool = True  # search_learnings tool
+    enable_save: bool = True  # save_learning tool
+    enable_search: bool = True  # search_learnings tool
 
     # Internal extraction tools
     enable_add: bool = True
@@ -309,21 +309,21 @@ class LearningsConfig:
         # Warn if knowledge is missing - learnings won't work without it
         if self.knowledge is None:
             log_warning(
-                "LearningsConfig: knowledge base is None. "
+                "LearnedKnowledgeConfig: knowledge base is None. "
                 "Learnings cannot be saved or searched without a knowledge base. "
-                "Provide a Knowledge instance to LearningsConfig or LearningMachine."
+                "Provide a Knowledge instance to LearnedKnowledgeConfig or LearningMachine."
             )
 
         # Warn if BACKGROUND mode but no model
         if self.mode == LearningMode.BACKGROUND and self.model is None:
             log_warning(
-                "LearningsConfig: BACKGROUND mode requires a model for extraction. "
-                "Provide a model to LearningsConfig or LearningMachine."
+                "LearnedKnowledgeConfig: BACKGROUND mode requires a model for extraction. "
+                "Provide a model to LearnedKnowledgeConfig or LearningMachine."
             )
 
     def __repr__(self) -> str:
         has_knowledge = self.knowledge is not None
-        return f"LearningsConfig(mode={self.mode.value}, knowledge={has_knowledge}, enable_tool={self.enable_tool})"
+        return f"LearnedKnowledgeConfig(mode={self.mode.value}, knowledge={has_knowledge}, enable_save={self.enable_save}, enable_search={self.enable_search})"
 
 
 # =============================================================================
@@ -353,8 +353,8 @@ class DecisionLogConfig:
     schema: Optional[Type[Any]] = None
 
     # Agent tools
-    agentic_save: bool = True  # save_decision tool
-    agentic_search: bool = True  # search_decisions tool
+    enable_save: bool = True  # save_decision tool
+    enable_search: bool = True  # search_decisions tool
 
     # Internal extraction tools
     enable_add: bool = True

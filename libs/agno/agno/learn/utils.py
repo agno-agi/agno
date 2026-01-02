@@ -1,3 +1,13 @@
+"""
+Learning Machine Utilities
+==========================
+Helper functions for safe data handling.
+
+All functions are designed to never raise exceptions -
+they return None on any failure. This prevents learning
+extraction errors from crashing the main agent.
+"""
+
 from dataclasses import asdict, fields
 from typing import Any, Dict, Optional, Type, TypeVar
 
@@ -5,14 +15,30 @@ T = TypeVar("T")
 
 
 def _safe_get(data: Any, key: str, default: Any = None) -> Any:
-    """Safely get a key from dict-like data."""
+    """Safely get a key from dict-like data.
+
+    Args:
+        data: Dict or object with attributes.
+        key: Key or attribute name to get.
+        default: Value to return if not found.
+
+    Returns:
+        The value, or default if not found.
+    """
     if isinstance(data, dict):
         return data.get(key, default)
     return getattr(data, key, default)
 
 
 def _parse_json(data: Any) -> Optional[Dict]:
-    """Parse JSON string to dict, or return dict as-is."""
+    """Parse JSON string to dict, or return dict as-is.
+
+    Args:
+        data: JSON string, dict, or None.
+
+    Returns:
+        Parsed dict, or None if parsing fails.
+    """
     if data is None:
         return None
     if isinstance(data, dict):

@@ -9,8 +9,8 @@ from os import getenv
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.learn.config import (
+    LearnedKnowledgeConfig,
     LearningMode,
-    LearningsConfig,
     SessionContextConfig,
     UserProfileConfig,
 )
@@ -31,7 +31,7 @@ except ImportError:
 # Type aliases for cleaner signatures (Store types imported lazily)
 UserProfileInput = Union[bool, UserProfileConfig, LearningStore, None]
 SessionContextInput = Union[bool, SessionContextConfig, LearningStore, None]
-LearningsInput = Union[bool, LearningsConfig, LearningStore, None]
+LearnedKnowledgeInput = Union[bool, LearnedKnowledgeConfig, LearningStore, None]
 
 
 @dataclass
@@ -42,7 +42,7 @@ class LearningMachine:
         db: Database backend for persistence.
         model: Model for learning extraction.
         knowledge: Knowledge base for learned knowledge store. When provided, automatically
-                   enables the learnings store if not explicitly disabled.
+                   enables the learned_knowledge store if not explicitly disabled.
         user_profile: Enable user profile. Accepts:
                       - bool: True = defaults, False/None = disabled
                       - UserProfileConfig: Custom configuration
@@ -51,11 +51,11 @@ class LearningMachine:
                          - bool: True = defaults, False/None = disabled
                          - SessionContextConfig: Custom configuration
                          - SessionContextStore: Use provided store directly
-        learnings: Enable learnings. Accepts:
-                   - bool: True = defaults, False/None = disabled
-                   - LearningsConfig: Custom configuration
-                   - LearningsStore: Use provided store directly
-                   Auto-enabled when knowledge is provided.
+        learned_knowledge: Enable learned knowledge. Accepts:
+                           - bool: True = defaults, False/None = disabled
+                           - LearnedKnowledgeConfig: Custom configuration
+                           - LearnedKnowledgeStore: Use provided store directly
+                           Auto-enabled when knowledge is provided.
         custom_stores: Additional stores implementing LearningStore protocol.
         debug_mode: Enable debug logging.
     """
@@ -67,7 +67,7 @@ class LearningMachine:
     # Store configurations
     user_profile: UserProfileInput = True
     session_context: SessionContextInput = False
-    learnings: LearningsInput = False
+    learned_knowledge: LearnedKnowledgeInput = False
 
     # Custom stores
     custom_stores: Optional[Dict[str, LearningStore]] = None
@@ -115,14 +115,14 @@ class LearningMachine:
                 # Bool or Config - create the store
                 self._stores["session_context"] = self._create_session_context_store()
 
-        # Auto-enable learnings if knowledge is provided
-        if self.learnings or self.knowledge is not None:
-            if isinstance(self.learnings, LearningStore):
+        # Auto-enable learned_knowledge if knowledge is provided
+        if self.learned_knowledge or self.knowledge is not None:
+            if isinstance(self.learned_knowledge, LearningStore):
                 # Store instance provided directly
-                self._stores["learnings"] = self.learnings
+                self._stores["learned_knowledge"] = self.learned_knowledge
             else:
                 # Bool or Config - create the store
-                self._stores["learnings"] = self._create_learnings_store()
+                self._stores["learned_knowledge"] = self._create_learned_knowledge_store()
 
         if self.custom_stores:
             for name, store in self.custom_stores.items():
@@ -168,25 +168,25 @@ class LearningMachine:
 
         return SessionContextStore(config=config, debug_mode=self.debug_mode)
 
-    def _create_learnings_store(self) -> "LearningStore":
-        """Create LearningsStore with resolved config."""
-        from agno.learn.stores import LearningsStore
+    def _create_learned_knowledge_store(self) -> "LearningStore":
+        """Create LearnedKnowledgeStore with resolved config."""
+        from agno.learn.stores import LearnedKnowledgeStore
 
-        if isinstance(self.learnings, LearningsConfig):
-            config = self.learnings
+        if isinstance(self.learned_knowledge, LearnedKnowledgeConfig):
+            config = self.learned_knowledge
             if config.model is None:
                 config.model = self.model
             # Use top-level knowledge as fallback
             if config.knowledge is None and self.knowledge is not None:
                 config.knowledge = self.knowledge
         else:
-            config = LearningsConfig(
+            config = LearnedKnowledgeConfig(
                 model=self.model,
                 knowledge=self.knowledge,  # Use top-level knowledge
                 mode=LearningMode.AGENTIC,
             )
 
-        return LearningsStore(config=config, debug_mode=self.debug_mode)
+        return LearnedKnowledgeStore(config=config, debug_mode=self.debug_mode)
 
     # =========================================================================
     # Store Access

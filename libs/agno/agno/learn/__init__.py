@@ -1,66 +1,83 @@
-# Enums and Configs
+"""
+Agno Learning Module
+====================
+Gives agents the ability to learn and remember.
+
+Main Components:
+- LearningMachine: Orchestrates all learning capabilities
+- Stores: Storage backends for each learning type
+- Schemas: Data structures for learnings
+- Config: Configuration options
+
+Quick Start:
+    >>> from agno.learn import LearningMachine
+    >>> from agno.learn.config import UserProfileConfig, LearningMode
+    >>>
+    >>> # Basic usage - just add to your agent
+    >>> learning = LearningMachine(
+    ...     db=my_db,
+    ...     model=my_model,
+    ...     user_profile=True,  # Enable user profile learning
+    ... )
+    >>>
+    >>> # Get context for agent prompt
+    >>> context = learning.build_context(user_id="alice")
+    >>>
+    >>> # Get tools to expose to agent
+    >>> tools = learning.get_tools(user_id="alice")
+    >>>
+    >>> # Process conversation for learnings
+    >>> learning.process(messages, user_id="alice")
+
+Learning Types:
+- UserProfile: Long-term memories about users (preferences, facts, history)
+- SessionContext: Current session state (summary, goals, progress)
+- LearnedKnowledge: Reusable insights that apply across users
+
+See Also:
+- agno.learn.config: Configuration options
+- agno.learn.schemas: Data structures
+- agno.learn.stores: Storage backends
+"""
+
 from agno.learn.config import (
-    DecisionLogConfig,
     ExtractionConfig,
     ExtractionTiming,
-    FeedbackConfig,
-    LearningMode,
     LearnedKnowledgeConfig,
-    SelfImprovementConfig,
+    LearningMode,
     SessionContextConfig,
     UserProfileConfig,
 )
-
-# Core
 from agno.learn.machine import LearningMachine
-
-# Schemas
 from agno.learn.schemas import (
-    Decision,
-    Feedback,
-    InstructionUpdate,
     LearnedKnowledge,
     SessionContext,
     UserProfile,
 )
-
-# Stores
 from agno.learn.stores import (
     LearnedKnowledgeStore,
     LearningStore,
     SessionContextStore,
     UserProfileStore,
-    from_dict_safe,
-    to_dict_safe,
 )
 
 __all__ = [
-    # Core
+    # Main class
     "LearningMachine",
-    # Enums
+    # Configs
     "LearningMode",
     "ExtractionTiming",
-    # Configs
     "ExtractionConfig",
     "UserProfileConfig",
     "SessionContextConfig",
     "LearnedKnowledgeConfig",
-    "DecisionLogConfig",
-    "FeedbackConfig",
-    "SelfImprovementConfig",
     # Schemas
     "UserProfile",
     "SessionContext",
     "LearnedKnowledge",
-    "Decision",
-    "Feedback",
-    "InstructionUpdate",
     # Stores
     "LearningStore",
     "UserProfileStore",
     "SessionContextStore",
     "LearnedKnowledgeStore",
-    # Helpers
-    "from_dict_safe",
-    "to_dict_safe",
 ]
