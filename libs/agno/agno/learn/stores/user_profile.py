@@ -4,7 +4,6 @@ User Profile Store
 Storage backend for User Profile learning type.
 
 Stores long-term memories about users that persist across sessions.
-Memories ACCUMULATE over time - new info is added, not replaced.
 
 Key Features:
 - Manual memory addition via add_memory()
@@ -12,6 +11,10 @@ Key Features:
 - Agent tool for in-conversation updates
 - Multi-user isolation (each user has their own profile)
 - Agent/team context for different perspectives on same user
+
+Supported Modes:
+- BACKGROUND: Automatic extraction with duplicate detection
+- AGENTIC: Agent calls update_user_memory directly when it discovers insights
 """
 
 import uuid
@@ -32,7 +35,6 @@ from agno.utils.log import (
     set_log_level_to_info,
 )
 
-# Conditional imports for type checking
 try:
     from agno.db.base import AsyncBaseDb, BaseDb
     from agno.models.message import Message
@@ -93,7 +95,6 @@ class UserProfileStore(LearningStore):
                 "User profile captures facts, not insights requiring approval. "
                 "Falling back to BACKGROUND mode. Use AGENTIC mode or enable_tool=True for agent updates."
             )
-            # Don't change the config, just warn - let it behave like BACKGROUND
 
     # =========================================================================
     # LearningStore Protocol Implementation
@@ -144,9 +145,6 @@ class UserProfileStore(LearningStore):
     ) -> None:
         """Extract user profile from messages.
 
-        Only runs in BACKGROUND mode. In AGENTIC mode, agent uses
-        update_user_memory tool directly.
-
         Args:
             messages: Conversation messages to analyze.
             user_id: The user to update profile for (required).
@@ -154,12 +152,13 @@ class UserProfileStore(LearningStore):
             team_id: Optional team context.
             **kwargs: Additional context (ignored).
         """
-        # Only run background extraction in BACKGROUND mode (or PROPOSE/HITL which falls back to BACKGROUND mode)
+        # Only run process in BACKGROUND mode (or PROPOSE/HITL which falls back to BACKGROUND mode)
         if self.config.mode == LearningMode.AGENTIC:
             return
 
         if not user_id or not messages:
             return
+
         self.extract_and_save(
             messages=messages,
             user_id=user_id,
@@ -739,7 +738,6 @@ class UserProfileStore(LearningStore):
             agent_id=agent_id,
             team_id=team_id,
         )
-        tool_map = {func.__name__: func for func in tools}
 
         # Convert to Function objects for model
         functions = self._build_functions_for_model(tools=tools)
@@ -757,17 +755,9 @@ class UserProfileStore(LearningStore):
             tools=functions,
         )
 
-        # Execute tool calls
+        # Set profile updated flag if tools were executed
         if response.tool_executions:
-            for tool_exec in response.tool_executions:
-                tool_name = tool_exec.tool_name
-                tool_args = tool_exec.tool_args
-                if tool_name in tool_map:
-                    try:
-                        tool_map[tool_name](**tool_args)
-                        self.profile_updated = True
-                    except Exception as e:
-                        log_warning(f"Error executing {tool_name}: {e}")
+            self.profile_updated = True
 
         log_debug("UserProfileStore: Extraction complete", center=True)
 
@@ -808,7 +798,6 @@ class UserProfileStore(LearningStore):
             agent_id=agent_id,
             team_id=team_id,
         )
-        tool_map = {func.__name__: func for func in tools}
 
         # Convert to Function objects for model
         functions = self._build_functions_for_model(tools=tools)
@@ -826,22 +815,9 @@ class UserProfileStore(LearningStore):
             tools=functions,
         )
 
-        # Execute tool calls
+        # Set profile updated flag if tools were executed
         if response.tool_executions:
-            import asyncio
-
-            for tool_exec in response.tool_executions:
-                tool_name = tool_exec.tool_name
-                tool_args = tool_exec.tool_args
-                if tool_name in tool_map:
-                    try:
-                        if asyncio.iscoroutinefunction(tool_map[tool_name]):
-                            await tool_map[tool_name](**tool_args)
-                        else:
-                            tool_map[tool_name](**tool_args)
-                        self.profile_updated = True
-                    except Exception as e:
-                        log_warning(f"Error executing {tool_name}: {e}")
+            self.profile_updated = True
 
         log_debug("UserProfileStore: Extraction complete", center=True)
 

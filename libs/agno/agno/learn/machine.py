@@ -22,7 +22,6 @@ from agno.utils.log import (
     set_log_level_to_info,
 )
 
-# Conditional imports
 try:
     from agno.db.base import AsyncBaseDb, BaseDb
     from agno.models.base import Model
@@ -37,12 +36,12 @@ LearningsInput = Union[bool, LearningsConfig, LearningStore, None]
 
 @dataclass
 class LearningMachine:
-    """Coordinates multiple learning stores for agent memory.
+    """Implements learning stores for agent and teams.
 
     Args:
         db: Database backend for persistence.
-        model: Model for extraction.
-        knowledge: Knowledge base for learnings store. When provided, automatically
+        model: Model for learning extraction.
+        knowledge: Knowledge base for learned knowledge store. When provided, automatically
                    enables the learnings store if not explicitly disabled.
         user_profile: Enable user profile. Accepts:
                       - bool: True = defaults, False/None = disabled
@@ -59,35 +58,13 @@ class LearningMachine:
                    Auto-enabled when knowledge is provided.
         custom_stores: Additional stores implementing LearningStore protocol.
         debug_mode: Enable debug logging.
-
-    Example:
-        # Simple usage with knowledge base
-        >>> learning = LearningMachine(
-        ...     db=db,
-        ...     model=model,
-        ...     knowledge=my_knowledge_base,  # Auto-enables learnings
-        ... )
-
-        # With custom config
-        >>> learning = LearningMachine(
-        ...     db=db,
-        ...     model=model,
-        ...     knowledge=my_knowledge_base,
-        ...     learnings=LearningsConfig(mode=LearningMode.PROPOSE),
-        ... )
-
-        # With custom/extended store (for testing or subclassing)
-        >>> learning = LearningMachine(
-        ...     user_profile=MyCustomUserProfileStore(config=...),
-        ... )
     """
 
-    # Dependencies
     db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
     model: Optional["Model"] = None
     knowledge: Optional[Any] = None
 
-    # Store configurations (bool = defaults, Config = custom, Store = direct)
+    # Store configurations
     user_profile: UserProfileInput = True
     session_context: SessionContextInput = False
     learnings: LearningsInput = False
@@ -168,7 +145,6 @@ class LearningMachine:
                 db=self.db,
                 model=self.model,
                 mode=LearningMode.BACKGROUND,
-                enable_tool=True,
             )
 
         return UserProfileStore(config=config, debug_mode=self.debug_mode)
@@ -235,10 +211,7 @@ class LearningMachine:
         **kwargs,
     ) -> str:
         """Build memory context for the agent's system prompt.
-
-        This is the main method for retrieving memories. Call before generating
-        a response to give the agent context about the user, session, and
-        relevant learnings.
+        Call before generating a response to give the agent context about relevant learnings.
 
         Args:
             user_id: User identifier (for user profile lookup).
@@ -314,10 +287,8 @@ class LearningMachine:
         team_id: Optional[str] = None,
         **kwargs,
     ) -> List[Callable]:
-        """Get memory tools to expose to the agent.
-
-        Returns tools like `update_user_memory`, `search_learnings`, etc.
-        depending on which stores are enabled and their configurations.
+        """Get learning tools to expose to the agent.
+        Returns tools like `update_user_memory`, `search_learnings`, etc. depending on which stores are enabled.
 
         Args:
             user_id: User identifier (required for user profile tool).
@@ -391,11 +362,8 @@ class LearningMachine:
         team_id: Optional[str] = None,
         **kwargs,
     ) -> None:
-        """Extract and save memories from a conversation.
-
-        Call after a conversation to extract user profile info, session
-        context, and learnings. Each store processes according to its
-        mode (BACKGROUND, AGENTIC, etc.).
+        """Extract and save learnings from a conversation.
+        Call after a conversation to extract learnings from enabled stores.
 
         Args:
             messages: Conversation messages to analyze.
@@ -403,15 +371,6 @@ class LearningMachine:
             session_id: Session identifier (for session context extraction).
             agent_id: Optional agent context.
             team_id: Optional team context.
-
-        Example:
-            >>> learning.process(
-            ...     messages=conversation.messages,
-            ...     user_id="alice",
-            ...     session_id="sess-123",
-            ... )
-            >>> learning.was_updated
-            True
         """
         context = {
             "messages": messages,

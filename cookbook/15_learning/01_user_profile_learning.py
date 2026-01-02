@@ -63,12 +63,12 @@ if __name__ == "__main__":
     # )
 
     # --- Session 3: Ask about what the agent remembers ---
-    print("\nSession 3: What do you know about me?")
-    print("-" * 40)
+    # print("\nSession 3: What do you know about me?")
+    # print("-" * 40)
 
-    agent.print_response(
-        "What do you remember about me?",
-        user_id=user_id,
-        session_id="session_recall",
-        stream=True,
-    )
+    # agent.print_response(
+    #     "What do you remember about me?",
+    #     user_id=user_id,
+    #     session_id="session_recall",
+    #     stream=True,
+    # )

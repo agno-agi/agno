@@ -12,7 +12,7 @@ Configurations:
 - ExtractionConfig: Settings for background extraction
 - UserProfileConfig: Config for user profile learning
 - SessionContextConfig: Config for session context learning
-- LearningsConfig: Config for learned knowledge
+- LearnedKnowledgeConfig: Config for learned knowledge
 """
 
 from dataclasses import dataclass, field
@@ -109,9 +109,9 @@ class UserProfileConfig:
         schema: Custom schema for user profile data. Default: UserProfile.
 
         # Agent tool
-        enable_tool: Whether to provide update_user_memory tool to agent.
+        agentic_update: Whether to provide update_user_memory tool to agent.
 
-        # Internal extraction tools (used by background extraction)
+        # Internal extraction tools
         enable_add: Allow adding new profile entries.
         enable_update: Allow updating existing entries.
         enable_delete: Allow deleting entries.
@@ -145,8 +145,8 @@ class UserProfileConfig:
     extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
     schema: Optional[Type[Any]] = None
 
-    # Agent tool
-    enable_tool: bool = False
+    # Agent tools
+    agentic_update: bool = False
 
     # Internal extraction tools
     enable_add: bool = True
@@ -172,12 +172,10 @@ class SessionContextConfig:
 
     Scope: SESSION (fixed) - Retrieved and stored by session_id.
 
-    Note: mode is fixed to BACKGROUND. No agent tool is provided
-    because session context is system-managed only.
-
     Attributes:
         db: Database backend for storage.
-        model: Model for extraction.
+        model: Model for extraction (required for BACKGROUND mode).
+        mode: How learning is extracted. Default: BACKGROUND.
         extraction: Extraction timing settings.
         schema: Custom schema for session context. Default: SessionContext.
 
@@ -212,7 +210,8 @@ class SessionContextConfig:
     db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
     model: Optional["Model"] = None
 
-    # mode is fixed to BACKGROUND - not configurable
+    # Mode and extraction
+    mode: LearningMode = LearningMode.BACKGROUND
     extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
     schema: Optional[Type[Any]] = None
 
@@ -256,8 +255,8 @@ class LearningsConfig:
         schema: Custom schema for learning data. Default: Learning.
 
         # Agent tools
-        enable_tool: Whether to provide save_learning tool to agent.
-        enable_search: Whether to provide search_learnings tool to agent.
+        agentic_save: Whether to provide save_learning tool to agent.
+        agentic_search: Whether to provide search_learnings tool to agent.
 
         # Internal extraction tools
         enable_add: Allow adding new learnings.
@@ -272,9 +271,9 @@ class LearningsConfig:
     Example:
         >>> config = LearningsConfig(
         ...     knowledge=my_knowledge_base,  # Required!
-        ...     mode=LearningMode.AGENTIC,  # Agent saves via tool
-        ...     enable_tool=True,
-        ...     enable_search=True,
+        ...     mode=LearningMode.AGENTIC,    # Agent saves via tool
+        ...     agentic_save=True,
+        ...     agentic_search=True,
         ... )
     """
 
@@ -290,8 +289,8 @@ class LearningsConfig:
     schema: Optional[Type[Any]] = None
 
     # Agent tools
-    enable_tool: bool = True  # save_learning tool
-    enable_search: bool = True  # search_learnings tool
+    agentic_save: bool = True  # save_learning tool
+    agentic_search: bool = True  # search_learnings tool
 
     # Internal extraction tools
     enable_add: bool = True
@@ -353,8 +352,9 @@ class DecisionLogConfig:
     extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
     schema: Optional[Type[Any]] = None
 
-    # Agent tool
-    enable_tool: bool = True
+    # Agent tools
+    agentic_save: bool = True  # save_decision tool
+    agentic_search: bool = True  # search_decisions tool
 
     # Internal extraction tools
     enable_add: bool = True
@@ -379,9 +379,6 @@ class FeedbackConfig:
 
     Scope: AGENT (fixed) — Stored and retrieved by agent_id.
 
-    Note: mode is fixed to BACKGROUND. No agent tool - feedback
-    is captured from external signals (UI, corrections in chat).
-
     Note: Deferred to Phase 2.
     """
 
@@ -389,7 +386,8 @@ class FeedbackConfig:
     db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
     model: Optional["Model"] = None
 
-    # mode is fixed to BACKGROUND
+    # Mode and extraction
+    mode: LearningMode = LearningMode.BACKGROUND
     extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
     schema: Optional[Type[Any]] = None
 
@@ -409,9 +407,6 @@ class SelfImprovementConfig:
 
     Scope: AGENT (fixed) — Stored and retrieved by agent_id.
 
-    Note: mode is fixed to HITL. No agent tool - self-improvement
-    is system-managed with human approval.
-
     Note: Deferred to Phase 3.
     """
 
@@ -419,7 +414,9 @@ class SelfImprovementConfig:
     db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
     model: Optional["Model"] = None
 
-    # mode is fixed to HITL
+    # Mode and extraction
+    mode: LearningMode = LearningMode.HITL
+    extraction: Optional[ExtractionConfig] = None
     schema: Optional[Type[Any]] = None
 
     # Prompt customization

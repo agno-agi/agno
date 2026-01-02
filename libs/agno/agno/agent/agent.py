@@ -1332,6 +1332,7 @@ class Agent:
         10. Cleanup and store the run response and session
         """
         memory_future = None
+        learning_future = None
         cultural_knowledge_future = None
 
         try:
@@ -1406,6 +1407,14 @@ class Agent:
                         run_messages=run_messages,
                         user_id=user_id,
                         existing_future=memory_future,
+                    )
+
+                    # Start learning extraction as a background task (runs concurrently with the main execution)
+                    learning_future = self._start_learning_future(
+                        run_messages=run_messages,
+                        session=session,
+                        user_id=user_id,
+                        existing_future=learning_future,
                     )
 
                     # Start cultural knowledge creation in background thread
@@ -2458,6 +2467,14 @@ class Agent:
                         run_messages=run_messages,
                         user_id=user_id,
                         existing_task=memory_task,
+                    )
+
+                    # Start learning extraction as a background task
+                    learning_task = await self._astart_learning_task(
+                        run_messages=run_messages,
+                        session=agent_session,
+                        user_id=user_id,
+                        existing_task=learning_task,
                     )
 
                     # Start cultural knowledge creation as a background task (runs concurrently with the main execution)
@@ -6346,7 +6363,7 @@ class Agent:
                 pass
 
         # Create new task if learning is enabled
-        if self.learning is not None and run_messages.user_message is not None:
+        if self.learning is not None:
             log_debug("Starting learning extraction as async task.")
             return create_task(
                 self._aprocess_learnings(
@@ -6438,7 +6455,7 @@ class Agent:
             existing_future.cancel()
 
         # Create new future if learning is enabled
-        if self.learning is not None and run_messages.user_message is not None:
+        if self.learning is not None:
             log_debug("Starting learning extraction in background thread.")
             return self.background_executor.submit(
                 self._process_learnings,

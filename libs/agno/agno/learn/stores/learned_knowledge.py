@@ -1,16 +1,13 @@
 """
-Learnings Store
+Learned Knowledge Store
 ===============
 Storage backend for Learned Knowledge learning type.
 
-Unlike UserProfileStore (per-user) and SessionContextStore (per-session),
-LearningsStore uses semantic search to find relevant learnings across
-all stored knowledge.
-
+Stores reusable insights that apply across users and agents.
 Think of it as:
 - UserProfile = what you know about a person
 - SessionContext = what happened in this meeting
-- Learnings = reusable insights that apply anywhere
+- LearnedKnowledge = reusable insights that apply anywhere
 
 Key Features:
 - TWO agent tools: save_learning and search_learnings
@@ -44,7 +41,7 @@ from agno.utils.log import (
 
 
 @dataclass
-class LearningsStore(LearningStore):
+class LearnedKnowledgeStore(LearningStore):
     """Storage backend for Learned Knowledge learning type.
 
     Uses a Knowledge base with vector embeddings for semantic search.
@@ -113,7 +110,7 @@ class LearningsStore(LearningStore):
     @property
     def learning_type(self) -> str:
         """Unique identifier for this learning type."""
-        return "learnings"
+        return "learned_knowledge"
 
     @property
     def schema(self) -> Any:
@@ -188,7 +185,7 @@ class LearningsStore(LearningStore):
         team_id: Optional[str] = None,
         **kwargs,
     ) -> None:
-        """Extract learnings from conversation in BACKGROUND mode.
+        """Extract learned knowledge from messages.
 
         Searches existing learnings first to avoid duplicates, then
         extracts and saves new insights.
@@ -203,7 +200,7 @@ class LearningsStore(LearningStore):
             # In AGENTIC/PROPOSE mode, agent handles saving via tools
             return
 
-        if not messages or not self.model or not self.knowledge:
+        if not messages:
             return
 
         self._extract_and_save(
@@ -963,7 +960,6 @@ class LearningsStore(LearningStore):
 
         # Get extraction tools
         tools = self._get_extraction_tools(agent_id=agent_id, team_id=team_id)
-        tool_map = {func.__name__: func for func in tools}
 
         # Build functions for model
         functions = self._build_functions_for_model(tools=tools)
@@ -981,17 +977,9 @@ class LearningsStore(LearningStore):
             tools=functions,
         )
 
-        # Execute tool calls
+        # Set learning saved flag if tools were executed
         if response.tool_executions:
-            for tool_exec in response.tool_executions:
-                tool_name = tool_exec.tool_name
-                tool_args = tool_exec.tool_args
-                if tool_name in tool_map:
-                    try:
-                        tool_map[tool_name](**tool_args)
-                        self.learning_saved = True
-                    except Exception as e:
-                        log_warning(f"Error executing {tool_name}: {e}")
+            self.learning_saved = True
 
         log_debug("LearningsStore: Extraction complete", center=True)
         return response.content or ("Learning saved" if self.learning_saved else "No new learnings")
@@ -1015,7 +1003,6 @@ class LearningsStore(LearningStore):
         existing_summary = self._summarize_existing(learnings=existing_learnings)
 
         tools = self._get_async_extraction_tools(agent_id=agent_id, team_id=team_id)
-        tool_map = {func.__name__: func for func in tools}
 
         functions = self._build_functions_for_model(tools=tools)
 
@@ -1030,21 +1017,9 @@ class LearningsStore(LearningStore):
             tools=functions,
         )
 
+        # Set learning saved flag if tools were executed
         if response.tool_executions:
-            import asyncio
-
-            for tool_exec in response.tool_executions:
-                tool_name = tool_exec.tool_name
-                tool_args = tool_exec.tool_args
-                if tool_name in tool_map:
-                    try:
-                        if asyncio.iscoroutinefunction(tool_map[tool_name]):
-                            await tool_map[tool_name](**tool_args)
-                        else:
-                            tool_map[tool_name](**tool_args)
-                        self.learning_saved = True
-                    except Exception as e:
-                        log_warning(f"Error executing {tool_name}: {e}")
+            self.learning_saved = True
 
         log_debug("LearningsStore: Extraction complete", center=True)
         return response.content or ("Learning saved" if self.learning_saved else "No new learnings")

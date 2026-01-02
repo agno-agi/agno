@@ -3,9 +3,7 @@ Session Context Store
 =====================
 Storage backend for Session Context learning type.
 
-Unlike UserProfileStore which ACCUMULATES memories, SessionContextStore
-REPLACES context on each extraction. It captures the current state of
-a session: what's happened, what's the goal, what's the plan.
+Stores the current state of a session: what's happened, what's the goal, what's the plan.
 
 Key Features:
 - Summary extraction from conversations
@@ -36,7 +34,6 @@ from agno.utils.log import (
     set_log_level_to_info,
 )
 
-# Conditional imports for type checking
 try:
     from agno.db.base import AsyncBaseDb, BaseDb
     from agno.models.message import Message
@@ -119,21 +116,11 @@ class SessionContextStore(LearningStore):
         """Schema class used for context."""
         return self._schema
 
-    def recall(
-        self,
-        session_id: str,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        **kwargs,
-    ) -> Optional[Any]:
+    def recall(self, session_id: str, **kwargs) -> Optional[Any]:
         """Retrieve session context from storage.
 
         Args:
             session_id: The session to retrieve context for (required).
-            user_id: Optional user context (stored but not used for lookup).
-            agent_id: Optional agent context.
-            team_id: Optional team context.
             **kwargs: Additional context (ignored).
 
         Returns:
@@ -143,14 +130,7 @@ class SessionContextStore(LearningStore):
             return None
         return self.get(session_id=session_id)
 
-    async def arecall(
-        self,
-        session_id: str,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        **kwargs,
-    ) -> Optional[Any]:
+    async def arecall(self, session_id: str, **kwargs) -> Optional[Any]:
         """Async version of recall."""
         if not session_id:
             return None
@@ -160,9 +140,6 @@ class SessionContextStore(LearningStore):
         self,
         messages: List[Any],
         session_id: str,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
         **kwargs,
     ) -> None:
         """Extract session context from messages.
@@ -170,19 +147,17 @@ class SessionContextStore(LearningStore):
         Args:
             messages: Conversation messages to analyze.
             session_id: The session to update context for (required).
-            user_id: Optional user context (stored in context).
-            agent_id: Optional agent context.
-            team_id: Optional team context.
             **kwargs: Additional context (ignored).
         """
+        if self.config.mode != LearningMode.BACKGROUND:
+            return
+
         if not session_id or not messages:
             return
+
         self.extract_and_save(
             messages=messages,
             session_id=session_id,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
         )
 
     async def aprocess(
@@ -554,7 +529,6 @@ class SessionContextStore(LearningStore):
             agent_id=agent_id,
             team_id=team_id,
         )
-        tool_map = {func.__name__: func for func in tools}
 
         # Convert to Function objects for model
         functions = self._build_functions_for_model(tools=tools)
@@ -569,17 +543,9 @@ class SessionContextStore(LearningStore):
             tools=functions,
         )
 
-        # Execute tool calls
+        # Set context updated flag if tools were executed
         if response.tool_executions:
-            for tool_exec in response.tool_executions:
-                tool_name = tool_exec.tool_name
-                tool_args = tool_exec.tool_args
-                if tool_name in tool_map:
-                    try:
-                        tool_map[tool_name](**tool_args)
-                        self.context_updated = True
-                    except Exception as e:
-                        log_warning(f"Error executing {tool_name}: {e}")
+            self.context_updated = True
 
         log_debug("SessionContextStore: Extraction complete", center=True)
 
@@ -618,7 +584,6 @@ class SessionContextStore(LearningStore):
             agent_id=agent_id,
             team_id=team_id,
         )
-        tool_map = {func.__name__: func for func in tools}
 
         # Convert to Function objects for model
         functions = self._build_functions_for_model(tools=tools)
@@ -633,22 +598,9 @@ class SessionContextStore(LearningStore):
             tools=functions,
         )
 
-        # Execute tool calls
+        # Set context updated flag if tools were executed
         if response.tool_executions:
-            import asyncio
-
-            for tool_exec in response.tool_executions:
-                tool_name = tool_exec.tool_name
-                tool_args = tool_exec.tool_args
-                if tool_name in tool_map:
-                    try:
-                        if asyncio.iscoroutinefunction(tool_map[tool_name]):
-                            await tool_map[tool_name](**tool_args)
-                        else:
-                            tool_map[tool_name](**tool_args)
-                        self.context_updated = True
-                    except Exception as e:
-                        log_warning(f"Error executing {tool_name}: {e}")
+            self.context_updated = True
 
         log_debug("SessionContextStore: Extraction complete", center=True)
 
