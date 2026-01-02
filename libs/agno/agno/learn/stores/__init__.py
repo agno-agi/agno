@@ -1,4 +1,4 @@
-from agno.learn.stores.learnings import LearningsStore
+from agno.learn.stores.learned_knowledge import LearnedKnowledgeStore
 from agno.learn.stores.protocol import LearningStore
 from agno.learn.stores.session_context import SessionContextStore
 from agno.learn.stores.user_profile import UserProfileStore
@@ -13,5 +13,5 @@ __all__ = [
     # Built-in stores
     "UserProfileStore",
     "SessionContextStore",
-    "LearningsStore",
+    "LearnedKnowledgeStore",
 ]

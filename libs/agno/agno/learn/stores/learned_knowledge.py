@@ -196,6 +196,7 @@ class LearnedKnowledgeStore(LearningStore):
             team_id: Optional team context.
             **kwargs: Additional context (ignored).
         """
+
         if self.config.mode != LearningMode.BACKGROUND:
             # In AGENTIC/PROPOSE mode, agent handles saving via tools
             return

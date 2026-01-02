@@ -5,7 +5,7 @@ from agno.learn.config import (
     ExtractionTiming,
     FeedbackConfig,
     LearningMode,
-    LearningsConfig,
+    LearnedKnowledgeConfig,
     SelfImprovementConfig,
     SessionContextConfig,
     UserProfileConfig,
@@ -19,14 +19,14 @@ from agno.learn.schemas import (
     Decision,
     Feedback,
     InstructionUpdate,
-    Learning,
+    LearnedKnowledge,
     SessionContext,
     UserProfile,
 )
 
 # Stores
 from agno.learn.stores import (
-    LearningsStore,
+    LearnedKnowledgeStore,
     LearningStore,
     SessionContextStore,
     UserProfileStore,
@@ -44,14 +44,14 @@ __all__ = [
     "ExtractionConfig",
     "UserProfileConfig",
     "SessionContextConfig",
-    "LearningsConfig",
+    "LearnedKnowledgeConfig",
     "DecisionLogConfig",
     "FeedbackConfig",
     "SelfImprovementConfig",
     # Schemas
     "UserProfile",
     "SessionContext",
-    "Learning",
+    "LearnedKnowledge",
     "Decision",
     "Feedback",
     "InstructionUpdate",
@@ -59,7 +59,7 @@ __all__ = [
     "LearningStore",
     "UserProfileStore",
     "SessionContextStore",
-    "LearningsStore",
+    "LearnedKnowledgeStore",
     # Helpers
     "from_dict_safe",
     "to_dict_safe",

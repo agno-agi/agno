@@ -12,7 +12,7 @@ automatically handle subclass fields via dataclasses.fields().
 Schemas:
 - UserProfile: Long-term user memory
 - SessionContext: Current session state
-- Learning: Reusable knowledge/insights
+- LearnedKnowledge: Reusable knowledge/insights
 - Decision: Decision logs (Phase 2)
 - Feedback: Behavioral feedback (Phase 2)
 - InstructionUpdate: Self-improvement (Phase 3)
@@ -260,7 +260,7 @@ class SessionContext:
 
 
 @dataclass
-class Learning:
+class LearnedKnowledge:
     """Schema for Learned Knowledge learning type.
 
     Captures reusable insights and patterns that can be shared
@@ -278,7 +278,7 @@ class Learning:
 
     Example - Extending with custom fields:
         @dataclass
-        class MyLearning(Learning):
+        class MyLearnedKnowledge(LearnedKnowledge):
             confidence: float = 1.0
             source_conversation_id: Optional[str] = None
     """
@@ -293,7 +293,7 @@ class Learning:
     updated_at: Optional[str] = None
 
     @classmethod
-    def from_dict(cls, data: Any) -> Optional["Learning"]:
+    def from_dict(cls, data: Any) -> Optional["LearnedKnowledge"]:
         """Parse from dict/JSON, returning None on any failure."""
         if data is None:
             return None
