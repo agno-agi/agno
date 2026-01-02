@@ -32,7 +32,7 @@ async def streaming_reasoning():
     # async for run_output_event in agent.arun(
     #     prompt,
     #     stream=True,
-    #     stream_events=True,  # Use stream_events instead of deprecated stream_intermediate_steps
+    #     stream_events=True,
     # ):
     #     if run_output_event.event == RunEvent.run_started:
     #         print(f"\nEVENT: {run_output_event.event}")

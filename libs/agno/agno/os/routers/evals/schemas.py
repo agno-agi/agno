@@ -1,5 +1,5 @@
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -10,6 +10,7 @@ from agno.eval.accuracy import AccuracyEval
 from agno.eval.agent_as_judge import AgentAsJudgeEval
 from agno.eval.performance import PerformanceEval
 from agno.eval.reliability import ReliabilityEval
+from agno.os.utils import to_utc_datetime
 
 
 class EvalRunInput(BaseModel):
@@ -74,8 +75,8 @@ class EvalSchema(BaseModel):
             eval_type=eval_run["eval_type"],
             eval_data=eval_run["eval_data"],
             eval_input=eval_run.get("eval_input"),
-            created_at=datetime.fromtimestamp(eval_run["created_at"], tz=timezone.utc),
-            updated_at=datetime.fromtimestamp(eval_run["updated_at"], tz=timezone.utc),
+            created_at=to_utc_datetime(eval_run.get("created_at")),
+            updated_at=to_utc_datetime(eval_run.get("updated_at")),
         )
 
     @classmethod
