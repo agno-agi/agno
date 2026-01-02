@@ -199,6 +199,28 @@ class Skills:
             }
         )
 
+    def _is_safe_path(self, base_dir: Path, requested_path: str) -> bool:
+        """Check if the requested path stays within the base directory.
+
+        This prevents path traversal attacks where a malicious path like
+        '../../../etc/passwd' could be used to access files outside the
+        intended directory.
+
+        Args:
+            base_dir: The base directory that the path must stay within.
+            requested_path: The user-provided path to validate.
+
+        Returns:
+            True if the path is safe (stays within base_dir), False otherwise.
+        """
+        try:
+            # Resolve the full path and check it's under base_dir
+            full_path = (base_dir / requested_path).resolve()
+            base_resolved = base_dir.resolve()
+            return full_path.is_relative_to(base_resolved)
+        except (ValueError, OSError):
+            return False
+
     def _get_skill_reference(self, skill_name: str, reference_path: str) -> str:
         """Load a reference document from a skill.
 
@@ -227,8 +249,18 @@ class Skills:
                 }
             )
 
+        # Validate path to prevent path traversal attacks
+        refs_dir = Path(skill.source_path) / "references"
+        if not self._is_safe_path(refs_dir, reference_path):
+            return json.dumps(
+                {
+                    "error": f"Invalid reference path: '{reference_path}'",
+                    "skill_name": skill_name,
+                }
+            )
+
         # Load the reference file
-        ref_file = Path(skill.source_path) / "references" / reference_path
+        ref_file = refs_dir / reference_path
         try:
             content = ref_file.read_text(encoding="utf-8")
             return json.dumps(
@@ -275,8 +307,18 @@ class Skills:
                 }
             )
 
+        # Validate path to prevent path traversal attacks
+        scripts_dir = Path(skill.source_path) / "scripts"
+        if not self._is_safe_path(scripts_dir, script_path):
+            return json.dumps(
+                {
+                    "error": f"Invalid script path: '{script_path}'",
+                    "skill_name": skill_name,
+                }
+            )
+
         # Load the script file
-        script_file = Path(skill.source_path) / "scripts" / script_path
+        script_file = scripts_dir / script_path
         try:
             content = script_file.read_text(encoding="utf-8")
             return json.dumps(

@@ -393,3 +393,48 @@ def test_loader_error_logged_but_continues() -> None:
 
     assert len(all_skills) == 1
     assert all_skills[0].name == "working"
+
+
+# --- Path Traversal Prevention Tests ---
+
+
+def test_get_skill_reference_path_traversal_blocked(mock_loader: MockSkillLoader) -> None:
+    """Test that path traversal attempts are blocked for references."""
+    skills = Skills(loaders=[mock_loader])
+    result_json = skills._get_skill_reference("test-skill", "../../../etc/passwd")
+    result = json.loads(result_json)
+
+    assert "error" in result
+    # Should be caught by the "not in skill.references" check first
+    assert "not found" in result["error"].lower()
+
+
+def test_get_skill_script_path_traversal_blocked(mock_loader: MockSkillLoader) -> None:
+    """Test that path traversal attempts are blocked for scripts."""
+    skills = Skills(loaders=[mock_loader])
+    result_json = skills._get_skill_script("test-skill", "../../../etc/passwd")
+    result = json.loads(result_json)
+
+    assert "error" in result
+    # Should be caught by the "not in skill.scripts" check first
+    assert "not found" in result["error"].lower()
+
+
+def test_is_safe_path_allows_valid_paths(mock_loader: MockSkillLoader) -> None:
+    """Test that _is_safe_path allows valid paths."""
+    skills = Skills(loaders=[mock_loader])
+    base_dir = Path("/some/base/dir")
+
+    assert skills._is_safe_path(base_dir, "file.txt") is True
+    assert skills._is_safe_path(base_dir, "subdir/file.txt") is True
+
+
+def test_is_safe_path_blocks_traversal(mock_loader: MockSkillLoader) -> None:
+    """Test that _is_safe_path blocks path traversal attempts."""
+    skills = Skills(loaders=[mock_loader])
+    base_dir = Path("/some/base/dir")
+
+    assert skills._is_safe_path(base_dir, "../file.txt") is False
+    assert skills._is_safe_path(base_dir, "../../file.txt") is False
+    assert skills._is_safe_path(base_dir, "../../../etc/passwd") is False
+    assert skills._is_safe_path(base_dir, "subdir/../../file.txt") is False
