@@ -1,14 +1,9 @@
 """
-User Profile Learning — The Simplest Setup
+User Profile Learning
 ===========================================
 This is the simplest way to add learning to an agent.
 
-Just set `learning=True` and provide a database. That's it!
-
-What you get:
-- ✅ User Profile: Remembers facts about users across sessions
-
-The agent automatically:
+Just set `learning=True` and provide a database. The agent automatically:
 - Extracts user info from conversations (BACKGROUND mode)
 - Has an `update_user_memory` tool to save info on demand
 
@@ -30,28 +25,25 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
 # Model for the agent
-model = OpenAIChat(id="gpt-4o")
+model = OpenAIChat(id="gpt-5.2")
 
 # =============================================================================
-# Create the Agent — Just set learning=True!
+# Create the Agent
 # =============================================================================
 
 agent = Agent(
-    name="Personal Assistant",
     model=model,
     db=db,
-    # This is all you need! Enables UserProfileStore with:
+    # learning=True is all you need!
+    # It enables UserProfileStore with:
     # - BACKGROUND extraction (auto-captures user info)
     # - update_user_memory tool (agent can save info on demand)
     learning=True,
-    # Standard agent settings
-    add_datetime_to_context=True,
-    markdown=True,
 )
 
 
 # =============================================================================
-# Demo: User Memory Across Sessions
+# Demo
 # =============================================================================
 
 
@@ -64,7 +56,7 @@ def demo_user_memory():
     user_id = "alice@example.com"
 
     # --- Session 1: User introduces themselves ---
-    print("\n📝 Session 1: Introduction")
+    print("\nSession 1: Introduction")
     print("-" * 40)
 
     agent.print_response(
@@ -76,18 +68,18 @@ def demo_user_memory():
     )
 
     # --- Session 2: New session, agent should remember Alice ---
-    print("\n\n📝 Session 2: New conversation (agent remembers!)")
+    print("\nSession 2: New conversation (agent remembers!)")
     print("-" * 40)
 
     agent.print_response(
         "What visualization library would you recommend for my work?",
         user_id=user_id,
-        session_id="session_followup",  # Different session!
+        session_id="session_followup",
         stream=True,
     )
 
     # --- Session 3: Ask about what the agent remembers ---
-    print("\n\n📝 Session 3: What do you know about me?")
+    print("\nSession 3: What do you know about me?")
     print("-" * 40)
 
     agent.print_response(
@@ -107,7 +99,7 @@ def demo_agent_tool():
     user_id = "carol@example.com"
     session_id = "preferences_session"
 
-    print("\n📝 User shares preferences (agent should save them)")
+    print("\nUser shares preferences (agent should save them)")
     print("-" * 40)
 
     agent.print_response(
@@ -119,13 +111,13 @@ def demo_agent_tool():
         stream=True,
     )
 
-    print("\n\n📝 Later: Testing if preferences were saved")
+    print("\nLater: Testing if preferences were saved")
     print("-" * 40)
 
     agent.print_response(
         "Can you explain how async/await works in Python?",
         user_id=user_id,
-        session_id="later_session",  # Different session
+        session_id="later_session",
         stream=True,
     )
 
@@ -135,33 +127,5 @@ def demo_agent_tool():
 # =============================================================================
 
 if __name__ == "__main__":
-    import sys
-
-    demos = {
-        "memory": demo_user_memory,
-        "tool": demo_agent_tool,
-    }
-
-    if len(sys.argv) > 1:
-        demo_name = sys.argv[1]
-
-        if demo_name == "all":
-            demo_user_memory()
-            demo_agent_tool()
-        elif demo_name in demos:
-            demos[demo_name]()
-        else:
-            print(f"Unknown demo: {demo_name}")
-            print(f"Available: {', '.join(demos.keys())}, all")
-    else:
-        print("=" * 60)
-        print("🧠 User Profile Learning — The Simplest Setup")
-        print("=" * 60)
-        print("\nThis cookbook shows learning=True in action.")
-        print("\nAvailable demos:")
-        print("  memory   - User memory persists across sessions")
-        print("  tool     - Agent uses update_user_memory tool")
-        print("  all      - Run all demos")
-        print("\nUsage: python 01_user_profile_learning.py <demo>")
-        print("\nRunning 'memory' demo by default...\n")
-        demo_user_memory()
+    demo_user_memory()
+    demo_agent_tool()
