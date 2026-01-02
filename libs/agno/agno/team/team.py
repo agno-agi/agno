@@ -114,6 +114,8 @@ from agno.utils.agent import (
 from agno.utils.common import is_typed_dict
 from agno.utils.events import (
     add_team_error_event,
+    create_team_llm_request_completed_event,
+    create_team_llm_request_started_event,
     create_team_parser_model_response_completed_event,
     create_team_parser_model_response_started_event,
     create_team_post_hook_completed_event,
@@ -3303,6 +3305,19 @@ class Team:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
+        # Emit LLMRequestStarted event
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_team_llm_request_started_event(
+                    from_run_response=run_response,
+                    model=self.model.id,
+                    model_provider=self.model.provider,
+                ),
+                run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
+            )
+
         full_model_response = ModelResponse()
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
@@ -3365,6 +3380,22 @@ class Team:
             messages_for_run_response, current_run_metrics=run_response.metrics
         )
 
+        # Emit LLMRequestCompleted event
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_team_llm_request_completed_event(
+                    from_run_response=run_response,
+                    model=self.model.id,
+                    model_provider=self.model.provider,
+                    input_tokens=run_response.metrics.input_tokens if run_response.metrics else None,
+                    output_tokens=run_response.metrics.output_tokens if run_response.metrics else None,
+                    total_tokens=run_response.metrics.total_tokens if run_response.metrics else None,
+                ),
+                run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
+            )
+
         # Update the run_response audio if streaming
         if full_model_response.audio is not None:
             run_response.response_audio = full_model_response.audio
@@ -3395,6 +3426,19 @@ class Team:
         if should_parse_structured_output:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
+
+        # Emit LLMRequestStarted event
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_team_llm_request_started_event(
+                    from_run_response=run_response,
+                    model=self.model.id,
+                    model_provider=self.model.provider,
+                ),
+                run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
+            )
 
         full_model_response = ModelResponse()
         model_stream = self.model.aresponse_stream(
@@ -3450,6 +3494,22 @@ class Team:
         run_response.metrics = self._calculate_metrics(
             messages_for_run_response, current_run_metrics=run_response.metrics
         )
+
+        # Emit LLMRequestCompleted event
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_team_llm_request_completed_event(
+                    from_run_response=run_response,
+                    model=self.model.id,
+                    model_provider=self.model.provider,
+                    input_tokens=run_response.metrics.input_tokens if run_response.metrics else None,
+                    output_tokens=run_response.metrics.output_tokens if run_response.metrics else None,
+                    total_tokens=run_response.metrics.total_tokens if run_response.metrics else None,
+                ),
+                run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
+            )
 
         if stream_events and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
