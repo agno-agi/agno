@@ -117,7 +117,7 @@ class BrowserbaseTools(Toolkit):
         Use provided connect_url or ensure we have a session with a connect_url
         """
         try:
-            from playwright.sync_api import sync_playwright
+            from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
         except ImportError:
             raise ImportError(
                 "`playwright` not installed. Please install using `pip install playwright` and run `playwright install`"
@@ -244,7 +244,7 @@ class BrowserbaseTools(Toolkit):
         Use provided connect_url or ensure we have a session with a connect_url
         """
         try:
-            from playwright.async_api import async_playwright
+            from playwright.async_api import async_playwright  # type: ignore[import-not-found]
         except ImportError:
             raise ImportError(
                 "`playwright` not installed. Please install using `pip install playwright` and run `playwright install`"
