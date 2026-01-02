@@ -18,9 +18,12 @@ from agno.tools.browserbase import BrowserbaseTools
 #   - Optional: Defaults to https://api.browserbase.com if not specified
 #   - Only change this if you're using a custom API endpoint or proxy
 
+# ==================== Sync Usage ====================
+# Use this for regular scripts and synchronous execution
+
 agent = Agent(
     name="Web Automation Assistant",
-    tools=[BrowserbaseTools()],
+    tools=[BrowserbaseTools()],  # Default: sync tools
     instructions=[
         "You are a web automation assistant that can help with:",
         "1. Capturing screenshots of websites",
@@ -45,3 +48,37 @@ agent.print_response("""
     2. Navigate to page 2
     3. Extract the first 5 quotes from page 2
 """)
+
+
+# ==================== Async Usage ====================
+# Use this for FastAPI, async frameworks, or when using agent.arun()
+# Uncomment the code below to use async tools
+
+# import asyncio
+#
+# async_agent = Agent(
+#     name="Async Web Automation Assistant",
+#     tools=[BrowserbaseTools(async_tools=True)],  # Enable async tools
+#     instructions=[
+#         "You are a web automation assistant that can help with:",
+#         "1. Capturing screenshots of websites",
+#         "2. Extracting content from web pages",
+#         "3. Monitoring website changes",
+#         "4. Taking visual snapshots of responsive layouts",
+#         "5. Automated web testing and verification",
+#     ],
+#     markdown=True,
+# )
+#
+#
+# async def main():
+#     await async_agent.aprint_response("""
+#         Visit https://quotes.toscrape.com and:
+#         1. Extract the first 5 quotes and their authors
+#         2. Navigate to page 2
+#         3. Extract the first 5 quotes from page 2
+#     """)
+#
+#
+# if __name__ == "__main__":
+#     asyncio.run(main())
