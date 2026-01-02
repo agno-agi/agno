@@ -408,7 +408,7 @@ class UserProfileStore(LearningStore):
                 team_id=team_id,
             )
 
-            if result and result.get("content"):
+            if result and result.get("content"):  # type: ignore
                 return from_dict_safe(self.schema, result["content"])
 
             return None

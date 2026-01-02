@@ -6309,6 +6309,7 @@ class Agent:
             # Convert run messages to list format expected by LearningMachine
             messages = run_messages.messages if run_messages else []
 
+            self.learning = cast(LearningMachine, self.learning)
             self.learning.process(
                 messages=messages,
                 user_id=user_id,

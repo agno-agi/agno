@@ -499,7 +499,7 @@ class BaseDb(ABC):
     def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
-    # --- Learning ---
+    # --- Learnings ---
     @abstractmethod
     def get_learning(
         self,
@@ -1056,9 +1056,9 @@ class AsyncBaseDb(ABC):
     ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
         raise NotImplementedError
 
-    # --- Learning ---
+    # --- Learnings ---
     @abstractmethod
-    async def aget_learning(
+    async def get_learning(
         self,
         learning_type: str,
         user_id: Optional[str] = None,
@@ -1081,7 +1081,7 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def aupsert_learning(
+    async def upsert_learning(
         self,
         id: str,
         learning_type: str,
@@ -1107,7 +1107,7 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def adelete_learning(self, id: str) -> bool:
+    async def delete_learning(self, id: str) -> bool:
         """Async delete a learning record.
 
         Args:
@@ -1119,7 +1119,7 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def aget_learnings(
+    async def get_learnings(
         self,
         learning_type: Optional[str] = None,
         user_id: Optional[str] = None,

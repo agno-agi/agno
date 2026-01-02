@@ -59,7 +59,7 @@ def from_dict_safe(cls: Type[T], data: Any) -> Optional[T]:
             return None
 
         # Get valid field names for this class
-        field_names = {f.name for f in fields(cls)}
+        field_names = {f.name for f in fields(cls)}  # type: ignore
 
         # Filter to only valid fields
         kwargs = {k: v for k, v in parsed.items() if k in field_names}
