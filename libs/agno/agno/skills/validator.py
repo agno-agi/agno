@@ -42,10 +42,7 @@ def _validate_name(name: str, skill_dir: Optional[Path] = None) -> List[str]:
     name = unicodedata.normalize("NFKC", name.strip())
 
     if len(name) > MAX_SKILL_NAME_LENGTH:
-        errors.append(
-            f"Skill name '{name}' exceeds {MAX_SKILL_NAME_LENGTH} character limit "
-            f"({len(name)} chars)"
-        )
+        errors.append(f"Skill name '{name}' exceeds {MAX_SKILL_NAME_LENGTH} character limit ({len(name)} chars)")
 
     if name != name.lower():
         errors.append(f"Skill name '{name}' must be lowercase")
@@ -58,8 +55,7 @@ def _validate_name(name: str, skill_dir: Optional[Path] = None) -> List[str]:
 
     if not all(c.isalnum() or c == "-" for c in name):
         errors.append(
-            f"Skill name '{name}' contains invalid characters. "
-            "Only letters, digits, and hyphens are allowed."
+            f"Skill name '{name}' contains invalid characters. Only letters, digits, and hyphens are allowed."
         )
 
     if skill_dir:
@@ -86,10 +82,7 @@ def _validate_description(description: str) -> List[str]:
         return errors
 
     if len(description) > MAX_DESCRIPTION_LENGTH:
-        errors.append(
-            f"Description exceeds {MAX_DESCRIPTION_LENGTH} character limit "
-            f"({len(description)} chars)"
-        )
+        errors.append(f"Description exceeds {MAX_DESCRIPTION_LENGTH} character limit ({len(description)} chars)")
 
     return errors
 
@@ -110,10 +103,7 @@ def _validate_compatibility(compatibility: str) -> List[str]:
         return errors
 
     if len(compatibility) > MAX_COMPATIBILITY_LENGTH:
-        errors.append(
-            f"Compatibility exceeds {MAX_COMPATIBILITY_LENGTH} character limit "
-            f"({len(compatibility)} chars)"
-        )
+        errors.append(f"Compatibility exceeds {MAX_COMPATIBILITY_LENGTH} character limit ({len(compatibility)} chars)")
 
     return errors
 

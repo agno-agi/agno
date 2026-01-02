@@ -22,21 +22,25 @@ def check_naming_conventions(code: str) -> list[dict]:
             parts = line.split("=")[0].strip()
             if any(c.isupper() for c in parts) and "_" not in parts:
                 if not parts[0].isupper():  # Not a class
-                    issues.append({
-                        "line": i,
-                        "type": "naming",
-                        "message": f"Possible camelCase variable: '{parts}'. Use snake_case instead.",
-                    })
+                    issues.append(
+                        {
+                            "line": i,
+                            "type": "naming",
+                            "message": f"Possible camelCase variable: '{parts}'. Use snake_case instead.",
+                        }
+                    )
 
         # Check for single-letter variable names (except i, j, k, x, y, z)
         if "=" in line:
             var_name = line.split("=")[0].strip()
             if len(var_name) == 1 and var_name not in "ijkxyz_":
-                issues.append({
-                    "line": i,
-                    "type": "naming",
-                    "message": f"Single-letter variable '{var_name}'. Use descriptive names.",
-                })
+                issues.append(
+                    {
+                        "line": i,
+                        "type": "naming",
+                        "message": f"Single-letter variable '{var_name}'. Use descriptive names.",
+                    }
+                )
 
     return issues
 
@@ -64,11 +68,13 @@ def check_function_length(code: str, max_lines: int = 50) -> list[dict]:
 
         if stripped.startswith("def "):
             if in_function and function_lines > max_lines:
-                issues.append({
-                    "line": function_start,
-                    "type": "length",
-                    "message": f"Function '{function_name}' is {function_lines} lines (max: {max_lines}).",
-                })
+                issues.append(
+                    {
+                        "line": function_start,
+                        "type": "length",
+                        "message": f"Function '{function_name}' is {function_lines} lines (max: {max_lines}).",
+                    }
+                )
 
             in_function = True
             function_name = stripped.split("(")[0].replace("def ", "")
@@ -86,11 +92,13 @@ def check_function_length(code: str, max_lines: int = 50) -> list[dict]:
 
     # Check last function
     if in_function and function_lines > max_lines:
-        issues.append({
-            "line": function_start,
-            "type": "length",
-            "message": f"Function '{function_name}' is {function_lines} lines (max: {max_lines}).",
-        })
+        issues.append(
+            {
+                "line": function_start,
+                "type": "length",
+                "message": f"Function '{function_name}' is {function_lines} lines (max: {max_lines}).",
+            }
+        )
 
     return issues
 

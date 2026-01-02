@@ -53,7 +53,9 @@ def validate_commit_message(message: str) -> dict:
 
         # Validate type
         if commit_type not in COMMIT_TYPES:
-            errors.append(f"Invalid commit type '{commit_type}'. Valid types: {', '.join(COMMIT_TYPES.keys())}")
+            errors.append(
+                f"Invalid commit type '{commit_type}'. Valid types: {', '.join(COMMIT_TYPES.keys())}"
+            )
 
         # Check description
         if not description:
@@ -65,7 +67,9 @@ def validate_commit_message(message: str) -> dict:
 
         # Check subject length
         if len(subject) > 72:
-            warnings.append(f"Subject line is {len(subject)} chars (recommended max: 72)")
+            warnings.append(
+                f"Subject line is {len(subject)} chars (recommended max: 72)"
+            )
 
     # Check for body separation
     if len(lines) > 1 and lines[1].strip():
@@ -140,9 +144,19 @@ def suggest_commit_type(changed_files: list[str]) -> str:
     Returns:
         Suggested commit type.
     """
-    test_files = [f for f in changed_files if "test" in f.lower() or "spec" in f.lower()]
-    doc_files = [f for f in changed_files if f.endswith((".md", ".rst", ".txt")) or "doc" in f.lower()]
-    config_files = [f for f in changed_files if f.endswith((".yml", ".yaml", ".json", ".toml", ".ini"))]
+    test_files = [
+        f for f in changed_files if "test" in f.lower() or "spec" in f.lower()
+    ]
+    doc_files = [
+        f
+        for f in changed_files
+        if f.endswith((".md", ".rst", ".txt")) or "doc" in f.lower()
+    ]
+    config_files = [
+        f
+        for f in changed_files
+        if f.endswith((".yml", ".yaml", ".json", ".toml", ".ini"))
+    ]
 
     if all(f in test_files for f in changed_files):
         return "test"

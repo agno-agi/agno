@@ -46,7 +46,6 @@ from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.types import KnowledgeFilter
-from agno.skills import Skills
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
@@ -78,6 +77,7 @@ from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
+from agno.skills import Skills
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
