@@ -63,6 +63,7 @@ agent = Agent(
 # The agent now has access to:
 # - get_skill_instructions(skill_name) - Load full instructions
 # - get_skill_reference(skill_name, reference_path) - Load reference docs
+# - get_skill_script(skill_name, script_path) - Load executable scripts
 ```
 
 ## How Skills Work
@@ -70,6 +71,7 @@ agent = Agent(
 1. **System Prompt**: Available skills are listed in the agent's system prompt
 2. **On-Demand Loading**: The agent calls `get_skill_instructions()` when it needs to use a skill
 3. **Reference Access**: The agent can load detailed documentation via `get_skill_reference()`
+4. **Script Access**: The agent can load executable code templates via `get_skill_script()`
 
 This lazy-loading approach keeps the context window efficient while giving agents access to extensive domain knowledge.
 

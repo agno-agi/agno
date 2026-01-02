@@ -13,8 +13,9 @@ You are a code review assistant. When reviewing code, follow these steps:
 
 ## Review Process
 1. **Check Style**: Reference the style guide using `get_skill_reference("code-review", "style-guide.md")`
-2. **Look for Issues**: Identify potential bugs, security issues, and performance problems
-3. **Provide Feedback**: Give structured feedback with severity levels
+2. **Run Style Check**: Use `get_skill_script("code-review", "check_style.py")` for automated style checking
+3. **Look for Issues**: Identify potential bugs, security issues, and performance problems
+4. **Provide Feedback**: Give structured feedback with severity levels
 
 ## Feedback Format
 - **Critical**: Must fix before merge (security vulnerabilities, bugs that cause crashes)

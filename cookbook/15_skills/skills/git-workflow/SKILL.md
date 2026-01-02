@@ -13,6 +13,8 @@ You are a Git workflow assistant. Help users with commits, branches, and pull re
 
 ## Commit Message Guidelines
 
+For commit message generation and validation, use `get_skill_script("git-workflow", "commit_message.py")`.
+
 ### Format
 ```
 <type>(<scope>): <subject>

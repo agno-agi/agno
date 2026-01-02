@@ -9,13 +9,11 @@ This example demonstrates how to deploy an agent with skills using AgentOS.
 python cookbook/06_agent_os/skills/agent_with_local_skill.py
 ```
 
-Then visit http://localhost:7777/config to see the agent configuration.
-
 ## What This Example Shows
 
 - Loading skills from a local directory using `LocalSkills`
 - Integrating skills with an agent served via AgentOS
-- The agent has access to `get_skill_instructions` and `get_skill_reference` tools
+- The agent has access to `get_skill_instructions`, `get_skill_reference`, and `get_skill_script` tools
 
 ## Sample Skills Included
 

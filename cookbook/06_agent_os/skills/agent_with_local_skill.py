@@ -15,18 +15,15 @@ from agno.skills import LocalSkills, Skills
 # Get the skills directory (from the 15_skills cookbook)
 skills_dir = Path(__file__).parent.parent.parent / "15_skills" / "skills"
 
-# Create agent with skills
+# Create an agent with skills
 agent = Agent(
     name="Skilled Agent",
     model=OpenAIChat(id="gpt-4o"),
     skills=Skills(loaders=[LocalSkills(str(skills_dir))]),
     instructions=[
         "You are a helpful assistant with access to specialized skills.",
-        "Use the get_skill_instructions tool to load skill guidance when needed.",
-        "Use the get_skill_reference tool to access detailed documentation.",
     ],
     markdown=True,
-    debug_mode=True,
 )
 
 # Create AgentOS
@@ -39,8 +36,4 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    """Run the AgentOS server.
-
-    Visit http://localhost:7777/config to see available endpoints.
-    """
     agent_os.serve(app="agent_with_local_skill:app", reload=True)
