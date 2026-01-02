@@ -8,7 +8,6 @@ from agno.skills.errors import SkillValidationError
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.loaders.local import LocalSkills
 
-
 # --- Initialization Tests ---
 
 

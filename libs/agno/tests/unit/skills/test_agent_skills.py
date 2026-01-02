@@ -15,7 +15,6 @@ from agno.tools.function import Function
 
 from .conftest import MockSkillLoader
 
-
 # --- Initialization Tests ---
 
 
@@ -25,9 +24,7 @@ def test_skills_with_single_loader(mock_loader: MockSkillLoader) -> None:
     assert len(skills.loaders) == 1
 
 
-def test_skills_with_multiple_loaders(
-    mock_loader: MockSkillLoader, mock_loader_empty: MockSkillLoader
-) -> None:
+def test_skills_with_multiple_loaders(mock_loader: MockSkillLoader, mock_loader_empty: MockSkillLoader) -> None:
     """Test Skills initialization with multiple loaders."""
     skills = Skills(loaders=[mock_loader, mock_loader_empty])
     assert len(skills.loaders) == 2
