@@ -1922,8 +1922,6 @@ class Model(ABC):
                     and function_call.function._run_context.session_state is not None
                 ):
                     function_execution_result.updated_session_state = function_call.function._run_context.session_state
-                elif function_call.function._session_state is not None:
-                    function_execution_result.updated_session_state = function_call.function._session_state
         else:
             from agno.tools.function import ToolResult
 
@@ -2463,8 +2461,6 @@ class Model(ABC):
                         and function_call.function._run_context.session_state is not None
                     ):
                         updated_session_state = function_call.function._run_context.session_state
-                    elif function_call.function._session_state is not None:
-                        updated_session_state = function_call.function._session_state
 
             if not (
                 async_function_call_output is not None

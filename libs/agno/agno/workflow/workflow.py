@@ -1,5 +1,4 @@
 import asyncio
-import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from os import getenv
@@ -37,12 +36,15 @@ from agno.models.metrics import Metrics
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunContentEvent, RunEvent, RunOutput
 from agno.run.cancel import (
-    cancel_run as cancel_run_global,
-)
-from agno.run.cancel import (
+    acleanup_run,
+    araise_if_cancelled,
+    aregister_run,
     cleanup_run,
     raise_if_cancelled,
     register_run,
+)
+from agno.run.cancel import (
+    cancel_run as cancel_run_global,
 )
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
@@ -186,9 +188,6 @@ class Workflow:
     # Number of historical runs to include in the messages
     num_history_runs: int = 3
 
-    # Deprecated. Use stream_events instead.
-    stream_intermediate_steps: bool = False
-
     # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
     _run_hooks_in_background: bool = False
 
@@ -208,7 +207,6 @@ class Workflow:
         debug_mode: Optional[bool] = False,
         stream: Optional[bool] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         store_events: bool = False,
         events_to_skip: Optional[List[Union[WorkflowRunEvent, RunEvent, TeamRunEvent]]] = None,
@@ -244,14 +242,7 @@ class Workflow:
         self.add_workflow_history_to_steps = add_workflow_history_to_steps
         self.num_history_runs = num_history_runs
         self._workflow_session: Optional[WorkflowSession] = None
-
-        if stream_intermediate_steps:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        self.stream_events = stream_events or stream_intermediate_steps
+        self.stream_events = stream_events
 
         # Warn if workflow history is enabled without a database
         if self.add_workflow_history_to_steps and self.db is None:
@@ -1879,6 +1870,7 @@ class Workflow:
         """Execute a specific pipeline by name asynchronously"""
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
+        await aregister_run(run_context.run_id)
         # Read existing session from database
         workflow_session, run_context.session_state = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=run_context.session_state
@@ -1902,14 +1894,14 @@ class Workflow:
             elif isasyncgenfunction(self.steps):  # type: ignore
                 async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
                 async for chunk in async_gen:
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                     else:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
-                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                 workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
             workflow_run_response.status = RunStatus.completed
 
@@ -1929,7 +1921,7 @@ class Workflow:
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Async Executing step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -1944,7 +1936,7 @@ class Workflow:
                     )
 
                     # Check for cancellation before executing step
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     step_output = await step.aexecute(  # type: ignore[union-attr]
                         step_input,
@@ -1962,7 +1954,7 @@ class Workflow:
                     )
 
                     # Check for cancellation after step execution
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
@@ -2042,7 +2034,7 @@ class Workflow:
         else:
             self.save_session(session=workflow_session)
         # Always clean up the run tracking
-        cleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_run(workflow_run_response.run_id)  # type: ignore
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -2064,6 +2056,8 @@ class Workflow:
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
+
+        await aregister_run(run_context.run_id)
 
         # Read existing session from database
         workflow_session, run_context.session_state = await self._aload_or_create_session(
@@ -2096,7 +2090,7 @@ class Workflow:
                 content = ""
                 async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
                 async for chunk in async_gen:
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                         yield chunk
@@ -2131,7 +2125,7 @@ class Workflow:
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     if workflow_run_response.run_id:
-                        raise_if_cancelled(workflow_run_response.run_id)
+                        await araise_if_cancelled(workflow_run_response.run_id)
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Async streaming step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -2169,7 +2163,7 @@ class Workflow:
                         background_tasks=background_tasks,
                     ):
                         if workflow_run_response.run_id:
-                            raise_if_cancelled(workflow_run_response.run_id)
+                            await araise_if_cancelled(workflow_run_response.run_id)
 
                         # Accumulate partial data from streaming events
                         partial_step_content = self._accumulate_partial_step_data(event, partial_step_content)  # type: ignore
@@ -2399,7 +2393,7 @@ class Workflow:
             await self._alog_workflow_telemetry(session_id=session_id, run_id=workflow_run_response.run_id)
 
         # Always clean up the run tracking
-        cleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_run(workflow_run_response.run_id)  # type: ignore
 
     async def _arun_background(
         self,
@@ -2735,6 +2729,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         run_context: RunContext,
         stream: bool = False,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """
@@ -2748,7 +2743,7 @@ class Workflow:
             execution_input: The execution input
             run_context: The run context
             stream: Whether to stream the response
-            stream_intermediate_steps: Whether to stream intermediate steps
+            stream_events: Whether to stream all events
 
         Returns:
             WorkflowRunOutput if stream=False, Iterator[WorkflowRunOutputEvent] if stream=True
@@ -2760,6 +2755,7 @@ class Workflow:
                 execution_input=execution_input,
                 run_context=run_context,
                 stream=stream,
+                stream_events=stream_events,
                 **kwargs,
             )
         else:
@@ -2794,7 +2790,7 @@ class Workflow:
 
         from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutputEvent
 
-        # Initialize agent with stream_intermediate_steps=True so tool yields events
+        # Initialize agent with stream_events=True so tool yields events
         self._initialize_workflow_agent(session, execution_input, run_context=run_context, stream=stream)
 
         # Build dependencies with workflow context
@@ -2834,7 +2830,7 @@ class Workflow:
         for event in self.agent.run(  # type: ignore[union-attr]
             input=agent_input,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             yield_run_response=True,
             session_id=session.session_id,
             dependencies=run_context.dependencies,  # Pass context dynamically per-run
@@ -3119,7 +3115,8 @@ class Workflow:
         if stream:
 
             async def _stream():
-                session, session_state_loaded = await self._aload_session_for_workflow_agent(
+                await aregister_run(run_context.run_id)
+                session, _ = await self._aload_session_for_workflow_agent(
                     run_context.session_id, run_context.user_id, run_context.session_state
                 )
                 async for event in self._arun_workflow_agent_stream(
@@ -3137,7 +3134,8 @@ class Workflow:
         else:
 
             async def _execute():
-                session, session_state_loaded = await self._aload_session_for_workflow_agent(
+                await aregister_run(run_context.run_id)
+                session, _ = await self._aload_session_for_workflow_agent(
                     run_context.session_id, run_context.user_id, run_context.session_state
                 )
                 return await self._arun_workflow_agent(
@@ -3221,7 +3219,7 @@ class Workflow:
         async for event in self.agent.arun(  # type: ignore[union-attr]
             input=agent_input,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             yield_run_response=True,
             session_id=session.session_id,
             dependencies=run_context.dependencies,  # Pass context dynamically per-run
@@ -3503,7 +3501,6 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
     ) -> WorkflowRunOutput: ...
@@ -3523,7 +3520,6 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
@@ -3542,7 +3538,6 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: bool = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
         **kwargs: Any,
@@ -3585,9 +3580,7 @@ class Workflow:
 
         # Use simple defaults
         stream = stream or self.stream or False
-        stream_events = (stream_events or stream_intermediate_steps) or (
-            self.stream_events or self.stream_intermediate_steps
-        )
+        stream_events = stream_events or self.stream_events
 
         # Can't stream events if streaming is disabled
         if stream is False:
@@ -3629,6 +3622,7 @@ class Workflow:
                 execution_input=inputs,
                 run_context=run_context,
                 stream=stream,
+                stream_events=stream_events,
                 **kwargs,
             )
 
@@ -3682,7 +3676,6 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
@@ -3703,7 +3696,6 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
@@ -3723,7 +3715,6 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: bool = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = False,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
@@ -3744,15 +3735,7 @@ class Workflow:
 
         if background:
             if stream and websocket:
-                # Consider both stream_events and stream_intermediate_steps (deprecated)
-                if stream_intermediate_steps is not None:
-                    warnings.warn(
-                        "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                        DeprecationWarning,
-                        stacklevel=2,
-                    )
-                stream_events = stream_events or stream_intermediate_steps or False
-
+                stream_events = stream_events or False
                 # Background + Streaming + WebSocket = Real-time events
                 return self._arun_background_stream(  # type: ignore
                     input=input,
@@ -3790,7 +3773,6 @@ class Workflow:
 
         # Set the id for the run and register it immediately for cancellation tracking
         run_id = run_id or str(uuid4())
-        register_run(run_id)
 
         self.initialize_workflow()
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -3807,9 +3789,7 @@ class Workflow:
 
         # Use simple defaults
         stream = stream or self.stream or False
-        stream_events = (stream_events or stream_intermediate_steps) or (
-            self.stream_events or self.stream_intermediate_steps
-        )
+        stream_events = stream_events or self.stream_events
 
         # Can't stream events if streaming is disabled
         if stream is False:
