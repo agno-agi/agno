@@ -812,19 +812,37 @@ class Agent:
             )
 
     def _set_learning_machine(self) -> None:
-        """Initialize LearningMachine with agent's db and model."""
-        if self.db is None:
-            log_warning("Database not provided. LearningMachine not initialized.")
+        """Initialize LearningMachine with agent's db and model.
+
+        Handles:
+        - learning=True: Create default LearningMachine
+        - learning=False/None: Disabled
+        - learning=LearningMachine(...): Use provided, inject db/model/knowledge
+        """
+        # Handle learning=False or learning=None
+        if self.learning is None or self.learning is False:
+            self.learning = None
             return
 
+        # Check db requirement
+        if self.db is None:
+            log_warning("Database not provided. LearningMachine not initialized.")
+            self.learning = None
+            return
+
+        # Handle learning=True: create default LearningMachine
         if self.learning is True:
             self.learning = LearningMachine(db=self.db, model=self.model)
-        elif isinstance(self.learning, LearningMachine):
+            log_debug("LearningMachine created with defaults.")
+            return
+
+        # Handle learning=LearningMachine(...): inject dependencies
+        if isinstance(self.learning, LearningMachine):
             if self.learning.db is None:
                 self.learning.db = self.db
             if self.learning.model is None:
                 self.learning.model = self.model
-        log_debug("LearningMachine initialized.")
+            log_debug("LearningMachine configured with agent dependencies.")
 
     def _set_session_summary_manager(self) -> None:
         if self.enable_session_summaries and self.session_summary_manager is None:
@@ -886,7 +904,7 @@ class Agent:
             self._set_session_summary_manager()
         if self.compress_tool_results or self.compression_manager is not None:
             self._set_compression_manager()
-        if self.learning is not None:
+        if self.learning is not None and self.learning is not False:
             self._set_learning_machine()
 
         log_debug(f"Agent ID: {self.id}", center=True)

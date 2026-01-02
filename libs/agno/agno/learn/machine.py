@@ -29,6 +29,11 @@ try:
 except ImportError:
     pass
 
+# Type aliases for cleaner signatures (Store types imported lazily)
+UserProfileInput = Union[bool, UserProfileConfig, LearningStore, None]
+SessionContextInput = Union[bool, SessionContextConfig, LearningStore, None]
+LearningsInput = Union[bool, LearningsConfig, LearningStore, None]
+
 
 @dataclass
 class LearningMachine:
@@ -39,10 +44,19 @@ class LearningMachine:
         model: Model for extraction.
         knowledge: Knowledge base for learnings store. When provided, automatically
                    enables the learnings store if not explicitly disabled.
-        user_profile: Enable user profile (bool or UserProfileConfig).
-        session_context: Enable session context (bool or SessionContextConfig).
-        learnings: Enable learnings (bool or LearningsConfig). Auto-enabled when
-                   knowledge is provided.
+        user_profile: Enable user profile. Accepts:
+                      - bool: True = defaults, False/None = disabled
+                      - UserProfileConfig: Custom configuration
+                      - UserProfileStore: Use provided store directly
+        session_context: Enable session context. Accepts:
+                         - bool: True = defaults, False/None = disabled
+                         - SessionContextConfig: Custom configuration
+                         - SessionContextStore: Use provided store directly
+        learnings: Enable learnings. Accepts:
+                   - bool: True = defaults, False/None = disabled
+                   - LearningsConfig: Custom configuration
+                   - LearningsStore: Use provided store directly
+                   Auto-enabled when knowledge is provided.
         custom_stores: Additional stores implementing LearningStore protocol.
         debug_mode: Enable debug logging.
 
@@ -54,12 +68,17 @@ class LearningMachine:
         ...     knowledge=my_knowledge_base,  # Auto-enables learnings
         ... )
 
-        # Explicit control
+        # With custom config
         >>> learning = LearningMachine(
         ...     db=db,
         ...     model=model,
         ...     knowledge=my_knowledge_base,
         ...     learnings=LearningsConfig(mode=LearningMode.PROPOSE),
+        ... )
+
+        # With custom/extended store (for testing or subclassing)
+        >>> learning = LearningMachine(
+        ...     user_profile=MyCustomUserProfileStore(config=...),
         ... )
     """
 
@@ -68,10 +87,10 @@ class LearningMachine:
     model: Optional["Model"] = None
     knowledge: Optional[Any] = None
 
-    # Store configurations (bool = use defaults, Config = custom settings)
-    user_profile: Union[bool, UserProfileConfig, None] = True
-    session_context: Union[bool, SessionContextConfig, None] = True
-    learnings: Union[bool, LearningsConfig, None] = False
+    # Store configurations (bool = defaults, Config = custom, Store = direct)
+    user_profile: UserProfileInput = True
+    session_context: SessionContextInput = True
+    learnings: LearningsInput = False
 
     # Custom stores
     custom_stores: Optional[Dict[str, LearningStore]] = None
@@ -94,18 +113,39 @@ class LearningMachine:
         return self._stores  # type: ignore
 
     def _initialize_stores(self) -> None:
-        """Initialize all configured stores."""
+        """Initialize all configured stores.
+
+        For each store type, accepts:
+        - bool: True = create with defaults, False/None = disabled
+        - Config: Create store with custom configuration
+        - Store: Use provided store instance directly
+        """
         self._stores = {}
 
         if self.user_profile:
-            self._stores["user_profile"] = self._create_user_profile_store()
+            if isinstance(self.user_profile, LearningStore):
+                # Store instance provided directly
+                self._stores["user_profile"] = self.user_profile
+            else:
+                # Bool or Config - create the store
+                self._stores["user_profile"] = self._create_user_profile_store()
 
         if self.session_context:
-            self._stores["session_context"] = self._create_session_context_store()
+            if isinstance(self.session_context, LearningStore):
+                # Store instance provided directly
+                self._stores["session_context"] = self.session_context
+            else:
+                # Bool or Config - create the store
+                self._stores["session_context"] = self._create_session_context_store()
 
         # Auto-enable learnings if knowledge is provided
         if self.learnings or self.knowledge is not None:
-            self._stores["learnings"] = self._create_learnings_store()
+            if isinstance(self.learnings, LearningStore):
+                # Store instance provided directly
+                self._stores["learnings"] = self.learnings
+            else:
+                # Bool or Config - create the store
+                self._stores["learnings"] = self._create_learnings_store()
 
         if self.custom_stores:
             for name, store in self.custom_stores.items():
@@ -166,7 +206,7 @@ class LearningMachine:
         else:
             config = LearningsConfig(
                 model=self.model,
-                knowledge=self.knowledge,
+                knowledge=self.knowledge,  # Use top-level knowledge
                 mode=LearningMode.AGENTIC,
             )
 
