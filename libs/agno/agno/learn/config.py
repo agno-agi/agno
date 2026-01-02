@@ -146,7 +146,7 @@ class UserProfileConfig:
     schema: Optional[Type[Any]] = None
 
     # Agent tool
-    enable_tool: bool = True
+    enable_tool: bool = False
 
     # Internal extraction tools
     enable_add: bool = True

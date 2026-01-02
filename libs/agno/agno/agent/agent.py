@@ -833,7 +833,6 @@ class Agent:
         # Handle learning=True: create default LearningMachine
         if self.learning is True:
             self.learning = LearningMachine(db=self.db, model=self.model)
-            log_debug("LearningMachine created with defaults.")
             return
 
         # Handle learning=LearningMachine(...): inject dependencies
@@ -842,7 +841,6 @@ class Agent:
                 self.learning.db = self.db
             if self.learning.model is None:
                 self.learning.model = self.model
-            log_debug("LearningMachine configured with agent dependencies.")
 
     def _set_session_summary_manager(self) -> None:
         if self.enable_session_summaries and self.session_summary_manager is None:
