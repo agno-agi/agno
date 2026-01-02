@@ -44,6 +44,7 @@ from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.session import get_session_router
+from agno.os.routers.skills import get_skill_router
 from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
 from agno.os.routers.workflows import get_workflow_router
@@ -307,6 +308,7 @@ class AgentOS:
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
+            get_skill_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
         ]
 
@@ -603,6 +605,7 @@ class AgentOS:
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
+            get_skill_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
         ]
 

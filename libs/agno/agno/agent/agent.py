@@ -77,6 +77,7 @@ from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
+from agno.skills import Skill, Skills
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
@@ -263,6 +264,8 @@ class Agent:
     #     ...
     knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None
     references_format: Literal["json", "yaml"] = "json"
+
+    skills: Optional[Skills] = None
 
     # --- Agent Tools ---
     # A list of tools provided to the Model.
@@ -487,6 +490,7 @@ class Agent:
         add_knowledge_to_context: bool = False,
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
+        skills: Optional[Skills] = None,
         metadata: Optional[Dict[str, Any]] = None,
         tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
@@ -609,6 +613,8 @@ class Agent:
         self.add_knowledge_to_context = add_knowledge_to_context
         self.knowledge_retriever = knowledge_retriever
         self.references_format = references_format
+
+        self.skills = skills
 
         self.metadata = metadata
 
@@ -6396,6 +6402,10 @@ class Agent:
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
+        # Add tools for accessing skills
+        if self.skills is not None:
+            agent_tools.extend(self.skills.get_tools())
+
         return agent_tools
 
     async def aget_tools(
@@ -6488,6 +6498,10 @@ class Agent:
 
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
+
+        # Add tools for accessing skills
+        if self.skills is not None:
+            agent_tools.extend(self.skills.get_tools())
 
         return agent_tools
 
@@ -7698,6 +7712,110 @@ class Agent:
 
         return await self.culture_manager.aget_all_knowledge()
 
+    def get_skill(self, skill_name: str) -> Optional[Skill]:
+        """Get a skill by name.
+
+        Args:
+            skill_name: The name of the skill to retrieve.
+
+        Returns:
+            Optional[Skill]: The skill if found, None otherwise.
+        """
+        if self.skills is None:
+            return None
+        return self.skills.get_skill(skill_name)
+
+    def get_skills(self) -> List[Skill]:
+        """Get all skills available to the agent.
+
+        Returns:
+            List[Skill]: List of all available skills.
+        """
+        if self.skills is None:
+            return []
+        return self.skills.get_all_skills()
+
+    def sync_skills_to_db(self) -> int:
+        """Sync all skills to the database.
+
+        This requires the agent to have a database configured.
+
+        Returns:
+            int: The number of skills synced to the database.
+
+        Raises:
+            ValueError: If no database is configured for the agent.
+        """
+        if self.skills is None:
+            return 0
+
+        if self.db is None:
+            raise ValueError("No database configured for the agent. Set agent.db to sync skills.")
+
+        if isinstance(self.db, AsyncBaseDb):
+            raise ValueError("Synchronous sync_skills_to_db requires a sync database. Use async_skills_to_db instead.")
+
+        return self.skills.sync_to_db(self.db)
+
+    async def async_skills_to_db(self) -> int:
+        """Sync all skills to the database asynchronously.
+
+        This requires the agent to have an async database configured.
+
+        Returns:
+            int: The number of skills synced to the database.
+
+        Raises:
+            ValueError: If no async database is configured for the agent.
+        """
+        if self.skills is None:
+            return 0
+
+        if self.db is None:
+            raise ValueError("No database configured for the agent. Set agent.db to sync skills.")
+
+        if not isinstance(self.db, AsyncBaseDb):
+            raise ValueError("Async async_skills_to_db requires an async database. Use sync_skills_to_db instead.")
+
+        return await self.skills.sync_to_db_async(self.db)
+
+    def load_skills_from_directory(self, path: str) -> int:
+        """Load skills from a directory and add them to the agent.
+
+        This also syncs the skills to the database if one is configured.
+
+        Args:
+            path: Path to the skills directory.
+
+        Returns:
+            int: The number of skills loaded.
+        """
+        from agno.skills.loaders.local import LocalSkills
+
+        loader = LocalSkills(path)
+        loaded_skills = loader.load()
+
+        if not loaded_skills:
+            return 0
+
+        # Add to the Skills orchestrator
+        if self.skills is None:
+            self.skills = Skills(loaders=[loader])
+        else:
+            # Add the new skills to the existing orchestrator
+            for skill in loaded_skills:
+                self.skills._skills[skill.name] = skill
+            self.skills._loaded = True
+
+        # Optionally sync to DB if configured
+        if self.db is not None:
+            from agno.skills.loaders.db import DbSkills
+
+            db_loader = DbSkills(db=self.db)
+            db_loader.save_all(loaded_skills)
+
+        return len(loaded_skills)
+
     # -*- System & User Message Functions
     def _format_message_with_state_variables(
         self,
@@ -7937,6 +8055,11 @@ class Agent:
         # 3.3.8 Then add additional context
         if self.additional_context is not None:
             system_message_content += f"{self.additional_context}\n"
+        # 3.3.8.1 Then add skills to the system prompt
+        if self.skills is not None:
+            skills_snippet = self.skills.get_system_prompt_snippet()
+            if skills_snippet:
+                system_message_content += f"\n{skills_snippet}\n"
         # 3.3.9 Then add memories to the system prompt
         if self.add_memories_to_context:
             _memory_manager_not_set = False
@@ -8281,6 +8404,11 @@ class Agent:
         # 3.3.8 Then add additional context
         if self.additional_context is not None:
             system_message_content += f"{self.additional_context}\n"
+        # 3.3.8.1 Then add skills to the system prompt
+        if self.skills is not None:
+            skills_snippet = self.skills.get_system_prompt_snippet()
+            if skills_snippet:
+                system_message_content += f"\n{skills_snippet}\n"
         # 3.3.9 Then add memories to the system prompt
         if self.add_memories_to_context:
             _memory_manager_not_set = False
@@ -8421,7 +8549,6 @@ class Agent:
         # 3.3.15 Add the session state to the system message
         if add_session_state_to_context and session_state is not None:
             system_message_content += self._get_formatted_session_state_for_system_message(session_state)
-
         # Return the system message
         return (
             Message(role=self.system_message_role, content=system_message_content.strip())  # type: ignore
