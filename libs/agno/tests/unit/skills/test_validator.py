@@ -393,22 +393,6 @@ def test_validate_skill_directory_invalid(invalid_skill_dir: Path) -> None:
     assert len(errors) > 0
 
 
-def test_validate_skill_directory_lowercase_skill_md(tmp_path: Path) -> None:
-    """Test that lowercase skill.md is also accepted."""
-    skill_dir = tmp_path / "lowercase-skill"
-    skill_dir.mkdir()
-    (skill_dir / "skill.md").write_text(
-        """---
-name: lowercase-skill
-description: Test with lowercase filename
----
-# Instructions
-"""
-    )
-    errors = validate_skill_directory(skill_dir)
-    assert len(errors) == 0
-
-
 # --- Validator Constants Tests ---
 
 

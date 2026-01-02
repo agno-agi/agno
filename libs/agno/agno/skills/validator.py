@@ -181,15 +181,9 @@ def validate_skill_directory(skill_dir: Path) -> List[str]:
     if not skill_dir.is_dir():
         return [f"Not a directory: {skill_dir}"]
 
-    # Find SKILL.md file
-    skill_md = None
-    for name in ("SKILL.md", "skill.md"):
-        path = skill_dir / name
-        if path.exists():
-            skill_md = path
-            break
-
-    if skill_md is None:
+    # Find SKILL.md file (only uppercase supported)
+    skill_md = skill_dir / "SKILL.md"
+    if not skill_md.exists():
         return ["Missing required file: SKILL.md"]
 
     # Parse frontmatter
