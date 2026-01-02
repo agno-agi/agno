@@ -87,7 +87,7 @@ def test_dead_simple():
     )
 
     print(f"\n📋 Stores enabled: {list(learning.stores.keys())}")
-    print(f"\n📊 Full representation:")
+    print("\n📊 Full representation:")
     print(f"   {learning}")
 
     # Verify all three stores are enabled
@@ -182,7 +182,7 @@ def test_full_control():
     )
 
     print(f"\n📋 Stores: {list(learning.stores.keys())}")
-    print(f"\n📊 Store configurations:")
+    print("\n📊 Store configurations:")
     for name, store in learning.stores.items():
         print(f"   {name}: {store}")
 
@@ -211,14 +211,14 @@ def test_lazy_initialization():
     )
 
     # Check internal state BEFORE accessing stores
-    print(f"\n📋 Before accessing stores:")
+    print("\n📋 Before accessing stores:")
     print(f"   _stores is None: {learning._stores is None}")
 
     # Access stores (triggers initialization)
     stores = learning.stores
 
     # Check internal state AFTER accessing stores
-    print(f"\n📋 After accessing stores:")
+    print("\n📋 After accessing stores:")
     print(f"   _stores is None: {learning._stores is None}")
     print(f"   Store count: {len(stores)}")
 
@@ -247,10 +247,10 @@ def test_repr():
         learnings=LearningsConfig(mode=LearningMode.PROPOSE),
     )
 
-    print(f"\n📊 LearningMachine repr:")
+    print("\n📊 LearningMachine repr:")
     print(f"   {learning}")
 
-    print(f"\n📊 Individual store reprs:")
+    print("\n📊 Individual store reprs:")
     for name, store in learning.stores.items():
         print(f"   {name}: {store}")
 
@@ -376,7 +376,7 @@ def test_process():
     if user_store:
         profile = user_store.recall(user_id="process_test@example.com")
         if profile:
-            print(f"\n📋 Extracted user profile:")
+            print("\n📋 Extracted user profile:")
             pprint(profile.to_dict() if hasattr(profile, "to_dict") else profile)
 
     print("\n✅ process() works!")
@@ -546,7 +546,7 @@ def test_custom_stores():
         project_id="proj_123",
     )
 
-    print(f"\n📋 Recall with project_id:")
+    print("\n📋 Recall with project_id:")
     for name, data in results.items():
         print(f"   {name}: {data}")
 
@@ -555,7 +555,7 @@ def test_custom_stores():
         user_id=TEST_USER,
         project_id="proj_123",
     )
-    print(f"\n📝 Context includes project:")
+    print("\n📝 Context includes project:")
     print(context[:300] if context else "(empty)")
 
     print("\n✅ Custom stores work!")

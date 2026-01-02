@@ -27,7 +27,8 @@ from typing import Any, Callable, List, Optional, Union
 
 from agno.learn.config import LearningMode, SessionContextConfig
 from agno.learn.schemas import SessionContext
-from agno.learn.stores.protocol import LearningStore, from_dict_safe, to_dict_safe
+from agno.learn.stores.protocol import LearningStore
+from agno.learn.utils import from_dict_safe, to_dict_safe
 from agno.utils.log import (
     log_debug,
     log_warning,

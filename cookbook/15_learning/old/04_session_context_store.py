@@ -105,7 +105,7 @@ def test_basic_summary():
 
     # Retrieve the context
     context = summary_store.get(session_id=session_id)
-    print(f"\n📋 Session context:")
+    print("\n📋 Session context:")
     if context:
         pprint(context.to_dict())
         assert context.summary, "Should have a summary"
@@ -157,7 +157,7 @@ def test_planning_mode():
 
     # Retrieve
     context = planning_store.get(session_id=session_id)
-    print(f"\n📋 Session context with planning:")
+    print("\n📋 Session context with planning:")
     if context:
         pprint(context.to_dict())
 
@@ -211,11 +211,11 @@ def test_summary_vs_planning():
     planning_store.extract_and_save(messages=messages, session_id=session_planning)
     ctx_planning = planning_store.get(session_id=session_planning)
 
-    print(f"\n📊 Summary Mode:")
+    print("\n📊 Summary Mode:")
     if ctx_summary:
         pprint(ctx_summary.to_dict())
 
-    print(f"\n📊 Planning Mode:")
+    print("\n📊 Planning Mode:")
     if ctx_planning:
         pprint(ctx_planning.to_dict())
 
@@ -251,7 +251,7 @@ def test_context_replacement():
 
     summary_store.extract_and_save(messages=messages_1, session_id=session_id)
     ctx_1 = summary_store.get(session_id=session_id)
-    print(f"\n📋 After first extraction:")
+    print("\n📋 After first extraction:")
     if ctx_1:
         print(f"   Summary: {ctx_1.summary}")
 
@@ -266,7 +266,7 @@ def test_context_replacement():
 
     summary_store.extract_and_save(messages=messages_2, session_id=session_id)
     ctx_2 = summary_store.get(session_id=session_id)
-    print(f"\n📋 After second extraction:")
+    print("\n📋 After second extraction:")
     if ctx_2:
         print(f"   Summary: {ctx_2.summary}")
 
@@ -303,22 +303,22 @@ def test_delete_and_clear():
 
     summary_store.extract_and_save(messages=messages, session_id=session_id)
     ctx = summary_store.get(session_id=session_id)
-    print(f"\n📋 Initial context:")
+    print("\n📋 Initial context:")
     if ctx:
         print(f"   Summary: {ctx.summary}")
 
     # Clear = empty but exists
     summary_store.clear(session_id=session_id)
     ctx_cleared = summary_store.get(session_id=session_id)
-    print(f"\n🧹 After clear:")
+    print("\n🧹 After clear:")
     if ctx_cleared:
         print(f"   Summary: '{ctx_cleared.summary or 'empty'}'")
-        print(f"   Context exists: True")
+        print("   Context exists: True")
 
     # Delete = gone entirely
     summary_store.delete(session_id=session_id)
     ctx_deleted = summary_store.get(session_id=session_id)
-    print(f"\n🗑️ After delete:")
+    print("\n🗑️ After delete:")
     print(f"   Context exists: {ctx_deleted is not None}")
 
     print("\n✅ Delete and clear work")
@@ -355,7 +355,7 @@ def test_format_for_prompt():
     # Format for injection
     formatted = planning_store.format_for_prompt(data=context)
 
-    print(f"\n📝 Formatted for system prompt:")
+    print("\n📝 Formatted for system prompt:")
     print("-" * 40)
     print(formatted)
     print("-" * 40)
@@ -406,11 +406,11 @@ def test_multi_session_isolation():
     ctx_alice = summary_store.get(session_id=session_alice)
     ctx_bob = summary_store.get(session_id=session_bob)
 
-    print(f"\n👩 Alice's session:")
+    print("\n👩 Alice's session:")
     if ctx_alice:
         print(f"   Summary: {ctx_alice.summary}")
 
-    print(f"\n👨 Bob's session:")
+    print("\n👨 Bob's session:")
     if ctx_bob:
         print(f"   Summary: {ctx_bob.summary}")
 
@@ -546,7 +546,7 @@ def test_long_conversation():
     planning_store.extract_and_save(messages=messages, session_id=session_id)
     context = planning_store.get(session_id=session_id)
 
-    print(f"\n📋 Long conversation summary:")
+    print("\n📋 Long conversation summary:")
     if context:
         pprint(context.to_dict())
 
@@ -598,7 +598,7 @@ def test_custom_instructions():
     custom_store.extract_and_save(messages=messages, session_id=session_id)
     context = custom_store.get(session_id=session_id)
 
-    print(f"\n📋 Custom-extracted context:")
+    print("\n📋 Custom-extracted context:")
     if context:
         print(f"   Summary: {context.summary}")
 

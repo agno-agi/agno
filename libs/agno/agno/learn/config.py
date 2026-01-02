@@ -99,7 +99,7 @@ class UserProfileConfig:
     User Profile captures long-term memory about users that persists
     across sessions: name, preferences, communication style, etc.
 
-    Scope: USER (fixed) — Retrieved and stored by user_id.
+    Scope: USER (fixed) - Retrieved and stored by user_id.
 
     Attributes:
         db: Database backend for storage.
@@ -170,7 +170,7 @@ class SessionContextConfig:
     Session Context captures state and summary for the current session:
     what's happened, goals, plans, and progress.
 
-    Scope: SESSION (fixed) — Retrieved and stored by session_id.
+    Scope: SESSION (fixed) - Retrieved and stored by session_id.
 
     Note: mode is fixed to BACKGROUND. No agent tool is provided
     because session context is system-managed only.
@@ -241,7 +241,7 @@ class LearningsConfig:
     Learned Knowledge captures reusable insights and patterns that
     can be shared across users and potentially across agents.
 
-    Scope: KNOWLEDGE (fixed) — Stored in Knowledge Base, retrieved
+    Scope: KNOWLEDGE (fixed) - Stored in Knowledge Base, retrieved
     via semantic search based on current query.
 
     IMPORTANT: A knowledge base is required for learnings to work.

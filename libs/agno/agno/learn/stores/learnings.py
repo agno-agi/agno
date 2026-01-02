@@ -33,7 +33,8 @@ from typing import Any, Callable, List, Optional
 
 from agno.learn.config import LearningMode, LearningsConfig
 from agno.learn.schemas import Learning
-from agno.learn.stores.protocol import LearningStore, to_dict_safe
+from agno.learn.stores.protocol import LearningStore
+from agno.learn.utils import to_dict_safe
 from agno.utils.log import (
     log_debug,
     log_warning,

@@ -36,7 +36,6 @@ from agno.learn.stores.learnings import LearningsStore
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from agno.vectordb.pgvector import PgVector, SearchType
-from rich.pretty import pprint
 
 # =============================================================================
 # Setup
@@ -340,11 +339,11 @@ def test_agent_team_filtering():
         limit=3,
     )
 
-    print(f"\n👨‍💻 Code reviewer's learnings:")
+    print("\n👨‍💻 Code reviewer's learnings:")
     for r in code_results:
         print(f"   - {r.title}")
 
-    print(f"\n🎧 Support agent's learnings:")
+    print("\n🎧 Support agent's learnings:")
     for r in support_results:
         print(f"   - {r.title}")
 
@@ -397,7 +396,7 @@ def test_build_context():
     # Format for system prompt
     formatted = agentic_store.build_context(data=results)
 
-    print(f"\n📝 Formatted context for system prompt:")
+    print("\n📝 Formatted context for system prompt:")
     print("-" * 40)
     print(formatted[:800] if len(formatted) > 800 else formatted)
     if len(formatted) > 800:
@@ -428,7 +427,7 @@ def test_propose_mode():
     results = propose_store.search(query="test", limit=1)
     context = propose_store.build_context(data=results)
 
-    print(f"\n📝 PROPOSE mode context includes different instructions:")
+    print("\n📝 PROPOSE mode context includes different instructions:")
     if "propose" in context.lower() or "confirm" in context.lower():
         print("   ✓ Instructions mention proposing/confirming")
     else:

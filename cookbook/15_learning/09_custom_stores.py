@@ -377,7 +377,7 @@ def test_project_store():
     project = store.recall(user_id="alice")
     context = store.build_context(project)
 
-    print(f"\n📝 Context for Alice:")
+    print("\n📝 Context for Alice:")
     print(context)
 
     print("\n✅ Project context store works!")
@@ -552,11 +552,11 @@ def test_tool_preference_store():
     # Recall and build context
     prefs = store.recall(user_id="developer@example.com")
     if prefs:
-        print(f"\n📋 Extracted preferences:")
+        print("\n📋 Extracted preferences:")
         pprint(prefs.to_dict())
 
         context = store.build_context(prefs)
-        print(f"\n📝 Context for system prompt:")
+        print("\n📝 Context for system prompt:")
         print(context)
 
     # Use the tool

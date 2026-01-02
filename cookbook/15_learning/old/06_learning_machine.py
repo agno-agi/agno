@@ -185,13 +185,13 @@ def test_full_control():
     # Verify configs were applied
     user_store = learning.user_profile_store
     if user_store:
-        print(f"\n👤 User profile config:")
+        print("\n👤 User profile config:")
         print(f"   enable_tool: {user_store.config.enable_tool}")
         print(f"   enable_delete: {user_store.config.enable_delete}")
 
     session_store = learning.session_context_store
     if session_store:
-        print(f"\n📋 Session context config:")
+        print("\n📋 Session context config:")
         print(f"   enable_planning: {session_store.config.enable_planning}")
 
     print("\n✅ Full control works")
@@ -225,7 +225,7 @@ def test_recall():
         message="How do I optimize my code?",
     )
 
-    print(f"\n📋 Recall results:")
+    print("\n📋 Recall results:")
     for name, data in results.items():
         print(f"   {name}: {type(data).__name__}")
         if hasattr(data, "to_dict"):
@@ -267,14 +267,14 @@ def test_process():
         session_id=TEST_SESSION,
     )
 
-    print(f"\n📝 Processing complete")
+    print("\n📝 Processing complete")
     print(f"   profile_updated: {learning.profile_updated}")
     print(f"   context_updated: {learning.context_updated}")
     print(f"   was_updated: {learning.was_updated}")
 
     # Check what was extracted
     results = learning.recall(user_id=TEST_USER, session_id=TEST_SESSION)
-    print(f"\n📋 After processing:")
+    print("\n📋 After processing:")
     for name, data in results.items():
         print(f"\n   {name}:")
         if hasattr(data, "to_dict"):
@@ -349,7 +349,7 @@ def test_system_prompt_injection():
         message="Help me with Python",
     )
 
-    print(f"\n📝 System prompt injection:")
+    print("\n📝 System prompt injection:")
     print("-" * 40)
     print(injection if injection else "(empty)")
     print("-" * 40)
@@ -387,7 +387,7 @@ def test_state_tracking():
         session_id="state_session",
     )
 
-    print(f"\n📊 State after processing:")
+    print("\n📊 State after processing:")
     print(f"   profile_updated: {learning.profile_updated}")
     print(f"   context_updated: {learning.context_updated}")
     print(f"   learning_saved: {learning.learning_saved}")
@@ -482,7 +482,7 @@ def test_custom_stores():
         user_id=TEST_USER,
         project_id="proj_123",  # Custom param for custom store
     )
-    print(f"\n📋 Recall with custom store:")
+    print("\n📋 Recall with custom store:")
     for name, data in results.items():
         print(f"   {name}: {data}")
 
@@ -550,7 +550,7 @@ def test_store_access():
     )
 
     # Property access
-    print(f"\n📋 Store access:")
+    print("\n📋 Store access:")
     print(f"   user_profile_store: {type(learning.user_profile_store).__name__}")
     print(f"   session_context_store: {type(learning.session_context_store).__name__}")
     print(f"   knowledge_store: {type(learning.knowledge_store).__name__}")

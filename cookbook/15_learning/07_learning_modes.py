@@ -69,7 +69,7 @@ def test_mode_definitions():
     print("TEST 1: Mode Definitions")
     print("=" * 60)
 
-    print(f"""
+    print("""
     ┌─────────────┬────────────────────────────────────────────────────┐
     │ Mode        │ Behavior                                           │
     ├─────────────┼────────────────────────────────────────────────────┤
@@ -148,7 +148,7 @@ def test_background_mode():
     # Check what was extracted
     results = learning.recall(user_id="background_test@example.com")
     if results.get("user_profile"):
-        print(f"\n📋 Auto-extracted profile:")
+        print("\n📋 Auto-extracted profile:")
         pprint(results["user_profile"].to_dict())
 
     # Cleanup

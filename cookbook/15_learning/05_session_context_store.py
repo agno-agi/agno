@@ -100,7 +100,7 @@ def test_basic_summary():
 
     # Retrieve the context
     context = summary_store.recall(session_id=session_id)
-    print(f"\n📋 Session context:")
+    print("\n📋 Session context:")
     if context:
         pprint(context.to_dict())
 
@@ -155,7 +155,7 @@ def test_planning_mode():
 
     # Retrieve
     context = planning_store.recall(session_id=session_id)
-    print(f"\n📋 Session context with planning:")
+    print("\n📋 Session context with planning:")
     if context:
         pprint(context.to_dict())
         print(f"\n   Summary: {context.summary}")
@@ -210,11 +210,11 @@ def test_summary_vs_planning():
     planning_store.process(messages=messages, session_id=session_planning)
     ctx_planning = planning_store.recall(session_id=session_planning)
 
-    print(f"\n📊 Summary Mode (enable_planning=False):")
+    print("\n📊 Summary Mode (enable_planning=False):")
     if ctx_summary:
         pprint(ctx_summary.to_dict())
 
-    print(f"\n📊 Planning Mode (enable_planning=True):")
+    print("\n📊 Planning Mode (enable_planning=True):")
     if ctx_planning:
         pprint(ctx_planning.to_dict())
 
@@ -250,7 +250,7 @@ def test_context_replacement():
 
     summary_store.process(messages=messages_1, session_id=session_id)
     ctx_1 = summary_store.recall(session_id=session_id)
-    print(f"\n📋 After first extraction:")
+    print("\n📋 After first extraction:")
     print(f"   Summary: {ctx_1.summary if ctx_1 else 'None'}")
 
     # Second conversation chunk (different topic!)
@@ -264,7 +264,7 @@ def test_context_replacement():
 
     summary_store.process(messages=messages_2, session_id=session_id)
     ctx_2 = summary_store.recall(session_id=session_id)
-    print(f"\n📋 After second extraction (REPLACED, not accumulated):")
+    print("\n📋 After second extraction (REPLACED, not accumulated):")
     print(f"   Summary: {ctx_2.summary if ctx_2 else 'None'}")
 
     # Note: The first summary about asyncio is gone!
@@ -319,10 +319,10 @@ def test_multi_session_isolation():
     ctx_alice = summary_store.recall(session_id=session_alice)
     ctx_bob = summary_store.recall(session_id=session_bob)
 
-    print(f"\n👩 Alice's session:")
+    print("\n👩 Alice's session:")
     print(f"   Summary: {ctx_alice.summary if ctx_alice else 'None'}")
 
-    print(f"\n👨 Bob's session:")
+    print("\n👨 Bob's session:")
     print(f"   Summary: {ctx_bob.summary if ctx_bob else 'None'}")
 
     # Verify no cross-contamination
@@ -449,7 +449,7 @@ def test_build_context():
     context_data = planning_store.recall(session_id=session_id)
     formatted = planning_store.build_context(data=context_data)
 
-    print(f"\n📝 Formatted context for system prompt:")
+    print("\n📝 Formatted context for system prompt:")
     print("-" * 40)
     print(formatted)
     print("-" * 40)
@@ -502,7 +502,7 @@ def test_custom_instructions():
     custom_store.process(messages=messages, session_id=session_id)
     context = custom_store.recall(session_id=session_id)
 
-    print(f"\n📋 Custom-extracted context (technical decisions only):")
+    print("\n📋 Custom-extracted context (technical decisions only):")
     if context:
         print(f"   Summary: {context.summary}")
 

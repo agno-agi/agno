@@ -80,13 +80,13 @@ def test_manual_memory():
 
     # Retrieve and verify
     alice_profile = store.recall(user_id=USER_ALICE)
-    print(f"\n👩‍💻 Alice's profile:")
+    print("\n👩‍💻 Alice's profile:")
     if alice_profile:
         pprint(alice_profile.to_dict())
         assert len(alice_profile.memories) == 3
 
     bob_profile = store.recall(user_id=USER_BOB)
-    print(f"\n👨‍🔬 Bob's profile:")
+    print("\n👨‍🔬 Bob's profile:")
     if bob_profile:
         pprint(bob_profile.to_dict())
         assert len(bob_profile.memories) == 2
@@ -94,7 +94,7 @@ def test_manual_memory():
     # Charlie doesn't exist yet
     charlie_profile = store.recall(user_id=USER_CHARLIE)
     assert charlie_profile is None
-    print(f"\n🤷 Charlie: No profile yet")
+    print("\n🤷 Charlie: No profile yet")
 
     print("\n✅ Manual memory addition works!")
 
@@ -131,7 +131,7 @@ def test_background_extraction():
 
     # Check what was extracted
     profile = store.recall(user_id=USER_CHARLIE)
-    print(f"\n👔 Charlie's extracted profile:")
+    print("\n👔 Charlie's extracted profile:")
     if profile:
         pprint(profile.to_dict())
         print(f"\n   Extracted {len(profile.memories)} memories")
@@ -171,7 +171,7 @@ def test_agent_tool():
     print(f"\n🔧 Add result: {result}")
 
     profile = store.recall(user_id=test_user)
-    print(f"\n📋 Profile after add:")
+    print("\n📋 Profile after add:")
     if profile:
         pprint(profile.to_dict())
 
@@ -180,7 +180,7 @@ def test_agent_tool():
     print(f"\n🔧 Update result: {result}")
 
     profile = store.recall(user_id=test_user)
-    print(f"\n📋 Profile after update:")
+    print("\n📋 Profile after update:")
     if profile:
         pprint(profile.to_dict())
 
@@ -225,17 +225,17 @@ def test_entity_isolation():
     sales_profile = store.recall(user_id=test_user, agent_id="sales_agent")
     global_profile = store.recall(user_id=test_user)
 
-    print(f"\n🎧 Support agent's view:")
+    print("\n🎧 Support agent's view:")
     if support_profile:
         for m in support_profile.memories:
             print(f"   - {m.get('content', m)}")
 
-    print(f"\n💼 Sales agent's view:")
+    print("\n💼 Sales agent's view:")
     if sales_profile:
         for m in sales_profile.memories:
             print(f"   - {m.get('content', m)}")
 
-    print(f"\n🌍 Global view:")
+    print("\n🌍 Global view:")
     if global_profile:
         for m in global_profile.memories:
             print(f"   - {m.get('content', m)}")
@@ -299,7 +299,7 @@ def test_custom_instructions():
     custom_store.process(messages=messages, user_id=test_user)
 
     profile = custom_store.recall(user_id=test_user)
-    print(f"\n📋 Profile (professional only):")
+    print("\n📋 Profile (professional only):")
     if profile:
         pprint(profile.to_dict())
 
@@ -359,7 +359,7 @@ def test_incremental_updates():
     print(f"\n📈 Memory growth: {count_1} → {count_2} → {count_3}")
 
     if profile_3:
-        print(f"\n📋 Final profile:")
+        print("\n📋 Final profile:")
         pprint(profile_3.to_dict())
 
     # Cleanup
@@ -460,7 +460,7 @@ def test_build_context():
     profile = store.recall(user_id=test_user)
     context = store.build_context(data=profile)
 
-    print(f"\n📝 Formatted context for system prompt:")
+    print("\n📝 Formatted context for system prompt:")
     print("-" * 40)
     print(context)
     print("-" * 40)

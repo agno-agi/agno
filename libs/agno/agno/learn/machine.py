@@ -89,7 +89,7 @@ class LearningMachine:
 
     # Store configurations (bool = defaults, Config = custom, Store = direct)
     user_profile: UserProfileInput = True
-    session_context: SessionContextInput = True
+    session_context: SessionContextInput = False
     learnings: LearningsInput = False
 
     # Custom stores
@@ -155,7 +155,7 @@ class LearningMachine:
 
     def _create_user_profile_store(self) -> "LearningStore":
         """Create UserProfileStore with resolved config."""
-        from agno.learn.stores.user import UserProfileStore
+        from agno.learn.stores import UserProfileStore
 
         if isinstance(self.user_profile, UserProfileConfig):
             config = self.user_profile
@@ -175,7 +175,7 @@ class LearningMachine:
 
     def _create_session_context_store(self) -> "LearningStore":
         """Create SessionContextStore with resolved config."""
-        from agno.learn.stores.session import SessionContextStore
+        from agno.learn.stores import SessionContextStore
 
         if isinstance(self.session_context, SessionContextConfig):
             config = self.session_context
@@ -194,7 +194,7 @@ class LearningMachine:
 
     def _create_learnings_store(self) -> "LearningStore":
         """Create LearningsStore with resolved config."""
-        from agno.learn.stores.learnings import LearningsStore
+        from agno.learn.stores import LearningsStore
 
         if isinstance(self.learnings, LearningsConfig):
             config = self.learnings

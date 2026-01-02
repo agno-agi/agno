@@ -21,33 +21,7 @@ Schemas:
 from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Dict, List, Optional
 
-# =============================================================================
-# Internal Helpers
-# =============================================================================
-
-
-def _safe_get(data: Any, key: str, default: Any = None) -> Any:
-    """Safely get a key from dict-like data."""
-    if isinstance(data, dict):
-        return data.get(key, default)
-    return getattr(data, key, default)
-
-
-def _parse_json(data: Any) -> Optional[Dict]:
-    """Parse JSON string to dict, or return dict as-is."""
-    if data is None:
-        return None
-    if isinstance(data, dict):
-        return data
-    if isinstance(data, str):
-        import json
-
-        try:
-            return json.loads(data)
-        except Exception:
-            return None
-    return None
-
+from agno.learn.utils import _parse_json, _safe_get
 
 # =============================================================================
 # User Profile Schema

@@ -244,7 +244,7 @@ def test_format_for_prompt():
 
     # Format for injection
     formatted = store.format_for_prompt(data=results)
-    print(f"\n📝 Formatted for system prompt:")
+    print("\n📝 Formatted for system prompt:")
     print("-" * 40)
     print(formatted)
     print("-" * 40)
@@ -435,7 +435,7 @@ def test_relevant_context():
         limit=3,
     )
 
-    print(f"\n📝 Relevant context for 'logging' query:")
+    print("\n📝 Relevant context for 'logging' query:")
     print("-" * 40)
     print(context)
     print("-" * 40)

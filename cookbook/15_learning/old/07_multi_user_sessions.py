@@ -15,7 +15,6 @@ Each user should have isolated memories, and each session should
 have its own context.
 """
 
-import asyncio
 
 from agno.db.postgres import PostgresDb
 from agno.learn import (
@@ -25,7 +24,6 @@ from agno.learn import (
 )
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
-from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)

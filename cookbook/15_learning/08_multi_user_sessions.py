@@ -29,7 +29,6 @@ from agno.learn import (
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from agno.vectordb.pgvector import PgVector, SearchType
-from rich.pretty import pprint
 
 # =============================================================================
 # Setup
@@ -135,13 +134,13 @@ def test_create_user_profiles():
     print("\n📝 Creating profiles...")
 
     learning.process(messages=alice_messages, user_id=ALICE, session_id=ALICE_SESSION_1)
-    print(f"   ✓ Alice's profile created")
+    print("   ✓ Alice's profile created")
 
     learning.process(messages=bob_messages, user_id=BOB, session_id=BOB_SESSION_1)
-    print(f"   ✓ Bob's profile created")
+    print("   ✓ Bob's profile created")
 
     learning.process(messages=carol_messages, user_id=CAROL, session_id=CAROL_SESSION_1)
-    print(f"   ✓ Carol's profile created")
+    print("   ✓ Carol's profile created")
 
     print("\n✅ User profiles created!")
 
@@ -242,18 +241,18 @@ def test_multiple_sessions():
         user_id=ALICE,
         session_id=ALICE_SESSION_2,
     )
-    print(f"\n📝 Created Alice's second session (code review)")
+    print("\n📝 Created Alice's second session (code review)")
 
     # Recall both sessions
     session_1 = learning.recall(user_id=ALICE, session_id=ALICE_SESSION_1)
     session_2 = learning.recall(user_id=ALICE, session_id=ALICE_SESSION_2)
 
-    print(f"\n📋 Alice's Session 1 (Project Planning):")
+    print("\n📋 Alice's Session 1 (Project Planning):")
     if session_1.get("session_context"):
         ctx = session_1["session_context"]
         print(f"   Summary: {ctx.summary[:80] if ctx.summary else 'None'}...")
 
-    print(f"\n📋 Alice's Session 2 (Code Review):")
+    print("\n📋 Alice's Session 2 (Code Review):")
     if session_2.get("session_context"):
         ctx = session_2["session_context"]
         print(f"   Summary: {ctx.summary[:80] if ctx.summary else 'None'}...")
@@ -419,12 +418,12 @@ def test_entity_isolation():
         support_view = user_store.recall(user_id=test_user, agent_id="support_agent")
         sales_view = user_store.recall(user_id=test_user, agent_id="sales_agent")
 
-        print(f"\n🎧 Support Agent's view:")
+        print("\n🎧 Support Agent's view:")
         if support_view:
             for m in support_view.memories:
                 print(f"   - {m.get('content', m)}")
 
-        print(f"\n💼 Sales Agent's view:")
+        print("\n💼 Sales Agent's view:")
         if sales_view:
             for m in sales_view.memories:
                 print(f"   - {m.get('content', m)}")

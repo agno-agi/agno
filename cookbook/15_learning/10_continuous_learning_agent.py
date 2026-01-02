@@ -197,7 +197,7 @@ class InteractionTracker:
         )
 
     def show_stats(self):
-        print(f"\n📊 Interaction Stats:")
+        print("\n📊 Interaction Stats:")
         print(f"   Total interactions: {len(self.interactions)}")
         print(f"   Learnings saved: {self.learnings_saved}")
 

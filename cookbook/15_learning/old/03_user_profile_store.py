@@ -139,7 +139,7 @@ def test_background_extraction():
 
     # What did we learn?
     profile = store.get(USER_CHARLIE)
-    print(f"\n👔 Charlie's extracted profile:")
+    print("\n👔 Charlie's extracted profile:")
     if profile:
         pprint(profile.to_dict())
         # Should have: name, job, company, preferences, language
@@ -177,7 +177,7 @@ def test_agent_tool():
     print(f"\n🔧 Tool result: {result}")
 
     profile = store.get(test_user)
-    print(f"\n📋 Profile after add:")
+    print("\n📋 Profile after add:")
     if profile:
         pprint(profile.to_dict())
 
@@ -186,7 +186,7 @@ def test_agent_tool():
     print(f"\n🔧 Update result: {result}")
 
     profile = store.get(test_user)
-    print(f"\n📋 Profile after update:")
+    print("\n📋 Profile after update:")
     if profile:
         pprint(profile.to_dict())
 
@@ -213,7 +213,7 @@ def test_direct_update():
     store.add_memory(test_user, "User works at Meta")
 
     profile_before = store.get(test_user)
-    print(f"\n📋 Profile before update:")
+    print("\n📋 Profile before update:")
     if profile_before:
         pprint(profile_before.to_dict())
 
@@ -227,7 +227,7 @@ def test_direct_update():
     print(f"🔄 Profile updated: {store.was_updated}")
 
     profile_after = store.get(test_user)
-    print(f"\n📋 Profile after career change:")
+    print("\n📋 Profile after career change:")
     if profile_after:
         pprint(profile_after.to_dict())
 
@@ -313,11 +313,11 @@ def test_entity_context():
     support_view = store.get(test_user, agent_id="support_agent")
     sales_view = store.get(test_user, agent_id="sales_agent")
 
-    print(f"\n🎧 Support agent sees:")
+    print("\n🎧 Support agent sees:")
     if support_view:
         pprint(support_view.to_dict())
 
-    print(f"\n💼 Sales agent sees:")
+    print("\n💼 Sales agent sees:")
     if sales_view:
         pprint(sales_view.to_dict())
 
@@ -367,7 +367,7 @@ def test_custom_instructions():
     work_store.extract_and_save(messages=messages, user_id=test_user)
 
     profile = work_store.get(test_user)
-    print(f"\n💼 Work-only profile:")
+    print("\n💼 Work-only profile:")
     if profile:
         pprint(profile.to_dict())
 
@@ -512,7 +512,7 @@ def test_deep_extraction():
     store.extract_and_save(messages=messages, user_id=test_user)
 
     profile = store.get(test_user)
-    print(f"\n🧠 Deep profile:")
+    print("\n🧠 Deep profile:")
     if profile:
         pprint(profile.to_dict())
 
@@ -561,7 +561,7 @@ def test_format_for_prompt():
     profile = store.get(test_user)
     formatted = store.format_for_prompt(profile)
 
-    print(f"\n📝 Formatted for system prompt:")
+    print("\n📝 Formatted for system prompt:")
     print("-" * 40)
     print(formatted)
     print("-" * 40)
