@@ -159,6 +159,9 @@ class UserProfileConfig:
     instructions: Optional[str] = None
     additional_instructions: Optional[str] = None
 
+    def __repr__(self) -> str:
+        return f"UserProfileConfig(mode={self.mode.value}, enable_tool={self.enable_tool})"
+
 
 @dataclass
 class SessionContextConfig:
@@ -227,6 +230,9 @@ class SessionContextConfig:
     instructions: Optional[str] = None
     additional_instructions: Optional[str] = None
 
+    def __repr__(self) -> str:
+        return f"SessionContextConfig(enable_planning={self.enable_planning})"
+
 
 @dataclass
 class LearningsConfig:
@@ -238,8 +244,12 @@ class LearningsConfig:
     Scope: KNOWLEDGE (fixed) — Stored in Knowledge Base, retrieved
     via semantic search based on current query.
 
+    IMPORTANT: A knowledge base is required for learnings to work.
+    Either provide it here or pass it to LearningMachine directly.
+
     Attributes:
         knowledge: Knowledge base instance (vector store) for storage.
+                   REQUIRED - learnings cannot be saved/searched without this.
         model: Model for extraction (if using BACKGROUND mode).
         mode: How learning is extracted. Default: AGENTIC.
         extraction: Extraction settings (only if mode=BACKGROUND).
@@ -261,15 +271,17 @@ class LearningsConfig:
 
     Example:
         >>> config = LearningsConfig(
-        ...     knowledge=my_knowledge_base,
+        ...     knowledge=my_knowledge_base,  # Required!
         ...     mode=LearningMode.AGENTIC,  # Agent saves via tool
         ...     enable_tool=True,
         ...     enable_search=True,
         ... )
     """
 
-    # Required fields
+    # Knowledge base - required for learnings to work
     knowledge: Optional[Any] = None  # agno.knowledge.Knowledge
+
+    # Model for extraction (optional, only needed for BACKGROUND mode)
     model: Optional["Model"] = None
 
     # Mode and extraction
@@ -290,6 +302,29 @@ class LearningsConfig:
     system_message: Optional[str] = None
     instructions: Optional[str] = None
     additional_instructions: Optional[str] = None
+
+    def __post_init__(self):
+        """Validate configuration."""
+        from agno.utils.log import log_warning
+
+        # Warn if knowledge is missing - learnings won't work without it
+        if self.knowledge is None:
+            log_warning(
+                "LearningsConfig: knowledge base is None. "
+                "Learnings cannot be saved or searched without a knowledge base. "
+                "Provide a Knowledge instance to LearningsConfig or LearningMachine."
+            )
+
+        # Warn if BACKGROUND mode but no model
+        if self.mode == LearningMode.BACKGROUND and self.model is None:
+            log_warning(
+                "LearningsConfig: BACKGROUND mode requires a model for extraction. "
+                "Provide a model to LearningsConfig or LearningMachine."
+            )
+
+    def __repr__(self) -> str:
+        has_knowledge = self.knowledge is not None
+        return f"LearningsConfig(mode={self.mode.value}, knowledge={has_knowledge}, enable_tool={self.enable_tool})"
 
 
 # =============================================================================
@@ -331,6 +366,9 @@ class DecisionLogConfig:
     instructions: Optional[str] = None
     additional_instructions: Optional[str] = None
 
+    def __repr__(self) -> str:
+        return f"DecisionLogConfig(mode={self.mode.value})"
+
 
 @dataclass
 class FeedbackConfig:
@@ -358,6 +396,9 @@ class FeedbackConfig:
     # Prompt customization
     instructions: Optional[str] = None
 
+    def __repr__(self) -> str:
+        return "FeedbackConfig(mode=BACKGROUND)"
+
 
 @dataclass
 class SelfImprovementConfig:
@@ -383,3 +424,6 @@ class SelfImprovementConfig:
 
     # Prompt customization
     instructions: Optional[str] = None
+
+    def __repr__(self) -> str:
+        return "SelfImprovementConfig(mode=HITL)"

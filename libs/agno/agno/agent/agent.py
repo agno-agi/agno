@@ -46,12 +46,6 @@ from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.types import KnowledgeFilter
-from agno.learn.config import (
-    LearningMode,
-    LearningsConfig,
-    SessionContextConfig,
-    UserProfileConfig,
-)
 from agno.learn.machine import LearningMachine
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager

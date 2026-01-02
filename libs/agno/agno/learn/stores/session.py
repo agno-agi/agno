@@ -973,3 +973,13 @@ class SessionContextStore(LearningStore):
                 return f"Error: {e}"
 
         return [save_session_context]
+
+    # =========================================================================
+    # Representation
+    # =========================================================================
+
+    def __repr__(self) -> str:
+        """String representation for debugging."""
+        has_db = self.db is not None
+        has_model = self.model is not None
+        return f"SessionContextStore(db={has_db}, model={has_model}, enable_planning={self.config.enable_planning})"

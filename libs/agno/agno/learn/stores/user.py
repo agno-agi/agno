@@ -1316,3 +1316,19 @@ class UserProfileStore(LearningStore):
             functions.append(clear_all_memories)
 
         return functions
+
+    # =========================================================================
+    # Representation
+    # =========================================================================
+
+    def __repr__(self) -> str:
+        """String representation for debugging."""
+        has_db = self.db is not None
+        has_model = self.model is not None
+        return (
+            f"UserProfileStore("
+            f"mode={self.config.mode.value}, "
+            f"db={has_db}, "
+            f"model={has_model}, "
+            f"enable_tool={self.config.enable_tool})"
+        )

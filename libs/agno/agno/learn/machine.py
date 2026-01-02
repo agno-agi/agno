@@ -37,16 +37,36 @@ class LearningMachine:
     Args:
         db: Database backend for persistence.
         model: Model for extraction.
+        knowledge: Knowledge base for learnings store. When provided, automatically
+                   enables the learnings store if not explicitly disabled.
         user_profile: Enable user profile (bool or UserProfileConfig).
         session_context: Enable session context (bool or SessionContextConfig).
-        learnings: Enable learnings (bool or LearningsConfig).
+        learnings: Enable learnings (bool or LearningsConfig). Auto-enabled when
+                   knowledge is provided.
         custom_stores: Additional stores implementing LearningStore protocol.
         debug_mode: Enable debug logging.
+
+    Example:
+        # Simple usage with knowledge base
+        >>> learning = LearningMachine(
+        ...     db=db,
+        ...     model=model,
+        ...     knowledge=my_knowledge_base,  # Auto-enables learnings
+        ... )
+
+        # Explicit control
+        >>> learning = LearningMachine(
+        ...     db=db,
+        ...     model=model,
+        ...     knowledge=my_knowledge_base,
+        ...     learnings=LearningsConfig(mode=LearningMode.PROPOSE),
+        ... )
     """
 
     # Dependencies
     db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
     model: Optional["Model"] = None
+    knowledge: Optional[Any] = None
 
     # Store configurations (bool = use defaults, Config = custom settings)
     user_profile: Union[bool, UserProfileConfig, None] = True
@@ -59,21 +79,23 @@ class LearningMachine:
     # Debug mode
     debug_mode: bool = False
 
-    # Internal state
-    _stores: Dict[str, LearningStore] = field(default_factory=dict, init=False)
-    _initialized: bool = field(default=False, init=False)
-
-    def __post_init__(self):
-        self._initialize_stores()
+    # Internal state (lazy initialization)
+    _stores: Optional[Dict[str, LearningStore]] = field(default=None, init=False)
 
     # =========================================================================
-    # Initialization
+    # Initialization (Lazy)
     # =========================================================================
+
+    @property
+    def stores(self) -> Dict[str, LearningStore]:
+        """All registered stores, keyed by name. Lazily initialized on first access."""
+        if self._stores is None:
+            self._initialize_stores()
+        return self._stores  # type: ignore
 
     def _initialize_stores(self) -> None:
         """Initialize all configured stores."""
-        if self._initialized:
-            return
+        self._stores = {}
 
         if self.user_profile:
             self._stores["user_profile"] = self._create_user_profile_store()
@@ -81,14 +103,14 @@ class LearningMachine:
         if self.session_context:
             self._stores["session_context"] = self._create_session_context_store()
 
-        if self.learnings:
+        # Auto-enable learnings if knowledge is provided
+        if self.learnings or self.knowledge is not None:
             self._stores["learnings"] = self._create_learnings_store()
 
         if self.custom_stores:
             for name, store in self.custom_stores.items():
                 self._stores[name] = store
 
-        self._initialized = True
         log_debug(f"LearningMachine initialized with stores: {list(self._stores.keys())}")
 
     def _create_user_profile_store(self) -> "LearningStore":
@@ -138,9 +160,13 @@ class LearningMachine:
             config = self.learnings
             if config.model is None:
                 config.model = self.model
+            # Use top-level knowledge as fallback
+            if config.knowledge is None and self.knowledge is not None:
+                config.knowledge = self.knowledge
         else:
             config = LearningsConfig(
                 model=self.model,
+                knowledge=self.knowledge,
                 mode=LearningMode.AGENTIC,
             )
 
@@ -151,14 +177,9 @@ class LearningMachine:
     # =========================================================================
 
     @property
-    def stores(self) -> Dict[str, LearningStore]:
-        """All registered stores, keyed by name."""
-        return self._stores
-
-    @property
     def was_updated(self) -> bool:
         """True if any store was updated in the last operation."""
-        return any(store.was_updated for store in self._stores.values() if hasattr(store, "was_updated"))
+        return any(store.was_updated for store in self.stores.values() if hasattr(store, "was_updated"))
 
     # =========================================================================
     # Main API
@@ -281,7 +302,7 @@ class LearningMachine:
             **kwargs,
         }
 
-        for name, store in self._stores.items():
+        for name, store in self.stores.items():
             try:
                 store_tools = store.get_tools(**context)
                 if store_tools:
@@ -310,7 +331,7 @@ class LearningMachine:
             **kwargs,
         }
 
-        for name, store in self._stores.items():
+        for name, store in self.stores.items():
             try:
                 store_tools = await store.aget_tools(**context)
                 if store_tools:
@@ -361,7 +382,7 @@ class LearningMachine:
             **kwargs,
         }
 
-        for name, store in self._stores.items():
+        for name, store in self.stores.items():
             try:
                 store.process(**context)
                 log_debug(f"Processed through {name}")
@@ -387,7 +408,7 @@ class LearningMachine:
             **kwargs,
         }
 
-        for name, store in self._stores.items():
+        for name, store in self.stores.items():
             try:
                 await store.aprocess(**context)
                 log_debug(f"Processed through {name}")
@@ -425,7 +446,7 @@ class LearningMachine:
             **kwargs,
         }
 
-        for name, store in self._stores.items():
+        for name, store in self.stores.items():
             try:
                 result = store.recall(**context)
                 if result is not None:
@@ -456,7 +477,7 @@ class LearningMachine:
             **kwargs,
         }
 
-        for name, store in self._stores.items():
+        for name, store in self.stores.items():
             try:
                 result = await store.arecall(**context)
                 if result is not None:
@@ -472,7 +493,7 @@ class LearningMachine:
         parts = []
 
         for name, data in results.items():
-            store = self._stores.get(name)
+            store = self.stores.get(name)
             if store and data is not None:
                 try:
                     formatted = store.build_context(data=data)
@@ -494,3 +515,16 @@ class LearningMachine:
             set_log_level_to_debug()
         else:
             set_log_level_to_info()
+
+    # =========================================================================
+    # Representation
+    # =========================================================================
+
+    def __repr__(self) -> str:
+        """String representation for debugging."""
+        store_names = list(self.stores.keys()) if self._stores is not None else "[not initialized]"
+        db_name = self.db.__class__.__name__ if self.db else None
+        model_name = self.model.id if self.model and hasattr(self.model, "id") else None
+        has_knowledge = self.knowledge is not None
+
+        return f"LearningMachine(stores={store_names}, db={db_name}, model={model_name}, knowledge={has_knowledge})"

@@ -1298,3 +1298,20 @@ class LearningsStore(LearningStore):
             if formatted:
                 parts.append(f"{i}. {formatted}")
         return "\n".join(parts)
+
+    # =========================================================================
+    # Representation
+    # =========================================================================
+
+    def __repr__(self) -> str:
+        """String representation for debugging."""
+        has_knowledge = self.knowledge is not None
+        has_model = self.model is not None
+        return (
+            f"LearningsStore("
+            f"mode={self.config.mode.value}, "
+            f"knowledge={has_knowledge}, "
+            f"model={has_model}, "
+            f"enable_tool={self.config.enable_tool}, "
+            f"enable_search={self.config.enable_search})"
+        )
