@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from agno.skills.errors import SkillValidationError
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.skill import Skill
 from agno.tools.function import Function
@@ -27,7 +28,11 @@ class Skills:
         self._loaded = False
 
     def _ensure_loaded(self) -> None:
-        """Ensure skills are loaded from all loaders."""
+        """Ensure skills are loaded from all loaders.
+
+        Raises:
+            SkillValidationError: If any skill fails validation.
+        """
         if self._loaded:
             return
 
@@ -38,6 +43,8 @@ class Skills:
                     if skill.name in self._skills:
                         log_warning(f"Duplicate skill name '{skill.name}', overwriting with newer version")
                     self._skills[skill.name] = skill
+            except SkillValidationError:
+                raise  # Re-raise validation errors as hard failures
             except Exception as e:
                 log_warning(f"Error loading skills from {loader}: {e}")
 

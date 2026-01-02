@@ -2,8 +2,10 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from agno.skills.errors import SkillValidationError
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.skill import Skill
+from agno.skills.validator import validate_skill_directory
 from agno.utils.log import log_debug, log_warning
 
 
@@ -16,10 +18,13 @@ class LocalSkills(SkillLoader):
 
     Args:
         path: Path to a skill folder or directory containing skill folders.
+        validate: Whether to validate skills against the Agent Skills spec.
+            If True (default), invalid skills will raise SkillValidationError.
     """
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, validate: bool = True):
         self.path = Path(path).resolve()
+        self.validate = validate
 
     def load(self) -> List[Skill]:
         """Load skills from the local filesystem.
@@ -65,14 +70,26 @@ class LocalSkills(SkillLoader):
 
         Returns:
             A Skill object if successful, None if there's an error.
+
+        Raises:
+            SkillValidationError: If validation is enabled and the skill is invalid.
         """
+        # Validate skill directory structure and content if validation is enabled
+        if self.validate:
+            errors = validate_skill_directory(folder)
+            if errors:
+                raise SkillValidationError(
+                    f"Skill validation failed for '{folder.name}'",
+                    errors=errors,
+                )
+
         skill_md_path = folder / "SKILL.md"
 
         try:
             content = skill_md_path.read_text(encoding="utf-8")
             frontmatter, instructions = self._parse_skill_md(content)
 
-            # Get skill name from frontmatter or folder name
+            # Get skill name from the frontmatter or folder name
             name = frontmatter.get("name", folder.name)
             description = frontmatter.get("description", "")
 
@@ -97,6 +114,8 @@ class LocalSkills(SkillLoader):
                 license=license_info,
             )
 
+        except SkillValidationError:
+            raise  # Re-raise validation errors
         except Exception as e:
             log_warning(f"Error loading skill from {folder}: {e}")
             return None
