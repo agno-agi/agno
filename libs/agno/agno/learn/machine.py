@@ -168,6 +168,7 @@ class LearningMachine:
         self,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        message: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         **kwargs,
@@ -181,6 +182,7 @@ class LearningMachine:
         Args:
             user_id: User identifier (for user profile lookup).
             session_id: Session identifier (for session context lookup).
+            message: Current message (for semantic search of learnings).
             agent_id: Optional agent context.
             team_id: Optional team context.
 
@@ -208,6 +210,7 @@ class LearningMachine:
         results = self.recall(
             user_id=user_id,
             session_id=session_id,
+            message=message,
             agent_id=agent_id,
             team_id=team_id,
             **kwargs,
@@ -222,6 +225,7 @@ class LearningMachine:
         self,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        message: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         **kwargs,
@@ -230,6 +234,7 @@ class LearningMachine:
         results = await self.arecall(
             user_id=user_id,
             session_id=session_id,
+            message=message,
             agent_id=agent_id,
             team_id=team_id,
             **kwargs,

@@ -362,7 +362,7 @@ class Agent:
     # LearningMachine for unified learning capabilities
     learning: Optional[Union[bool, LearningMachine]] = None
     # Add learnings context to system prompt
-    add_learnings_to_context: Optional[bool] = None
+    add_learnings_to_context: bool = True
 
     # --- Extra Messages ---
     # A list of extra messages added after the system message and before the user message.
@@ -532,7 +532,7 @@ class Agent:
         timezone_identifier: Optional[str] = None,
         resolve_in_context: bool = True,
         learning: Optional[Union[bool, LearningMachine]] = None,
-        add_learnings_to_context: Optional[bool] = None,
+        add_learnings_to_context: bool = True,
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
         user_message_role: str = "user",
         build_user_context: bool = True,
@@ -819,13 +819,13 @@ class Agent:
 
     def _set_learning_machine(self) -> None:
         """Initialize LearningMachine with agent's db and model."""
-
         if self.db is None:
             log_warning("Database not provided. LearningMachine not initialized.")
             return
-        if self.learning is None:
+
+        if self.learning is True:
             self.learning = LearningMachine(db=self.db, model=self.model)
-        else:
+        elif isinstance(self.learning, LearningMachine):
             if self.learning.db is None:
                 self.learning.db = self.db
             if self.learning.model is None:
@@ -6649,7 +6649,6 @@ class Agent:
                 user_id=user_id,
                 session_id=session.session_id if session else None,
                 agent_id=self.id,
-                team_id=self.team_id,
             )
             agent_tools.extend(learning_tools)
 
