@@ -31,7 +31,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Index, UniqueConstraint, and_, func, select, update
+    from sqlalchemy import ForeignKey, Index, UniqueConstraint, and_, func, select, update
     from sqlalchemy.dialects import mysql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -227,6 +227,16 @@ class SingleStoreDb(BaseDb):
                 if col_config.get("unique", False):
                     column_kwargs["unique"] = True
                     unique_constraints.append(col_name)
+
+                # Handle foreign key constraint
+                if "foreign_key" in col_config:
+                    fk_ref = col_config["foreign_key"]
+                    # For spans table, dynamically replace the traces table reference
+                    # with the actual trace table name configured for this db instance
+                    if table_type == "spans" and "trace_id" in fk_ref:
+                        fk_ref = f"{self.db_schema}.{self.trace_table_name}.trace_id" if self.db_schema else f"{self.trace_table_name}.trace_id"
+                    column_args.append(ForeignKey(fk_ref))
+
                 columns.append(Column(*column_args, **column_kwargs))
 
             # Create the table object
