@@ -40,7 +40,7 @@ def show_profile(user_id: str):
     if profile and profile.memories:
         print("\n📝 Stored memories:")
         for mem in profile.memories:
-            print(f"   • {mem.get('content', mem)}")
+            print(f"   > {mem.get('content', mem)}")
     else:
         print("\n📝 No memories stored yet.")
     print()
