@@ -119,10 +119,11 @@ class LearnedKnowledgeStore(LearningStore):
         if not search_query:
             return None
 
+        effective_namespace = namespace or self.config.namespace
         results = self.search(
             query=search_query,
             user_id=user_id,
-            namespace=namespace,
+            namespace=effective_namespace,
             limit=limit,
         )
         return results if results else None
@@ -141,10 +142,11 @@ class LearnedKnowledgeStore(LearningStore):
         if not search_query:
             return None
 
+        effective_namespace = namespace or self.config.namespace
         results = await self.asearch(
             query=search_query,
             user_id=user_id,
-            namespace=namespace,
+            namespace=effective_namespace,
             limit=limit,
         )
         return results if results else None

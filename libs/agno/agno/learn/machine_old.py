@@ -1,15 +1,7 @@
 """
 Learning Machine
 ================
-Unified learning system for agents.
-
-Coordinates multiple learning stores to give agents:
-- User memory (who they're talking to)
-- Session context (what's happened so far)
-- Entity memory (knowledge about external things)
-- Learned knowledge (reusable insights)
-
-Plus maintenance via the Curator for keeping memories healthy.
+Gives agents learning capabilities.
 """
 
 from dataclasses import dataclass, field
@@ -23,7 +15,6 @@ from agno.learn.config import (
     SessionContextConfig,
     UserProfileConfig,
 )
-from agno.learn.curate import Curator
 from agno.learn.stores.protocol import LearningStore
 from agno.utils.log import (
     log_debug,
@@ -38,7 +29,7 @@ try:
 except ImportError:
     pass
 
-# Type aliases for cleaner signatures
+# Type aliases for cleaner signatures (Store types imported lazily)
 UserProfileInput = Union[bool, UserProfileConfig, LearningStore, None]
 EntityMemoryInput = Union[bool, EntityMemoryConfig, LearningStore, None]
 SessionContextInput = Union[bool, SessionContextConfig, LearningStore, None]
@@ -50,19 +41,26 @@ class LearningMachine:
     """Central orchestrator for agent learning.
 
     Coordinates all learning stores and provides unified interface
-    for recall, processing, tool generation, and maintenance.
+    for recall, processing, and tool generation.
 
     Args:
         db: Database backend for persistence.
         model: Model for learning extraction.
-        knowledge: Knowledge base for learned knowledge store.
-
-        user_profile: Enable user profile. Accepts bool, Config, or Store.
-        session_context: Enable session context. Accepts bool, Config, or Store.
-        entity_memory: Enable entity memory. Accepts bool, Config, or Store.
-        learned_knowledge: Enable learned knowledge. Auto-enabled when knowledge provided.
-
-        namespace: Default namespace for entity_memory and learned_knowledge.
+        knowledge: Knowledge base for learned knowledge store. When provided, automatically
+                   enables the learned_knowledge store if not explicitly disabled.
+        user_profile: Enable user profile. Accepts:
+                      - bool: True = defaults, False/None = disabled
+                      - UserProfileConfig: Custom configuration
+                      - UserProfileStore: Use provided store directly
+        session_context: Enable session context. Accepts:
+                         - bool: True = defaults, False/None = disabled
+                         - SessionContextConfig: Custom configuration
+                         - SessionContextStore: Use provided store directly
+        learned_knowledge: Enable learned knowledge. Accepts:
+                           - bool: True = defaults, False/None = disabled
+                           - LearnedKnowledgeConfig: Custom configuration
+                           - LearnedKnowledgeStore: Use provided store directly
+                           Auto-enabled when knowledge is provided.
         custom_stores: Additional stores implementing LearningStore protocol.
         debug_mode: Enable debug logging.
     """
@@ -71,14 +69,10 @@ class LearningMachine:
     model: Optional["Model"] = None
     knowledge: Optional[Any] = None
 
-    # Store configurations (accepts bool, Config, or Store instance)
+    # Store configurations
     user_profile: UserProfileInput = False
     session_context: SessionContextInput = False
-    entity_memory: EntityMemoryInput = False
     learned_knowledge: LearnedKnowledgeInput = False
-
-    # Namespace for entity_memory and learned_knowledge
-    namespace: str = "global"
 
     # Custom stores
     custom_stores: Optional[Dict[str, LearningStore]] = None
@@ -88,7 +82,6 @@ class LearningMachine:
 
     # Internal state (lazy initialization)
     _stores: Optional[Dict[str, LearningStore]] = field(default=None, init=False)
-    _curator: Optional[Any] = field(default=None, init=False)
 
     # =========================================================================
     # Initialization (Lazy)
@@ -96,85 +89,58 @@ class LearningMachine:
 
     @property
     def stores(self) -> Dict[str, LearningStore]:
-        """All registered stores, keyed by name. Lazily initialized."""
+        """All registered stores, keyed by name. Lazily initialized on first access."""
         if self._stores is None:
             self._initialize_stores()
         return self._stores  # type: ignore
 
     def _initialize_stores(self) -> None:
-        """Initialize all configured stores."""
+        """Initialize all configured stores.
+
+        For each store type, accepts:
+        - bool: True = create with defaults, False/None = disabled
+        - Config: Create store with custom configuration
+        - Store: Use provided store instance directly
+        """
         self._stores = {}
 
-        # User Profile
         if self.user_profile:
-            self._stores["user_profile"] = self._resolve_store(
-                input_value=self.user_profile,
-                store_type="user_profile",
-            )
+            if isinstance(self.user_profile, LearningStore):
+                # Store instance provided directly
+                self._stores["user_profile"] = self.user_profile
+            else:
+                # Bool or Config - create the store
+                self._stores["user_profile"] = self._create_user_profile_store()
 
-        # Session Context
         if self.session_context:
-            self._stores["session_context"] = self._resolve_store(
-                input_value=self.session_context,
-                store_type="session_context",
-            )
+            if isinstance(self.session_context, LearningStore):
+                # Store instance provided directly
+                self._stores["session_context"] = self.session_context
+            else:
+                # Bool or Config - create the store
+                self._stores["session_context"] = self._create_session_context_store()
 
-        # Entity Memory
-        if self.entity_memory:
-            self._stores["entity_memory"] = self._resolve_store(
-                input_value=self.entity_memory,
-                store_type="entity_memory",
-            )
-
-        # Learned Knowledge (auto-enable if knowledge provided)
+        # Auto-enable learned_knowledge if knowledge is provided
         if self.learned_knowledge or self.knowledge is not None:
-            self._stores["learned_knowledge"] = self._resolve_store(
-                input_value=self.learned_knowledge if self.learned_knowledge else True,
-                store_type="learned_knowledge",
-            )
+            if isinstance(self.learned_knowledge, LearningStore):
+                # Store instance provided directly
+                self._stores["learned_knowledge"] = self.learned_knowledge
+            else:
+                # Bool or Config - create the store
+                self._stores["learned_knowledge"] = self._create_learned_knowledge_store()
 
-        # Custom stores
         if self.custom_stores:
             for name, store in self.custom_stores.items():
                 self._stores[name] = store
 
         log_debug(f"LearningMachine initialized with stores: {list(self._stores.keys())}")
 
-    def _resolve_store(
-        self,
-        input_value: Any,
-        store_type: str,
-    ) -> LearningStore:
-        """Resolve input to a store instance.
-
-        Args:
-            input_value: bool, Config, or Store instance
-            store_type: One of "user_profile", "session_context", "entity_memory", "learned_knowledge"
-
-        Returns:
-            Initialized store instance.
-        """
-        # Already a store instance
-        if isinstance(input_value, LearningStore):
-            return input_value
-
-        # Create store based on type
-        if store_type == "user_profile":
-            return self._create_user_profile_store(config=input_value)
-        elif store_type == "session_context":
-            return self._create_session_context_store(config=input_value)
-        elif store_type == "entity_memory":
-            return self._create_entity_memory_store(config=input_value)
-        elif store_type == "learned_knowledge":
-            return self._create_learned_knowledge_store(config=input_value)
-        else:
-            raise ValueError(f"Unknown store type: {store_type}")
-
-    def _create_user_profile_store(self, config: Any) -> LearningStore:
+    def _create_user_profile_store(self) -> "LearningStore":
         """Create UserProfileStore with resolved config."""
         from agno.learn.stores import UserProfileStore
 
-        if isinstance(config, UserProfileConfig):
+        if isinstance(self.user_profile, UserProfileConfig):
+            config = self.user_profile
             if config.db is None:
                 config.db = self.db
             if config.model is None:
@@ -188,11 +154,12 @@ class LearningMachine:
 
         return UserProfileStore(config=config, debug_mode=self.debug_mode)
 
-    def _create_session_context_store(self, config: Any) -> LearningStore:
+    def _create_session_context_store(self) -> "LearningStore":
         """Create SessionContextStore with resolved config."""
         from agno.learn.stores import SessionContextStore
 
-        if isinstance(config, SessionContextConfig):
+        if isinstance(self.session_context, SessionContextConfig):
+            config = self.session_context
             if config.db is None:
                 config.db = self.db
             if config.model is None:
@@ -206,71 +173,34 @@ class LearningMachine:
 
         return SessionContextStore(config=config, debug_mode=self.debug_mode)
 
-    def _create_entity_memory_store(self, config: Any) -> LearningStore:
-        """Create EntityMemoryStore with resolved config."""
-        from agno.learn.stores import EntityMemoryStore
-
-        if isinstance(config, EntityMemoryConfig):
-            if config.db is None:
-                config.db = self.db
-            if config.model is None:
-                config.model = self.model
-        else:
-            config = EntityMemoryConfig(
-                db=self.db,
-                model=self.model,
-                namespace=self.namespace,
-                mode=LearningMode.BACKGROUND,
-            )
-
-        return EntityMemoryStore(config=config, debug_mode=self.debug_mode)
-
-    def _create_learned_knowledge_store(self, config: Any) -> LearningStore:
+    def _create_learned_knowledge_store(self) -> "LearningStore":
         """Create LearnedKnowledgeStore with resolved config."""
         from agno.learn.stores import LearnedKnowledgeStore
 
-        if isinstance(config, LearnedKnowledgeConfig):
+        if isinstance(self.learned_knowledge, LearnedKnowledgeConfig):
+            config = self.learned_knowledge
             if config.model is None:
                 config.model = self.model
+            # Use top-level knowledge as fallback
             if config.knowledge is None and self.knowledge is not None:
                 config.knowledge = self.knowledge
         else:
             config = LearnedKnowledgeConfig(
                 model=self.model,
-                knowledge=self.knowledge,
+                knowledge=self.knowledge,  # Use top-level knowledge
                 mode=LearningMode.AGENTIC,
             )
 
         return LearnedKnowledgeStore(config=config, debug_mode=self.debug_mode)
 
     # =========================================================================
-    # Store Accessors (Type-Safe)
+    # Store Access
     # =========================================================================
-
-    @property
-    def user_profile_store(self) -> Optional[LearningStore]:
-        """Get user profile store if enabled."""
-        return self.stores.get("user_profile")
-
-    @property
-    def session_context_store(self) -> Optional[LearningStore]:
-        """Get session context store if enabled."""
-        return self.stores.get("session_context")
-
-    @property
-    def entity_memory_store(self) -> Optional[LearningStore]:
-        """Get entity memory store if enabled."""
-        return self.stores.get("entity_memory")
-
-    @property
-    def learned_knowledge_store(self) -> Optional[LearningStore]:
-        """Get learned knowledge store if enabled."""
-        return self.stores.get("learned_knowledge")
 
     @property
     def was_updated(self) -> bool:
         """True if any store was updated in the last operation."""
-        return any(getattr(store, "was_updated", False) for store in self.stores.values())
+        return any(store.was_updated for store in self.stores.values() if hasattr(store, "was_updated"))
 
     # =========================================================================
     # Main API
@@ -281,37 +211,45 @@ class LearningMachine:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         message: Optional[str] = None,
-        entity_id: Optional[str] = None,
-        entity_type: Optional[str] = None,
-        namespace: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         **kwargs,
     ) -> str:
         """Build memory context for the agent's system prompt.
-
-        Call before generating a response to give the agent relevant context.
+        Call before generating a response to give the agent context about relevant learnings.
 
         Args:
             user_id: User identifier (for user profile lookup).
             session_id: Session identifier (for session context lookup).
             message: Current message (for semantic search of learnings).
-            entity_id: Entity to retrieve (for entity memory).
-            entity_type: Type of entity to retrieve.
-            namespace: Namespace filter for entity_memory and learned_knowledge.
             agent_id: Optional agent context.
             team_id: Optional team context.
 
         Returns:
-            Context string to inject into the agent's system prompt.
+            Formatted context string to append to system prompt.
+
+        Example:
+            >>> context = learning.build_context(
+            ...     user_id="alice",
+            ...     session_id="sess-123",
+            ...     message="How do I optimize async code?",
+            ... )
+            >>> print(context)
+            <user_profile>
+            What you know about this user:
+            - User is a Python developer
+            - User prefers concise explanations
+            </user_profile>
+
+            <session_context>
+            Earlier in this session:
+            User asked about Python best practices...
+            </session_context>
         """
         results = self.recall(
             user_id=user_id,
             session_id=session_id,
             message=message,
-            entity_id=entity_id,
-            entity_type=entity_type,
-            namespace=namespace or self.namespace,
             agent_id=agent_id,
             team_id=team_id,
             **kwargs,
@@ -320,16 +258,13 @@ class LearningMachine:
         if not results:
             return ""
 
-        return self._format_results(results=results)
+        return self._format_results(results)
 
     async def abuild_context(
         self,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         message: Optional[str] = None,
-        entity_id: Optional[str] = None,
-        entity_type: Optional[str] = None,
-        namespace: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         **kwargs,
@@ -339,9 +274,6 @@ class LearningMachine:
             user_id=user_id,
             session_id=session_id,
             message=message,
-            entity_id=entity_id,
-            entity_type=entity_type,
-            namespace=namespace or self.namespace,
             agent_id=agent_id,
             team_id=team_id,
             **kwargs,
@@ -350,39 +282,37 @@ class LearningMachine:
         if not results:
             return ""
 
-        return self._format_results(results=results)
+        return self._format_results(results)
 
     def get_tools(
         self,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        namespace: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         **kwargs,
     ) -> List[Callable]:
         """Get learning tools to expose to the agent.
-
-        Returns tools based on which stores are enabled:
-        - user_profile: update_user_memory
-        - entity_memory: search_entities, create_entity, update_entity, add_fact, etc.
-        - learned_knowledge: search_learnings, save_learning
+        Returns tools like `update_user_memory`, `search_learnings`, etc. depending on which stores are enabled.
 
         Args:
-            user_id: User identifier (required for user profile tools).
+            user_id: User identifier (required for user profile tool).
             session_id: Session identifier.
-            namespace: Default namespace for entity/learning operations.
             agent_id: Optional agent context.
             team_id: Optional team context.
 
         Returns:
             List of callable tools.
+
+        Example:
+            >>> tools = learning.get_tools(user_id="alice")
+            >>> [t.__name__ for t in tools]
+            ['update_user_memory', 'search_learnings', 'save_learning']
         """
         tools = []
         context = {
             "user_id": user_id,
             "session_id": session_id,
-            "namespace": namespace or self.namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
@@ -403,7 +333,6 @@ class LearningMachine:
         self,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        namespace: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         **kwargs,
@@ -413,7 +342,6 @@ class LearningMachine:
         context = {
             "user_id": user_id,
             "session_id": session_id,
-            "namespace": namespace or self.namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
@@ -435,21 +363,17 @@ class LearningMachine:
         messages: List[Any],
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        namespace: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         **kwargs,
     ) -> None:
         """Extract and save learnings from a conversation.
-
-        Call after a conversation to extract learnings. Each store
-        processes based on its mode (BACKGROUND stores extract automatically).
+        Call after a conversation to extract learnings from enabled stores.
 
         Args:
             messages: Conversation messages to analyze.
             user_id: User identifier (for user profile extraction).
             session_id: Session identifier (for session context extraction).
-            namespace: Namespace for entity/learning saves.
             agent_id: Optional agent context.
             team_id: Optional team context.
         """
@@ -457,7 +381,6 @@ class LearningMachine:
             "messages": messages,
             "user_id": user_id,
             "session_id": session_id,
-            "namespace": namespace or self.namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
@@ -466,8 +389,7 @@ class LearningMachine:
         for name, store in self.stores.items():
             try:
                 store.process(**context)
-                if getattr(store, "was_updated", False):
-                    log_debug(f"Store {name} was updated")
+                log_debug(f"Processed through {name}")
             except Exception as e:
                 log_warning(f"Error processing through {name}: {e}")
 
@@ -476,7 +398,6 @@ class LearningMachine:
         messages: List[Any],
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        namespace: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         **kwargs,
@@ -486,7 +407,6 @@ class LearningMachine:
             "messages": messages,
             "user_id": user_id,
             "session_id": session_id,
-            "namespace": namespace or self.namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
@@ -495,13 +415,12 @@ class LearningMachine:
         for name, store in self.stores.items():
             try:
                 await store.aprocess(**context)
-                if getattr(store, "was_updated", False):
-                    log_debug(f"Store {name} was updated")
+                log_debug(f"Processed through {name}")
             except Exception as e:
                 log_warning(f"Error processing through {name}: {e}")
 
     # =========================================================================
-    # Lower-Level API
+    # Lower-Level API (for debugging/advanced use)
     # =========================================================================
 
     def recall(
@@ -509,9 +428,6 @@ class LearningMachine:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         message: Optional[str] = None,
-        entity_id: Optional[str] = None,
-        entity_type: Optional[str] = None,
-        namespace: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         **kwargs,
@@ -519,6 +435,7 @@ class LearningMachine:
         """Retrieve raw data from all stores.
 
         Most users should use `build_context()` instead.
+        This is useful for debugging or when you need the raw data.
 
         Returns:
             Dict mapping store names to their recalled data.
@@ -528,10 +445,6 @@ class LearningMachine:
             "user_id": user_id,
             "session_id": session_id,
             "message": message,
-            "query": message,  # For learned_knowledge
-            "entity_id": entity_id,
-            "entity_type": entity_type,
-            "namespace": namespace or self.namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
@@ -553,9 +466,6 @@ class LearningMachine:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         message: Optional[str] = None,
-        entity_id: Optional[str] = None,
-        entity_type: Optional[str] = None,
-        namespace: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         **kwargs,
@@ -566,10 +476,6 @@ class LearningMachine:
             "user_id": user_id,
             "session_id": session_id,
             "message": message,
-            "query": message,
-            "entity_id": entity_id,
-            "entity_type": entity_type,
-            "namespace": namespace or self.namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
@@ -603,26 +509,6 @@ class LearningMachine:
         return "\n\n".join(parts)
 
     # =========================================================================
-    # Curation
-    # =========================================================================
-
-    @property
-    def curator(self) -> "Curator":
-        """Get the curator for memory maintenance.
-
-        Lazily creates the curator on first access.
-
-        Example:
-            >>> learning.curator.prune(user_id="alice", max_age_days=90)
-            >>> learning.curator.deduplicate(user_id="alice")
-        """
-        if self._curator is None:
-            from agno.learn.curate import Curator
-
-            self._curator = Curator(machine=self)
-        return self._curator
-
-    # =========================================================================
     # Debug
     # =========================================================================
 
@@ -645,11 +531,4 @@ class LearningMachine:
         model_name = self.model.id if self.model and hasattr(self.model, "id") else None
         has_knowledge = self.knowledge is not None
 
-        return (
-            f"LearningMachine("
-            f"stores={store_names}, "
-            f"db={db_name}, "
-            f"model={model_name}, "
-            f"knowledge={has_knowledge}, "
-            f"namespace={self.namespace!r})"
-        )
+        return f"LearningMachine(stores={store_names}, db={db_name}, model={model_name}, knowledge={has_knowledge})"
