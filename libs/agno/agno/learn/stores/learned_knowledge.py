@@ -13,10 +13,10 @@ Key Features:
 - TWO agent tools: save_learning and search_learnings
 - Semantic search for relevant learnings
 - Shared across all agents using the same knowledge base
-- Supports namespace-based scoping for privacy/sharing control.
+- Supports namespace-based scoping for privacy/sharing control:
     - namespace="user": Private per user (scoped by user_id)
     - namespace="global": Shared with everyone (default)
-    - namespace="engineering": Custom grouping (literal string)
+    - namespace="<custom>": Custom grouping (literal string, e.g., "engineering")
 
 Supported Modes:
 - AGENTIC: Agent calls save_learning directly when it discovers insights
@@ -49,6 +49,11 @@ class LearnedKnowledgeStore(LearningStore):
 
     Uses a Knowledge base with vector embeddings for semantic search.
     Supports namespace-based scoping for privacy/sharing control.
+
+    Namespace Scoping:
+    - namespace="global": Shared with everyone (default)
+    - namespace="user": Private per user (requires user_id)
+    - namespace="<custom>": Custom grouping (e.g., "engineering", "sales")
 
     Provides TWO tools to the agent (when enable_agent_tools=True):
     1. search_learnings - Find relevant learnings via semantic search
@@ -94,6 +99,8 @@ class LearnedKnowledgeStore(LearningStore):
         self,
         message: Optional[str] = None,
         query: Optional[str] = None,
+        user_id: Optional[str] = None,
+        namespace: Optional[str] = None,
         limit: int = 5,
         **kwargs,
     ) -> Optional[List[Any]]:
@@ -102,6 +109,8 @@ class LearnedKnowledgeStore(LearningStore):
         Args:
             message: Current user message to find relevant learnings for.
             query: Alternative query string (if message not provided).
+            user_id: User ID for "user" namespace scoping.
+            namespace: Filter by namespace (None = all accessible).
             limit: Maximum number of results.
             **kwargs: Additional context (ignored).
 
@@ -112,13 +121,20 @@ class LearnedKnowledgeStore(LearningStore):
         if not search_query:
             return None
 
-        results = self.search(query=search_query, limit=limit)
+        results = self.search(
+            query=search_query,
+            user_id=user_id,
+            namespace=namespace,
+            limit=limit,
+        )
         return results if results else None
 
     async def arecall(
         self,
         message: Optional[str] = None,
         query: Optional[str] = None,
+        user_id: Optional[str] = None,
+        namespace: Optional[str] = None,
         limit: int = 5,
         **kwargs,
     ) -> Optional[List[Any]]:
@@ -127,22 +143,31 @@ class LearnedKnowledgeStore(LearningStore):
         if not search_query:
             return None
 
-        results = await self.asearch(query=search_query, limit=limit)
+        results = await self.asearch(
+            query=search_query,
+            user_id=user_id,
+            namespace=namespace,
+            limit=limit,
+        )
         return results if results else None
 
     def process(
         self,
         messages: List[Any],
+        user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        namespace: Optional[str] = None,
         **kwargs,
     ) -> None:
         """Extract learned knowledge from messages.
 
         Args:
             messages: Conversation messages to analyze.
+            user_id: User context (for "user" namespace scoping).
             agent_id: Agent context (stored for audit).
             team_id: Team context (stored for audit).
+            namespace: Namespace to save learnings to (default: "global").
             **kwargs: Additional context (ignored).
         """
         if self.config.mode != LearningMode.BACKGROUND:
@@ -153,15 +178,19 @@ class LearnedKnowledgeStore(LearningStore):
 
         self._extract_and_save(
             messages=messages,
+            user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            namespace=namespace,
         )
 
     async def aprocess(
         self,
         messages: List[Any],
+        user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        namespace: Optional[str] = None,
         **kwargs,
     ) -> None:
         """Async version of process."""
@@ -173,8 +202,10 @@ class LearnedKnowledgeStore(LearningStore):
 
         await self._aextract_and_save(
             messages=messages,
+            user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            namespace=namespace,
         )
 
     def build_context(self, data: Any) -> str:
@@ -324,15 +355,19 @@ class LearnedKnowledgeStore(LearningStore):
 
     def get_tools(
         self,
+        user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        namespace: Optional[str] = None,
         **kwargs,
     ) -> List[Callable]:
         """Get tools to expose to agent.
 
         Args:
+            user_id: User context (for "user" namespace scoping).
             agent_id: Agent context (stored for audit on saves).
             team_id: Team context (stored for audit on saves).
+            namespace: Default namespace for saves (default: "global").
             **kwargs: Additional context (ignored).
 
         Returns:
@@ -340,18 +375,30 @@ class LearnedKnowledgeStore(LearningStore):
         """
         if not self.config.enable_agent_tools:
             return []
-        return self.get_agent_tools(agent_id=agent_id, team_id=team_id)
+        return self.get_agent_tools(
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+            namespace=namespace,
+        )
 
     async def aget_tools(
         self,
+        user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        namespace: Optional[str] = None,
         **kwargs,
     ) -> List[Callable]:
         """Async version of get_tools."""
         if not self.config.enable_agent_tools:
             return []
-        return await self.aget_agent_tools(agent_id=agent_id, team_id=team_id)
+        return await self.aget_agent_tools(
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+            namespace=namespace,
+        )
 
     @property
     def was_updated(self) -> bool:
@@ -390,18 +437,22 @@ class LearnedKnowledgeStore(LearningStore):
 
     def get_agent_tools(
         self,
+        user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        namespace: Optional[str] = None,
     ) -> List[Callable]:
         """Get the tools to expose to the agent.
 
         Returns TWO tools (based on config settings):
-        1. search_learnings - Find relevant learnings (searches ALL learnings)
-        2. save_learning - Save reusable insights (stores agent_id/team_id for audit)
+        1. search_learnings - Find relevant learnings
+        2. save_learning - Save reusable insights
 
         Args:
+            user_id: User context (for "user" namespace scoping).
             agent_id: Agent context (stored for audit on saves).
             team_id: Team context (stored for audit on saves).
+            namespace: Default namespace for saves (default: "global").
 
         Returns:
             List of callable tools.
@@ -409,26 +460,42 @@ class LearnedKnowledgeStore(LearningStore):
         tools = []
 
         if self.config.enable_search:
-            tools.append(self._create_search_learnings_tool())
+            tools.append(self._create_search_learnings_tool(user_id=user_id))
 
         if self.config.enable_save:
-            tools.append(self._create_save_learning_tool(agent_id=agent_id, team_id=team_id))
+            tools.append(
+                self._create_save_learning_tool(
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    default_namespace=namespace,
+                )
+            )
 
         return tools
 
     async def aget_agent_tools(
         self,
+        user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        namespace: Optional[str] = None,
     ) -> List[Callable]:
         """Async version of get_agent_tools."""
         tools = []
 
         if self.config.enable_search:
-            tools.append(self._create_async_search_learnings_tool())
+            tools.append(self._create_async_search_learnings_tool(user_id=user_id))
 
         if self.config.enable_save:
-            tools.append(self._create_async_save_learning_tool(agent_id=agent_id, team_id=team_id))
+            tools.append(
+                self._create_async_save_learning_tool(
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    default_namespace=namespace,
+                )
+            )
 
         return tools
 
@@ -438,8 +505,10 @@ class LearnedKnowledgeStore(LearningStore):
 
     def _create_save_learning_tool(
         self,
+        user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        default_namespace: Optional[str] = None,
     ) -> Callable:
         """Create the save_learning tool for the agent."""
 
@@ -448,6 +517,7 @@ class LearnedKnowledgeStore(LearningStore):
             learning: str,
             context: Optional[str] = None,
             tags: Optional[List[str]] = None,
+            namespace: Optional[str] = None,
         ) -> str:
             """Save a reusable insight or learning to the knowledge base.
 
@@ -465,29 +535,39 @@ class LearnedKnowledgeStore(LearningStore):
                 learning: The actual insight or knowledge to save.
                 context: When/where this applies (optional).
                 tags: Categories for this learning (optional).
+                namespace: Scope for this learning (optional).
+                    - "global": Shared with everyone (default)
+                    - "user": Private to current user
+                    - "<custom>": Custom grouping (e.g., "engineering")
 
             Returns:
                 Confirmation message.
             """
+            effective_namespace = namespace or default_namespace or "global"
+
             success = self.save(
                 title=title,
                 learning=learning,
                 context=context,
                 tags=tags,
+                user_id=user_id,
                 agent_id=agent_id,
                 team_id=team_id,
+                namespace=effective_namespace,
             )
             if success:
                 self.learning_saved = True
-                return f"Learning saved: {title}"
+                return f"Learning saved: {title} (namespace: {effective_namespace})"
             return "Failed to save learning"
 
         return save_learning
 
     def _create_async_save_learning_tool(
         self,
+        user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        default_namespace: Optional[str] = None,
     ) -> Callable:
         """Create the async save_learning tool for the agent."""
 
@@ -496,6 +576,7 @@ class LearnedKnowledgeStore(LearningStore):
             learning: str,
             context: Optional[str] = None,
             tags: Optional[List[str]] = None,
+            namespace: Optional[str] = None,
         ) -> str:
             """Save a reusable insight or learning to the knowledge base.
 
@@ -513,21 +594,29 @@ class LearnedKnowledgeStore(LearningStore):
                 learning: The actual insight or knowledge to save.
                 context: When/where this applies (optional).
                 tags: Categories for this learning (optional).
+                namespace: Scope for this learning (optional).
+                    - "global": Shared with everyone (default)
+                    - "user": Private to current user
+                    - "<custom>": Custom grouping (e.g., "engineering")
 
             Returns:
                 Confirmation message.
             """
+            effective_namespace = namespace or default_namespace or "global"
+
             success = await self.asave(
                 title=title,
                 learning=learning,
                 context=context,
                 tags=tags,
+                user_id=user_id,
                 agent_id=agent_id,
                 team_id=team_id,
+                namespace=effective_namespace,
             )
             if success:
                 self.learning_saved = True
-                return f"Learning saved: {title}"
+                return f"Learning saved: {title} (namespace: {effective_namespace})"
             return "Failed to save learning"
 
         return save_learning
@@ -536,12 +625,16 @@ class LearnedKnowledgeStore(LearningStore):
     # Tool: search_learnings
     # =========================================================================
 
-    def _create_search_learnings_tool(self) -> Callable:
+    def _create_search_learnings_tool(
+        self,
+        user_id: Optional[str] = None,
+    ) -> Callable:
         """Create the search_learnings tool for the agent."""
 
         def search_learnings(
             query: str,
             limit: int = 5,
+            namespace: Optional[str] = None,
         ) -> str:
             """Search for relevant learnings in the knowledge base.
 
@@ -552,11 +645,21 @@ class LearnedKnowledgeStore(LearningStore):
             Args:
                 query: What you're looking for (e.g., "database performance tips")
                 limit: Maximum number of results to return (default: 5)
+                namespace: Filter by namespace (optional).
+                    - None: Search all accessible learnings
+                    - "global": Only shared learnings
+                    - "user": Only user's private learnings
+                    - "<custom>": Only learnings in custom namespace
 
             Returns:
                 Formatted list of relevant learnings, or message if none found.
             """
-            results = self.search(query=query, limit=limit)
+            results = self.search(
+                query=query,
+                user_id=user_id,
+                namespace=namespace,
+                limit=limit,
+            )
 
             if not results:
                 return "No relevant learnings found."
@@ -566,12 +669,16 @@ class LearnedKnowledgeStore(LearningStore):
 
         return search_learnings
 
-    def _create_async_search_learnings_tool(self) -> Callable:
+    def _create_async_search_learnings_tool(
+        self,
+        user_id: Optional[str] = None,
+    ) -> Callable:
         """Create the async search_learnings tool for the agent."""
 
         async def search_learnings(
             query: str,
             limit: int = 5,
+            namespace: Optional[str] = None,
         ) -> str:
             """Search for relevant learnings in the knowledge base.
 
@@ -582,11 +689,21 @@ class LearnedKnowledgeStore(LearningStore):
             Args:
                 query: What you're looking for (e.g., "database performance tips")
                 limit: Maximum number of results to return (default: 5)
+                namespace: Filter by namespace (optional).
+                    - None: Search all accessible learnings
+                    - "global": Only shared learnings
+                    - "user": Only user's private learnings
+                    - "<custom>": Only learnings in custom namespace
 
             Returns:
                 Formatted list of relevant learnings, or message if none found.
             """
-            results = await self.asearch(query=query, limit=limit)
+            results = await self.asearch(
+                query=query,
+                user_id=user_id,
+                namespace=namespace,
+                limit=limit,
+            )
 
             if not results:
                 return "No relevant learnings found."
@@ -600,14 +717,21 @@ class LearnedKnowledgeStore(LearningStore):
     # Search Operations
     # =========================================================================
 
-    def search(self, query: str, limit: int = 5) -> List[Any]:
+    def search(
+        self,
+        query: str,
+        user_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        limit: int = 5,
+    ) -> List[Any]:
         """Search for relevant learnings based on query.
 
         Uses semantic search to find learnings most relevant to the query.
-        Returns ALL matching learnings — no filtering by agent_id/team_id.
 
         Args:
             query: The search query.
+            user_id: User ID for "user" namespace access.
+            namespace: Filter by namespace (None = all accessible).
             limit: Maximum number of results to return.
 
         Returns:
@@ -618,30 +742,16 @@ class LearnedKnowledgeStore(LearningStore):
             return []
 
         try:
-            results = self.knowledge.search(query=query, num_documents=limit)
+            # Build filters based on namespace
+            filters = self._build_search_filters(user_id=user_id, namespace=namespace)
 
-            learnings = []
-            for result in results or []:
-                learning = self._parse_result(result=result)
-                if learning:
-                    learnings.append(learning)
-
-            log_debug(f"LearnedKnowledgeStore.search: found {len(learnings)} learnings for query: {query[:50]}...")
-            return learnings
-
-        except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.search failed: {e}")
-            return []
-
-    async def asearch(self, query: str, limit: int = 5) -> List[Any]:
-        """Async version of search."""
-        if not self.knowledge:
-            log_warning("LearnedKnowledgeStore.asearch: no knowledge base configured")
-            return []
-
-        try:
-            if hasattr(self.knowledge, "asearch"):
-                results = await self.knowledge.asearch(query=query, num_documents=limit)
+            # Search with filters if supported
+            if (
+                filters
+                and hasattr(self.knowledge, "search")
+                and "filters" in self.knowledge.search.__code__.co_varnames
+            ):
+                results = self.knowledge.search(query=query, num_documents=limit, filters=filters)
             else:
                 results = self.knowledge.search(query=query, num_documents=limit)
 
@@ -649,14 +759,101 @@ class LearnedKnowledgeStore(LearningStore):
             for result in results or []:
                 learning = self._parse_result(result=result)
                 if learning:
-                    learnings.append(learning)
+                    # Post-filter by namespace if KB doesn't support filtering
+                    if self._matches_namespace_filter(learning, user_id=user_id, namespace=namespace):
+                        learnings.append(learning)
+
+            log_debug(f"LearnedKnowledgeStore.search: found {len(learnings)} learnings for query: {query[:50]}...")
+            return learnings[:limit]
+
+        except Exception as e:
+            log_warning(f"LearnedKnowledgeStore.search failed: {e}")
+            return []
+
+    async def asearch(
+        self,
+        query: str,
+        user_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        limit: int = 5,
+    ) -> List[Any]:
+        """Async version of search."""
+        if not self.knowledge:
+            log_warning("LearnedKnowledgeStore.asearch: no knowledge base configured")
+            return []
+
+        try:
+            # Build filters based on namespace
+            filters = self._build_search_filters(user_id=user_id, namespace=namespace)
+
+            # Search with filters if supported
+            if hasattr(self.knowledge, "asearch"):
+                if filters and "filters" in self.knowledge.asearch.__code__.co_varnames:
+                    results = await self.knowledge.asearch(query=query, num_documents=limit, filters=filters)
+                else:
+                    results = await self.knowledge.asearch(query=query, num_documents=limit)
+            else:
+                if (
+                    filters
+                    and hasattr(self.knowledge, "search")
+                    and "filters" in self.knowledge.search.__code__.co_varnames
+                ):
+                    results = self.knowledge.search(query=query, num_documents=limit, filters=filters)
+                else:
+                    results = self.knowledge.search(query=query, num_documents=limit)
+
+            learnings = []
+            for result in results or []:
+                learning = self._parse_result(result=result)
+                if learning:
+                    # Post-filter by namespace if KB doesn't support filtering
+                    if self._matches_namespace_filter(learning, user_id=user_id, namespace=namespace):
+                        learnings.append(learning)
 
             log_debug(f"LearnedKnowledgeStore.asearch: found {len(learnings)} learnings for query: {query[:50]}...")
-            return learnings
+            return learnings[:limit]
 
         except Exception as e:
             log_warning(f"LearnedKnowledgeStore.asearch failed: {e}")
             return []
+
+    def _build_search_filters(
+        self,
+        user_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Build search filters for namespace scoping.
+
+        Returns filter dict for knowledge base, or None if no filtering needed.
+        """
+        if not namespace:
+            return None
+
+        if namespace == "user":
+            if not user_id:
+                log_warning("LearnedKnowledgeStore: 'user' namespace requires user_id")
+                return None
+            return {"namespace": "user", "user_id": user_id}
+
+        return {"namespace": namespace}
+
+    def _matches_namespace_filter(
+        self,
+        learning: Any,
+        user_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+    ) -> bool:
+        """Check if a learning matches the namespace filter (for post-filtering)."""
+        if not namespace:
+            return True
+
+        learning_namespace = getattr(learning, "namespace", None) or "global"
+        learning_user_id = getattr(learning, "user_id", None)
+
+        if namespace == "user":
+            return learning_namespace == "user" and learning_user_id == user_id
+
+        return learning_namespace == namespace
 
     # =========================================================================
     # Save Operations
@@ -668,8 +865,10 @@ class LearnedKnowledgeStore(LearningStore):
         learning: str,
         context: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        namespace: Optional[str] = None,
     ) -> bool:
         """Save a learning to the knowledge base.
 
@@ -678,14 +877,23 @@ class LearnedKnowledgeStore(LearningStore):
             learning: The actual insight.
             context: When/why this applies.
             tags: Tags for categorization.
+            user_id: User ID (required for "user" namespace).
             agent_id: Agent that created this (stored as metadata for audit).
             team_id: Team context (stored as metadata for audit).
+            namespace: Namespace for scoping (default: "global").
 
         Returns:
             True if saved successfully, False otherwise.
         """
         if not self.knowledge:
             log_warning("LearnedKnowledgeStore.save: no knowledge base configured")
+            return False
+
+        effective_namespace = namespace or "global"
+
+        # Validate "user" namespace has user_id
+        if effective_namespace == "user" and not user_id:
+            log_warning("LearnedKnowledgeStore.save: 'user' namespace requires user_id")
             return False
 
         try:
@@ -696,6 +904,8 @@ class LearnedKnowledgeStore(LearningStore):
                 "learning": learning.strip(),
                 "context": context.strip() if context else None,
                 "tags": tags or [],
+                "namespace": effective_namespace,
+                "user_id": user_id if effective_namespace == "user" else None,
                 "agent_id": agent_id,
                 "team_id": team_id,
                 "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -711,7 +921,7 @@ class LearnedKnowledgeStore(LearningStore):
                 skip_if_exists=True,
             )
 
-            log_debug(f"LearnedKnowledgeStore.save: saved learning '{title}'")
+            log_debug(f"LearnedKnowledgeStore.save: saved learning '{title}' (namespace: {effective_namespace})")
             return True
 
         except Exception as e:
@@ -724,12 +934,21 @@ class LearnedKnowledgeStore(LearningStore):
         learning: str,
         context: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        namespace: Optional[str] = None,
     ) -> bool:
         """Async version of save."""
         if not self.knowledge:
             log_warning("LearnedKnowledgeStore.asave: no knowledge base configured")
+            return False
+
+        effective_namespace = namespace or "global"
+
+        # Validate "user" namespace has user_id
+        if effective_namespace == "user" and not user_id:
+            log_warning("LearnedKnowledgeStore.asave: 'user' namespace requires user_id")
             return False
 
         try:
@@ -740,6 +959,8 @@ class LearnedKnowledgeStore(LearningStore):
                 "learning": learning.strip(),
                 "context": context.strip() if context else None,
                 "tags": tags or [],
+                "namespace": effective_namespace,
+                "user_id": user_id if effective_namespace == "user" else None,
                 "agent_id": agent_id,
                 "team_id": team_id,
                 "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -763,7 +984,7 @@ class LearnedKnowledgeStore(LearningStore):
                     skip_if_exists=True,
                 )
 
-            log_debug(f"LearnedKnowledgeStore.asave: saved learning '{title}'")
+            log_debug(f"LearnedKnowledgeStore.asave: saved learning '{title}' (namespace: {effective_namespace})")
             return True
 
         except Exception as e:
@@ -829,8 +1050,10 @@ class LearnedKnowledgeStore(LearningStore):
     def _extract_and_save(
         self,
         messages: List[Any],
+        user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        namespace: Optional[str] = None,
     ) -> None:
         """Extract learnings from messages (sync)."""
         if not self.model or not self.knowledge:
@@ -850,7 +1073,12 @@ class LearnedKnowledgeStore(LearningStore):
                 existing_summary=existing_summary,
             )
 
-            tools = self._get_extraction_tools(agent_id=agent_id, team_id=team_id)
+            tools = self._get_extraction_tools(
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                namespace=namespace,
+            )
             functions = self._build_functions_for_model(tools=tools)
 
             model_copy = deepcopy(self.model)
@@ -869,8 +1097,10 @@ class LearnedKnowledgeStore(LearningStore):
     async def _aextract_and_save(
         self,
         messages: List[Any],
+        user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        namespace: Optional[str] = None,
     ) -> None:
         """Extract learnings from messages (async)."""
         if not self.model or not self.knowledge:
@@ -890,7 +1120,12 @@ class LearnedKnowledgeStore(LearningStore):
                 existing_summary=existing_summary,
             )
 
-            tools = self._get_async_extraction_tools(agent_id=agent_id, team_id=team_id)
+            tools = self._get_async_extraction_tools(
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                namespace=namespace,
+            )
             functions = self._build_functions_for_model(tools=tools)
 
             model_copy = deepcopy(self.model)
@@ -955,10 +1190,13 @@ class LearnedKnowledgeStore(LearningStore):
 
     def _get_extraction_tools(
         self,
+        user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        namespace: Optional[str] = None,
     ) -> List[Callable]:
         """Get sync extraction tools."""
+        effective_namespace = namespace or "global"
 
         def save_learning(
             title: str,
@@ -982,8 +1220,10 @@ class LearnedKnowledgeStore(LearningStore):
                 learning=learning,
                 context=context,
                 tags=tags,
+                user_id=user_id,
                 agent_id=agent_id,
                 team_id=team_id,
+                namespace=effective_namespace,
             )
             return f"Saved: {title}" if success else "Failed to save"
 
@@ -991,10 +1231,13 @@ class LearnedKnowledgeStore(LearningStore):
 
     def _get_async_extraction_tools(
         self,
+        user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        namespace: Optional[str] = None,
     ) -> List[Callable]:
         """Get async extraction tools."""
+        effective_namespace = namespace or "global"
 
         async def save_learning(
             title: str,
@@ -1018,8 +1261,10 @@ class LearnedKnowledgeStore(LearningStore):
                 learning=learning,
                 context=context,
                 tags=tags,
+                user_id=user_id,
                 agent_id=agent_id,
                 team_id=team_id,
+                namespace=effective_namespace,
             )
             return f"Saved: {title}" if success else "Failed to save"
 
@@ -1141,6 +1386,9 @@ class LearnedKnowledgeStore(LearningStore):
         if hasattr(learning, "tags") and learning.tags:
             tags_str = ", ".join(learning.tags)
             parts.append(f"_Tags: {tags_str}_")
+
+        if hasattr(learning, "namespace") and learning.namespace and learning.namespace != "global":
+            parts.append(f"_Namespace: {learning.namespace}_")
 
         return "\n   ".join(parts)
 
