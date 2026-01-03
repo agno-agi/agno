@@ -101,15 +101,16 @@ def inspect_profile(user_id: str):
     print(f"Type: {type(profile).__name__}")
 
     # Raw data
-    if hasattr(profile, 'to_dict'):
+    if hasattr(profile, "to_dict"):
         import json
+
         print(f"\nRaw data:\n{json.dumps(profile.to_dict(), indent=2, default=str)}")
 
     # Memories
-    if hasattr(profile, 'memories'):
+    if hasattr(profile, "memories"):
         print(f"\nMemories ({len(profile.memories)}):")
         for i, mem in enumerate(profile.memories):
-            print(f"  {i+1}. {mem}")
+            print(f"  {i + 1}. {mem}")
 
 
 # =============================================================================
@@ -136,8 +137,9 @@ def inspect_session(session_id: str):
     print(f"\n✅ Context found!")
     print(f"Type: {type(context).__name__}")
 
-    if hasattr(context, 'to_dict'):
+    if hasattr(context, "to_dict"):
         import json
+
         print(f"\nRaw data:\n{json.dumps(context.to_dict(), indent=2, default=str)}")
 
 
@@ -163,7 +165,7 @@ def inspect_learnings(query: str = ""):
         results = store.search(query=query, limit=10)
         print(f"Found: {len(results)} results")
         for i, r in enumerate(results):
-            print(f"\n  {i+1}. {getattr(r, 'title', 'Untitled')}")
+            print(f"\n  {i + 1}. {getattr(r, 'title', 'Untitled')}")
             print(f"     {getattr(r, 'learning', str(r))[:100]}...")
 
 
@@ -225,7 +227,7 @@ def check_was_updated():
     print(f"\nLearningMachine.was_updated: {lm.was_updated}")
 
     for name, store in lm.stores.items():
-        updated = getattr(store, 'was_updated', None)
+        updated = getattr(store, "was_updated", None)
         print(f"  {name}.was_updated: {updated}")
 
 
@@ -305,7 +307,7 @@ if __name__ == "__main__":
     test_extraction(
         user_id="debug_user@example.com",
         message="Hi, I'm a debug user. I work as a software engineer at TestCorp. "
-                "I specialize in Python and distributed systems."
+        "I specialize in Python and distributed systems.",
     )
 
     # 3. Inspect the profile

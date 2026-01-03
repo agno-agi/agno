@@ -50,7 +50,7 @@ def get_profile_content(user_id: str) -> list:
     """Get profile content for a user."""
     profile = agent.learning.stores["user_profile"].get(user_id=user_id)
     if profile and profile.memories:
-        return [m.get('content', str(m)) for m in profile.memories]
+        return [m.get("content", str(m)) for m in profile.memories]
     return []
 
 
@@ -99,8 +99,9 @@ def test_user_isolation():
     print(f"Bob's profile has {len(bob_profile)} memories")
 
     # Check that Bob can't see Alice's data
-    bob_sees_alice = any("alice" in str(m).lower() or "secret" in str(m).lower() 
-                         for m in bob_profile)
+    bob_sees_alice = any(
+        "alice" in str(m).lower() or "secret" in str(m).lower() for m in bob_profile
+    )
     print(f"Bob can see Alice's data: {bob_sees_alice}")
     print(f"✅ PASS" if not bob_sees_alice else "❌ FAIL")
 

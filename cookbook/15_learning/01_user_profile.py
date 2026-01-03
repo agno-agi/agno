@@ -7,7 +7,7 @@ Set `learning=True` and provide a database.
 The agent automatically extracts user info from conversations (BACKGROUND mode).
 
 Memories persist across sessions — the agent on conversation 100
-knows everything it learned in conversations 1-99.
+remembers what it learned about the user in previous conversations.
 """
 
 from agno.agent import Agent
@@ -24,7 +24,7 @@ db = PostgresDb(db_url=db_url)
 # Create Learning Agent
 # =============================================================================
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.2"),
     db=db,
     learning=True,  # Enables UserProfileStore in BACKGROUND mode
     markdown=True,

@@ -3,10 +3,10 @@ User Profile Learning (Agentic Mode)
 ===========================================
 In AGENTIC mode, the agent decides when to save memories using a tool.
 
-This gives the agent control — it only saves what it judges important,
-rather than extracting from every conversation automatically.
+This gives the agent control — it only saves what it judges important.
 
-Use this when you want intentional, high-quality memories.
+Pros: Runs when the agent wants to save something.
+Cons: The agent may miss important information.
 """
 
 from agno.agent import Agent
@@ -24,15 +24,11 @@ db = PostgresDb(db_url=db_url)
 # Create Learning Agent (Agentic Mode)
 # =============================================================================
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.2"),
     db=db,
     learning=LearningMachine(
-        db=db,
-        model=OpenAIChat(id="gpt-4o"),
-        user_profile=UserProfileConfig(
-            mode=LearningMode.AGENTIC,  # Agent decides when to save
-            enable_tool=True,  # Gives agent the update_user_memory tool
-        ),
+        # Gives the agent an `update_user_memory` tool to save memories
+        user_profile=UserProfileConfig(mode=LearningMode.AGENTIC),
     ),
     markdown=True,
 )

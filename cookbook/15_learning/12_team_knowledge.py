@@ -16,9 +16,9 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.agent import AgentKnowledge
 from agno.learn import (
+    LearnedKnowledgeConfig,
     LearningMachine,
     LearningMode,
-    LearnedKnowledgeConfig,
     UserProfileConfig,
 )
 from agno.models.openai import OpenAIChat
@@ -115,7 +115,7 @@ def show_team_knowledge():
     if results:
         print("\n📚 Team Knowledge Base:")
         for r in results:
-            title = getattr(r, 'title', 'Untitled')
+            title = getattr(r, "title", "Untitled")
             print(f"   > {title}")
     else:
         print("\n📚 No team knowledge yet")

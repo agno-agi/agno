@@ -21,6 +21,7 @@ from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine
 from agno.models.openai import OpenAIChat
 
+
 # =============================================================================
 # Custom Schema: Project
 # =============================================================================
@@ -155,7 +156,9 @@ class ProjectStore:
         """
         pass
 
-    async def aprocess(self, messages: List[Any], project_id: str = None, **kwargs) -> None:
+    async def aprocess(
+        self, messages: List[Any], project_id: str = None, **kwargs
+    ) -> None:
         """Async version of process."""
         pass
 
@@ -194,7 +197,9 @@ class ProjectStore:
                 add_decision: Record a decision made
                 add_note: Add a project note
             """
-            project = self.recall(project_id=project_id) or Project(project_id=project_id)
+            project = self.recall(project_id=project_id) or Project(
+                project_id=project_id
+            )
 
             changes = []
             if name:

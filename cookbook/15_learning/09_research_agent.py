@@ -18,9 +18,9 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.agent import AgentKnowledge
 from agno.learn import (
+    LearnedKnowledgeConfig,
     LearningMachine,
     LearningMode,
-    LearnedKnowledgeConfig,
     SessionContextConfig,
     UserProfileConfig,
 )
@@ -178,8 +178,8 @@ if __name__ == "__main__":
     if results:
         print("\n📚 Research patterns learned:")
         for r in results:
-            title = getattr(r, 'title', 'Untitled')
-            learning = getattr(r, 'learning', str(r))[:80]
+            title = getattr(r, "title", "Untitled")
+            learning = getattr(r, "learning", str(r))[:80]
             print(f"   > {title}")
             print(f"     {learning}...")
     else:
