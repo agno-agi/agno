@@ -25,9 +25,9 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.agent import AgentKnowledge
 from agno.learn import (
+    LearnedKnowledgeConfig,
     LearningMachine,
     LearningMode,
-    LearnedKnowledgeConfig,
     UserProfileConfig,
 )
 from agno.models.openai import OpenAIChat
@@ -73,7 +73,7 @@ agentic_agent = Agent(
         model=model,
         user_profile=UserProfileConfig(
             mode=LearningMode.AGENTIC,  # Agent decides
-            enable_agent_tools=True,  # Updated from enable_tool
+            enable_tool=True,
         ),
     ),
     markdown=True,

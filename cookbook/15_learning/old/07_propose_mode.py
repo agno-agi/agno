@@ -19,7 +19,7 @@ Perfect for:
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.agent import AgentKnowledge
-from agno.learn import LearningMachine, LearningMode, LearnedKnowledgeConfig
+from agno.learn import LearnedKnowledgeConfig, LearningMachine, LearningMode
 from agno.models.openai import OpenAIChat
 from agno.vectordb.pgvector import PgVector
 
@@ -94,8 +94,8 @@ def show_learnings():
     if results:
         print("\n📚 Saved Learnings:")
         for r in results:
-            title = getattr(r, 'title', 'Untitled')
-            learning = getattr(r, 'learning', str(r))[:60]
+            title = getattr(r, "title", "Untitled")
+            learning = getattr(r, "learning", str(r))[:60]
             print(f"   > {title}: {learning}...")
     else:
         print("\n📚 No learnings saved yet.")

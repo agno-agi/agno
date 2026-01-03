@@ -9,11 +9,17 @@ Key Features:
 - Summary extraction from conversations
 - Optional planning mode (goal, plan, progress tracking)
 - Session-scoped storage (each session_id has one context)
+- Builds on previous context (doesn't start from scratch each time)
 - No agent tool (system-managed only)
 
 Scope:
 - Context is retrieved by session_id only
 - agent_id/team_id stored in DB columns for audit trail
+
+Key Behavior:
+- Extraction receives the previous context and updates it
+- This ensures continuity even when message history is truncated
+- Previous context + new messages → Updated context
 
 Supported Modes:
 - BACKGROUND only. SessionContextStore does not support AGENTIC, PROPOSE, or HITL modes.
@@ -54,7 +60,12 @@ class SessionContextStore(LearningStore):
 
     Key difference from UserProfileStore:
     - UserProfile: accumulates memories over time
-    - SessionContext: snapshot of current session state (replaced on each extraction)
+    - SessionContext: snapshot of current session state (updated on each extraction)
+
+    Key behavior:
+    - Extraction builds on previous context rather than starting fresh
+    - This ensures continuity even when message history is truncated
+    - Previous summary, goal, plan, progress are preserved and updated
 
     Usage:
         >>> store = SessionContextStore(config=SessionContextConfig(db=db, model=model))
@@ -485,6 +496,8 @@ class SessionContextStore(LearningStore):
     ) -> str:
         """Extract session context from messages and save.
 
+        Builds on previous context rather than starting from scratch.
+
         Args:
             messages: Conversation messages to analyze.
             session_id: The unique session identifier.
@@ -507,6 +520,9 @@ class SessionContextStore(LearningStore):
 
         self.context_updated = False
 
+        # Get existing context to build upon
+        existing_context = self.get(session_id=session_id)
+
         conversation_text = self._messages_to_text(messages=messages)
 
         tools = self._get_extraction_tools(
@@ -514,11 +530,15 @@ class SessionContextStore(LearningStore):
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            existing_context=existing_context,
         )
 
         functions = self._build_functions_for_model(tools=tools)
 
-        system_message = self._get_system_message(conversation_text=conversation_text)
+        system_message = self._get_system_message(
+            conversation_text=conversation_text,
+            existing_context=existing_context,
+        )
 
         messages_for_model = [system_message]
 
@@ -556,6 +576,9 @@ class SessionContextStore(LearningStore):
 
         self.context_updated = False
 
+        # Get existing context to build upon
+        existing_context = await self.aget(session_id=session_id)
+
         conversation_text = self._messages_to_text(messages=messages)
 
         tools = await self._aget_extraction_tools(
@@ -563,11 +586,15 @@ class SessionContextStore(LearningStore):
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            existing_context=existing_context,
         )
 
         functions = self._build_functions_for_model(tools=tools)
 
-        system_message = self._get_system_message(conversation_text=conversation_text)
+        system_message = self._get_system_message(
+            conversation_text=conversation_text,
+            existing_context=existing_context,
+        )
 
         messages_for_model = [system_message]
 
@@ -626,8 +653,15 @@ class SessionContextStore(LearningStore):
                     parts.append(f"Assistant: {content}")
         return "\n".join(parts)
 
-    def _get_system_message(self, conversation_text: str) -> "Message":
-        """Build system message for extraction."""
+    def _get_system_message(
+        self,
+        conversation_text: str,
+        existing_context: Optional[Any] = None,
+    ) -> "Message":
+        """Build system message for extraction.
+
+        Includes previous context so the model can update rather than recreate.
+        """
         from agno.models.message import Message
 
         if self.config.system_message is not None:
@@ -636,19 +670,38 @@ class SessionContextStore(LearningStore):
         enable_planning = self.config.enable_planning
         custom_instructions = self.config.instructions or ""
 
+        # Build previous context section
+        previous_context_section = ""
+        if existing_context:
+            previous_context_section = "\n## Previous Context (update this, don't start fresh)\n"
+            if hasattr(existing_context, "summary") and existing_context.summary:
+                previous_context_section += f"Previous summary: {existing_context.summary}\n"
+            if enable_planning:
+                if hasattr(existing_context, "goal") and existing_context.goal:
+                    previous_context_section += f"Previous goal: {existing_context.goal}\n"
+                if hasattr(existing_context, "plan") and existing_context.plan:
+                    previous_context_section += f"Previous plan: {', '.join(existing_context.plan)}\n"
+                if hasattr(existing_context, "progress") and existing_context.progress:
+                    previous_context_section += f"Previous progress: {', '.join(existing_context.progress)}\n"
+            previous_context_section += "\n"
+
         if enable_planning:
             system_prompt = (
                 dedent("""\
-                You are a Session Context Manager. Your job is to capture the current state of this conversation.
+                You are a Session Context Manager. Your job is to capture and UPDATE the current state of this conversation.
 
                 ## Your Task
-                Analyze the conversation and extract:
+                Analyze the conversation and update the context:
                 1. **Summary**: What's been discussed? Key decisions, conclusions, important points.
+                   Build on the previous summary - don't lose earlier context.
                 2. **Goal**: What is the user trying to accomplish? (if apparent)
                 3. **Plan**: What steps have been outlined to achieve the goal? (if any)
                 4. **Progress**: Which steps have been completed? (if any)
 
-                ## Conversation
+            """)
+                + previous_context_section
+                + dedent("""\
+                ## New Conversation
                 <conversation>
             """)
                 + conversation_text
@@ -656,31 +709,35 @@ class SessionContextStore(LearningStore):
                 </conversation>
 
                 ## Guidelines
+                - **BUILD ON** previous context - don't lose earlier information
+                - Incorporate new information into existing summary
+                - Update goal/plan/progress if they've changed
                 - Be concise but capture what matters
                 - Focus on information needed to continue the conversation later
-                - The summary should stand alone - someone reading it should understand the session
-                - Only include goal/plan/progress if they're actually present in the conversation
-                - Don't invent or assume - capture what's actually there
+                - The summary should stand alone - someone reading it should understand the full session
 
             """)
                 + custom_instructions
                 + dedent("""
-                Use the save_session_context tool to save your analysis.\
+                Use the save_session_context tool to save your updated analysis.\
             """)
             )
         else:
             system_prompt = (
                 dedent("""\
-                You are a Session Context Manager. Your job is to summarize this conversation.
+                You are a Session Context Manager. Your job is to summarize and UPDATE this conversation.
 
                 ## Your Task
-                Create a concise summary capturing:
-                - Key topics discussed
+                Create an updated summary capturing:
+                - Key topics discussed (including from previous context)
                 - Important decisions or conclusions
                 - Outstanding questions or next steps
                 - Any context needed to continue the conversation
 
-                ## Conversation
+            """)
+                + previous_context_section
+                + dedent("""\
+                ## New Conversation
                 <conversation>
             """)
                 + conversation_text
@@ -688,6 +745,8 @@ class SessionContextStore(LearningStore):
                 </conversation>
 
                 ## Guidelines
+                - **BUILD ON** the previous summary - don't lose earlier context
+                - Integrate new information with what was already captured
                 - Be concise but complete
                 - Focus on what would help someone pick up where this left off
                 - Don't include trivial details
@@ -696,7 +755,7 @@ class SessionContextStore(LearningStore):
             """)
                 + custom_instructions
                 + dedent("""
-                Use the save_session_context tool to save your summary.\
+                Use the save_session_context tool to save your updated summary.\
             """)
             )
 
@@ -734,6 +793,7 @@ class SessionContextStore(LearningStore):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        existing_context: Optional[Any] = None,
     ) -> List[Callable]:
         """Get sync extraction tools for the model."""
         enable_planning = self.config.enable_planning
@@ -748,6 +808,7 @@ class SessionContextStore(LearningStore):
 
             Args:
                 summary: Brief summary of what's been discussed in this session.
+                         Build on previous summary - don't lose earlier context.
                 goal: The user's main objective (if apparent from conversation).
                 plan: Steps to achieve the goal (if discussed).
                 progress: Which steps have been completed (if any).
@@ -762,9 +823,21 @@ class SessionContextStore(LearningStore):
                 }
 
                 if enable_planning:
-                    context_data["goal"] = goal
-                    context_data["plan"] = plan or []
-                    context_data["progress"] = progress or []
+                    # Preserve previous values if not updated
+                    if goal is not None:
+                        context_data["goal"] = goal
+                    elif existing_context and hasattr(existing_context, "goal"):
+                        context_data["goal"] = existing_context.goal
+
+                    if plan is not None:
+                        context_data["plan"] = plan
+                    elif existing_context and hasattr(existing_context, "plan"):
+                        context_data["plan"] = existing_context.plan or []
+
+                    if progress is not None:
+                        context_data["progress"] = progress
+                    elif existing_context and hasattr(existing_context, "progress"):
+                        context_data["progress"] = existing_context.progress or []
 
                 context = from_dict_safe(self.schema, context_data)
                 self.save(
@@ -788,6 +861,7 @@ class SessionContextStore(LearningStore):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        existing_context: Optional[Any] = None,
     ) -> List[Callable]:
         """Get async extraction tools for the model."""
         enable_planning = self.config.enable_planning
@@ -802,6 +876,7 @@ class SessionContextStore(LearningStore):
 
             Args:
                 summary: Brief summary of what's been discussed in this session.
+                         Build on previous summary - don't lose earlier context.
                 goal: The user's main objective (if apparent from conversation).
                 plan: Steps to achieve the goal (if discussed).
                 progress: Which steps have been completed (if any).
@@ -816,9 +891,21 @@ class SessionContextStore(LearningStore):
                 }
 
                 if enable_planning:
-                    context_data["goal"] = goal
-                    context_data["plan"] = plan or []
-                    context_data["progress"] = progress or []
+                    # Preserve previous values if not updated
+                    if goal is not None:
+                        context_data["goal"] = goal
+                    elif existing_context and hasattr(existing_context, "goal"):
+                        context_data["goal"] = existing_context.goal
+
+                    if plan is not None:
+                        context_data["plan"] = plan
+                    elif existing_context and hasattr(existing_context, "plan"):
+                        context_data["plan"] = existing_context.plan or []
+
+                    if progress is not None:
+                        context_data["progress"] = progress
+                    elif existing_context and hasattr(existing_context, "progress"):
+                        context_data["progress"] = existing_context.progress or []
 
                 context = from_dict_safe(self.schema, context_data)
                 await self.asave(

@@ -74,7 +74,7 @@ assistant = Agent(
         model=OpenAIChat(id="gpt-4o"),
         user_profile=UserProfileConfig(
             mode=LearningMode.BACKGROUND,
-            enable_agent_tools=True,  # Also allow explicit saves (updated from enable_tool)
+            enable_tool=True,  # Also allow explicit saves
             instructions=(
                 "Learn everything about this person: communication style, "
                 "interests, work, family, preferences, schedule, goals, "

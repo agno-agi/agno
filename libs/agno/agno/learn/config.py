@@ -101,6 +101,14 @@ class UserProfileConfig:
 
     Scope: USER (fixed) - Retrieved and stored by user_id.
 
+    ## Two Types of Profile Data
+
+    1. **Profile Fields** (structured): name, preferred_name, and any custom
+       fields added when extending the schema. Updated via `update_profile` tool.
+
+    2. **Memories** (unstructured): Observations that don't fit schema fields.
+       Updated via `add_memory`, `update_memory`, `delete_memory` tools.
+
     Attributes:
         db: Database backend for storage.
         model: Model for extraction (required for BACKGROUND mode).
@@ -108,14 +116,17 @@ class UserProfileConfig:
         extraction: Extraction timing settings.
         schema: Custom schema for user profile data. Default: UserProfile.
 
-        # Agent tool
-        enable_tool: Whether to provide update_user_memory tool to agent.
+        # Extraction operations (BACKGROUND mode)
+        enable_add_memory: Allow adding new memories during extraction.
+        enable_update_memory: Allow updating existing memories.
+        enable_delete_memory: Allow deleting memories.
+        enable_clear_memories: Allow clearing all memories (dangerous).
+        enable_update_profile: Allow updating profile fields (name, etc).
 
-        # Internal extraction tools
-        enable_add: Allow adding new profile entries.
-        enable_update: Allow updating existing entries.
-        enable_delete: Allow deleting entries.
-        enable_clear: Allow clearing all profile data.
+        # Agent tools (AGENTIC mode or when enable_agent_tools=True)
+        enable_agent_tools: Master switch to expose tools to the agent.
+        agent_can_update_memories: If agent_tools enabled, allow memory updates.
+        agent_can_update_profile: If agent_tools enabled, allow profile updates.
 
         # Prompt customization
         system_message: Full override for extraction system message.
@@ -127,12 +138,18 @@ class UserProfileConfig:
         ...     db=my_db,
         ...     model=my_model,
         ...     mode=LearningMode.BACKGROUND,
-        ...     extraction=ExtractionConfig(
-        ...         timing=ExtractionTiming.PARALLEL,
-        ...         run_after_messages=2,
-        ...     ),
-        ...     enable_tool=True,
+        ...     enable_agent_tools=True,  # Expose tools to agent
         ...     instructions="Focus on professional preferences only.",
+        ... )
+
+    Example with extended schema:
+        >>> @dataclass
+        ... class MyUserProfile(UserProfile):
+        ...     company: Optional[str] = field(default=None, metadata={"description": "Where they work"})
+        ...     role: Optional[str] = field(default=None, metadata={"description": "Job title"})
+        ...
+        >>> config = UserProfileConfig(
+        ...     schema=MyUserProfile,  # Agent sees company, role as updateable fields
         ... )
     """
 
@@ -145,14 +162,17 @@ class UserProfileConfig:
     extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
     schema: Optional[Type[Any]] = None
 
-    # Agent tools
-    enable_tool: bool = False
+    # Extraction operations (what can happen during BACKGROUND extraction)
+    enable_add_memory: bool = True
+    enable_update_memory: bool = True
+    enable_delete_memory: bool = True
+    enable_clear_memories: bool = False  # Dangerous - disabled by default
+    enable_update_profile: bool = True  # Allow updating profile fields
 
-    # Internal extraction tools
-    enable_add: bool = True
-    enable_update: bool = True
-    enable_delete: bool = True
-    enable_clear: bool = False  # Dangerous - disabled by default
+    # Agent tools (AGENTIC mode or explicit enable)
+    enable_agent_tools: bool = False  # Master switch
+    agent_can_update_memories: bool = True  # If agent_tools enabled
+    agent_can_update_profile: bool = True  # If agent_tools enabled
 
     # Prompt customization
     system_message: Optional[str] = None
@@ -160,7 +180,7 @@ class UserProfileConfig:
     additional_instructions: Optional[str] = None
 
     def __repr__(self) -> str:
-        return f"UserProfileConfig(mode={self.mode.value}, enable_tool={self.enable_tool})"
+        return f"UserProfileConfig(mode={self.mode.value}, enable_agent_tools={self.enable_agent_tools})"
 
 
 @dataclass
@@ -172,6 +192,10 @@ class SessionContextConfig:
 
     Scope: SESSION (fixed) - Retrieved and stored by session_id.
 
+    Key behavior: Context builds on previous context. Each extraction
+    receives the previous context and updates it, rather than creating
+    from scratch. This ensures continuity even with truncated message history.
+
     Attributes:
         db: Database backend for storage.
         model: Model for extraction (required for BACKGROUND mode).
@@ -182,12 +206,6 @@ class SessionContextConfig:
         # Feature flags
         enable_planning: If True, extract goal/plan/progress in addition
                         to summary. If False, extract summary only.
-
-        # Internal extraction tools
-        enable_add: Allow adding new context entries.
-        enable_update: Allow updating existing entries.
-        enable_delete: Allow deleting entries.
-        enable_clear: Allow clearing all context data.
 
         # Prompt customization
         system_message: Full override for extraction system message.
@@ -217,12 +235,6 @@ class SessionContextConfig:
 
     # Feature flags
     enable_planning: bool = False
-
-    # Internal extraction tools
-    enable_add: bool = True
-    enable_update: bool = True
-    enable_delete: bool = True
-    enable_clear: bool = False
 
     # Prompt customization
     system_message: Optional[str] = None
@@ -255,13 +267,9 @@ class LearnedKnowledgeConfig:
         schema: Custom schema for learning data. Default: LearnedKnowledge.
 
         # Agent tools
-        enable_save: Whether to provide save_learning tool to agent.
-        enable_search: Whether to provide search_learnings tool to agent.
-
-        # Internal extraction tools
-        enable_add: Allow adding new learnings.
-        enable_update: Allow updating existing learnings.
-        enable_delete: Allow deleting learnings.
+        enable_agent_tools: Master switch to expose tools to the agent.
+        enable_save: If agent_tools enabled, provide save_learning tool.
+        enable_search: If agent_tools enabled, provide search_learnings tool.
 
         # Prompt customization
         system_message: Full override for extraction system message.
@@ -272,6 +280,7 @@ class LearnedKnowledgeConfig:
         >>> config = LearnedKnowledgeConfig(
         ...     knowledge=my_knowledge_base,  # Required!
         ...     mode=LearningMode.AGENTIC,    # Agent saves via tool
+        ...     enable_agent_tools=True,
         ...     enable_save=True,
         ...     enable_search=True,
         ... )
@@ -289,13 +298,9 @@ class LearnedKnowledgeConfig:
     schema: Optional[Type[Any]] = None
 
     # Agent tools
-    enable_save: bool = True  # save_learning tool
-    enable_search: bool = True  # search_learnings tool
-
-    # Internal extraction tools
-    enable_add: bool = True
-    enable_update: bool = True
-    enable_delete: bool = True
+    enable_agent_tools: bool = True  # Master switch (default True for learnings)
+    enable_save: bool = True  # save_learning tool (if agent_tools enabled)
+    enable_search: bool = True  # search_learnings tool (if agent_tools enabled)
 
     # Prompt customization
     system_message: Optional[str] = None
@@ -323,7 +328,7 @@ class LearnedKnowledgeConfig:
 
     def __repr__(self) -> str:
         has_knowledge = self.knowledge is not None
-        return f"LearnedKnowledgeConfig(mode={self.mode.value}, knowledge={has_knowledge}, enable_save={self.enable_save}, enable_search={self.enable_search})"
+        return f"LearnedKnowledgeConfig(mode={self.mode.value}, knowledge={has_knowledge}, enable_agent_tools={self.enable_agent_tools})"
 
 
 # =============================================================================
@@ -353,13 +358,9 @@ class DecisionLogConfig:
     schema: Optional[Type[Any]] = None
 
     # Agent tools
-    enable_save: bool = True  # save_decision tool
-    enable_search: bool = True  # search_decisions tool
-
-    # Internal extraction tools
-    enable_add: bool = True
-    enable_update: bool = True
-    enable_delete: bool = True
+    enable_agent_tools: bool = True
+    enable_save: bool = True
+    enable_search: bool = True
 
     # Prompt customization
     system_message: Optional[str] = None

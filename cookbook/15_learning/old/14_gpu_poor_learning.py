@@ -16,9 +16,9 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.agent import AgentKnowledge
 from agno.learn import (
+    LearnedKnowledgeConfig,
     LearningMachine,
     LearningMode,
-    LearnedKnowledgeConfig,
     SessionContextConfig,
     UserProfileConfig,
 )
@@ -128,12 +128,16 @@ class CostTracker:
 
     def estimate_cost(self):
         # Rough estimate assuming 50/50 input/output
-        response_cost = (self.response_tokens / 1_000_000) * (
-            self.COSTS["gpt-4o"]["input"] + self.COSTS["gpt-4o"]["output"]
-        ) / 2
-        extraction_cost = (self.extraction_tokens / 1_000_000) * (
-            self.COSTS["gpt-4o-mini"]["input"] + self.COSTS["gpt-4o-mini"]["output"]
-        ) / 2
+        response_cost = (
+            (self.response_tokens / 1_000_000)
+            * (self.COSTS["gpt-4o"]["input"] + self.COSTS["gpt-4o"]["output"])
+            / 2
+        )
+        extraction_cost = (
+            (self.extraction_tokens / 1_000_000)
+            * (self.COSTS["gpt-4o-mini"]["input"] + self.COSTS["gpt-4o-mini"]["output"])
+            / 2
+        )
 
         return {
             "response_cost": response_cost,

@@ -54,7 +54,7 @@ class LearnedKnowledgeStore(LearningStore):
 
     For team isolation, configure separate knowledge bases per team.
 
-    Provides TWO tools to the agent:
+    Provides TWO tools to the agent (when enable_agent_tools=True):
     1. search_learnings - Find relevant learnings via semantic search
     2. save_learning - Save reusable insights
 
@@ -357,8 +357,10 @@ class LearnedKnowledgeStore(LearningStore):
             **kwargs: Additional context (ignored).
 
         Returns:
-            List of callable tools.
+            List of callable tools (empty if enable_agent_tools=False).
         """
+        if not self.config.enable_agent_tools:
+            return []
         return self.get_agent_tools(agent_id=agent_id, team_id=team_id)
 
     async def aget_tools(
@@ -368,6 +370,8 @@ class LearnedKnowledgeStore(LearningStore):
         **kwargs,
     ) -> List[Callable]:
         """Async version of get_tools."""
+        if not self.config.enable_agent_tools:
+            return []
         return await self.aget_agent_tools(agent_id=agent_id, team_id=team_id)
 
     @property
@@ -412,7 +416,7 @@ class LearnedKnowledgeStore(LearningStore):
     ) -> List[Callable]:
         """Get the tools to expose to the agent.
 
-        Returns TWO tools:
+        Returns TWO tools (based on config settings):
         1. search_learnings - Find relevant learnings (searches ALL learnings)
         2. save_learning - Save reusable insights (stores agent_id/team_id for audit)
 
@@ -798,15 +802,15 @@ class LearnedKnowledgeStore(LearningStore):
             title: The title of the learning to delete.
 
         Returns:
-            True if deleted successfully, False otherwise.
+            True if deleted, False otherwise.
         """
         if not self.knowledge:
+            log_warning("LearnedKnowledgeStore.delete: no knowledge base configured")
             return False
 
         try:
-            learning_id = self._build_learning_id(title=title)
-            if hasattr(self.knowledge, "delete"):
-                self.knowledge.delete(id=learning_id)
+            if hasattr(self.knowledge, "delete_content"):
+                self.knowledge.delete_content(name=title)
                 log_debug(f"LearnedKnowledgeStore.delete: deleted learning '{title}'")
                 return True
             else:
@@ -820,28 +824,27 @@ class LearnedKnowledgeStore(LearningStore):
     async def adelete(self, title: str) -> bool:
         """Async version of delete."""
         if not self.knowledge:
+            log_warning("LearnedKnowledgeStore.adelete: no knowledge base configured")
             return False
 
         try:
-            learning_id = self._build_learning_id(title=title)
-            if hasattr(self.knowledge, "adelete"):
-                await self.knowledge.adelete(id=learning_id)
-                log_debug(f"LearnedKnowledgeStore.adelete: deleted learning '{title}'")
-                return True
-            elif hasattr(self.knowledge, "delete"):
-                self.knowledge.delete(id=learning_id)
-                log_debug(f"LearnedKnowledgeStore.adelete: deleted learning '{title}'")
-                return True
+            if hasattr(self.knowledge, "adelete_content"):
+                await self.knowledge.adelete_content(name=title)
+            elif hasattr(self.knowledge, "delete_content"):
+                self.knowledge.delete_content(name=title)
             else:
                 log_warning("LearnedKnowledgeStore.adelete: knowledge base does not support deletion")
                 return False
+
+            log_debug(f"LearnedKnowledgeStore.adelete: deleted learning '{title}'")
+            return True
 
         except Exception as e:
             log_warning(f"LearnedKnowledgeStore.adelete failed: {e}")
             return False
 
     # =========================================================================
-    # Background Extraction
+    # Background Extraction (BACKGROUND mode)
     # =========================================================================
 
     def _extract_and_save(
@@ -850,7 +853,7 @@ class LearnedKnowledgeStore(LearningStore):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> None:
-        """Extract learnings from messages (BACKGROUND mode)."""
+        """Extract learnings from messages (sync)."""
         if not self.model or not self.knowledge:
             return
 
@@ -859,6 +862,7 @@ class LearnedKnowledgeStore(LearningStore):
 
             conversation_text = self._messages_to_text(messages=messages)
 
+            # Search for existing learnings to avoid duplicates
             existing = self.search(query=conversation_text[:500], limit=5)
             existing_summary = self._summarize_existing(learnings=existing)
 
@@ -878,8 +882,7 @@ class LearnedKnowledgeStore(LearningStore):
 
             if response.tool_executions:
                 self.learning_saved = True
-
-            log_debug("LearnedKnowledgeStore: Background extraction complete")
+                log_debug("LearnedKnowledgeStore: Extraction saved new learning(s)")
 
         except Exception as e:
             log_warning(f"LearnedKnowledgeStore._extract_and_save failed: {e}")
@@ -890,7 +893,7 @@ class LearnedKnowledgeStore(LearningStore):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> None:
-        """Async version of _extract_and_save."""
+        """Extract learnings from messages (async)."""
         if not self.model or not self.knowledge:
             return
 
@@ -899,6 +902,7 @@ class LearnedKnowledgeStore(LearningStore):
 
             conversation_text = self._messages_to_text(messages=messages)
 
+            # Search for existing learnings to avoid duplicates
             existing = await self.asearch(query=conversation_text[:500], limit=5)
             existing_summary = self._summarize_existing(learnings=existing)
 
@@ -918,8 +922,7 @@ class LearnedKnowledgeStore(LearningStore):
 
             if response.tool_executions:
                 self.learning_saved = True
-
-            log_debug("LearnedKnowledgeStore: Background extraction complete (async)")
+                log_debug("LearnedKnowledgeStore: Extraction saved new learning(s)")
 
         except Exception as e:
             log_warning(f"LearnedKnowledgeStore._aextract_and_save failed: {e}")
@@ -929,29 +932,26 @@ class LearnedKnowledgeStore(LearningStore):
         conversation_text: str,
         existing_summary: str,
     ) -> List[Any]:
-        """Build messages for extraction model."""
+        """Build messages for extraction."""
         from agno.models.message import Message
 
         system_prompt = dedent("""\
-            You are a Learning Extractor. Your job is to identify genuinely reusable insights from conversations.
+            You are a Learning Extractor. Review conversations for genuinely reusable insights.
 
             ## What Makes a Good Learning
 
             Save if it's:
-            - **Specific**: Concrete, actionable advice (not vague)
-            - **Generalizable**: Applies beyond this one conversation
-            - **Novel**: Not obvious or already well-known
+            - **Novel**: Not already captured in existing learnings
+            - **Specific**: Concrete guidance, not vague principles
+            - **Actionable**: Can be directly applied
+            - **Generalizable**: Useful beyond this specific situation
 
-            Do NOT save:
+            ## What NOT to Save
+
             - Raw facts or data
-            - User-specific information
-            - One-off answers
+            - User-specific information (belongs in user memory)
             - Obvious or common knowledge
-
-            ## Important
-
-            - Most conversations have NO learnings worth saving. That's normal.
-            - Quality over quantity - one good learning beats many weak ones.
+            - One-time answers
             - If unsure, don't save.
 
         """)
@@ -1187,6 +1187,5 @@ class LearnedKnowledgeStore(LearningStore):
             f"mode={self.config.mode.value}, "
             f"knowledge={has_knowledge}, "
             f"model={has_model}, "
-            f"enable_save={self.config.enable_save}, "
-            f"enable_search={self.config.enable_search})"
+            f"enable_agent_tools={self.config.enable_agent_tools})"
         )

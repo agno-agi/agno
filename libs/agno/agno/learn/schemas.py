@@ -9,6 +9,20 @@ All parsing is done via from_dict() which never raises.
 Classes are designed to be extended - from_dict() and to_dict()
 automatically handle subclass fields via dataclasses.fields().
 
+## Field Descriptions
+
+When extending schemas, use field metadata to provide descriptions
+that will be shown to the LLM:
+
+    @dataclass
+    class MyUserProfile(UserProfile):
+        company: Optional[str] = field(
+            default=None,
+            metadata={"description": "Where they work"}
+        )
+
+The LLM will see this description when deciding how to update fields.
+
 Schemas:
 - UserProfile: Long-term user memory
 - SessionContext: Current session state
@@ -35,32 +49,58 @@ class UserProfile:
     Captures long-term information about a user that persists
     across sessions. Designed to be extended with custom fields.
 
+    ## Two Types of Data
+
+    1. **Profile Fields** (structured): name, preferred_name, and any
+       custom fields you add. Use `update_profile` tool to set these.
+
+    2. **Memories** (unstructured): Observations that don't fit fields.
+       Use `add_memory`, `update_memory`, `delete_memory` tools.
+
+    ## Extending with Custom Fields
+
+    Use field metadata to provide descriptions for the LLM:
+
+        @dataclass
+        class MyUserProfile(UserProfile):
+            company: Optional[str] = field(
+                default=None,
+                metadata={"description": "Company or organization they work for"}
+            )
+            role: Optional[str] = field(
+                default=None,
+                metadata={"description": "Job title or role"}
+            )
+            timezone: Optional[str] = field(
+                default=None,
+                metadata={"description": "User's timezone (e.g., America/New_York)"}
+            )
+
     Attributes:
         user_id: Required unique identifier for the user.
-        name: User's name (if known).
-        preferred_name: How they prefer to be addressed.
+        name: User's full name.
+        preferred_name: How they prefer to be addressed (nickname, first name, etc).
         memories: List of memory entries, each with 'id' and 'content'.
         agent_id: Which agent created this profile.
         team_id: Which team created this profile.
         created_at: When the profile was created (ISO format).
         updated_at: When the profile was last updated (ISO format).
-
-    Example - Extending with custom fields:
-        @dataclass
-        class MyUserProfile(UserProfile):
-            company: Optional[str] = None
-            role: Optional[str] = None
-            timezone: Optional[str] = None
     """
 
     user_id: str
-    name: Optional[str] = None
-    preferred_name: Optional[str] = None
+    name: Optional[str] = field(
+        default=None,
+        metadata={"description": "User's full name"}
+    )
+    preferred_name: Optional[str] = field(
+        default=None,
+        metadata={"description": "How they prefer to be addressed (nickname, first name, etc)"}
+    )
     memories: List[Dict[str, Any]] = field(default_factory=list)
-    agent_id: Optional[str] = None
-    team_id: Optional[str] = None
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    agent_id: Optional[str] = field(default=None, metadata={"internal": True})
+    team_id: Optional[str] = field(default=None, metadata={"internal": True})
+    created_at: Optional[str] = field(default=None, metadata={"internal": True})
+    updated_at: Optional[str] = field(default=None, metadata={"internal": True})
 
     @classmethod
     def from_dict(cls, data: Any) -> Optional["UserProfile"]:
@@ -159,6 +199,31 @@ class UserProfile:
 
         return "\n".join(lines)
 
+    @classmethod
+    def get_updateable_fields(cls) -> Dict[str, Dict[str, Any]]:
+        """Get fields that can be updated via update_profile tool.
+
+        Returns:
+            Dict mapping field name to field info including description.
+            Excludes internal fields (user_id, memories, timestamps, etc).
+        """
+        skip = {'user_id', 'memories', 'created_at', 'updated_at', 'agent_id', 'team_id'}
+
+        result = {}
+        for f in fields(cls):
+            if f.name in skip:
+                continue
+            # Skip fields marked as internal
+            if f.metadata.get("internal"):
+                continue
+
+            result[f.name] = {
+                "type": f.type,
+                "description": f.metadata.get("description", f"User's {f.name.replace('_', ' ')}"),
+            }
+
+        return result
+
 
 # =============================================================================
 # Session Context Schema
@@ -171,6 +236,9 @@ class SessionContext:
 
     Captures state and summary for the current session.
     Unlike UserProfile which accumulates, this is REPLACED on each update.
+
+    Key behavior: Extraction receives the previous context and updates it,
+    ensuring continuity even when message history is truncated.
 
     Attributes:
         session_id: Required unique identifier for the session.
@@ -187,20 +255,38 @@ class SessionContext:
     Example - Extending with custom fields:
         @dataclass
         class MySessionContext(SessionContext):
-            mood: Optional[str] = None
-            blockers: List[str] = field(default_factory=list)
+            mood: Optional[str] = field(
+                default=None,
+                metadata={"description": "User's current mood or emotional state"}
+            )
+            blockers: List[str] = field(
+                default_factory=list,
+                metadata={"description": "Current blockers or obstacles"}
+            )
     """
 
     session_id: str
     user_id: Optional[str] = None
-    summary: Optional[str] = None
-    goal: Optional[str] = None
-    plan: Optional[List[str]] = None
-    progress: Optional[List[str]] = None
-    agent_id: Optional[str] = None
-    team_id: Optional[str] = None
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    summary: Optional[str] = field(
+        default=None,
+        metadata={"description": "Summary of what's been discussed in this session"}
+    )
+    goal: Optional[str] = field(
+        default=None,
+        metadata={"description": "What the user is trying to accomplish"}
+    )
+    plan: Optional[List[str]] = field(
+        default=None,
+        metadata={"description": "Steps to achieve the goal"}
+    )
+    progress: Optional[List[str]] = field(
+        default=None,
+        metadata={"description": "Which steps have been completed"}
+    )
+    agent_id: Optional[str] = field(default=None, metadata={"internal": True})
+    team_id: Optional[str] = field(default=None, metadata={"internal": True})
+    created_at: Optional[str] = field(default=None, metadata={"internal": True})
+    updated_at: Optional[str] = field(default=None, metadata={"internal": True})
 
     @classmethod
     def from_dict(cls, data: Any) -> Optional["SessionContext"]:
@@ -263,34 +349,29 @@ class SessionContext:
 class LearnedKnowledge:
     """Schema for Learned Knowledge learning type.
 
-    Captures reusable insights and patterns that can be shared
-    across users and potentially across agents.
+    Captures reusable insights that apply across users and agents.
 
-    Attributes:
-        title: Short descriptive title.
-        learning: The actual insight or knowledge.
-        context: When/where this applies.
-        tags: Categories for this learning.
-        agent_id: Which agent created this learning.
-        team_id: Which team created this learning.
-        created_at: When the learning was created (ISO format).
-        updated_at: When the learning was last updated (ISO format).
+    - title: Short, descriptive title for the learning.
+    - learning: The actual insight or pattern.
+    - context: When/where this learning applies.
+    - tags: Categories for organization.
 
-    Example - Extending with custom fields:
-        @dataclass
-        class MyLearnedKnowledge(LearnedKnowledge):
-            confidence: float = 1.0
-            source_conversation_id: Optional[str] = None
+    Example:
+        LearnedKnowledge(
+            title="Python async best practices",
+            learning="Always use asyncio.gather() for concurrent I/O tasks",
+            context="When optimizing I/O-bound Python applications",
+            tags=["python", "async", "performance"]
+        )
     """
 
     title: str
     learning: str
     context: Optional[str] = None
-    tags: List[str] = field(default_factory=list)
-    agent_id: Optional[str] = None
-    team_id: Optional[str] = None
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    tags: Optional[List[str]] = None
+    agent_id: Optional[str] = field(default=None, metadata={"internal": True})
+    team_id: Optional[str] = field(default=None, metadata={"internal": True})
+    created_at: Optional[str] = field(default=None, metadata={"internal": True})
 
     @classmethod
     def from_dict(cls, data: Any) -> Optional["LearnedKnowledge"]:
