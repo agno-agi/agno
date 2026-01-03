@@ -677,8 +677,8 @@ class UserProfileStore(LearningStore):
             return None
 
         try:
-            if hasattr(self.db, "aget_learning"):
-                result = await self.db.aget_learning(
+            if isinstance(self.db, AsyncBaseDb):
+                result = await self.db.get_learning(
                     learning_type=self.learning_type,
                     user_id=user_id,
                 )
@@ -753,8 +753,8 @@ class UserProfileStore(LearningStore):
             if not content:
                 return
 
-            if hasattr(self.db, "aupsert_learning"):
-                await self.db.aupsert_learning(
+            if isinstance(self.db, AsyncBaseDb):
+                await self.db.upsert_learning(
                     id=self._build_profile_id(user_id=user_id),
                     learning_type=self.learning_type,
                     user_id=user_id,
@@ -806,8 +806,8 @@ class UserProfileStore(LearningStore):
 
         try:
             profile_id = self._build_profile_id(user_id=user_id)
-            if hasattr(self.db, "adelete_learning"):
-                return await self.db.adelete_learning(id=profile_id)
+            if isinstance(self.db, AsyncBaseDb):
+                return await self.db.delete_learning(id=profile_id)
             else:
                 return self.db.delete_learning(id=profile_id)
         except Exception as e:
