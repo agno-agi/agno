@@ -36,6 +36,20 @@ from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Dict, List, Optional
 
 from agno.learn.utils import _parse_json, _safe_get
+from agno.utils.log import log_debug
+
+# =============================================================================
+# Helper for debug logging
+# =============================================================================
+
+
+def _truncate_for_log(data: Any, max_len: int = 100) -> str:
+    """Truncate data for logging to avoid massive log entries."""
+    s = str(data)
+    if len(s) > max_len:
+        return s[:max_len] + "..."
+    return s
+
 
 # =============================================================================
 # User Profile Schema
@@ -112,10 +126,12 @@ class UserProfile:
         try:
             parsed = _parse_json(data)
             if not parsed:
+                log_debug(f"{cls.__name__}.from_dict: _parse_json returned None for data={_truncate_for_log(data)}")
                 return None
 
             # user_id is required
             if not parsed.get("user_id"):
+                log_debug(f"{cls.__name__}.from_dict: missing required field 'user_id'")
                 return None
 
             # Get field names for this class (includes subclass fields)
@@ -123,14 +139,16 @@ class UserProfile:
             kwargs = {k: v for k, v in parsed.items() if k in field_names}
 
             return cls(**kwargs)
-        except Exception:
+        except Exception as e:
+            log_debug(f"{cls.__name__}.from_dict failed: {e}, data={_truncate_for_log(data)}")
             return None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict. Works with subclasses."""
         try:
             return asdict(self)
-        except Exception:
+        except Exception as e:
+            log_debug(f"{self.__class__.__name__}.to_dict failed: {e}")
             return {}
 
     def add_memory(self, content: str, **kwargs) -> str:
@@ -285,24 +303,28 @@ class SessionContext:
         try:
             parsed = _parse_json(data)
             if not parsed:
+                log_debug(f"{cls.__name__}.from_dict: _parse_json returned None for data={_truncate_for_log(data)}")
                 return None
 
             # session_id is required
             if not parsed.get("session_id"):
+                log_debug(f"{cls.__name__}.from_dict: missing required field 'session_id'")
                 return None
 
             field_names = {f.name for f in fields(cls)}
             kwargs = {k: v for k, v in parsed.items() if k in field_names}
 
             return cls(**kwargs)
-        except Exception:
+        except Exception as e:
+            log_debug(f"{cls.__name__}.from_dict failed: {e}, data={_truncate_for_log(data)}")
             return None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict."""
         try:
             return asdict(self)
-        except Exception:
+        except Exception as e:
+            log_debug(f"{self.__class__.__name__}.to_dict failed: {e}")
             return {}
 
     def get_context_text(self) -> str:
@@ -374,24 +396,28 @@ class LearnedKnowledge:
         try:
             parsed = _parse_json(data)
             if not parsed:
+                log_debug(f"{cls.__name__}.from_dict: _parse_json returned None for data={_truncate_for_log(data)}")
                 return None
 
             # title and learning are required
             if not parsed.get("title") or not parsed.get("learning"):
+                log_debug(f"{cls.__name__}.from_dict: missing required fields 'title' or 'learning'")
                 return None
 
             field_names = {f.name for f in fields(cls)}
             kwargs = {k: v for k, v in parsed.items() if k in field_names}
 
             return cls(**kwargs)
-        except Exception:
+        except Exception as e:
+            log_debug(f"{cls.__name__}.from_dict failed: {e}, data={_truncate_for_log(data)}")
             return None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict."""
         try:
             return asdict(self)
-        except Exception:
+        except Exception as e:
+            log_debug(f"{self.__class__.__name__}.to_dict failed: {e}")
             return {}
 
     def to_text(self) -> str:
@@ -505,24 +531,28 @@ class EntityMemory:
         try:
             parsed = _parse_json(data)
             if not parsed:
+                log_debug(f"{cls.__name__}.from_dict: _parse_json returned None for data={_truncate_for_log(data)}")
                 return None
 
             # entity_id and entity_type are required
             if not parsed.get("entity_id") or not parsed.get("entity_type"):
+                log_debug(f"{cls.__name__}.from_dict: missing required fields 'entity_id' or 'entity_type'")
                 return None
 
             field_names = {f.name for f in fields(cls)}
             kwargs = {k: v for k, v in parsed.items() if k in field_names}
 
             return cls(**kwargs)
-        except Exception:
+        except Exception as e:
+            log_debug(f"{cls.__name__}.from_dict failed: {e}, data={_truncate_for_log(data)}")
             return None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict."""
         try:
             return asdict(self)
-        except Exception:
+        except Exception as e:
+            log_debug(f"{self.__class__.__name__}.to_dict failed: {e}")
             return {}
 
     def add_fact(self, content: str, **kwargs) -> str:
@@ -715,6 +745,7 @@ class UserProfileExtractionResponse:
         try:
             parsed = _parse_json(data)
             if not parsed:
+                log_debug(f"{cls.__name__}.from_dict: _parse_json returned None for data={_truncate_for_log(data)}")
                 return None
 
             return cls(
@@ -722,7 +753,8 @@ class UserProfileExtractionResponse:
                 preferred_name=_safe_get(parsed, "preferred_name"),
                 new_memories=_safe_get(parsed, "new_memories") or [],
             )
-        except Exception:
+        except Exception as e:
+            log_debug(f"{cls.__name__}.from_dict failed: {e}, data={_truncate_for_log(data)}")
             return None
 
 
@@ -743,10 +775,12 @@ class SessionSummaryExtractionResponse:
         try:
             parsed = _parse_json(data)
             if not parsed:
+                log_debug(f"{cls.__name__}.from_dict: _parse_json returned None for data={_truncate_for_log(data)}")
                 return None
 
             return cls(summary=_safe_get(parsed, "summary") or "")
-        except Exception:
+        except Exception as e:
+            log_debug(f"{cls.__name__}.from_dict failed: {e}, data={_truncate_for_log(data)}")
             return None
 
 
@@ -770,6 +804,7 @@ class SessionPlanningExtractionResponse:
         try:
             parsed = _parse_json(data)
             if not parsed:
+                log_debug(f"{cls.__name__}.from_dict: _parse_json returned None for data={_truncate_for_log(data)}")
                 return None
 
             return cls(
@@ -778,7 +813,8 @@ class SessionPlanningExtractionResponse:
                 plan=_safe_get(parsed, "plan"),
                 progress=_safe_get(parsed, "progress"),
             )
-        except Exception:
+        except Exception as e:
+            log_debug(f"{cls.__name__}.from_dict failed: {e}, data={_truncate_for_log(data)}")
             return None
 
 
@@ -804,6 +840,7 @@ class Decision:
 
     @classmethod
     def from_dict(cls, data: Any) -> Optional["Decision"]:
+        """Parse from dict/JSON, returning None on any failure."""
         if data is None:
             return None
         if isinstance(data, cls):
@@ -811,20 +848,28 @@ class Decision:
 
         try:
             parsed = _parse_json(data)
-            if not parsed or not parsed.get("decision"):
+            if not parsed:
+                log_debug(f"{cls.__name__}.from_dict: _parse_json returned None for data={_truncate_for_log(data)}")
+                return None
+
+            if not parsed.get("decision"):
+                log_debug(f"{cls.__name__}.from_dict: missing required field 'decision'")
                 return None
 
             field_names = {f.name for f in fields(cls)}
             kwargs = {k: v for k, v in parsed.items() if k in field_names}
 
             return cls(**kwargs)
-        except Exception:
+        except Exception as e:
+            log_debug(f"{cls.__name__}.from_dict failed: {e}, data={_truncate_for_log(data)}")
             return None
 
     def to_dict(self) -> Dict[str, Any]:
+        """Convert to dict."""
         try:
             return asdict(self)
-        except Exception:
+        except Exception as e:
+            log_debug(f"{self.__class__.__name__}.to_dict failed: {e}")
             return {}
 
 
@@ -844,6 +889,7 @@ class Feedback:
 
     @classmethod
     def from_dict(cls, data: Any) -> Optional["Feedback"]:
+        """Parse from dict/JSON, returning None on any failure."""
         if data is None:
             return None
         if isinstance(data, cls):
@@ -851,20 +897,28 @@ class Feedback:
 
         try:
             parsed = _parse_json(data)
-            if not parsed or not parsed.get("signal"):
+            if not parsed:
+                log_debug(f"{cls.__name__}.from_dict: _parse_json returned None for data={_truncate_for_log(data)}")
+                return None
+
+            if not parsed.get("signal"):
+                log_debug(f"{cls.__name__}.from_dict: missing required field 'signal'")
                 return None
 
             field_names = {f.name for f in fields(cls)}
             kwargs = {k: v for k, v in parsed.items() if k in field_names}
 
             return cls(**kwargs)
-        except Exception:
+        except Exception as e:
+            log_debug(f"{cls.__name__}.from_dict failed: {e}, data={_truncate_for_log(data)}")
             return None
 
     def to_dict(self) -> Dict[str, Any]:
+        """Convert to dict."""
         try:
             return asdict(self)
-        except Exception:
+        except Exception as e:
+            log_debug(f"{self.__class__.__name__}.to_dict failed: {e}")
             return {}
 
 
@@ -885,6 +939,7 @@ class InstructionUpdate:
 
     @classmethod
     def from_dict(cls, data: Any) -> Optional["InstructionUpdate"]:
+        """Parse from dict/JSON, returning None on any failure."""
         if data is None:
             return None
         if isinstance(data, cls):
@@ -893,21 +948,27 @@ class InstructionUpdate:
         try:
             parsed = _parse_json(data)
             if not parsed:
+                log_debug(f"{cls.__name__}.from_dict: _parse_json returned None for data={_truncate_for_log(data)}")
                 return None
 
             required = ["current_instruction", "proposed_instruction", "reasoning"]
-            if not all(parsed.get(k) for k in required):
+            missing = [k for k in required if not parsed.get(k)]
+            if missing:
+                log_debug(f"{cls.__name__}.from_dict: missing required fields {missing}")
                 return None
 
             field_names = {f.name for f in fields(cls)}
             kwargs = {k: v for k, v in parsed.items() if k in field_names}
 
             return cls(**kwargs)
-        except Exception:
+        except Exception as e:
+            log_debug(f"{cls.__name__}.from_dict failed: {e}, data={_truncate_for_log(data)}")
             return None
 
     def to_dict(self) -> Dict[str, Any]:
+        """Convert to dict."""
         try:
             return asdict(self)
-        except Exception:
+        except Exception as e:
+            log_debug(f"{self.__class__.__name__}.to_dict failed: {e}")
             return {}

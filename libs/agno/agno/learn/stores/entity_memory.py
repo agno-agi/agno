@@ -128,7 +128,7 @@ class EntityMemoryStore(LearningStore):
         effective_namespace = namespace or self.config.namespace
         if effective_namespace == "user" and not user_id:
             log_warning("EntityMemoryStore.process: namespace='user' requires user_id")
-            return
+            return None
 
         return self.get(
             entity_id=entity_id,
@@ -2389,7 +2389,7 @@ class EntityMemoryStore(LearningStore):
         try:
             conversation_text = self._messages_to_text(messages=messages)
 
-            tools = self._get_async_extraction_tools(
+            tools = self._aget_extraction_tools(
                 user_id=user_id,
                 agent_id=agent_id,
                 team_id=team_id,
@@ -2568,7 +2568,7 @@ class EntityMemoryStore(LearningStore):
 
         return tools
 
-    def _get_async_extraction_tools(
+    def _aget_extraction_tools(
         self,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,

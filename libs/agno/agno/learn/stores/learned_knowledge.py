@@ -1130,7 +1130,7 @@ class LearnedKnowledgeStore(LearningStore):
                 existing_summary=existing_summary,
             )
 
-            tools = self._get_async_extraction_tools(
+            tools = self._aget_extraction_tools(
                 user_id=user_id,
                 agent_id=agent_id,
                 team_id=team_id,
@@ -1239,7 +1239,7 @@ class LearnedKnowledgeStore(LearningStore):
 
         return [save_learning]
 
-    def _get_async_extraction_tools(
+    def _aget_extraction_tools(
         self,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
