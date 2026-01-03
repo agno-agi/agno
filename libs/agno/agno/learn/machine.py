@@ -9,10 +9,11 @@ from os import getenv
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.learn.config import (
-    LearnedKnowledgeConfig,
     LearningMode,
-    SessionContextConfig,
     UserProfileConfig,
+    EntityMemoryConfig,
+    LearnedKnowledgeConfig,
+    SessionContextConfig,
 )
 from agno.learn.stores.protocol import LearningStore
 from agno.utils.log import (
@@ -30,13 +31,17 @@ except ImportError:
 
 # Type aliases for cleaner signatures (Store types imported lazily)
 UserProfileInput = Union[bool, UserProfileConfig, LearningStore, None]
+EntityMemoryInput = Union[bool, EntityMemoryConfig, LearningStore, None]
 SessionContextInput = Union[bool, SessionContextConfig, LearningStore, None]
 LearnedKnowledgeInput = Union[bool, LearnedKnowledgeConfig, LearningStore, None]
 
 
 @dataclass
 class LearningMachine:
-    """Implements learning stores for agent and teams.
+    """Central orchestrator for agent learning.
+
+    Coordinates all learning stores and provides unified interface
+    for recall, processing, and tool generation.
 
     Args:
         db: Database backend for persistence.

@@ -13,6 +13,7 @@ Configurations:
 - UserProfileConfig: Config for user profile learning
 - SessionContextConfig: Config for session context learning
 - LearnedKnowledgeConfig: Config for learned knowledge
+- EntityMemoryConfig: Config for entity memory
 """
 
 from dataclasses import dataclass, field
@@ -340,7 +341,7 @@ class EntityMemoryConfig:
         agent_can_search_entities: If agent_tools enabled, provide search_entities tool.
 
         # Prompt customization
-        instructions: Custom instructions for what makes a good learning.
+        instructions: Custom instructions for entity extraction.
         additional_instructions: Extra instructions appended to default.
         system_message: Full override for extraction system message.
     """
@@ -376,6 +377,9 @@ class EntityMemoryConfig:
     instructions: Optional[str] = None
     additional_instructions: Optional[str] = None
     system_message: Optional[str] = None
+
+    def __repr__(self) -> str:
+        return f"EntityMemoryConfig(mode={self.mode.value}, namespace={self.namespace}, enable_agent_tools={self.enable_agent_tools})"
 
 
 # =============================================================================

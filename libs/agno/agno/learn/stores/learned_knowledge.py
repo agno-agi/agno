@@ -13,11 +13,10 @@ Key Features:
 - TWO agent tools: save_learning and search_learnings
 - Semantic search for relevant learnings
 - Shared across all agents using the same knowledge base
-
-Scope:
-- Learnings are SHARED - search returns all relevant learnings
-- agent_id/team_id stored as metadata for audit trail only
-- For isolation, use separate knowledge bases per agent_id or team_id
+- Supports namespace-based scoping for privacy/sharing control.
+    - namespace="user": Private per user (scoped by user_id)
+    - namespace="global": Shared with everyone (default)
+    - namespace="engineering": Custom grouping (literal string)
 
 Supported Modes:
 - AGENTIC: Agent calls save_learning directly when it discovers insights
@@ -49,31 +48,11 @@ class LearnedKnowledgeStore(LearningStore):
     """Storage backend for Learned Knowledge learning type.
 
     Uses a Knowledge base with vector embeddings for semantic search.
-    Learnings are SHARED — all agents using the same knowledge base see all learnings.
-    agent_id and team_id are stored as metadata for audit trail only.
-
-    For team isolation, configure separate knowledge bases per team.
+    Supports namespace-based scoping for privacy/sharing control.
 
     Provides TWO tools to the agent (when enable_agent_tools=True):
     1. search_learnings - Find relevant learnings via semantic search
     2. save_learning - Save reusable insights
-
-    Usage:
-        >>> store = LearnedKnowledgeStore(config=LearnedKnowledgeConfig(knowledge=kb))
-        >>>
-        >>> # Save a learning
-        >>> store.save(
-        ...     title="Python async best practices",
-        ...     learning="Always use asyncio.gather for concurrent tasks",
-        ...     context="When optimizing I/O-bound operations",
-        ...     tags=["python", "async", "performance"]
-        ... )
-        >>>
-        >>> # Search for relevant learnings
-        >>> results = store.search("How do I optimize my async code?")
-        >>>
-        >>> # Get tools for agent
-        >>> tools = store.get_agent_tools()
 
     Args:
         config: LearnedKnowledgeConfig with all settings including knowledge base.

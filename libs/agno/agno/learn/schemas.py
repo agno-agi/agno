@@ -9,8 +9,7 @@ All parsing is done via from_dict() which never raises.
 Classes are designed to be extended - from_dict() and to_dict()
 automatically handle subclass fields via dataclasses.fields().
 
-## Field Descriptions
-
+Field Descriptions
 When extending schemas, use field metadata to provide descriptions
 that will be shown to the LLM:
 
@@ -27,6 +26,7 @@ Schemas:
 - UserProfile: Long-term user memory
 - SessionContext: Current session state
 - LearnedKnowledge: Reusable knowledge/insights
+- EntityMemory: Third-party entity facts
 - Decision: Decision logs (Phase 2)
 - Feedback: Behavioral feedback (Phase 2)
 - InstructionUpdate: Self-improvement (Phase 3)
@@ -355,6 +355,7 @@ class LearnedKnowledge:
     - learning: The actual insight or pattern.
     - context: When/where this learning applies.
     - tags: Categories for organization.
+    - namespace: Sharing boundary for this learning.
 
     Example:
         LearnedKnowledge(
@@ -369,9 +370,12 @@ class LearnedKnowledge:
     learning: str
     context: Optional[str] = None
     tags: Optional[List[str]] = None
+    user_id: Optional[str] = field(default=None, metadata={"internal": True})
+    namespace: Optional[str] = field(default=None, metadata={"internal": True})
     agent_id: Optional[str] = field(default=None, metadata={"internal": True})
     team_id: Optional[str] = field(default=None, metadata={"internal": True})
     created_at: Optional[str] = field(default=None, metadata={"internal": True})
+    updated_at: Optional[str] = field(default=None, metadata={"internal": True})
 
     @classmethod
     def from_dict(cls, data: Any) -> Optional["LearnedKnowledge"]:
@@ -412,6 +416,302 @@ class LearnedKnowledge:
         if self.tags:
             parts.append(f"Tags: {', '.join(self.tags)}")
         return "\n".join(parts)
+
+
+# =============================================================================
+# Entity Memory Schema
+# =============================================================================
+
+
+@dataclass
+class EntityMemory:
+    """Schema for Entity Memory learning type.
+
+    Captures facts about third-party entities: companies, projects,
+    people, systems, products. Like UserProfile but for non-users.
+
+    Structure:
+    - **Core**: name, description, properties (key-value pairs)
+    - **Facts**: Semantic memory ("Acme uses PostgreSQL")
+    - **Events**: Episodic memory ("Acme launched v2 on Jan 15")
+    - **Relationships**: Graph edges ("Bob is CEO of Acme")
+
+    Common Entity Types:
+    - "company", "project", "person", "system", "product"
+    - Any string is valid.
+
+    Example:
+        EntityMemory(
+            entity_id="acme_corp",
+            entity_type="company",
+            name="Acme Corporation",
+            description="Enterprise software company",
+            properties={"industry": "fintech", "size": "startup"},
+            facts=[
+                {"id": "f1", "content": "Uses PostgreSQL for main database"},
+                {"id": "f2", "content": "API uses OAuth2 authentication"},
+            ],
+            events=[
+                {"id": "e1", "content": "Launched v2.0", "date": "2024-01-15"},
+            ],
+            relationships=[
+                {"entity_id": "bob_smith", "relation": "CEO"},
+            ],
+        )
+
+    Attributes:
+        entity_id: Unique identifier (lowercase, underscores: "acme_corp").
+        entity_type: Type of entity ("company", "project", "person", etc).
+        name: Display name for the entity.
+        description: Brief description of what this entity is.
+        properties: Key-value properties (industry, tech_stack, etc).
+        facts: Semantic memories - timeless facts about the entity.
+        events: Episodic memories - time-bound occurrences.
+        relationships: Connections to other entities.
+        namespace: Sharing boundary for this entity.
+        user_id: Owner user (if namespace="user").
+        agent_id: Which agent created this.
+        team_id: Which team context.
+        created_at: When first created.
+        updated_at: When last modified.
+    """
+
+    entity_id: str
+    entity_type: str = field(
+        metadata={"description": "Type: company, project, person, system, product, etc"}
+    )
+
+    # Core properties
+    name: Optional[str] = field(
+        default=None,
+        metadata={"description": "Display name for the entity"}
+    )
+    description: Optional[str] = field(
+        default=None,
+        metadata={"description": "Brief description of what this entity is"}
+    )
+    properties: Dict[str, str] = field(
+        default_factory=dict,
+        metadata={"description": "Key-value properties (industry, tech_stack, etc)"}
+    )
+
+    # Semantic memory (facts)
+    facts: List[Dict[str, Any]] = field(default_factory=list)
+    # [{"id": "abc", "content": "Uses PostgreSQL", "confidence": 0.9, "source": "..."}]
+
+    # Episodic memory (events)
+    events: List[Dict[str, Any]] = field(default_factory=list)
+    # [{"id": "xyz", "content": "Had outage on 2024-01-15", "date": "2024-01-15"}]
+
+    # Relationships (graph edges)
+    relationships: List[Dict[str, Any]] = field(default_factory=list)
+    # [{"entity_id": "bob", "relation": "CEO", "direction": "incoming"}]
+
+    # Scope
+    namespace: Optional[str] = field(default=None, metadata={"internal": True})
+    user_id: Optional[str] = field(default=None, metadata={"internal": True})
+    agent_id: Optional[str] = field(default=None, metadata={"internal": True})
+    team_id: Optional[str] = field(default=None, metadata={"internal": True})
+    created_at: Optional[str] = field(default=None, metadata={"internal": True})
+    updated_at: Optional[str] = field(default=None, metadata={"internal": True})
+
+    @classmethod
+    def from_dict(cls, data: Any) -> Optional["EntityMemory"]:
+        """Parse from dict/JSON, returning None on any failure."""
+        if data is None:
+            return None
+        if isinstance(data, cls):
+            return data
+
+        try:
+            parsed = _parse_json(data)
+            if not parsed:
+                return None
+
+            # entity_id and entity_type are required
+            if not parsed.get("entity_id") or not parsed.get("entity_type"):
+                return None
+
+            field_names = {f.name for f in fields(cls)}
+            kwargs = {k: v for k, v in parsed.items() if k in field_names}
+
+            return cls(**kwargs)
+        except Exception:
+            return None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dict."""
+        try:
+            return asdict(self)
+        except Exception:
+            return {}
+
+    def add_fact(self, content: str, **kwargs) -> str:
+        """Add a new fact to the entity.
+
+        Args:
+            content: The fact text.
+            **kwargs: Additional fields (confidence, source, etc).
+
+        Returns:
+            The generated fact ID.
+        """
+        import uuid
+
+        fact_id = str(uuid.uuid4())[:8]
+
+        if content and content.strip():
+            self.facts.append({"id": fact_id, "content": content.strip(), **kwargs})
+
+        return fact_id
+
+    def add_event(self, content: str, date: Optional[str] = None, **kwargs) -> str:
+        """Add a new event to the entity.
+
+        Args:
+            content: The event description.
+            date: When the event occurred (ISO format or natural language).
+            **kwargs: Additional fields.
+
+        Returns:
+            The generated event ID.
+        """
+        import uuid
+
+        event_id = str(uuid.uuid4())[:8]
+
+        if content and content.strip():
+            event = {"id": event_id, "content": content.strip(), **kwargs}
+            if date:
+                event["date"] = date
+            self.events.append(event)
+
+        return event_id
+
+    def add_relationship(
+        self,
+        related_entity_id: str,
+        relation: str,
+        direction: str = "outgoing",
+        **kwargs
+    ) -> str:
+        """Add a relationship to another entity.
+
+        Args:
+            related_entity_id: The other entity's ID.
+            relation: The relationship type ("CEO", "owns", "part_of", etc).
+            direction: "outgoing" (this → other) or "incoming" (other → this).
+            **kwargs: Additional fields.
+
+        Returns:
+            The generated relationship ID.
+        """
+        import uuid
+
+        rel_id = str(uuid.uuid4())[:8]
+
+        self.relationships.append({
+            "id": rel_id,
+            "entity_id": related_entity_id,
+            "relation": relation,
+            "direction": direction,
+            **kwargs
+        })
+
+        return rel_id
+
+    def get_fact(self, fact_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific fact by ID."""
+        for fact in self.facts:
+            if isinstance(fact, dict) and fact.get("id") == fact_id:
+                return fact
+        return None
+
+    def update_fact(self, fact_id: str, content: str, **kwargs) -> bool:
+        """Update an existing fact.
+
+        Returns:
+            True if fact was found and updated, False otherwise.
+        """
+        for fact in self.facts:
+            if isinstance(fact, dict) and fact.get("id") == fact_id:
+                fact["content"] = content.strip()
+                fact.update(kwargs)
+                return True
+        return False
+
+    def delete_fact(self, fact_id: str) -> bool:
+        """Delete a fact by ID.
+
+        Returns:
+            True if fact was found and deleted, False otherwise.
+        """
+        original_len = len(self.facts)
+        self.facts = [f for f in self.facts if not (isinstance(f, dict) and f.get("id") == fact_id)]
+        return len(self.facts) < original_len
+
+    def get_context_text(self) -> str:
+        """Get entity as formatted string for prompts."""
+        parts = []
+
+        if self.name:
+            parts.append(f"**{self.name}** ({self.entity_type})")
+        else:
+            parts.append(f"**{self.entity_id}** ({self.entity_type})")
+
+        if self.description:
+            parts.append(self.description)
+
+        if self.properties:
+            props = ", ".join(f"{k}: {v}" for k, v in self.properties.items())
+            parts.append(f"Properties: {props}")
+
+        if self.facts:
+            facts_text = "\n".join(f"  - {f.get('content', f)}" for f in self.facts)
+            parts.append(f"Facts:\n{facts_text}")
+
+        if self.events:
+            events_text = "\n".join(
+                f"  - {e.get('content', e)}" + (f" ({e.get('date')})" if e.get('date') else "")
+                for e in self.events
+            )
+            parts.append(f"Events:\n{events_text}")
+
+        if self.relationships:
+            rels_text = "\n".join(
+                f"  - {r.get('relation')}: {r.get('entity_id')}"
+                for r in self.relationships
+            )
+            parts.append(f"Relationships:\n{rels_text}")
+
+        return "\n\n".join(parts)
+
+    @classmethod
+    def get_updateable_fields(cls) -> Dict[str, Dict[str, Any]]:
+        """Get fields that can be updated via update tools.
+
+        Returns:
+            Dict mapping field name to field info including description.
+            Excludes internal fields and collections (facts, events, relationships).
+        """
+        skip = {
+            'entity_id', 'entity_type', 'facts', 'events', 'relationships',
+            'namespace', 'user_id', 'agent_id', 'team_id', 'created_at', 'updated_at'
+        }
+
+        result = {}
+        for f in fields(cls):
+            if f.name in skip:
+                continue
+            if f.metadata.get("internal"):
+                continue
+
+            result[f.name] = {
+                "type": f.type,
+                "description": f.metadata.get("description", f"Entity's {f.name.replace('_', ' ')}"),
+            }
+
+        return result
 
 
 # =============================================================================
