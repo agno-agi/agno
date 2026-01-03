@@ -5,6 +5,21 @@ This example shows how to:
 1. Start an agent run in a separate thread
 2. Cancel the run from another thread
 3. Handle the cancelled response
+
+By default, Agno uses an in-memory cancellation manager which works for single-process
+applications. For distributed environments, you can use:
+
+- RedisRunCancellationManager: For distributed cancellation across multiple processes
+  See: cancel_a_run_with_redis.py
+
+- Custom cancellation managers: Create your own by extending BaseRunCancellationManager
+  See: custom_cancellation_manager.py
+
+To set a custom cancellation manager:
+    from agno.run.cancel import set_cancellation_manager
+    from agno.run.cancellation_management import RedisRunCancellationManager
+
+    set_cancellation_manager(RedisRunCancellationManager(redis_client=...))
 """
 
 import threading
