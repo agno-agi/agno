@@ -27,6 +27,7 @@ from agno.learn.schemas import (
     UserProfile,
 )
 from agno.learn.stores import (
+    EntityMemoryStore,
     LearnedKnowledgeStore,
     LearningStore,
     SessionContextStore,
@@ -54,5 +55,5 @@ __all__ = [
     "UserProfileStore",
     "SessionContextStore",
     "LearnedKnowledgeStore",
-    # "EntityMemoryStore",
+    "EntityMemoryStore",
 ]

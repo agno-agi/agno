@@ -120,6 +120,10 @@ class LearnedKnowledgeStore(LearningStore):
             return None
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("LearnedKnowledgeStore.recall: namespace='user' requires user_id")
+            return None
+
         results = self.search(
             query=search_query,
             user_id=user_id,
@@ -143,6 +147,10 @@ class LearnedKnowledgeStore(LearningStore):
             return None
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("LearnedKnowledgeStore.arecall: namespace='user' requires user_id")
+            return None
+
         results = await self.asearch(
             query=search_query,
             user_id=user_id,
@@ -461,10 +469,10 @@ class LearnedKnowledgeStore(LearningStore):
         """
         tools = []
 
-        if self.config.enable_search:
+        if self.config.agent_can_search:
             tools.append(self._create_search_learnings_tool(user_id=user_id))
 
-        if self.config.enable_save:
+        if self.config.agent_can_save:
             tools.append(
                 self._create_save_learning_tool(
                     user_id=user_id,
@@ -486,10 +494,10 @@ class LearnedKnowledgeStore(LearningStore):
         """Async version of get_agent_tools."""
         tools = []
 
-        if self.config.enable_search:
+        if self.config.agent_can_search:
             tools.append(self._create_async_search_learnings_tool(user_id=user_id))
 
-        if self.config.enable_save:
+        if self.config.agent_can_save:
             tools.append(
                 self._create_async_save_learning_tool(
                     user_id=user_id,

@@ -16,6 +16,7 @@ Available Stores:
 - EntityMemoryStore: Third-party entity facts
 """
 
+from agno.learn.stores.entity_memory import EntityMemoryStore
 from agno.learn.stores.learned_knowledge import LearnedKnowledgeStore
 from agno.learn.stores.protocol import LearningStore
 from agno.learn.stores.session_context import SessionContextStore
@@ -26,5 +27,5 @@ __all__ = [
     "UserProfileStore",
     "SessionContextStore",
     "LearnedKnowledgeStore",
-    # "EntityMemoryStore",
+    "EntityMemoryStore",
 ]

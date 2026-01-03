@@ -126,6 +126,10 @@ class EntityMemoryStore(LearningStore):
             return None
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.process: namespace='user' requires user_id")
+            return
+
         return self.get(
             entity_id=entity_id,
             entity_type=entity_type,
@@ -146,6 +150,10 @@ class EntityMemoryStore(LearningStore):
             return None
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.arecall: namespace='user' requires user_id")
+            return None
+
         return await self.aget(
             entity_id=entity_id,
             entity_type=entity_type,
@@ -179,7 +187,7 @@ class EntityMemoryStore(LearningStore):
             return
 
         effective_namespace = namespace or self.config.namespace
-        self._extract_and_save(
+        self.extract_and_save(
             messages=messages,
             user_id=user_id,
             agent_id=agent_id,
@@ -204,7 +212,7 @@ class EntityMemoryStore(LearningStore):
             return
 
         effective_namespace = namespace or self.config.namespace
-        await self._aextract_and_save(
+        await self.aextract_and_save(
             messages=messages,
             user_id=user_id,
             agent_id=agent_id,
@@ -2324,7 +2332,7 @@ class EntityMemoryStore(LearningStore):
     # Background Extraction
     # =========================================================================
 
-    def _extract_and_save(
+    def extract_and_save(
         self,
         messages: List[Any],
         user_id: Optional[str] = None,
@@ -2364,9 +2372,9 @@ class EntityMemoryStore(LearningStore):
                 log_debug("EntityMemoryStore: Extraction saved entities")
 
         except Exception as e:
-            log_warning(f"EntityMemoryStore._extract_and_save failed: {e}")
+            log_warning(f"EntityMemoryStore.extract_and_save failed: {e}")
 
-    async def _aextract_and_save(
+    async def aextract_and_save(
         self,
         messages: List[Any],
         user_id: Optional[str] = None,
@@ -2406,7 +2414,7 @@ class EntityMemoryStore(LearningStore):
                 log_debug("EntityMemoryStore: Extraction saved entities")
 
         except Exception as e:
-            log_warning(f"EntityMemoryStore._aextract_and_save failed: {e}")
+            log_warning(f"EntityMemoryStore.aextract_and_save failed: {e}")
 
     def _get_extraction_system_message(self) -> Dict[str, str]:
         """Get system message for extraction."""
