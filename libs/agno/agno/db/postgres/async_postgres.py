@@ -2601,13 +2601,16 @@ class AsyncPostgresDb(AsyncBaseDb):
             return []
 
     # -- Learning methods --
-    async def aget_learning(
+    async def get_learning(
         self,
         learning_type: str,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Async retrieve a learning record.
 
@@ -2617,6 +2620,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
             session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
 
         Returns:
             Dict with 'content' key containing the learning data, or None.
@@ -2637,6 +2643,12 @@ class AsyncPostgresDb(AsyncBaseDb):
                     stmt = stmt.where(table.c.team_id == team_id)
                 if session_id is not None:
                     stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
 
                 result = await sess.execute(stmt)
                 row = result.fetchone()
@@ -2650,7 +2662,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_debug(f"Error retrieving learning: {e}")
             return None
 
-    async def aupsert_learning(
+    async def upsert_learning(
         self,
         id: str,
         learning_type: str,
@@ -2659,6 +2671,9 @@ class AsyncPostgresDb(AsyncBaseDb):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Async insert or update a learning record.
@@ -2671,6 +2686,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             agent_id: Associated agent ID.
             team_id: Associated team ID.
             session_id: Associated session ID.
+            namespace: Namespace for scoping ('user', 'global', or custom).
+            entity_id: Associated entity ID (for entity-specific learnings).
+            entity_type: Entity type ('person', 'company', etc.).
             metadata: Optional metadata.
         """
         try:
@@ -2684,10 +2702,13 @@ class AsyncPostgresDb(AsyncBaseDb):
                 stmt = postgresql.insert(table).values(
                     learning_id=id,
                     learning_type=learning_type,
+                    namespace=namespace,
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
                     session_id=session_id,
+                    entity_id=entity_id,
+                    entity_type=entity_type,
                     content=content,
                     metadata=metadata,
                     created_at=current_time,
@@ -2708,7 +2729,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error upserting learning: {e}")
 
-    async def adelete_learning(self, id: str) -> bool:
+    async def delete_learning(self, id: str) -> bool:
         """Async delete a learning record.
 
         Args:
@@ -2731,13 +2752,16 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_debug(f"Error deleting learning: {e}")
             return False
 
-    async def aget_learnings(
+    async def get_learnings(
         self,
         learning_type: Optional[str] = None,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Async get multiple learning records.
@@ -2748,6 +2772,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
             session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
             limit: Maximum number of records to return.
 
         Returns:
@@ -2771,6 +2798,12 @@ class AsyncPostgresDb(AsyncBaseDb):
                     stmt = stmt.where(table.c.team_id == team_id)
                 if session_id is not None:
                     stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
 
                 stmt = stmt.order_by(table.c.updated_at.desc())
 

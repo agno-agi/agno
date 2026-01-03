@@ -11,27 +11,26 @@ Main Components:
 """
 
 from agno.learn.config import (
-    LearningMode,
-    ExtractionTiming,
-    ExtractionConfig,
-    UserProfileConfig,
     EntityMemoryConfig,
-    SessionContextConfig,
+    ExtractionConfig,
+    ExtractionTiming,
     LearnedKnowledgeConfig,
+    LearningMode,
+    SessionContextConfig,
+    UserProfileConfig,
 )
 from agno.learn.machine import LearningMachine
 from agno.learn.schemas import (
-    UserProfile,
     EntityMemory,
-    SessionContext,
     LearnedKnowledge,
+    SessionContext,
+    UserProfile,
 )
 from agno.learn.stores import (
-    LearningStore,
-    UserProfileStore,
-    EntityMemoryStore,
-    SessionContextStore,
     LearnedKnowledgeStore,
+    LearningStore,
+    SessionContextStore,
+    UserProfileStore,
 )
 
 __all__ = [
@@ -53,7 +52,7 @@ __all__ = [
     # Stores
     "LearningStore",
     "UserProfileStore",
-    "EntityMemoryStore",
     "SessionContextStore",
     "LearnedKnowledgeStore",
+    # "EntityMemoryStore",
 ]

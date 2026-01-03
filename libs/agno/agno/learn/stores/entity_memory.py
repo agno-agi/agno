@@ -629,18 +629,20 @@ entities (companies, projects, people, systems, products).
             if not results:
                 return json.dumps({"entities": [], "message": "No entities found"})
 
-            return json.dumps({
-                "entities": [
-                    {
-                        "entity_id": e.entity_id,
-                        "entity_type": e.entity_type,
-                        "name": e.name,
-                        "description": e.description,
-                        "fact_count": len(e.facts),
-                    }
-                    for e in results
-                ]
-            })
+            return json.dumps(
+                {
+                    "entities": [
+                        {
+                            "entity_id": e.entity_id,
+                            "entity_type": e.entity_type,
+                            "name": e.name,
+                            "description": e.description,
+                            "fact_count": len(e.facts),
+                        }
+                        for e in results
+                    ]
+                }
+            )
 
         return search_entities
 
@@ -672,10 +674,12 @@ entities (companies, projects, people, systems, products).
             # Check if exists
             existing = self.get(entity_id, user_id, team_id)
             if existing:
-                return json.dumps({
-                    "success": False,
-                    "error": f"Entity {entity_id} already exists",
-                })
+                return json.dumps(
+                    {
+                        "success": False,
+                        "error": f"Entity {entity_id} already exists",
+                    }
+                )
 
             entity = self.schema(
                 entity_id=entity_id,
@@ -686,10 +690,12 @@ entities (companies, projects, people, systems, products).
 
             success = self.save(entity, user_id, team_id, agent_id)
 
-            return json.dumps({
-                "success": success,
-                "entity_id": entity_id,
-            })
+            return json.dumps(
+                {
+                    "success": success,
+                    "entity_id": entity_id,
+                }
+            )
 
         return create_entity
 
@@ -719,11 +725,13 @@ entities (companies, projects, people, systems, products).
                 agent_id=agent_id,
             )
 
-            return json.dumps({
-                "success": fact_id is not None,
-                "fact_id": fact_id,
-                "entity_id": entity_id,
-            })
+            return json.dumps(
+                {
+                    "success": fact_id is not None,
+                    "fact_id": fact_id,
+                    "entity_id": entity_id,
+                }
+            )
 
         return add_entity_fact
 
@@ -759,11 +767,13 @@ entities (companies, projects, people, systems, products).
                 agent_id=agent_id,
             )
 
-            return json.dumps({
-                "success": event_id is not None,
-                "event_id": event_id,
-                "entity_id": entity_id,
-            })
+            return json.dumps(
+                {
+                    "success": event_id is not None,
+                    "event_id": event_id,
+                    "entity_id": entity_id,
+                }
+            )
 
         return add_entity_event
 
@@ -799,12 +809,14 @@ entities (companies, projects, people, systems, products).
                 agent_id=agent_id,
             )
 
-            return json.dumps({
-                "success": rel_id is not None,
-                "relationship_id": rel_id,
-                "entity_id": entity_id,
-                "related_entity_id": related_entity_id,
-            })
+            return json.dumps(
+                {
+                    "success": rel_id is not None,
+                    "relationship_id": rel_id,
+                    "entity_id": entity_id,
+                    "related_entity_id": related_entity_id,
+                }
+            )
 
         return add_entity_relationship
 
@@ -838,10 +850,12 @@ entities (companies, projects, people, systems, products).
             entity = self.get(entity_id, user_id, team_id)
 
             if not entity:
-                return json.dumps({
-                    "success": False,
-                    "error": f"Entity {entity_id} not found",
-                })
+                return json.dumps(
+                    {
+                        "success": False,
+                        "error": f"Entity {entity_id} not found",
+                    }
+                )
 
             if name is not None:
                 entity.name = name
@@ -854,10 +868,12 @@ entities (companies, projects, people, systems, products).
 
             success = self.save(entity, user_id, team_id, agent_id)
 
-            return json.dumps({
-                "success": success,
-                "entity_id": entity_id,
-            })
+            return json.dumps(
+                {
+                    "success": success,
+                    "entity_id": entity_id,
+                }
+            )
 
         return update_entity
 

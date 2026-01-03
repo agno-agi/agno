@@ -17,9 +17,9 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.agent import AgentKnowledge
 from agno.learn import (
+    LearnedKnowledgeConfig,
     LearningMachine,
     LearningMode,
-    LearnedKnowledgeConfig,
     SessionContextConfig,
     UserProfileConfig,
 )
@@ -149,7 +149,7 @@ def show_planning_learnings():
     if results:
         print(f"\n📚 Planning Patterns Learned:")
         for r in results:
-            title = getattr(r, 'title', 'Untitled')
+            title = getattr(r, "title", "Untitled")
             print(f"   > {title}")
     print()
 

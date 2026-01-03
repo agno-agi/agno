@@ -832,7 +832,7 @@ class Agent:
 
         # Handle learning=True: create default LearningMachine
         if self.learning is True:
-            self.learning = LearningMachine(db=self.db, model=self.model)
+            self.learning = LearningMachine(db=self.db, model=self.model, user_profile=True)
             return
 
         # Handle learning=LearningMachine(...): inject dependencies

@@ -31,13 +31,14 @@ from typing import Any, Dict, List, Optional
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.learn import (
-    LearningMachine,
     LearnedKnowledgeConfig,
+    LearningMachine,
     SessionContextConfig,
     UserProfileConfig,
 )
-from agno.learn.schemas import UserProfile, SessionContext
+from agno.learn.schemas import SessionContext, UserProfile
 from agno.models.openai import OpenAIChat
+
 
 # =============================================================================
 # Custom User Profile Schema (with field metadata!)
@@ -45,39 +46,44 @@ from agno.models.openai import OpenAIChat
 @dataclass
 class EnterpriseUserProfile(UserProfile):
     """Custom user profile with enterprise-specific fields.
-    
-    Note: We extend UserProfile to inherit base fields (user_id, name, 
+
+    Note: We extend UserProfile to inherit base fields (user_id, name,
     preferred_name, memories) and add our own with descriptions.
     """
 
     # Enterprise-specific fields with descriptions for LLM
     department: Optional[str] = field(
         default=None,
-        metadata={"description": "Department or team they work in (e.g., Engineering, Sales)"}
+        metadata={
+            "description": "Department or team they work in (e.g., Engineering, Sales)"
+        },
     )
     role: Optional[str] = field(
         default=None,
-        metadata={"description": "Job title or role (e.g., Senior Engineer, Product Manager)"}
+        metadata={
+            "description": "Job title or role (e.g., Senior Engineer, Product Manager)"
+        },
     )
     email: Optional[str] = field(
-        default=None,
-        metadata={"description": "Work email address"}
+        default=None, metadata={"description": "Work email address"}
     )
     timezone: Optional[str] = field(
         default=None,
-        metadata={"description": "User's timezone (e.g., America/New_York, Europe/London)"}
+        metadata={
+            "description": "User's timezone (e.g., America/New_York, Europe/London)"
+        },
     )
     communication_preference: Optional[str] = field(
         default=None,
-        metadata={"description": "How they prefer responses: brief, detailed, or technical"}
+        metadata={
+            "description": "How they prefer responses: brief, detailed, or technical"
+        },
     )
     expertise_areas: Optional[str] = field(
-        default=None,
-        metadata={"description": "Areas of expertise, comma-separated"}
+        default=None, metadata={"description": "Areas of expertise, comma-separated"}
     )
     current_projects: Optional[str] = field(
-        default=None,
-        metadata={"description": "Projects they're currently working on"}
+        default=None, metadata={"description": "Projects they're currently working on"}
     )
 
     def get_context_text(self) -> str:
@@ -95,7 +101,7 @@ class EnterpriseUserProfile(UserProfile):
             parts.append(f"Prefers: {self.communication_preference} responses")
         if self.current_projects:
             parts.append(f"Projects: {self.current_projects}")
-        
+
         memories_text = self.get_memories_text()
         if memories_text:
             parts.append(f"Notes:\n{memories_text}")
@@ -108,26 +114,23 @@ class EnterpriseUserProfile(UserProfile):
 @dataclass
 class ProjectSessionContext(SessionContext):
     """Custom session context for project work.
-    
+
     Extends SessionContext to add project-specific tracking.
     """
 
     # Project-specific fields
     project_name: Optional[str] = field(
-        default=None,
-        metadata={"description": "Name of the project being worked on"}
+        default=None, metadata={"description": "Name of the project being worked on"}
     )
     ticket_id: Optional[str] = field(
-        default=None,
-        metadata={"description": "Ticket or issue ID (e.g., PROJ-123)"}
+        default=None, metadata={"description": "Ticket or issue ID (e.g., PROJ-123)"}
     )
     priority: Optional[str] = field(
         default=None,
-        metadata={"description": "Priority level: low, medium, high, or critical"}
+        metadata={"description": "Priority level: low, medium, high, or critical"},
     )
     blockers: Optional[str] = field(
-        default=None,
-        metadata={"description": "Current blockers or obstacles"}
+        default=None, metadata={"description": "Current blockers or obstacles"}
     )
 
     def get_context_text(self) -> str:
@@ -145,7 +148,9 @@ class ProjectSessionContext(SessionContext):
         if self.blockers:
             parts.append(f"Blockers: {self.blockers}")
         if self.plan:
-            plan_text = "\n".join(f"  {i+1}. {step}" for i, step in enumerate(self.plan))
+            plan_text = "\n".join(
+                f"  {i + 1}. {step}" for i, step in enumerate(self.plan)
+            )
             parts.append(f"Plan:\n{plan_text}")
         if self.progress:
             progress_text = "\n".join(f"  ✓ {step}" for step in self.progress)

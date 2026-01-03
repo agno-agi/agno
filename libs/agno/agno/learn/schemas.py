@@ -88,13 +88,9 @@ class UserProfile:
     """
 
     user_id: str
-    name: Optional[str] = field(
-        default=None,
-        metadata={"description": "User's full name"}
-    )
+    name: Optional[str] = field(default=None, metadata={"description": "User's full name"})
     preferred_name: Optional[str] = field(
-        default=None,
-        metadata={"description": "How they prefer to be addressed (nickname, first name, etc)"}
+        default=None, metadata={"description": "How they prefer to be addressed (nickname, first name, etc)"}
     )
     memories: List[Dict[str, Any]] = field(default_factory=list)
     agent_id: Optional[str] = field(default=None, metadata={"internal": True})
@@ -207,7 +203,7 @@ class UserProfile:
             Dict mapping field name to field info including description.
             Excludes internal fields (user_id, memories, timestamps, etc).
         """
-        skip = {'user_id', 'memories', 'created_at', 'updated_at', 'agent_id', 'team_id'}
+        skip = {"user_id", "memories", "created_at", "updated_at", "agent_id", "team_id"}
 
         result = {}
         for f in fields(cls):
@@ -268,21 +264,11 @@ class SessionContext:
     session_id: str
     user_id: Optional[str] = None
     summary: Optional[str] = field(
-        default=None,
-        metadata={"description": "Summary of what's been discussed in this session"}
+        default=None, metadata={"description": "Summary of what's been discussed in this session"}
     )
-    goal: Optional[str] = field(
-        default=None,
-        metadata={"description": "What the user is trying to accomplish"}
-    )
-    plan: Optional[List[str]] = field(
-        default=None,
-        metadata={"description": "Steps to achieve the goal"}
-    )
-    progress: Optional[List[str]] = field(
-        default=None,
-        metadata={"description": "Which steps have been completed"}
-    )
+    goal: Optional[str] = field(default=None, metadata={"description": "What the user is trying to accomplish"})
+    plan: Optional[List[str]] = field(default=None, metadata={"description": "Steps to achieve the goal"})
+    progress: Optional[List[str]] = field(default=None, metadata={"description": "Which steps have been completed"})
     agent_id: Optional[str] = field(default=None, metadata={"internal": True})
     team_id: Optional[str] = field(default=None, metadata={"internal": True})
     created_at: Optional[str] = field(default=None, metadata={"internal": True})
@@ -477,22 +463,15 @@ class EntityMemory:
     """
 
     entity_id: str
-    entity_type: str = field(
-        metadata={"description": "Type: company, project, person, system, product, etc"}
-    )
+    entity_type: str = field(metadata={"description": "Type: company, project, person, system, product, etc"})
 
     # Core properties
-    name: Optional[str] = field(
-        default=None,
-        metadata={"description": "Display name for the entity"}
-    )
+    name: Optional[str] = field(default=None, metadata={"description": "Display name for the entity"})
     description: Optional[str] = field(
-        default=None,
-        metadata={"description": "Brief description of what this entity is"}
+        default=None, metadata={"description": "Brief description of what this entity is"}
     )
     properties: Dict[str, str] = field(
-        default_factory=dict,
-        metadata={"description": "Key-value properties (industry, tech_stack, etc)"}
+        default_factory=dict, metadata={"description": "Key-value properties (industry, tech_stack, etc)"}
     )
 
     # Semantic memory (facts)
@@ -588,13 +567,7 @@ class EntityMemory:
 
         return event_id
 
-    def add_relationship(
-        self,
-        related_entity_id: str,
-        relation: str,
-        direction: str = "outgoing",
-        **kwargs
-    ) -> str:
+    def add_relationship(self, related_entity_id: str, relation: str, direction: str = "outgoing", **kwargs) -> str:
         """Add a relationship to another entity.
 
         Args:
@@ -610,13 +583,9 @@ class EntityMemory:
 
         rel_id = str(uuid.uuid4())[:8]
 
-        self.relationships.append({
-            "id": rel_id,
-            "entity_id": related_entity_id,
-            "relation": relation,
-            "direction": direction,
-            **kwargs
-        })
+        self.relationships.append(
+            {"id": rel_id, "entity_id": related_entity_id, "relation": relation, "direction": direction, **kwargs}
+        )
 
         return rel_id
 
@@ -672,16 +641,12 @@ class EntityMemory:
 
         if self.events:
             events_text = "\n".join(
-                f"  - {e.get('content', e)}" + (f" ({e.get('date')})" if e.get('date') else "")
-                for e in self.events
+                f"  - {e.get('content', e)}" + (f" ({e.get('date')})" if e.get("date") else "") for e in self.events
             )
             parts.append(f"Events:\n{events_text}")
 
         if self.relationships:
-            rels_text = "\n".join(
-                f"  - {r.get('relation')}: {r.get('entity_id')}"
-                for r in self.relationships
-            )
+            rels_text = "\n".join(f"  - {r.get('relation')}: {r.get('entity_id')}" for r in self.relationships)
             parts.append(f"Relationships:\n{rels_text}")
 
         return "\n\n".join(parts)
@@ -695,8 +660,17 @@ class EntityMemory:
             Excludes internal fields and collections (facts, events, relationships).
         """
         skip = {
-            'entity_id', 'entity_type', 'facts', 'events', 'relationships',
-            'namespace', 'user_id', 'agent_id', 'team_id', 'created_at', 'updated_at'
+            "entity_id",
+            "entity_type",
+            "facts",
+            "events",
+            "relationships",
+            "namespace",
+            "user_id",
+            "agent_id",
+            "team_id",
+            "created_at",
+            "updated_at",
         }
 
         result = {}

@@ -508,6 +508,9 @@ class BaseDb(ABC):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Retrieve a learning record.
 
@@ -517,6 +520,9 @@ class BaseDb(ABC):
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
             session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
 
         Returns:
             Dict with 'content' key containing the learning data, or None.
@@ -533,6 +539,9 @@ class BaseDb(ABC):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Insert or update a learning record.
@@ -545,6 +554,9 @@ class BaseDb(ABC):
             agent_id: Associated agent ID.
             team_id: Associated team ID.
             session_id: Associated session ID.
+            namespace: Namespace for scoping ('user', 'global', or custom).
+            entity_id: Associated entity ID (for entity-specific learnings).
+            entity_type: Entity type ('person', 'company', etc.).
             metadata: Optional metadata.
         """
         raise NotImplementedError
@@ -569,6 +581,9 @@ class BaseDb(ABC):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Get multiple learning records.
@@ -579,6 +594,9 @@ class BaseDb(ABC):
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
             session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
             limit: Maximum number of records to return.
 
         Returns:
@@ -1065,6 +1083,9 @@ class AsyncBaseDb(ABC):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Async retrieve a learning record.
 
@@ -1074,6 +1095,9 @@ class AsyncBaseDb(ABC):
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
             session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
 
         Returns:
             Dict with 'content' key containing the learning data, or None.
@@ -1090,6 +1114,9 @@ class AsyncBaseDb(ABC):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Async insert or update a learning record.
@@ -1102,6 +1129,9 @@ class AsyncBaseDb(ABC):
             agent_id: Associated agent ID.
             team_id: Associated team ID.
             session_id: Associated session ID.
+            namespace: Namespace for scoping ('user', 'global', or custom).
+            entity_id: Associated entity ID (for entity-specific learnings).
+            entity_type: Entity type ('person', 'company', etc.).
             metadata: Optional metadata.
         """
         raise NotImplementedError
@@ -1126,6 +1156,9 @@ class AsyncBaseDb(ABC):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Async get multiple learning records.
@@ -1136,6 +1169,9 @@ class AsyncBaseDb(ABC):
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
             session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
             limit: Maximum number of records to return.
 
         Returns:

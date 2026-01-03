@@ -15,9 +15,9 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.agent import AgentKnowledge
 from agno.learn import (
+    LearnedKnowledgeConfig,
     LearningMachine,
     LearningMode,
-    LearnedKnowledgeConfig,
     SessionContextConfig,
     UserProfileConfig,
 )
@@ -129,7 +129,9 @@ class LearningMetrics:
         if not store:
             return 0
         # Search with broad query to get count
-        results = store.search("software development best practices patterns", limit=100)
+        results = store.search(
+            "software development best practices patterns", limit=100
+        )
         return len(results)
 
     def count_user_profiles(self) -> int:
@@ -207,8 +209,8 @@ if __name__ == "__main__":
     if results:
         print("\n📚 Learned Patterns:")
         for r in results:
-            title = getattr(r, 'title', 'Untitled')
-            learning = getattr(r, 'learning', str(r))[:100]
+            title = getattr(r, "title", "Untitled")
+            learning = getattr(r, "learning", str(r))[:100]
             print(f"\n   {title}")
             print(f"   {learning}...")
     else:

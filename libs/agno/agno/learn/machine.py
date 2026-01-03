@@ -9,11 +9,11 @@ from os import getenv
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.learn.config import (
-    LearningMode,
-    UserProfileConfig,
     EntityMemoryConfig,
     LearnedKnowledgeConfig,
+    LearningMode,
     SessionContextConfig,
+    UserProfileConfig,
 )
 from agno.learn.stores.protocol import LearningStore
 from agno.utils.log import (
@@ -70,7 +70,7 @@ class LearningMachine:
     knowledge: Optional[Any] = None
 
     # Store configurations
-    user_profile: UserProfileInput = True
+    user_profile: UserProfileInput = False
     session_context: SessionContextInput = False
     learned_knowledge: LearnedKnowledgeInput = False
 

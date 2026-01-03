@@ -18,9 +18,9 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.agent import AgentKnowledge
 from agno.learn import (
+    LearnedKnowledgeConfig,
     LearningMachine,
     LearningMode,
-    LearnedKnowledgeConfig,
     SessionContextConfig,
     UserProfileConfig,
 )
@@ -111,7 +111,9 @@ def show_customer_profile(user_id: str):
 
 def show_ticket_context(session_id: str):
     """Show current ticket context."""
-    context = support_agent.learning.stores["session_context"].get(session_id=session_id)
+    context = support_agent.learning.stores["session_context"].get(
+        session_id=session_id
+    )
     if context and context.summary:
         print(f"\n🎫 Ticket Context:")
         print(f"   {context.summary}")

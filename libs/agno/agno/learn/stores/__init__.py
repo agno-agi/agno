@@ -13,6 +13,7 @@ Available Stores:
 - UserProfileStore: Long-term user memories
 - SessionContextStore: Current session state
 - LearnedKnowledgeStore: Reusable knowledge/insights
+- EntityMemoryStore: Third-party entity facts
 """
 
 from agno.learn.stores.learned_knowledge import LearnedKnowledgeStore
@@ -25,4 +26,5 @@ __all__ = [
     "UserProfileStore",
     "SessionContextStore",
     "LearnedKnowledgeStore",
+    # "EntityMemoryStore",
 ]

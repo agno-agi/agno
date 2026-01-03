@@ -36,10 +36,11 @@ Supported Modes:
 import inspect
 import uuid
 from copy import deepcopy
-from dataclasses import dataclass, field, fields as dc_fields
+from dataclasses import dataclass, field
+from dataclasses import fields as dc_fields
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Union, get_origin, get_args
+from typing import Any, Callable, Dict, List, Optional, Union, get_args, get_origin
 
 from agno.learn.config import LearningMode, UserProfileConfig
 from agno.learn.schemas import UserProfile
@@ -355,11 +356,11 @@ class UserProfileStore(LearningStore):
             Excludes internal fields (user_id, memories, timestamps, etc).
         """
         # Use schema method if available
-        if hasattr(self.schema, 'get_updateable_fields'):
+        if hasattr(self.schema, "get_updateable_fields"):
             return self.schema.get_updateable_fields()
 
         # Fallback: introspect dataclass fields
-        skip = {'user_id', 'memories', 'created_at', 'updated_at', 'agent_id', 'team_id'}
+        skip = {"user_id", "memories", "created_at", "updated_at", "agent_id", "team_id"}
 
         result = {}
         for f in dc_fields(self.schema):
@@ -404,12 +405,9 @@ class UserProfileStore(LearningStore):
         ]
 
         # Build docstring with field descriptions
-        fields_doc = "\n".join(
-            f"            {name}: {info['description']}"
-            for name, info in updateable.items()
-        )
+        fields_doc = "\n".join(f"            {name}: {info['description']}" for name, info in updateable.items())
 
-        docstring = f'''Update user profile fields.
+        docstring = f"""Update user profile fields.
 
         Use this to update structured information about the user.
         Only provide fields you want to update.
@@ -423,7 +421,7 @@ class UserProfileStore(LearningStore):
         Examples:
             update_profile(name="Alice")
             update_profile(name="Bob", preferred_name="Bobby")
-        '''
+        """
 
         # Capture self and IDs in closure
         store = self
@@ -485,12 +483,9 @@ class UserProfileStore(LearningStore):
             for field_name in updateable
         ]
 
-        fields_doc = "\n".join(
-            f"            {name}: {info['description']}"
-            for name, info in updateable.items()
-        )
+        fields_doc = "\n".join(f"            {name}: {info['description']}" for name, info in updateable.items())
 
-        docstring = f'''Update user profile fields.
+        docstring = f"""Update user profile fields.
 
         Use this to update structured information about the user.
         Only provide fields you want to update.
@@ -500,7 +495,7 @@ class UserProfileStore(LearningStore):
 
         Returns:
             Confirmation of updated fields.
-        '''
+        """
 
         store = self
 
@@ -562,6 +557,7 @@ class UserProfileStore(LearningStore):
 
         # Memory update tool (delegates to extraction)
         if self.config.agent_can_update_memories:
+
             def update_user_memory(task: str) -> str:
                 """Update information about the user.
 
@@ -608,6 +604,7 @@ class UserProfileStore(LearningStore):
         tools = []
 
         if self.config.agent_can_update_memories:
+
             async def update_user_memory(task: str) -> str:
                 """Update information about the user.
 
@@ -1196,7 +1193,7 @@ class UserProfileStore(LearningStore):
             """)
 
             for field_name, field_info in profile_fields.items():
-                description = field_info.get('description', f"User's {field_name.replace('_', ' ')}")
+                description = field_info.get("description", f"User's {field_name.replace('_', ' ')}")
                 system_prompt += f"    - **{field_name}**: {description}\n"
 
             # Show current values if profile exists
@@ -1280,21 +1277,21 @@ class UserProfileStore(LearningStore):
 
         if profile_fields and self.config.enable_update_profile:
             example_fields = []
-            if 'name' in profile_fields:
+            if "name" in profile_fields:
                 example_fields.append('name="Alice"')
-            if 'role' in profile_fields:
+            if "role" in profile_fields:
                 example_fields.append('role="CTO"')
-            if 'company' in profile_fields:
+            if "company" in profile_fields:
                 example_fields.append('company="Acme"')
-            if 'location' in profile_fields:
+            if "location" in profile_fields:
                 example_fields.append('location="London"')
 
             if example_fields:
                 system_prompt += f"→ update_profile({', '.join(example_fields)})\n"
             else:
-                system_prompt += "→ add_memory(\"User is Alice, CTO at Acme, based in London\")\n"
+                system_prompt += '→ add_memory("User is Alice, CTO at Acme, based in London")\n'
         else:
-            system_prompt += "→ add_memory(\"User is Alice, CTO at Acme, based in London\")\n"
+            system_prompt += '→ add_memory("User is Alice, CTO at Acme, based in London")\n'
 
         system_prompt += dedent("""
             User says: "I prefer detailed explanations with code examples"
@@ -1336,6 +1333,7 @@ class UserProfileStore(LearningStore):
 
         # Memory tools
         if self.config.enable_add_memory:
+
             def add_memory(memory: str) -> str:
                 """Add a new memory about the user.
 
@@ -1373,6 +1371,7 @@ class UserProfileStore(LearningStore):
             functions.append(add_memory)
 
         if self.config.enable_update_memory:
+
             def update_memory(memory_id: str, memory: str) -> str:
                 """Update an existing memory.
 
@@ -1410,6 +1409,7 @@ class UserProfileStore(LearningStore):
             functions.append(update_memory)
 
         if self.config.enable_delete_memory:
+
             def delete_memory(memory_id: str) -> str:
                 """Delete a memory that is no longer accurate.
 
@@ -1427,7 +1427,9 @@ class UserProfileStore(LearningStore):
                     if hasattr(profile, "memories"):
                         original_len = len(profile.memories)
                         profile.memories = [
-                            mem for mem in profile.memories if not (isinstance(mem, dict) and mem.get("id") == memory_id)
+                            mem
+                            for mem in profile.memories
+                            if not (isinstance(mem, dict) and mem.get("id") == memory_id)
                         ]
                         if len(profile.memories) < original_len:
                             self.save(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
@@ -1443,6 +1445,7 @@ class UserProfileStore(LearningStore):
             functions.append(delete_memory)
 
         if self.config.enable_clear_memories:
+
             def clear_all_memories() -> str:
                 """Clear all memories for this user. Use sparingly.
 
@@ -1484,6 +1487,7 @@ class UserProfileStore(LearningStore):
 
         # Memory tools
         if self.config.enable_add_memory:
+
             async def add_memory(memory: str) -> str:
                 """Add a new memory about the user.
 
@@ -1521,6 +1525,7 @@ class UserProfileStore(LearningStore):
             functions.append(add_memory)
 
         if self.config.enable_update_memory:
+
             async def update_memory(memory_id: str, memory: str) -> str:
                 """Update an existing memory.
 
@@ -1558,6 +1563,7 @@ class UserProfileStore(LearningStore):
             functions.append(update_memory)
 
         if self.config.enable_delete_memory:
+
             async def delete_memory(memory_id: str) -> str:
                 """Delete a memory that is no longer accurate.
 
@@ -1575,7 +1581,9 @@ class UserProfileStore(LearningStore):
                     if hasattr(profile, "memories"):
                         original_len = len(profile.memories)
                         profile.memories = [
-                            mem for mem in profile.memories if not (isinstance(mem, dict) and mem.get("id") == memory_id)
+                            mem
+                            for mem in profile.memories
+                            if not (isinstance(mem, dict) and mem.get("id") == memory_id)
                         ]
                         if len(profile.memories) < original_len:
                             await self.asave(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
@@ -1591,6 +1599,7 @@ class UserProfileStore(LearningStore):
             functions.append(delete_memory)
 
         if self.config.enable_clear_memories:
+
             async def clear_all_memories() -> str:
                 """Clear all memories for this user. Use sparingly.
 

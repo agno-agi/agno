@@ -160,10 +160,13 @@ SPAN_TABLE_SCHEMA = {
 LEARNINGS_TABLE_SCHEMA = {
     "learning_id": {"type": String, "primary_key": True, "nullable": False},
     "learning_type": {"type": String, "nullable": False, "index": True},
+    "namespace": {"type": String, "nullable": True, "index": True},
     "user_id": {"type": String, "nullable": True, "index": True},
     "agent_id": {"type": String, "nullable": True, "index": True},
     "team_id": {"type": String, "nullable": True, "index": True},
     "session_id": {"type": String, "nullable": True, "index": True},
+    "entity_id": {"type": String, "nullable": True, "index": True},
+    "entity_type": {"type": String, "nullable": True, "index": True},
     "content": {"type": JSONB, "nullable": False},
     "metadata": {"type": JSONB, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},

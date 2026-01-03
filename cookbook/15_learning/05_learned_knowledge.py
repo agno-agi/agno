@@ -57,12 +57,14 @@ agent = Agent(
 # =============================================================================
 def search_learnings(query: str, limit: int = 3):
     """Search the knowledge base for relevant learnings."""
-    results = agent.learning.stores["learned_knowledge"].search(query=query, limit=limit)
+    results = agent.learning.stores["learned_knowledge"].search(
+        query=query, limit=limit
+    )
     if results:
         print(f"\n🔍 Found {len(results)} learning(s) for '{query}':")
         for r in results:
-            title = getattr(r, 'title', 'Untitled')
-            learning = getattr(r, 'learning', str(r))[:80]
+            title = getattr(r, "title", "Untitled")
+            learning = getattr(r, "learning", str(r))[:80]
             print(f"   > {title}: {learning}...")
     else:
         print(f"\n🔍 No learnings found for '{query}'")
