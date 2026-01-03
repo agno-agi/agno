@@ -8,7 +8,6 @@ if TYPE_CHECKING:
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.redis.utils import (
-    apply_filters,
     apply_pagination,
     apply_sorting,
     calculate_date_metrics,
@@ -242,6 +241,50 @@ class RedisDb(BaseDb):
             log_error(f"Error deleting record {record_id}: {e}")
             return False
 
+    def _get_records_by_index(
+        self, table_type: str, index_field: str, index_value: str
+    ) -> List[Dict[str, Any]]:
+        """Get records using Redis index for fast lookup.
+
+        Args:
+            table_type (str): The type of table to get records from.
+            index_field (str): The index field name (e.g., 'user_id', 'agent_id').
+            index_value (str): The value to filter by.
+
+        Returns:
+            List[Dict[str, Any]]: The filtered records.
+        """
+        try:
+            from agno.db.redis.utils import generate_index_key
+
+            # Get the index key
+            index_key = generate_index_key(self.db_prefix, table_type, index_field, index_value)
+
+            # Get all record IDs from the index set
+            record_ids = self.redis_client.smembers(index_key)  # type: ignore[union-attr]
+
+            if not record_ids:
+                return []
+
+            # Build full keys for records
+            from agno.db.redis.utils import generate_redis_key
+
+            keys = [generate_redis_key(self.db_prefix, table_type, str(record_id)) for record_id in record_ids]  # type: ignore[union-attr]
+
+            # Use MGET for batch retrieval
+            values = self.redis_client.mget(keys)  # type: ignore[union-attr]
+
+            records = []
+            for data in values:  # type: ignore[union-attr]
+                if data:
+                    records.append(deserialize_data(data))  # type: ignore
+
+            return records
+
+        except Exception as e:
+            log_error(f"Error getting records by index {index_field}={index_value}: {e}")
+            return []
+
     def _get_all_records(self, table_type: str) -> List[Dict[str, Any]]:
         """Generic method to get all records for a table type.
 
@@ -257,9 +300,15 @@ class RedisDb(BaseDb):
         try:
             keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type=table_type)
 
+            if not keys:
+                return []
+
+            # Use MGET for batch retrieval instead of N+1 GET commands
+            # This reduces Redis round trips from N to 1
+            values = self.redis_client.mget(keys)  # type: ignore[union-attr]
+
             records = []
-            for key in keys:
-                data = self.redis_client.get(key)
+            for data in values:  # type: ignore[union-attr]
                 if data:
                     records.append(deserialize_data(data))  # type: ignore
 
@@ -373,7 +422,6 @@ class RedisDb(BaseDb):
             log_error(f"Exception reading session: {e}")
             raise e
 
-    # TODO: optimizable
     def get_sessions(
         self,
         session_type: Optional[SessionType] = None,
@@ -405,16 +453,23 @@ class RedisDb(BaseDb):
             List[Union[AgentSession, TeamSession, WorkflowSession]]: The list of sessions.
         """
         try:
-            all_sessions = self._get_all_records("sessions")
-
-            conditions: Dict[str, Any] = {}
-            if session_type is not None:
-                conditions["session_type"] = session_type
+            # Performance optimization: Use Redis index for user_id filtering
+            # This avoids full table scan by leveraging the pre-built user_id index
             if user_id is not None:
-                conditions["user_id"] = user_id
+                all_sessions = self._get_records_by_index(
+                    table_type="sessions", index_field="user_id", index_value=user_id
+                )
+            else:
+                all_sessions = self._get_all_records("sessions")
 
-            filtered_sessions = apply_filters(records=all_sessions, conditions=conditions)
+            # Apply additional filters
+            filtered_sessions = all_sessions
 
+            # Filter by session_type
+            if session_type is not None:
+                filtered_sessions = [s for s in filtered_sessions if s.get("session_type") == session_type]
+
+            # Filter by component_id
             if component_id is not None:
                 if session_type == SessionType.AGENT:
                     filtered_sessions = [s for s in filtered_sessions if s.get("agent_id") == component_id]
@@ -422,11 +477,14 @@ class RedisDb(BaseDb):
                     filtered_sessions = [s for s in filtered_sessions if s.get("team_id") == component_id]
                 elif session_type == SessionType.WORKFLOW:
                     filtered_sessions = [s for s in filtered_sessions if s.get("workflow_id") == component_id]
+
+            # Filter by timestamps
             if start_timestamp is not None:
                 filtered_sessions = [s for s in filtered_sessions if s.get("created_at", 0) >= start_timestamp]
             if end_timestamp is not None:
                 filtered_sessions = [s for s in filtered_sessions if s.get("created_at", 0) <= end_timestamp]
 
+            # Filter by session_name
             if session_name is not None:
                 filtered_sessions = [
                     s
@@ -434,6 +492,7 @@ class RedisDb(BaseDb):
                     if session_name.lower() in s.get("session_data", {}).get("session_name", "").lower()
                 ]
 
+            # Apply sorting and pagination
             sorted_sessions = apply_sorting(records=filtered_sessions, sort_by=sort_by, sort_order=sort_order)
             sessions = apply_pagination(records=sorted_sessions, limit=limit, page=page)
             sessions = [record for record in sessions]
@@ -815,26 +874,43 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while reading the memories.
         """
         try:
-            all_memories = self._get_all_records("memories")
-
-            # Apply filters
-            conditions = {}
+            # Performance optimization: Use Redis index when available
+            # Index priority order: user_id > agent_id > team_id
+            # This significantly reduces data transfer and memory usage
+            index_used_for = None
             if user_id is not None:
-                conditions["user_id"] = user_id
-            if agent_id is not None:
-                conditions["agent_id"] = agent_id
-            if team_id is not None:
-                conditions["team_id"] = team_id
+                all_memories = self._get_records_by_index(
+                    table_type="memories", index_field="user_id", index_value=user_id
+                )
+                index_used_for = "user_id"
+            elif agent_id is not None:
+                all_memories = self._get_records_by_index(
+                    table_type="memories", index_field="agent_id", index_value=agent_id
+                )
+                index_used_for = "agent_id"
+            elif team_id is not None:
+                all_memories = self._get_records_by_index(
+                    table_type="memories", index_field="team_id", index_value=team_id
+                )
+                index_used_for = "team_id"
+            else:
+                all_memories = self._get_all_records("memories")
 
-            filtered_memories = apply_filters(records=all_memories, conditions=conditions)
+            # Apply additional filters (excluding the one already used for index lookup)
+            filtered_memories = all_memories
 
-            # Apply topic filter
+            if agent_id is not None and index_used_for != "agent_id":
+                filtered_memories = [m for m in filtered_memories if m.get("agent_id") == agent_id]
+            if team_id is not None and index_used_for != "team_id":
+                filtered_memories = [m for m in filtered_memories if m.get("team_id") == team_id]
+
+            # Filter by topics
             if topics is not None:
                 filtered_memories = [
                     m for m in filtered_memories if any(topic in m.get("topics", []) for topic in topics)
                 ]
 
-            # Apply content search
+            # Filter by content search
             if search_content is not None:
                 filtered_memories = [
                     m for m in filtered_memories if search_content.lower() in str(m.get("memory", "")).lower()
