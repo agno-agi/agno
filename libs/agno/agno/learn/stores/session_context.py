@@ -299,8 +299,8 @@ class SessionContextStore(LearningStore):
             return None
 
         try:
-            if hasattr(self.db, "aget_learning"):
-                result = await self.db.aget_learning(
+            if isinstance(self.db, AsyncBaseDb):
+                result = await self.db.get_learning(
                     learning_type=self.learning_type,
                     session_id=session_id,
                 )
@@ -379,8 +379,8 @@ class SessionContextStore(LearningStore):
             if not content:
                 return
 
-            if hasattr(self.db, "aupsert_learning"):
-                await self.db.aupsert_learning(
+            if isinstance(self.db, AsyncBaseDb):
+                await self.db.upsert_learning(
                     id=self._build_context_id(session_id=session_id),
                     learning_type=self.learning_type,
                     session_id=session_id,
@@ -434,8 +434,8 @@ class SessionContextStore(LearningStore):
 
         try:
             context_id = self._build_context_id(session_id=session_id)
-            if hasattr(self.db, "adelete_learning"):
-                return await self.db.adelete_learning(id=context_id)
+            if isinstance(self.db, AsyncBaseDb):
+                return await self.db.delete_learning(id=context_id)
             else:
                 return self.db.delete_learning(id=context_id)
         except Exception as e:
