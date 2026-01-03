@@ -67,21 +67,6 @@ class SessionContextStore(LearningStore):
     - This ensures continuity even when message history is truncated
     - Previous summary, goal, plan, progress are preserved and updated
 
-    Usage:
-        >>> store = SessionContextStore(config=SessionContextConfig(db=db, model=model))
-        >>>
-        >>> # Extract context from conversation
-        >>> store.extract_and_save(messages, session_id="session123")
-        >>>
-        >>> # Get context
-        >>> context = store.get("session123")
-        >>> print(context.summary)
-        >>>
-        >>> # With planning enabled
-        >>> store = SessionContextStore(config=SessionContextConfig(
-        ...     db=db, model=model, enable_planning=True
-        ... ))
-
     Args:
         config: SessionContextConfig with all settings including db and model.
         debug_mode: Enable debug logging.
@@ -155,6 +140,8 @@ class SessionContextStore(LearningStore):
             team_id: Team context (stored for audit).
             **kwargs: Additional context (ignored).
         """
+        # process only supported in BACKGROUND mode
+        # for programmatic extraction, use extract_and_save directly
         if self.config.mode != LearningMode.BACKGROUND:
             return
 

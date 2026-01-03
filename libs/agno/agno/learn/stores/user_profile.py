@@ -77,23 +77,6 @@ class UserProfileStore(LearningStore):
     2. **Memories** (unstructured): Observations that don't fit schema fields.
        Updated via `add_memory`, `update_memory`, `delete_memory` tools.
 
-    Usage:
-        >>> store = UserProfileStore(config=UserProfileConfig(db=db, model=model))
-        >>>
-        >>> # Manual memory addition
-        >>> store.add_memory("alice", "User prefers dark mode")
-        >>>
-        >>> # Get profile
-        >>> profile = store.get("alice")
-        >>> print(profile.name)  # Profile field
-        >>> print(profile.get_memories_text())  # Memories
-        >>>
-        >>> # Background extraction
-        >>> store.extract_and_save(messages, user_id="alice")
-        >>>
-        >>> # Agent tools
-        >>> tools = store.get_agent_tools(user_id="alice")
-
     Args:
         config: UserProfileConfig with all settings including db and model.
         debug_mode: Enable debug logging.
@@ -110,9 +93,9 @@ class UserProfileStore(LearningStore):
         self._schema = self.config.schema or UserProfile
 
         if self.config.mode == LearningMode.PROPOSE:
-            log_warning("UserProfileStore does not support PROPOSE mode. Falling back to BACKGROUND mode.")
+            log_warning("UserProfileStore does not support PROPOSE mode.")
         elif self.config.mode == LearningMode.HITL:
-            log_warning("UserProfileStore does not support HITL mode. Falling back to BACKGROUND mode.")
+            log_warning("UserProfileStore does not support HITL mode.")
 
     # =========================================================================
     # LearningStore Protocol Implementation
@@ -165,7 +148,9 @@ class UserProfileStore(LearningStore):
             team_id: Team context (stored for audit).
             **kwargs: Additional context (ignored).
         """
-        if self.config.mode == LearningMode.AGENTIC:
+        # process only supported in BACKGROUND mode
+        # for programmatic extraction, use extract_and_save directly
+        if self.config.mode != LearningMode.BACKGROUND:
             return
 
         if not user_id or not messages:
@@ -187,7 +172,7 @@ class UserProfileStore(LearningStore):
         **kwargs,
     ) -> None:
         """Async version of process."""
-        if self.config.mode == LearningMode.AGENTIC:
+        if self.config.mode != LearningMode.BACKGROUND:
             return
 
         if not user_id or not messages:
@@ -201,13 +186,13 @@ class UserProfileStore(LearningStore):
         )
 
     def build_context(self, data: Any) -> str:
-        """Build context string for the agent's system prompt.
+        """Build context for the agent.
 
         Args:
             data: User profile data from recall().
 
         Returns:
-            Formatted context string, or empty string if no data.
+            Context string to inject into the agent's system prompt.
         """
         if not data:
             if self.config.enable_agent_tools:

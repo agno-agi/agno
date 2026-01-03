@@ -76,9 +76,7 @@ class LearnedKnowledgeStore(LearningStore):
 
         if self.config.mode == LearningMode.HITL:
             log_warning(
-                "LearnedKnowledgeStore does not support HITL mode. "
-                "Use PROPOSE mode for human-in-the-loop approval. "
-                "Falling back to PROPOSE mode."
+                "LearnedKnowledgeStore does not support HITL mode. Use PROPOSE mode for human-in-the-loop approval. "
             )
 
     # =========================================================================
@@ -97,8 +95,8 @@ class LearnedKnowledgeStore(LearningStore):
 
     def recall(
         self,
-        message: Optional[str] = None,
         query: Optional[str] = None,
+        message: Optional[str] = None,
         user_id: Optional[str] = None,
         namespace: Optional[str] = None,
         limit: int = 5,
@@ -107,8 +105,8 @@ class LearnedKnowledgeStore(LearningStore):
         """Retrieve relevant learnings via semantic search.
 
         Args:
-            message: Current user message to find relevant learnings for.
-            query: Alternative query string (if message not provided).
+            query: Search query (searches title, learning, context).
+            message: Current user message to find relevant learnings for (alternative).
             user_id: User ID for "user" namespace scoping.
             namespace: Filter by namespace (None = all accessible).
             limit: Maximum number of results.
@@ -117,7 +115,7 @@ class LearnedKnowledgeStore(LearningStore):
         Returns:
             List of relevant learnings, or None if no query.
         """
-        search_query = message or query
+        search_query = query or message
         if not search_query:
             return None
 
@@ -131,15 +129,15 @@ class LearnedKnowledgeStore(LearningStore):
 
     async def arecall(
         self,
-        message: Optional[str] = None,
         query: Optional[str] = None,
+        message: Optional[str] = None,
         user_id: Optional[str] = None,
         namespace: Optional[str] = None,
         limit: int = 5,
         **kwargs,
     ) -> Optional[List[Any]]:
         """Async version of recall."""
-        search_query = message or query
+        search_query = query or message
         if not search_query:
             return None
 
@@ -170,13 +168,15 @@ class LearnedKnowledgeStore(LearningStore):
             namespace: Namespace to save learnings to (default: "global").
             **kwargs: Additional context (ignored).
         """
+        # process only supported in BACKGROUND mode
+        # for programmatic extraction, use extract_and_save directly
         if self.config.mode != LearningMode.BACKGROUND:
             return
 
         if not messages:
             return
 
-        self._extract_and_save(
+        self.extract_and_save(
             messages=messages,
             user_id=user_id,
             agent_id=agent_id,
@@ -197,10 +197,10 @@ class LearnedKnowledgeStore(LearningStore):
         if self.config.mode != LearningMode.BACKGROUND:
             return
 
-        if not messages or not self.model or not self.knowledge:
+        if not messages:
             return
 
-        await self._aextract_and_save(
+        await self.aextract_and_save(
             messages=messages,
             user_id=user_id,
             agent_id=agent_id,
@@ -209,13 +209,13 @@ class LearnedKnowledgeStore(LearningStore):
         )
 
     def build_context(self, data: Any) -> str:
-        """Build context with tool usage instructions for the agent.
+        """Build context for the agent.
 
         Args:
             data: List of learning objects from recall() (may be None).
 
         Returns:
-            Formatted context string with tool instructions.
+            Context string to inject into the agent's system prompt.
         """
         mode = self.config.mode
 
@@ -1047,7 +1047,7 @@ class LearnedKnowledgeStore(LearningStore):
     # Background Extraction (BACKGROUND mode)
     # =========================================================================
 
-    def _extract_and_save(
+    def extract_and_save(
         self,
         messages: List[Any],
         user_id: Optional[str] = None,
@@ -1092,9 +1092,9 @@ class LearnedKnowledgeStore(LearningStore):
                 log_debug("LearnedKnowledgeStore: Extraction saved new learning(s)")
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore._extract_and_save failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.extract_and_save failed: {e}")
 
-    async def _aextract_and_save(
+    async def aextract_and_save(
         self,
         messages: List[Any],
         user_id: Optional[str] = None,
@@ -1139,7 +1139,7 @@ class LearnedKnowledgeStore(LearningStore):
                 log_debug("LearnedKnowledgeStore: Extraction saved new learning(s)")
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore._aextract_and_save failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.aextract_and_save failed: {e}")
 
     def _build_extraction_messages(
         self,
