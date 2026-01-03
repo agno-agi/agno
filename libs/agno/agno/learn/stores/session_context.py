@@ -11,10 +11,12 @@ Key Features:
 - Session-scoped storage (each session_id has one context)
 - No agent tool (system-managed only)
 
+Scope:
+- Context is retrieved by session_id only
+- agent_id/team_id stored in DB columns for audit trail
+
 Supported Modes:
 - BACKGROUND only. SessionContextStore does not support AGENTIC, PROPOSE, or HITL modes.
-  Session context is automatic note-taking for continuity - the agent doesn't decide
-  what to save about the session.
 """
 
 from copy import deepcopy
@@ -46,18 +48,13 @@ except ImportError:
 class SessionContextStore(LearningStore):
     """Storage backend for Session Context learning type.
 
-    Handles retrieval, storage, and extraction of session context.
-    Context is stored per session_id and is REPLACED (not appended)
-    on each extraction.
+    Context is retrieved by session_id only — all agents sharing the same DB
+    will see the same context for a given session. agent_id and team_id are
+    stored in DB columns for audit purposes.
 
     Key difference from UserProfileStore:
     - UserProfile: accumulates memories over time
-    - SessionContext: snapshot of current session state
-
-    Supported Modes:
-    - BACKGROUND only. This store does not support AGENTIC, PROPOSE, or HITL modes.
-      Session context is system-managed automatic summarization - the agent doesn't
-      decide what to save about the session. There are no agent tools.
+    - SessionContext: snapshot of current session state (replaced on each extraction)
 
     Usage:
         >>> store = SessionContextStore(config=SessionContextConfig(db=db, model=model))
@@ -73,9 +70,6 @@ class SessionContextStore(LearningStore):
         >>> store = SessionContextStore(config=SessionContextConfig(
         ...     db=db, model=model, enable_planning=True
         ... ))
-        >>> store.extract_and_save(messages, session_id="session123")
-        >>> context = store.get("session123")
-        >>> print(context.goal, context.plan, context.progress)
 
     Args:
         config: SessionContextConfig with all settings including db and model.
@@ -92,12 +86,9 @@ class SessionContextStore(LearningStore):
     def __post_init__(self):
         self._schema = self.config.schema or SessionContext
 
-        # SessionContextStore only supports BACKGROUND mode
         if self.config.mode != LearningMode.BACKGROUND:
             log_warning(
-                f"SessionContextStore only supports BACKGROUND mode, got {self.config.mode}. "
-                "Session context is system-managed automatic summarization with no agent tools. "
-                "Ignoring mode setting and using BACKGROUND."
+                f"SessionContextStore only supports BACKGROUND mode, got {self.config.mode}. Ignoring mode setting."
             )
 
     # =========================================================================
@@ -148,12 +139,11 @@ class SessionContextStore(LearningStore):
         Args:
             messages: Conversation messages to analyze.
             session_id: The session to update context for (required).
-            user_id: Optional user context.
-            agent_id: Optional agent context.
-            team_id: Optional team context.
+            user_id: User context (stored for audit).
+            agent_id: Agent context (stored for audit).
+            team_id: Team context (stored for audit).
             **kwargs: Additional context (ignored).
         """
-        # SessionContextStore only runs in BACKGROUND mode
         if self.config.mode != LearningMode.BACKGROUND:
             return
 
@@ -178,7 +168,6 @@ class SessionContextStore(LearningStore):
         **kwargs,
     ) -> None:
         """Async version of process."""
-        # SessionContextStore only runs in BACKGROUND mode
         if self.config.mode != LearningMode.BACKGROUND:
             return
 
@@ -200,8 +189,7 @@ class SessionContextStore(LearningStore):
             data: Session context data from recall().
 
         Returns:
-            Context string to inject into the agent's system prompt,
-            or empty string if no data.
+            Context string to inject into the agent's system prompt.
         """
         if not data:
             return ""
@@ -224,29 +212,11 @@ class SessionContextStore(LearningStore):
             </session_context>\
         """)
 
-    def get_tools(
-        self,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        **kwargs,
-    ) -> List[Callable]:
-        """Session context has no agent tools (system-managed only).
-
-        Returns:
-            Empty list - session context is managed by background extraction only.
-        """
+    def get_tools(self, **kwargs) -> List[Callable]:
+        """Session context has no agent tools (system-managed only)."""
         return []
 
-    async def aget_tools(
-        self,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        **kwargs,
-    ) -> List[Callable]:
+    async def aget_tools(self, **kwargs) -> List[Callable]:
         """Async version of get_tools."""
         return []
 
@@ -352,14 +322,12 @@ class SessionContextStore(LearningStore):
     ) -> None:
         """Save or replace session context.
 
-        Note: Session context is REPLACED, not appended.
-
         Args:
             session_id: The unique session identifier.
             context: The context data to save.
-            user_id: Optional user context.
-            agent_id: Optional agent context.
-            team_id: Optional team context.
+            user_id: User context (stored in DB column for audit).
+            agent_id: Agent context (stored in DB column for audit).
+            team_id: Team context (stored in DB column for audit).
         """
         if not self.db or not context:
             return
@@ -463,30 +431,42 @@ class SessionContextStore(LearningStore):
             log_debug(f"SessionContextStore.adelete failed for session_id={session_id}: {e}")
             return False
 
-    def clear(self, session_id: str) -> None:
+    def clear(
+        self,
+        session_id: str,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> None:
         """Clear session context (reset to empty).
 
         Args:
             session_id: The unique session identifier.
+            agent_id: Agent context (stored for audit).
+            team_id: Team context (stored for audit).
         """
         if not self.db:
             return
 
         try:
             empty_context = self.schema(session_id=session_id)
-            self.save(session_id=session_id, context=empty_context)
+            self.save(session_id=session_id, context=empty_context, agent_id=agent_id, team_id=team_id)
             log_debug(f"SessionContextStore.clear: cleared context for session_id={session_id}")
         except Exception as e:
             log_debug(f"SessionContextStore.clear failed for session_id={session_id}: {e}")
 
-    async def aclear(self, session_id: str) -> None:
+    async def aclear(
+        self,
+        session_id: str,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> None:
         """Async version of clear."""
         if not self.db:
             return
 
         try:
             empty_context = self.schema(session_id=session_id)
-            await self.asave(session_id=session_id, context=empty_context)
+            await self.asave(session_id=session_id, context=empty_context, agent_id=agent_id, team_id=team_id)
             log_debug(f"SessionContextStore.aclear: cleared context for session_id={session_id}")
         except Exception as e:
             log_debug(f"SessionContextStore.aclear failed for session_id={session_id}: {e}")
@@ -505,14 +485,12 @@ class SessionContextStore(LearningStore):
     ) -> str:
         """Extract session context from messages and save.
 
-        Unlike UserProfileStore which accumulates, this REPLACES the context.
-
         Args:
             messages: Conversation messages to analyze.
             session_id: The unique session identifier.
-            user_id: Optional user context.
-            agent_id: Optional agent context.
-            team_id: Optional team context.
+            user_id: User context (stored for audit).
+            agent_id: Agent context (stored for audit).
+            team_id: Team context (stored for audit).
 
         Returns:
             Response from model.
@@ -527,13 +505,10 @@ class SessionContextStore(LearningStore):
 
         log_debug("SessionContextStore: Extracting session context", center=True)
 
-        # Reset state
         self.context_updated = False
 
-        # Build conversation text
         conversation_text = self._messages_to_text(messages=messages)
 
-        # Get tools
         tools = self._get_extraction_tools(
             session_id=session_id,
             user_id=user_id,
@@ -541,23 +516,18 @@ class SessionContextStore(LearningStore):
             team_id=team_id,
         )
 
-        # Convert to Function objects for model
         functions = self._build_functions_for_model(tools=tools)
 
-        # Build system message
         system_message = self._get_system_message(conversation_text=conversation_text)
 
-        # Prepare messages for model
         messages_for_model = [system_message]
 
-        # Generate response (model will call save_session_context tool)
         model_copy = deepcopy(self.model)
         response = model_copy.response(
             messages=messages_for_model,
             tools=functions,
         )
 
-        # Set context updated flag if tools were executed
         if response.tool_executions:
             self.context_updated = True
 
@@ -584,13 +554,10 @@ class SessionContextStore(LearningStore):
 
         log_debug("SessionContextStore: Extracting session context (async)", center=True)
 
-        # Reset state
         self.context_updated = False
 
-        # Build conversation text
         conversation_text = self._messages_to_text(messages=messages)
 
-        # Get tools
         tools = await self._aget_extraction_tools(
             session_id=session_id,
             user_id=user_id,
@@ -598,23 +565,18 @@ class SessionContextStore(LearningStore):
             team_id=team_id,
         )
 
-        # Convert to Function objects for model
         functions = self._build_functions_for_model(tools=tools)
 
-        # Build system message
         system_message = self._get_system_message(conversation_text=conversation_text)
 
-        # Prepare messages for model
         messages_for_model = [system_message]
 
-        # Generate response (model will call save_session_context tool)
         model_copy = deepcopy(self.model)
         response = await model_copy.aresponse(
             messages=messages_for_model,
             tools=functions,
         )
 
-        # Set context updated flag if tools were executed
         if response.tool_executions:
             self.context_updated = True
 
@@ -668,7 +630,6 @@ class SessionContextStore(LearningStore):
         """Build system message for extraction."""
         from agno.models.message import Message
 
-        # Full override from config
         if self.config.system_message is not None:
             return Message(role="system", content=self.config.system_message)
 
@@ -800,13 +761,6 @@ class SessionContextStore(LearningStore):
                     "summary": summary,
                 }
 
-                if user_id:
-                    context_data["user_id"] = user_id
-                if agent_id:
-                    context_data["agent_id"] = agent_id
-                if team_id:
-                    context_data["team_id"] = team_id
-
                 if enable_planning:
                     context_data["goal"] = goal
                     context_data["plan"] = plan or []
@@ -861,13 +815,6 @@ class SessionContextStore(LearningStore):
                     "summary": summary,
                 }
 
-                if user_id:
-                    context_data["user_id"] = user_id
-                if agent_id:
-                    context_data["agent_id"] = agent_id
-                if team_id:
-                    context_data["team_id"] = team_id
-
                 if enable_planning:
                     context_data["goal"] = goal
                     context_data["plan"] = plan or []
@@ -897,4 +844,10 @@ class SessionContextStore(LearningStore):
         """String representation for debugging."""
         has_db = self.db is not None
         has_model = self.model is not None
-        return f"SessionContextStore(mode={self.config.mode.value}, db={has_db}, model={has_model}, enable_planning={self.config.enable_planning})"
+        return (
+            f"SessionContextStore("
+            f"mode={self.config.mode.value}, "
+            f"db={has_db}, "
+            f"model={has_model}, "
+            f"enable_planning={self.config.enable_planning})"
+        )
