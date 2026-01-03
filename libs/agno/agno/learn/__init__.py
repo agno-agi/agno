@@ -4,61 +4,34 @@ Agno Learning Module
 Gives agents the ability to learn and remember.
 
 Main Components:
-- LearningMachine: Orchestrates all learning capabilities
-- Stores: Storage backends for each learning type
-- Schemas: Data structures for learnings
-- Config: Configuration options
-
-Quick Start:
-    >>> from agno.learn import LearningMachine
-    >>> from agno.learn.config import UserProfileConfig, LearningMode
-    >>>
-    >>> # Basic usage - just add to your agent
-    >>> learning = LearningMachine(
-    ...     db=my_db,
-    ...     model=my_model,
-    ...     user_profile=True,  # Enable user profile learning
-    ... )
-    >>>
-    >>> # Get context for agent prompt
-    >>> context = learning.build_context(user_id="alice")
-    >>>
-    >>> # Get tools to expose to agent
-    >>> tools = learning.get_tools(user_id="alice")
-    >>>
-    >>> # Process conversation for learnings
-    >>> learning.process(messages, user_id="alice")
-
-Learning Types:
-- UserProfile: Long-term memories about users (preferences, facts, history)
-- SessionContext: Current session state (summary, goals, progress)
-- LearnedKnowledge: Reusable insights that apply across users
-
-See Also:
-- agno.learn.config: Configuration options
-- agno.learn.schemas: Data structures
-- agno.learn.stores: Storage backends
+- LearningMachine: Unified learning system
+- Config: Configuration for learning types
+- Schemas: Data structures for learning types
+- Stores: Storage backends for learning types
 """
 
 from agno.learn.config import (
-    ExtractionConfig,
-    ExtractionTiming,
-    LearnedKnowledgeConfig,
     LearningMode,
-    SessionContextConfig,
+    ExtractionTiming,
+    ExtractionConfig,
     UserProfileConfig,
+    EntityMemoryConfig,
+    SessionContextConfig,
+    LearnedKnowledgeConfig,
 )
 from agno.learn.machine import LearningMachine
 from agno.learn.schemas import (
-    LearnedKnowledge,
-    SessionContext,
     UserProfile,
+    EntityMemory,
+    SessionContext,
+    LearnedKnowledge,
 )
 from agno.learn.stores import (
-    LearnedKnowledgeStore,
     LearningStore,
-    SessionContextStore,
     UserProfileStore,
+    EntityMemoryStore,
+    SessionContextStore,
+    LearnedKnowledgeStore,
 )
 
 __all__ = [
@@ -69,15 +42,18 @@ __all__ = [
     "ExtractionTiming",
     "ExtractionConfig",
     "UserProfileConfig",
+    "EntityMemoryConfig",
     "SessionContextConfig",
     "LearnedKnowledgeConfig",
     # Schemas
     "UserProfile",
+    "EntityMemory",
     "SessionContext",
     "LearnedKnowledge",
     # Stores
     "LearningStore",
     "UserProfileStore",
+    "EntityMemoryStore",
     "SessionContextStore",
     "LearnedKnowledgeStore",
 ]

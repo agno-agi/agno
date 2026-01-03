@@ -32,15 +32,10 @@ if TYPE_CHECKING:
 class LearningMode(Enum):
     """How learning is extracted and saved.
 
-    Attributes:
-        BACKGROUND: Automatically extract and save learnings in the background.
-                   No user interaction needed. Best for user profiles.
-        AGENTIC: Learning extraction is agent-driven via tool usage.
-                Agent decides when to save learnings using provided tools.
-        PROPOSE: Agent proposes learning in chat, user confirms before saving.
-                Best for explicit knowledge capture with user validation.
-        HITL: Human-in-the-loop. Background extracts and queues for human approval.
-              Best for sensitive or high-stakes learning types.
+    BACKGROUND: Automatic extraction after each response.
+    AGENTIC: Agent decides when to learn via tools.
+    PROPOSE: Agent proposes, human confirms.
+    HITL (Human-in-the-Loop): Reserved for future use.
     """
 
     BACKGROUND = "background"
@@ -54,9 +49,8 @@ class ExtractionTiming(Enum):
 
     Attributes:
         BEFORE: Runs before LLM call. Adds latency before response.
-               Use when you need fresh context for the response.
         PARALLEL: Runs while LLM generates response. Fast, but may
-                 duplicate if agent also saves learnings via tool.
+                 duplicate if agent also saves learnings.
         AFTER: Runs after response is returned. Slower, but can
               check what agent saved to avoid duplicates.
     """
@@ -96,18 +90,13 @@ class ExtractionConfig:
 class UserProfileConfig:
     """Configuration for User Profile learning type.
 
-    User Profile captures long-term memory about users that persists
-    across sessions: name, preferences, communication style, etc.
+    UserProfile stores long-term memory about users. It captures two types of data:
+    1. **Profile Fields** (structured): name, preferred_name, and custom
+       fields from extended schemas. Updated via `update_profile` tool.
+    2. **Memories** (unstructured): Observations and memories that don't fit schema fields.
+       Updated via `add_memory`, `update_memory`, `delete_memory` tools.
 
     Scope: USER (fixed) - Retrieved and stored by user_id.
-
-    ## Two Types of Profile Data
-
-    1. **Profile Fields** (structured): name, preferred_name, and any custom
-       fields added when extending the schema. Updated via `update_profile` tool.
-
-    2. **Memories** (unstructured): Observations that don't fit schema fields.
-       Updated via `add_memory`, `update_memory`, `delete_memory` tools.
 
     Attributes:
         db: Database backend for storage.
@@ -116,41 +105,22 @@ class UserProfileConfig:
         extraction: Extraction timing settings.
         schema: Custom schema for user profile data. Default: UserProfile.
 
-        # Extraction operations (BACKGROUND mode)
+        # Extraction operations
         enable_add_memory: Allow adding new memories during extraction.
         enable_update_memory: Allow updating existing memories.
         enable_delete_memory: Allow deleting memories.
         enable_clear_memories: Allow clearing all memories (dangerous).
         enable_update_profile: Allow updating profile fields (name, etc).
 
-        # Agent tools (AGENTIC mode or when enable_agent_tools=True)
-        enable_agent_tools: Master switch to expose tools to the agent.
-        agent_can_update_memories: If agent_tools enabled, allow memory updates.
-        agent_can_update_profile: If agent_tools enabled, allow profile updates.
+        # Agent tools
+        enable_agent_tools: Expose tools to the agent.
+        agent_can_update_memories: If agent_tools enabled, provide update_user_memory tool.
+        agent_can_update_profile: If agent_tools enabled, provide update_user_profile tool.
 
         # Prompt customization
-        system_message: Full override for extraction system message.
         instructions: Custom instructions for what to capture.
         additional_instructions: Extra instructions appended to default.
-
-    Example:
-        >>> config = UserProfileConfig(
-        ...     db=my_db,
-        ...     model=my_model,
-        ...     mode=LearningMode.BACKGROUND,
-        ...     enable_agent_tools=True,  # Expose tools to agent
-        ...     instructions="Focus on professional preferences only.",
-        ... )
-
-    Example with extended schema:
-        >>> @dataclass
-        ... class MyUserProfile(UserProfile):
-        ...     company: Optional[str] = field(default=None, metadata={"description": "Where they work"})
-        ...     role: Optional[str] = field(default=None, metadata={"description": "Job title"})
-        ...
-        >>> config = UserProfileConfig(
-        ...     schema=MyUserProfile,  # Agent sees company, role as updateable fields
-        ... )
+        system_message: Full override for extraction system message.
     """
 
     # Required fields
@@ -162,22 +132,22 @@ class UserProfileConfig:
     extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
     schema: Optional[Type[Any]] = None
 
-    # Extraction operations (what can happen during BACKGROUND extraction)
+    # Extraction operations
     enable_add_memory: bool = True
     enable_update_memory: bool = True
     enable_delete_memory: bool = True
     enable_clear_memories: bool = False  # Dangerous - disabled by default
     enable_update_profile: bool = True  # Allow updating profile fields
 
-    # Agent tools (AGENTIC mode or explicit enable)
-    enable_agent_tools: bool = False  # Master switch
-    agent_can_update_memories: bool = True  # If agent_tools enabled
-    agent_can_update_profile: bool = True  # If agent_tools enabled
+    # Agent tools
+    enable_agent_tools: bool = False
+    agent_can_update_memories: bool = True
+    agent_can_update_profile: bool = True
 
     # Prompt customization
-    system_message: Optional[str] = None
     instructions: Optional[str] = None
     additional_instructions: Optional[str] = None
+    system_message: Optional[str] = None
 
     def __repr__(self) -> str:
         return f"UserProfileConfig(mode={self.mode.value}, enable_agent_tools={self.enable_agent_tools})"
@@ -203,25 +173,17 @@ class SessionContextConfig:
         extraction: Extraction timing settings.
         schema: Custom schema for session context. Default: SessionContext.
 
-        # Feature flags
-        enable_planning: If True, extract goal/plan/progress in addition
-                        to summary. If False, extract summary only.
+        # Planning mode
+        enable_planning: Track goal, plan, and progress (not just summary).
+        enable_add_context: Allow creating new context.
+        enable_update_context: Allow updating existing context.
+        enable_delete_context: Allow deleting context.
+        enable_clear_context: Allow clearing context.
 
         # Prompt customization
-        system_message: Full override for extraction system message.
         instructions: Custom instructions for extraction.
         additional_instructions: Extra instructions appended to default.
-
-    Example:
-        >>> config = SessionContextConfig(
-        ...     db=my_db,
-        ...     model=my_model,
-        ...     extraction=ExtractionConfig(
-        ...         timing=ExtractionTiming.AFTER,
-        ...         run_after_messages=5,
-        ...     ),
-        ...     enable_planning=True,  # Track goals and progress
-        ... )
+        system_message: Full override for extraction system message.
     """
 
     # Required fields
@@ -233,13 +195,18 @@ class SessionContextConfig:
     extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
     schema: Optional[Type[Any]] = None
 
-    # Feature flags
+    # Planning mode
     enable_planning: bool = False
+    # Extraction operations
+    enable_add_context: bool = True
+    enable_update_context: bool = True
+    enable_delete_context: bool = True
+    enable_clear_context: bool = False
 
     # Prompt customization
-    system_message: Optional[str] = None
     instructions: Optional[str] = None
     additional_instructions: Optional[str] = None
+    system_message: Optional[str] = None
 
     def __repr__(self) -> str:
         return f"SessionContextConfig(mode={self.mode.value}, enable_planning={self.enable_planning})"
@@ -250,10 +217,12 @@ class LearnedKnowledgeConfig:
     """Configuration for Learned Knowledge learning type.
 
     Learned Knowledge captures reusable insights and patterns that
-    can be shared across users and potentially across agents.
+    can be shared across users and agents.
 
-    Scope: KNOWLEDGE (fixed) - Stored in Knowledge Base, retrieved
-    via semantic search based on current query.
+    Scope: KNOWLEDGE (fixed) + `namespace`:
+    - "user": Private learned knowledge per user
+    - "global": Shared with everyone (default)
+    - Custom string: Explicit grouping (e.g., "engineering", "sales_west")
 
     IMPORTANT: A knowledge base is required for learnings to work.
     Either provide it here or pass it to LearningMachine directly.
@@ -266,30 +235,22 @@ class LearnedKnowledgeConfig:
         extraction: Extraction settings (only if mode=BACKGROUND).
         schema: Custom schema for learning data. Default: LearnedKnowledge.
 
+        # Sharing boundary
+        namespace: Sharing boundary ("user", "global", or custom).
+
         # Agent tools
-        enable_agent_tools: Master switch to expose tools to the agent.
-        enable_save: If agent_tools enabled, provide save_learning tool.
-        enable_search: If agent_tools enabled, provide search_learnings tool.
+        enable_agent_tools: Expose tools to the agent.
+        agent_can_save: If agent_tools enabled, provide save_learning tool.
+        agent_can_search: If agent_tools enabled, provide search_learnings tool.
 
         # Prompt customization
-        system_message: Full override for extraction system message.
         instructions: Custom instructions for what makes a good learning.
         additional_instructions: Extra instructions appended to default.
-
-    Example:
-        >>> config = LearnedKnowledgeConfig(
-        ...     knowledge=my_knowledge_base,  # Required!
-        ...     mode=LearningMode.AGENTIC,    # Agent saves via tool
-        ...     enable_agent_tools=True,
-        ...     enable_save=True,
-        ...     enable_search=True,
-        ... )
+        system_message: Full override for extraction system message.
     """
 
     # Knowledge base - required for learnings to work
     knowledge: Optional[Any] = None  # agno.knowledge.Knowledge
-
-    # Model for extraction (optional, only needed for BACKGROUND mode)
     model: Optional["Model"] = None
 
     # Mode and extraction
@@ -297,15 +258,18 @@ class LearnedKnowledgeConfig:
     extraction: Optional[ExtractionConfig] = None
     schema: Optional[Type[Any]] = None
 
+    # Sharing boundary
+    namespace: str = "global"
+
     # Agent tools
-    enable_agent_tools: bool = True  # Master switch (default True for learnings)
-    enable_save: bool = True  # save_learning tool (if agent_tools enabled)
-    enable_search: bool = True  # search_learnings tool (if agent_tools enabled)
+    enable_agent_tools: bool = True
+    agent_can_save: bool = True
+    agent_can_search: bool = True
 
     # Prompt customization
-    system_message: Optional[str] = None
     instructions: Optional[str] = None
     additional_instructions: Optional[str] = None
+    system_message: Optional[str] = None
 
     def __post_init__(self):
         """Validate configuration."""
@@ -329,6 +293,89 @@ class LearnedKnowledgeConfig:
     def __repr__(self) -> str:
         has_knowledge = self.knowledge is not None
         return f"LearnedKnowledgeConfig(mode={self.mode.value}, knowledge={has_knowledge}, enable_agent_tools={self.enable_agent_tools})"
+
+
+@dataclass
+class EntityMemoryConfig:
+    """Configuration for EntityMemory learning type.
+
+    EntityMemory stores facts about third-party entities: companies,
+    projects, people, systems, products, etc. Think of it as UserProfile
+    but for things that aren't the user.
+
+    Entities have:
+    - Core properties (name, description, key-value properties)
+    - Facts (semantic memory - "Acme uses PostgreSQL")
+    - Events (episodic memory - "Acme launched v2 on Jan 15")
+    - Relationships (graph edges - "Bob is CEO of Acme")
+
+    Scope is controlled by `namespace`:
+    - "user": Private entity graph per user
+    - "global": Shared with everyone (default)
+    - Custom string: Explicit grouping (e.g., "sales_west")
+
+    Attributes:
+        db: Database backend for storage.
+        model: Model for extraction (required for BACKGROUND mode).
+        mode: How learning is extracted. Default: BACKGROUND.
+        extraction: Extraction timing settings.
+        schema: Custom schema for entity memory data. Default: EntityMemory.
+
+        # Sharing boundary
+        namespace: Sharing boundary ("user", "global", or custom).
+
+        # Extraction operations
+        enable_create_entity: Allow creating new entities.
+        enable_update_entity: Allow updating entity properties.
+        enable_add_fact: Allow adding facts to entities.
+        enable_update_fact: Allow updating existing facts.
+        enable_delete_fact: Allow deleting facts.
+        enable_add_event: Allow adding events to entities.
+        enable_add_relationship: Allow adding relationships.
+
+        # Agent tools
+        enable_agent_tools: Expose tools to the agent.
+        agent_can_create_entity: If agent_tools enabled, provide create_entity tool.
+        agent_can_update_entity: If agent_tools enabled, provide update_entity tool.
+        agent_can_search_entities: If agent_tools enabled, provide search_entities tool.
+
+        # Prompt customization
+        instructions: Custom instructions for what makes a good learning.
+        additional_instructions: Extra instructions appended to default.
+        system_message: Full override for extraction system message.
+    """
+
+    # Required fields
+    db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
+    model: Optional["Model"] = None
+
+    # Mode and extraction
+    mode: LearningMode = LearningMode.BACKGROUND
+    extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
+    schema: Optional[Type[Any]] = None
+
+    # Sharing boundary
+    namespace: str = "global"
+
+    # Extraction operations
+    enable_create_entity: bool = True
+    enable_update_entity: bool = True
+    enable_add_fact: bool = True
+    enable_update_fact: bool = True
+    enable_delete_fact: bool = True
+    enable_add_event: bool = True
+    enable_add_relationship: bool = True
+
+    # Agent tools
+    enable_agent_tools: bool = False
+    agent_can_create_entity: bool = True
+    agent_can_update_entity: bool = True
+    agent_can_search_entities: bool = True
+
+    # Prompt customization
+    instructions: Optional[str] = None
+    additional_instructions: Optional[str] = None
+    system_message: Optional[str] = None
 
 
 # =============================================================================
@@ -359,8 +406,8 @@ class DecisionLogConfig:
 
     # Agent tools
     enable_agent_tools: bool = True
-    enable_save: bool = True
-    enable_search: bool = True
+    agent_can_save: bool = True
+    agent_can_search: bool = True
 
     # Prompt customization
     system_message: Optional[str] = None
