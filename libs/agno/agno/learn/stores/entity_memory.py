@@ -223,6 +223,10 @@ class EntityMemoryStore(LearningStore):
     def build_context(self, data: Any) -> str:
         """Build context for the agent.
 
+        Formats entity memory for injection into the agent's system prompt.
+        Entity memory provides knowledge about external things - people, companies,
+        projects, products - distinct from knowledge about the user themselves.
+
         Args:
             data: Entity memory data from recall() - single entity or list.
 
@@ -232,12 +236,27 @@ class EntityMemoryStore(LearningStore):
         if not data:
             if self.config.enable_agent_tools:
                 return dedent("""\
-                    <entity_memory>
-                    You have access to entity memory tools to store and retrieve
-                    information about people, companies, projects, and other entities.
+                    <entity_memory_system>
+                    You have access to entity memory - a knowledge base about people, companies,
+                    projects, products, and other external entities relevant to your work.
 
-                    Use `search_entities` to find info, `create_entity` to store new entities.
-                    </entity_memory>""")
+                    **Available Tools:**
+                    - `search_entities`: Find stored information about entities
+                    - `create_entity`: Store a new entity with its facts
+                    - `add_fact`: Add a timeless truth about an entity
+                    - `add_event`: Record a time-bound occurrence
+                    - `add_relationship`: Capture connections between entities
+
+                    **When to use entity memory:**
+                    - You learn something substantive about a company, person, or project
+                    - Information would be useful to recall in future conversations
+                    - Facts are stable enough to be worth storing
+
+                    **Entity memory vs other memory types:**
+                    - User memory = about THE USER (their preferences, role, context)
+                    - Entity memory = about EXTERNAL THINGS (companies, people, projects)
+                    - Learned knowledge = reusable TASK insights (patterns, approaches)
+                    </entity_memory_system>""")
             return ""
 
         # Handle single entity or list
@@ -257,20 +276,25 @@ class EntityMemoryStore(LearningStore):
 
         context = dedent(f"""\
             <entity_memory>
-            Known information about relevant entities:
+            **Known information about relevant entities:**
 
             {formatted}
+
+            <entity_memory_guidelines>
+            Use this knowledge naturally in your responses:
+            - Reference stored facts without citing "entity memory"
+            - Treat this as background knowledge you simply have
+            - Current conversation takes precedence if there's conflicting information
+            - Update entity memory if you learn something new and substantive
+            </entity_memory_guidelines>
         """)
 
         if self.config.enable_agent_tools:
             context += dedent("""
-            Use entity memory tools to search, create, or update entities.
-            Current conversation takes precedence over stored info.
+            Entity memory tools are available to search, create, or update entities.
             </entity_memory>""")
         else:
-            context += dedent("""
-            Use this for context. Current conversation takes precedence.
-            </entity_memory>""")
+            context += "</entity_memory>"
 
         return context
 
@@ -572,18 +596,33 @@ class EntityMemoryStore(LearningStore):
             entity_type: Optional[str] = None,
             limit: int = 5,
         ) -> str:
-            """Search for entities in memory.
+            """Search for entities in the knowledge base.
 
-            Use this to find information about people, companies, projects,
-            or other entities that have been stored.
+            Use this to recall information about people, companies, projects, products,
+            or other entities that have been stored. Searches across names, facts,
+            events, and relationships.
+
+            **Good times to search:**
+            - Before discussing a company/person that might have stored context
+            - When the user references an entity by name
+            - To recall details about a project or product
+            - To find relationships between entities
+
+            **Search tips:**
+            - Search by name: "Acme Corp", "Jane Smith"
+            - Search by attribute: "PostgreSQL", "San Francisco"
+            - Search by relationship: "CEO", "competitor"
+            - Combine with entity_type to narrow results
 
             Args:
-                query: What to search for (e.g., "Acme", "PostgreSQL", "CEO")
-                entity_type: Filter by type (e.g., "person", "company", "project")
-                limit: Maximum results to return (default: 5)
+                query: What to search for. Can be a name, fact content, relationship,
+                       or any text that might appear in entity records.
+                       Examples: "Acme", "uses PostgreSQL", "VP Engineering"
+                entity_type: Optional filter - "person", "company", "project", "product", etc.
+                limit: Maximum results (default: 5)
 
             Returns:
-                Formatted list of matching entities with their facts.
+                Formatted list of matching entities with their facts, events, and relationships.
             """
             results = self.search(
                 query=query,
@@ -613,18 +652,33 @@ class EntityMemoryStore(LearningStore):
             entity_type: Optional[str] = None,
             limit: int = 5,
         ) -> str:
-            """Search for entities in memory.
+            """Search for entities in the knowledge base.
 
-            Use this to find information about people, companies, projects,
-            or other entities that have been stored.
+            Use this to recall information about people, companies, projects, products,
+            or other entities that have been stored. Searches across names, facts,
+            events, and relationships.
+
+            **Good times to search:**
+            - Before discussing a company/person that might have stored context
+            - When the user references an entity by name
+            - To recall details about a project or product
+            - To find relationships between entities
+
+            **Search tips:**
+            - Search by name: "Acme Corp", "Jane Smith"
+            - Search by attribute: "PostgreSQL", "San Francisco"
+            - Search by relationship: "CEO", "competitor"
+            - Combine with entity_type to narrow results
 
             Args:
-                query: What to search for (e.g., "Acme", "PostgreSQL", "CEO")
-                entity_type: Filter by type (e.g., "person", "company", "project")
-                limit: Maximum results to return (default: 5)
+                query: What to search for. Can be a name, fact content, relationship,
+                       or any text that might appear in entity records.
+                       Examples: "Acme", "uses PostgreSQL", "VP Engineering"
+                entity_type: Optional filter - "person", "company", "project", "product", etc.
+                limit: Maximum results (default: 5)
 
             Returns:
-                Formatted list of matching entities with their facts.
+                Formatted list of matching entities with their facts, events, and relationships.
             """
             results = await self.asearch(
                 query=query,
@@ -662,17 +716,37 @@ class EntityMemoryStore(LearningStore):
             description: Optional[str] = None,
             properties: Optional[Dict[str, str]] = None,
         ) -> str:
-            """Create a new entity in memory.
+            """Create a new entity in the knowledge base.
 
-            Use this to store information about a person, company, project,
-            or other entity mentioned in the conversation.
+            Use this when you encounter a person, company, project, or other entity
+            worth remembering. Create the entity first, then add facts/events/relationships.
+
+            **When to create an entity:**
+            - A company, person, or project is discussed with substantive details
+            - Information would be useful to recall in future conversations
+            - The entity has a specific identity (not just "a company")
+
+            **When NOT to create:**
+            - For the user themselves (use user memory)
+            - For generic concepts without specific identity
+            - For one-off mentions with no useful details
 
             Args:
-                entity_id: Unique identifier (lowercase, underscores: "acme_corp")
-                entity_type: Type ("person", "company", "project", "product", etc.)
-                name: Display name for the entity
-                description: Brief description of what this entity is
-                properties: Key-value properties (e.g., {"industry": "fintech"})
+                entity_id: Unique identifier using lowercase and underscores.
+                          Convention: descriptive name like "acme_corp", "jane_smith", "project_atlas"
+                          Bad: "company1", "entity_123", "c"
+                entity_type: Category of entity. Common types:
+                          - "person": Individual people
+                          - "company": Businesses, organizations
+                          - "project": Specific initiatives or projects
+                          - "product": Software, services, offerings
+                          - "system": Technical systems, platforms
+                          - "concept": Domain-specific concepts worth tracking
+                name: Human-readable display name (e.g., "Acme Corporation", "Jane Smith")
+                description: Brief description of what/who this entity is.
+                          Good: "Enterprise SaaS startup in the fintech space, potential client"
+                          Bad: "A company" (too vague)
+                properties: Optional key-value metadata (e.g., {"industry": "fintech", "stage": "Series A"})
 
             Returns:
                 Confirmation message.
@@ -712,17 +786,37 @@ class EntityMemoryStore(LearningStore):
             description: Optional[str] = None,
             properties: Optional[Dict[str, str]] = None,
         ) -> str:
-            """Create a new entity in memory.
+            """Create a new entity in the knowledge base.
 
-            Use this to store information about a person, company, project,
-            or other entity mentioned in the conversation.
+            Use this when you encounter a person, company, project, or other entity
+            worth remembering. Create the entity first, then add facts/events/relationships.
+
+            **When to create an entity:**
+            - A company, person, or project is discussed with substantive details
+            - Information would be useful to recall in future conversations
+            - The entity has a specific identity (not just "a company")
+
+            **When NOT to create:**
+            - For the user themselves (use user memory)
+            - For generic concepts without specific identity
+            - For one-off mentions with no useful details
 
             Args:
-                entity_id: Unique identifier (lowercase, underscores: "acme_corp")
-                entity_type: Type ("person", "company", "project", "product", etc.)
-                name: Display name for the entity
-                description: Brief description of what this entity is
-                properties: Key-value properties (e.g., {"industry": "fintech"})
+                entity_id: Unique identifier using lowercase and underscores.
+                          Convention: descriptive name like "acme_corp", "jane_smith", "project_atlas"
+                          Bad: "company1", "entity_123", "c"
+                entity_type: Category of entity. Common types:
+                          - "person": Individual people
+                          - "company": Businesses, organizations
+                          - "project": Specific initiatives or projects
+                          - "product": Software, services, offerings
+                          - "system": Technical systems, platforms
+                          - "concept": Domain-specific concepts worth tracking
+                name: Human-readable display name (e.g., "Acme Corporation", "Jane Smith")
+                description: Brief description of what/who this entity is.
+                          Good: "Enterprise SaaS startup in the fintech space, potential client"
+                          Bad: "A company" (too vague)
+                properties: Optional key-value metadata (e.g., {"industry": "fintech", "stage": "Series A"})
 
             Returns:
                 Confirmation message.
@@ -768,15 +862,24 @@ class EntityMemoryStore(LearningStore):
         ) -> str:
             """Update an existing entity's core properties.
 
-            Use this to modify an entity's name, description, or properties.
-            Only provided fields will be updated.
+            Use this to modify the entity's identity information. Only provided
+            fields will be updated - omitted fields remain unchanged.
+
+            **When to update:**
+            - Name change: Company rebranded, person changed name
+            - Description evolved: Better understanding of what entity is
+            - Properties changed: New metadata to add
+
+            **Note:** To update facts, events, or relationships, use the specific
+            tools (update_fact, add_event, add_relationship) instead.
 
             Args:
                 entity_id: The entity's identifier
                 entity_type: Type of entity
-                name: New display name (optional)
-                description: New description (optional)
-                properties: Properties to add/update (optional, merged with existing)
+                name: New display name (only if changed)
+                description: New description (only if you have better info)
+                properties: Properties to add/update (merged with existing)
+                           Existing properties not in this dict are preserved
 
             Returns:
                 Confirmation message.
@@ -818,15 +921,24 @@ class EntityMemoryStore(LearningStore):
         ) -> str:
             """Update an existing entity's core properties.
 
-            Use this to modify an entity's name, description, or properties.
-            Only provided fields will be updated.
+            Use this to modify the entity's identity information. Only provided
+            fields will be updated - omitted fields remain unchanged.
+
+            **When to update:**
+            - Name change: Company rebranded, person changed name
+            - Description evolved: Better understanding of what entity is
+            - Properties changed: New metadata to add
+
+            **Note:** To update facts, events, or relationships, use the specific
+            tools (update_fact, add_event, add_relationship) instead.
 
             Args:
                 entity_id: The entity's identifier
                 entity_type: Type of entity
-                name: New display name (optional)
-                description: New description (optional)
-                properties: Properties to add/update (optional, merged with existing)
+                name: New display name (only if changed)
+                description: New description (only if you have better info)
+                properties: Properties to add/update (merged with existing)
+                           Existing properties not in this dict are preserved
 
             Returns:
                 Confirmation message.
@@ -870,13 +982,29 @@ class EntityMemoryStore(LearningStore):
         ) -> str:
             """Add a fact to an entity.
 
-            Facts are timeless truths about the entity (semantic memory).
-            Examples: "Uses PostgreSQL", "Based in San Francisco", "Founded in 2020"
+            Facts are **timeless truths** about an entity (semantic memory).
+            They describe what IS, not what HAPPENED.
+
+            **Good facts (timeless, descriptive):**
+            - "Uses PostgreSQL and Redis for their data layer"
+            - "Headquarters in San Francisco, engineering team in Austin"
+            - "Founded by ex-Google engineers in 2019"
+            - "Main product is a B2B analytics platform"
+            - "Prefers async communication via Slack"
+
+            **Not facts (use events instead):**
+            - "Launched v2.0 last month" → This is an EVENT (time-bound)
+            - "Just closed Series B" → This is an EVENT
+            - "Had a meeting yesterday" → This is an EVENT
+
+            **Not facts (too vague):**
+            - "It's a good company" → Subjective, not useful
+            - "They do tech stuff" → Too vague
 
             Args:
-                entity_id: The entity's identifier
-                entity_type: Type of entity
-                fact: The fact to add
+                entity_id: The entity's identifier (e.g., "acme_corp")
+                entity_type: Type of entity (e.g., "company")
+                fact: The fact to add - should be specific and timeless
 
             Returns:
                 Confirmation message with fact ID.
@@ -914,13 +1042,29 @@ class EntityMemoryStore(LearningStore):
         ) -> str:
             """Add a fact to an entity.
 
-            Facts are timeless truths about the entity (semantic memory).
-            Examples: "Uses PostgreSQL", "Based in San Francisco", "Founded in 2020"
+            Facts are **timeless truths** about an entity (semantic memory).
+            They describe what IS, not what HAPPENED.
+
+            **Good facts (timeless, descriptive):**
+            - "Uses PostgreSQL and Redis for their data layer"
+            - "Headquarters in San Francisco, engineering team in Austin"
+            - "Founded by ex-Google engineers in 2019"
+            - "Main product is a B2B analytics platform"
+            - "Prefers async communication via Slack"
+
+            **Not facts (use events instead):**
+            - "Launched v2.0 last month" → This is an EVENT (time-bound)
+            - "Just closed Series B" → This is an EVENT
+            - "Had a meeting yesterday" → This is an EVENT
+
+            **Not facts (too vague):**
+            - "It's a good company" → Subjective, not useful
+            - "They do tech stuff" → Too vague
 
             Args:
-                entity_id: The entity's identifier
-                entity_type: Type of entity
-                fact: The fact to add
+                entity_id: The entity's identifier (e.g., "acme_corp")
+                entity_type: Type of entity (e.g., "company")
+                fact: The fact to add - should be specific and timeless
 
             Returns:
                 Confirmation message with fact ID.
@@ -963,11 +1107,23 @@ class EntityMemoryStore(LearningStore):
         ) -> str:
             """Update an existing fact on an entity.
 
+            Use this when a fact needs correction or has become more specific.
+            The new fact completely replaces the old one.
+
+            **When to update:**
+            - Correction: Original fact was wrong
+            - More detail: "Uses PostgreSQL" → "Uses PostgreSQL 15 with TimescaleDB extension"
+            - Changed reality: "50 employees" → "75 employees after recent hiring"
+
+            **When to delete instead:**
+            - Fact is no longer true and shouldn't be replaced
+            - Fact was a misunderstanding
+
             Args:
                 entity_id: The entity's identifier
                 entity_type: Type of entity
-                fact_id: ID of the fact to update
-                fact: New fact content
+                fact_id: ID of the fact to update (from search_entities results)
+                fact: New fact content - complete replacement, not a diff
 
             Returns:
                 Confirmation message.
@@ -1007,11 +1163,23 @@ class EntityMemoryStore(LearningStore):
         ) -> str:
             """Update an existing fact on an entity.
 
+            Use this when a fact needs correction or has become more specific.
+            The new fact completely replaces the old one.
+
+            **When to update:**
+            - Correction: Original fact was wrong
+            - More detail: "Uses PostgreSQL" → "Uses PostgreSQL 15 with TimescaleDB extension"
+            - Changed reality: "50 employees" → "75 employees after recent hiring"
+
+            **When to delete instead:**
+            - Fact is no longer true and shouldn't be replaced
+            - Fact was a misunderstanding
+
             Args:
                 entity_id: The entity's identifier
                 entity_type: Type of entity
-                fact_id: ID of the fact to update
-                fact: New fact content
+                fact_id: ID of the fact to update (from search_entities results)
+                fact: New fact content - complete replacement, not a diff
 
             Returns:
                 Confirmation message.
@@ -1054,10 +1222,23 @@ class EntityMemoryStore(LearningStore):
         ) -> str:
             """Delete a fact from an entity.
 
+            Use this when a fact is no longer accurate and shouldn't be replaced
+            with updated information.
+
+            **When to delete:**
+            - Fact was incorrect/misunderstood
+            - Fact is no longer true (and no replacement makes sense)
+            - Duplicate of another fact
+            - Too vague to be useful
+
+            **When to update instead:**
+            - Fact needs correction but the topic is still relevant
+            - Fact needs more detail
+
             Args:
                 entity_id: The entity's identifier
                 entity_type: Type of entity
-                fact_id: ID of the fact to delete
+                fact_id: ID of the fact to delete (from search_entities results)
 
             Returns:
                 Confirmation message.
@@ -1095,10 +1276,23 @@ class EntityMemoryStore(LearningStore):
         ) -> str:
             """Delete a fact from an entity.
 
+            Use this when a fact is no longer accurate and shouldn't be replaced
+            with updated information.
+
+            **When to delete:**
+            - Fact was incorrect/misunderstood
+            - Fact is no longer true (and no replacement makes sense)
+            - Duplicate of another fact
+            - Too vague to be useful
+
+            **When to update instead:**
+            - Fact needs correction but the topic is still relevant
+            - Fact needs more detail
+
             Args:
                 entity_id: The entity's identifier
                 entity_type: Type of entity
-                fact_id: ID of the fact to delete
+                fact_id: ID of the fact to delete (from search_entities results)
 
             Returns:
                 Confirmation message.
@@ -1141,14 +1335,32 @@ class EntityMemoryStore(LearningStore):
         ) -> str:
             """Add an event to an entity.
 
-            Events are time-bound occurrences (episodic memory).
-            Examples: "Launched v2.0", "Acquired by BigCorp", "Had outage"
+            Events are **time-bound occurrences** (episodic memory).
+            They describe what HAPPENED, not what IS.
+
+            **Good events (specific, time-bound):**
+            - "Launched v2.0 with new ML features" (date: "2025-01-15")
+            - "Closed $50M Series B led by Sequoia" (date: "2024-Q3")
+            - "Had 4-hour outage affecting payment processing" (date: "2024-12-20")
+            - "CEO announced pivot to enterprise market" (date: "2024-11")
+            - "Initial discovery call - interested in our analytics product"
+
+            **Not events (use facts instead):**
+            - "Uses PostgreSQL" → This is a FACT (timeless truth)
+            - "Based in San Francisco" → This is a FACT
+            - "Has 50 employees" → This is a FACT
+
+            **Include dates when known** - even approximate dates help:
+            - Exact: "2025-01-15"
+            - Month: "January 2025" or "2025-01"
+            - Quarter: "Q1 2025"
+            - Relative: "early 2024", "last week"
 
             Args:
-                entity_id: The entity's identifier
-                entity_type: Type of entity
-                event: Description of what happened
-                date: When it happened (ISO format or natural language)
+                entity_id: The entity's identifier (e.g., "acme_corp")
+                entity_type: Type of entity (e.g., "company")
+                event: Description of what happened - be specific
+                date: When it happened (ISO format, natural language, or approximate)
 
             Returns:
                 Confirmation message with event ID.
@@ -1188,14 +1400,32 @@ class EntityMemoryStore(LearningStore):
         ) -> str:
             """Add an event to an entity.
 
-            Events are time-bound occurrences (episodic memory).
-            Examples: "Launched v2.0", "Acquired by BigCorp", "Had outage"
+            Events are **time-bound occurrences** (episodic memory).
+            They describe what HAPPENED, not what IS.
+
+            **Good events (specific, time-bound):**
+            - "Launched v2.0 with new ML features" (date: "2025-01-15")
+            - "Closed $50M Series B led by Sequoia" (date: "2024-Q3")
+            - "Had 4-hour outage affecting payment processing" (date: "2024-12-20")
+            - "CEO announced pivot to enterprise market" (date: "2024-11")
+            - "Initial discovery call - interested in our analytics product"
+
+            **Not events (use facts instead):**
+            - "Uses PostgreSQL" → This is a FACT (timeless truth)
+            - "Based in San Francisco" → This is a FACT
+            - "Has 50 employees" → This is a FACT
+
+            **Include dates when known** - even approximate dates help:
+            - Exact: "2025-01-15"
+            - Month: "January 2025" or "2025-01"
+            - Quarter: "Q1 2025"
+            - Relative: "early 2024", "last week"
 
             Args:
-                entity_id: The entity's identifier
-                entity_type: Type of entity
-                event: Description of what happened
-                date: When it happened (ISO format or natural language)
+                entity_id: The entity's identifier (e.g., "acme_corp")
+                entity_type: Type of entity (e.g., "company")
+                event: Description of what happened - be specific
+                date: When it happened (ISO format, natural language, or approximate)
 
             Returns:
                 Confirmation message with event ID.
@@ -1238,17 +1468,44 @@ class EntityMemoryStore(LearningStore):
             relation: str,
             direction: str = "outgoing",
         ) -> str:
-            """Add a relationship between entities.
+            """Add a relationship between two entities.
 
-            Relationships are graph edges connecting entities.
-            Examples: "CEO of", "owns", "part_of", "competitor_of"
+            Relationships are **graph edges** connecting entities - they capture
+            how entities relate to each other.
+
+            **Common relationship patterns:**
+
+            People → Companies:
+            - "jane_smith" --[CEO]--> "acme_corp"
+            - "bob_jones" --[engineer_at]--> "acme_corp"
+            - "sarah_chen" --[founder]--> "startup_xyz"
+
+            Companies → Companies:
+            - "acme_corp" --[competitor_of]--> "beta_inc"
+            - "acme_corp" --[acquired]--> "small_startup"
+            - "acme_corp" --[partner_of]--> "big_vendor"
+
+            Projects → Other entities:
+            - "project_atlas" --[uses]--> "postgresql"
+            - "project_atlas" --[owned_by]--> "acme_corp"
+            - "project_atlas" --[led_by]--> "jane_smith"
+
+            **Direction matters:**
+            - "outgoing": This entity → Related entity (default)
+              "jane_smith" --[CEO]--> "acme_corp" means Jane IS CEO OF Acme
+            - "incoming": Related entity → This entity
+              "acme_corp" with incoming "CEO" from "jane_smith" means Acme HAS CEO Jane
 
             Args:
                 entity_id: The source entity's identifier
                 entity_type: Type of source entity
-                related_entity_id: The target entity's identifier
-                relation: Type of relationship ("CEO", "owns", "part_of", etc.)
-                direction: "outgoing" (this → other) or "incoming" (other → this)
+                related_entity_id: The target entity's identifier (must exist or will be created)
+                relation: Type of relationship - use clear, consistent labels:
+                         For roles: "CEO", "CTO", "engineer_at", "founder"
+                         For ownership: "owns", "owned_by", "part_of"
+                         For competition: "competitor_of", "partner_of"
+                         For technical: "uses", "depends_on", "integrates_with"
+                direction: "outgoing" (source → target) or "incoming" (target → source)
 
             Returns:
                 Confirmation message with relationship ID.
@@ -1288,17 +1545,44 @@ class EntityMemoryStore(LearningStore):
             relation: str,
             direction: str = "outgoing",
         ) -> str:
-            """Add a relationship between entities.
+            """Add a relationship between two entities.
 
-            Relationships are graph edges connecting entities.
-            Examples: "CEO of", "owns", "part_of", "competitor_of"
+            Relationships are **graph edges** connecting entities - they capture
+            how entities relate to each other.
+
+            **Common relationship patterns:**
+
+            People → Companies:
+            - "jane_smith" --[CEO]--> "acme_corp"
+            - "bob_jones" --[engineer_at]--> "acme_corp"
+            - "sarah_chen" --[founder]--> "startup_xyz"
+
+            Companies → Companies:
+            - "acme_corp" --[competitor_of]--> "beta_inc"
+            - "acme_corp" --[acquired]--> "small_startup"
+            - "acme_corp" --[partner_of]--> "big_vendor"
+
+            Projects → Other entities:
+            - "project_atlas" --[uses]--> "postgresql"
+            - "project_atlas" --[owned_by]--> "acme_corp"
+            - "project_atlas" --[led_by]--> "jane_smith"
+
+            **Direction matters:**
+            - "outgoing": This entity → Related entity (default)
+              "jane_smith" --[CEO]--> "acme_corp" means Jane IS CEO OF Acme
+            - "incoming": Related entity → This entity
+              "acme_corp" with incoming "CEO" from "jane_smith" means Acme HAS CEO Jane
 
             Args:
                 entity_id: The source entity's identifier
                 entity_type: Type of source entity
-                related_entity_id: The target entity's identifier
-                relation: Type of relationship ("CEO", "owns", "part_of", etc.)
-                direction: "outgoing" (this → other) or "incoming" (other → this)
+                related_entity_id: The target entity's identifier (must exist or will be created)
+                relation: Type of relationship - use clear, consistent labels:
+                         For roles: "CEO", "CTO", "engineer_at", "founder"
+                         For ownership: "owns", "owned_by", "part_of"
+                         For competition: "competitor_of", "partner_of"
+                         For technical: "uses", "depends_on", "integrates_with"
+                direction: "outgoing" (source → target) or "incoming" (target → source)
 
             Returns:
                 Confirmation message with relationship ID.
@@ -2425,44 +2709,122 @@ class EntityMemoryStore(LearningStore):
             return {"role": "system", "content": self.config.system_message}
 
         content = dedent("""\
-            You are an Entity Extractor. Identify people, companies, projects,
-            and other notable entities mentioned in conversations.
+            You are an Entity Extractor. Your job is to identify and capture knowledge about
+            external entities - people, companies, projects, products, systems, and other things
+            mentioned in conversations that are worth remembering.
+
+            ## Philosophy
+
+            Entity memory is your knowledge about the WORLD, distinct from:
+            - **User memory**: What you know about the user themselves
+            - **Learned knowledge**: Reusable task insights and patterns
+            - **Session context**: State of the current conversation
+
+            Think of entity memory like a professional's mental rolodex - the accumulated knowledge
+            about clients, companies, technologies, and projects that helps you work effectively.
 
             ## Entity Structure
 
-            Entities have:
-            - **Core**: entity_id (lowercase_underscores), entity_type, name, description, properties
-            - **Facts**: Timeless truths (semantic memory) - "Uses PostgreSQL", "Based in SF"
-            - **Events**: Time-bound occurrences (episodic memory) - "Launched v2 on Jan 15"
-            - **Relationships**: Connections to other entities - "Bob is CEO of Acme"
+            Each entity has:
+
+            **Core identity:**
+            - `entity_id`: Lowercase with underscores (e.g., "acme_corp", "jane_smith", "project_atlas")
+            - `entity_type`: Category - "person", "company", "project", "product", "system", "concept"
+            - `name`: Human-readable display name
+            - `description`: Brief description of what this entity is
+
+            **Three types of memory:**
+
+            1. **Facts** (semantic memory) - Timeless truths about the entity
+               - "Uses PostgreSQL for their main database"
+               - "Headquarters in San Francisco"
+               - "Founded in 2019"
+               - "Prefers async communication"
+
+            2. **Events** (episodic memory) - Time-bound occurrences
+               - "Launched v2.0 on January 15, 2025"
+               - "Acquired by BigCorp in Q3 2024"
+               - "Had a major outage affecting 10K users"
+               - "Completed Series B funding"
+
+            3. **Relationships** (graph edges) - Connections to other entities
+               - "Bob Smith" --[CEO]--> "Acme Corp"
+               - "Project Atlas" --[uses]--> "PostgreSQL"
+               - "Acme Corp" --[competitor_of]--> "Beta Inc"
+               - "Jane" --[reports_to]--> "Bob"
 
             ## What to Extract
 
-            Extract entities that are:
-            - Mentioned by name (people, companies, products, projects)
-            - Important to the conversation context
-            - Likely to be referenced again
+            **DO extract entities that are:**
+            - Named specifically (not just "a company" but "Acme Corp")
+            - Substantively discussed (not just mentioned in passing)
+            - Likely to be referenced again in future conversations
+            - Important to the user's work or context
+
+            **DO capture:**
+            - Companies the user works with or mentions repeatedly
+            - People (colleagues, clients, stakeholders) with specific roles
+            - Projects with concrete details
+            - Products or systems with technical specifics
+            - Organizations relevant to the user's domain
 
             ## What NOT to Extract
 
-            - The user themselves (that's UserProfile, not EntityMemory)
-            - Generic concepts without specific identifiers
-            - One-off mentions unlikely to recur
+            **DO NOT extract:**
+            - The user themselves (that belongs in UserProfile)
+            - Generic concepts without specific identity ("databases" vs "PostgreSQL")
+            - One-off mentions unlikely to recur ("I saw a company on the news")
+            - Entities with no substantive information to store
+            - Publicly available information that's easily searchable
 
-            ## Guidelines
+            **Avoid:**
+            - Creating entities just because something was named
+            - Storing obvious facts ("Google is a tech company")
+            - Duplicating information across multiple entities unnecessarily
 
-            - Use lowercase_underscore entity_ids (e.g., "acme_corp", "bob_smith")
-            - Choose appropriate entity_type (person, company, project, product, system, etc.)
-            - Capture factual information as facts
-            - Capture time-specific events with dates when known
-            - Capture relationships between entities when mentioned
-            - Be concise but complete
-            - It's fine to extract nothing if no notable entities are mentioned
+            ## Quality Guidelines
+
+            **Good entity example:**
+            ```
+            entity_id: "northstar_analytics"
+            entity_type: "company"
+            name: "NorthStar Analytics"
+            description: "Data analytics startup, potential client"
+            facts:
+              - "Series A stage, ~50 employees"
+              - "Tech stack: Python, Snowflake, dbt"
+              - "Main contact is Sarah Chen, VP Engineering"
+              - "Decision timeline is Q1 2025"
+            events:
+              - "Initial meeting held December 2024"
+              - "Requested technical deep-dive on ML capabilities"
+            relationships:
+              - sarah_chen --[works_at]--> northstar_analytics
+            ```
+
+            **Poor entity example:**
+            ```
+            entity_id: "company1"  # Too generic
+            name: "Some Company"   # Vague
+            facts:
+              - "It's a company"   # Obvious, not useful
+            ```
+
+            ## Extraction Guidelines
+
+            1. **Be selective**: Only extract entities with substantive, useful information
+            2. **Be specific**: Capture concrete details, not vague generalities
+            3. **Be accurate**: Only store information actually stated in the conversation
+            4. **Categorize correctly**: Facts vs events vs relationships have different purposes
+            5. **Use consistent IDs**: Lowercase, underscores, descriptive (e.g., "acme_corp" not "company_1")
+
+            It's perfectly fine to extract nothing if no notable entities are mentioned.
+            Quality over quantity - one well-documented entity beats five sparse ones.
 
         """)
 
         if custom_instructions:
-            content += f"\n{custom_instructions}\n"
+            content += f"\n## Additional Instructions\n\n{custom_instructions}\n"
 
         if additional:
             content += f"\n{additional}\n"
