@@ -53,8 +53,10 @@ def show_profile(user_id: str) -> None:
 if __name__ == "__main__":
     user_id = "hello@learning.com"
 
-    print("Session 1: Introduce yourself")
-    print("=" * 60)
+    # Session 1: Introduce yourself
+    print("\n" + "=" * 60)
+    print("SESSION 1: Introduce yourself")
+    print("=" * 60 + "\n")
     agent.print_response(
         "Hi! I'm Alice, I work at Anthropic as a research scientist. "
         "I love hiking and prefer dark mode in all my apps.",
@@ -62,18 +64,18 @@ if __name__ == "__main__":
         session_id="session_1",
         stream=True,
     )
-    print("=" * 60)
+    print("\n--- Stored Profile ---")
     show_profile(user_id)
-    print("=" * 60)
 
-    print("Session 2: Test memory recall")
-    print("=" * 60)
+    # Session 2: Test memory recall
+    print("\n" + "=" * 60)
+    print("SESSION 2: New session, test memory")
+    print("=" * 60 + "\n")
     agent.print_response(
         "What do you remember about me?",
         user_id=user_id,
         session_id="session_2",
         stream=True,
     )
-    print("=" * 60)
+    print("\n--- Updated Profile ---")
     show_profile(user_id)
-    print("=" * 60)
