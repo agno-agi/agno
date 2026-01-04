@@ -3,16 +3,26 @@ Custom Schemas
 ===========================================
 Customize the data structures used by learning stores.
 
+## NEW: Field Metadata for LLM Visibility
+
+When extending schemas, use field metadata to provide descriptions
+that the LLM will see when deciding how to update fields:
+
+    @dataclass
+    class MyUserProfile(UserProfile):
+        company: Optional[str] = field(
+            default=None,
+            metadata={"description": "Company or organization they work for"}
+        )
+
+The LLM sees these descriptions in the update_profile tool signature,
+making it much more likely to correctly populate custom fields.
+
 Use cases:
 - Add fields specific to your domain
 - Change how data is formatted
 - Add validation logic
 - Integrate with existing data models
-
-This cookbook shows how to create custom schemas for:
-- UserProfile
-- SessionContext
-- LearnedKnowledge
 """
 
 from dataclasses import dataclass, field
@@ -26,74 +36,55 @@ from agno.learn import (
     SessionContextConfig,
     UserProfileConfig,
 )
+from agno.learn.schemas import SessionContext, UserProfile
 from agno.models.openai import OpenAIChat
 
 
 # =============================================================================
-# Custom User Profile Schema
+# Custom User Profile Schema (with field metadata!)
 # =============================================================================
 @dataclass
-class EnterpriseUserProfile:
-    """Custom user profile with enterprise-specific fields."""
+class EnterpriseUserProfile(UserProfile):
+    """Custom user profile with enterprise-specific fields.
 
-    user_id: str
-    # Standard fields
-    name: Optional[str] = None
-    email: Optional[str] = None
-    memories: List[Dict[str, Any]] = field(default_factory=list)
+    Note: We extend UserProfile to inherit base fields (user_id, name,
+    preferred_name, memories) and add our own with descriptions.
+    """
 
-    # Enterprise-specific fields
-    department: Optional[str] = None
-    role: Optional[str] = None
-    permissions: List[str] = field(default_factory=list)
-    projects: List[str] = field(default_factory=list)
-    expertise_areas: List[str] = field(default_factory=list)
-    communication_preference: Optional[str] = None  # "brief", "detailed", "technical"
-    timezone: Optional[str] = None
-
-    # Metadata
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
-
-    @classmethod
-    def from_dict(cls, data: Any) -> Optional["EnterpriseUserProfile"]:
-        """Parse from dict. Returns None on failure."""
-        if not isinstance(data, dict):
-            return None
-        try:
-            valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
-            filtered = {k: v for k, v in data.items() if k in valid_fields}
-            return cls(**filtered)
-        except Exception:
-            return None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dict."""
-        return {
-            "user_id": self.user_id,
-            "name": self.name,
-            "email": self.email,
-            "memories": self.memories,
-            "department": self.department,
-            "role": self.role,
-            "permissions": self.permissions,
-            "projects": self.projects,
-            "expertise_areas": self.expertise_areas,
-            "communication_preference": self.communication_preference,
-            "timezone": self.timezone,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-        }
-
-    def get_memories_text(self) -> str:
-        """Format memories for prompts."""
-        if not self.memories:
-            return ""
-        lines = []
-        for mem in self.memories:
-            content = mem.get("content", str(mem))
-            lines.append(f"- {content}")
-        return "\n".join(lines)
+    # Enterprise-specific fields with descriptions for LLM
+    department: Optional[str] = field(
+        default=None,
+        metadata={
+            "description": "Department or team they work in (e.g., Engineering, Sales)"
+        },
+    )
+    role: Optional[str] = field(
+        default=None,
+        metadata={
+            "description": "Job title or role (e.g., Senior Engineer, Product Manager)"
+        },
+    )
+    email: Optional[str] = field(
+        default=None, metadata={"description": "Work email address"}
+    )
+    timezone: Optional[str] = field(
+        default=None,
+        metadata={
+            "description": "User's timezone (e.g., America/New_York, Europe/London)"
+        },
+    )
+    communication_preference: Optional[str] = field(
+        default=None,
+        metadata={
+            "description": "How they prefer responses: brief, detailed, or technical"
+        },
+    )
+    expertise_areas: Optional[str] = field(
+        default=None, metadata={"description": "Areas of expertise, comma-separated"}
+    )
+    current_projects: Optional[str] = field(
+        default=None, metadata={"description": "Projects they're currently working on"}
+    )
 
     def get_context_text(self) -> str:
         """Get full context for prompts."""
@@ -105,11 +96,15 @@ class EnterpriseUserProfile:
         if self.role:
             parts.append(f"Role: {self.role}")
         if self.expertise_areas:
-            parts.append(f"Expertise: {', '.join(self.expertise_areas)}")
+            parts.append(f"Expertise: {self.expertise_areas}")
         if self.communication_preference:
             parts.append(f"Prefers: {self.communication_preference} responses")
-        if self.memories:
-            parts.append(f"Notes:\n{self.get_memories_text()}")
+        if self.current_projects:
+            parts.append(f"Projects: {self.current_projects}")
+
+        memories_text = self.get_memories_text()
+        if memories_text:
+            parts.append(f"Notes:\n{memories_text}")
         return "\n".join(parts)
 
 
@@ -117,55 +112,26 @@ class EnterpriseUserProfile:
 # Custom Session Context Schema
 # =============================================================================
 @dataclass
-class ProjectSessionContext:
-    """Custom session context for project work."""
+class ProjectSessionContext(SessionContext):
+    """Custom session context for project work.
 
-    session_id: str
-    # Standard fields
-    summary: Optional[str] = None
-    goal: Optional[str] = None
-    plan: List[str] = field(default_factory=list)
-    progress: List[str] = field(default_factory=list)
+    Extends SessionContext to add project-specific tracking.
+    """
 
     # Project-specific fields
-    project_name: Optional[str] = None
-    ticket_id: Optional[str] = None
-    priority: Optional[str] = None  # "low", "medium", "high", "critical"
-    blockers: List[str] = field(default_factory=list)
-    decisions_made: List[Dict[str, str]] = field(default_factory=list)
-    action_items: List[Dict[str, str]] = field(default_factory=list)
-
-    # Metadata
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
-
-    @classmethod
-    def from_dict(cls, data: Any) -> Optional["ProjectSessionContext"]:
-        if not isinstance(data, dict):
-            return None
-        try:
-            valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
-            filtered = {k: v for k, v in data.items() if k in valid_fields}
-            return cls(**filtered)
-        except Exception:
-            return None
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "session_id": self.session_id,
-            "summary": self.summary,
-            "goal": self.goal,
-            "plan": self.plan,
-            "progress": self.progress,
-            "project_name": self.project_name,
-            "ticket_id": self.ticket_id,
-            "priority": self.priority,
-            "blockers": self.blockers,
-            "decisions_made": self.decisions_made,
-            "action_items": self.action_items,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-        }
+    project_name: Optional[str] = field(
+        default=None, metadata={"description": "Name of the project being worked on"}
+    )
+    ticket_id: Optional[str] = field(
+        default=None, metadata={"description": "Ticket or issue ID (e.g., PROJ-123)"}
+    )
+    priority: Optional[str] = field(
+        default=None,
+        metadata={"description": "Priority level: low, medium, high, or critical"},
+    )
+    blockers: Optional[str] = field(
+        default=None, metadata={"description": "Current blockers or obstacles"}
+    )
 
     def get_context_text(self) -> str:
         parts = []
@@ -180,10 +146,15 @@ class ProjectSessionContext:
         if self.goal:
             parts.append(f"Goal: {self.goal}")
         if self.blockers:
-            parts.append(f"Blockers: {', '.join(self.blockers)}")
-        if self.action_items:
-            items = [f"- {a.get('item', a)}" for a in self.action_items]
-            parts.append(f"Action Items:\n" + "\n".join(items))
+            parts.append(f"Blockers: {self.blockers}")
+        if self.plan:
+            plan_text = "\n".join(
+                f"  {i + 1}. {step}" for i, step in enumerate(self.plan)
+            )
+            parts.append(f"Plan:\n{plan_text}")
+        if self.progress:
+            progress_text = "\n".join(f"  ✓ {step}" for step in self.progress)
+            parts.append(f"Progress:\n{progress_text}")
         return "\n".join(parts)
 
 
@@ -204,9 +175,12 @@ agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         user_profile=UserProfileConfig(
             schema=EnterpriseUserProfile,  # Use custom schema!
+            # The LLM will see all our custom fields with their descriptions
+            # in the update_profile tool signature
             instructions=(
-                "Extract: name, department, role, expertise areas, "
-                "communication preference, projects they're working on"
+                "Extract enterprise context: department, role, expertise areas, "
+                "communication preference, current projects. Use update_profile "
+                "for structured data and add_memory for observations."
             ),
         ),
         session_context=SessionContextConfig(
@@ -225,6 +199,15 @@ if __name__ == "__main__":
     user_id = "hannah@enterprise.com"
     session_id = "project_alpha"
 
+    # --- Show the custom fields the LLM will see ---
+    print("=" * 60)
+    print("Custom Profile Fields (LLM sees these in update_profile)")
+    print("=" * 60)
+    fields = EnterpriseUserProfile.get_updateable_fields()
+    for name, info in fields.items():
+        print(f"  {name}: {info['description']}")
+    print()
+
     # --- Establish rich context ---
     print("=" * 60)
     print("Establishing Enterprise Context")
@@ -240,15 +223,17 @@ if __name__ == "__main__":
 
     # --- Check custom profile ---
     print("\n" + "=" * 60)
-    print("Custom Profile Schema")
+    print("Custom Profile Schema Results")
     print("=" * 60)
     profile = agent.learning.stores["user_profile"].get(user_id=user_id)
     if profile:
         print(f"Type: {type(profile).__name__}")
+        print(f"Name: {profile.name}")
         print(f"Department: {profile.department}")
         print(f"Role: {profile.role}")
         print(f"Expertise: {profile.expertise_areas}")
         print(f"Communication: {profile.communication_preference}")
+        print(f"Projects: {profile.current_projects}")
         print(f"\nFull context:\n{profile.get_context_text()}")
 
     # --- Work on project ---
@@ -265,7 +250,7 @@ if __name__ == "__main__":
 
     # --- Check custom session context ---
     print("\n" + "=" * 60)
-    print("Custom Session Schema")
+    print("Custom Session Schema Results")
     print("=" * 60)
     context = agent.learning.stores["session_context"].get(session_id=session_id)
     if context:

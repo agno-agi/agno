@@ -3,10 +3,10 @@ User Profile Learning (Agentic Mode)
 ===========================================
 In AGENTIC mode, the agent decides when to save memories using a tool.
 
-This gives the agent control — it only saves what it judges important.
+This gives the agent control — it only saves what it judges important,
+rather than extracting from every conversation automatically.
 
-Pros: Runs when the agent wants to save something.
-Cons: The agent may miss important information.
+Use this when you want intentional, high-quality memories.
 """
 
 from agno.agent import Agent
@@ -24,11 +24,15 @@ db = PostgresDb(db_url=db_url)
 # Create Learning Agent (Agentic Mode)
 # =============================================================================
 agent = Agent(
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o"),
     db=db,
     learning=LearningMachine(
-        # Gives the agent an `update_user_memory` tool to save memories
-        user_profile=UserProfileConfig(mode=LearningMode.AGENTIC),
+        db=db,
+        model=OpenAIChat(id="gpt-4o"),
+        user_profile=UserProfileConfig(
+            mode=LearningMode.AGENTIC,  # Agent decides when to save
+            enable_agent_tools=True,  # Gives agent the update_user_memory tool
+        ),
     ),
     markdown=True,
 )
@@ -40,12 +44,18 @@ agent = Agent(
 def show_profile(user_id: str):
     """Display the stored user profile."""
     profile = agent.learning.stores["user_profile"].get(user_id=user_id)
-    if profile and profile.memories:
-        print("\n📝 Stored memories:")
-        for mem in profile.memories:
-            print(f"   > {mem.get('content', mem)}")
+    if profile:
+        # Show profile fields
+        if profile.name:
+            print(f"\n👤 Name: {profile.name}")
+
+        # Show memories
+        if profile.memories:
+            print("\n📝 Memories:")
+            for mem in profile.memories:
+                print(f"   > {mem.get('content', mem)}")
     else:
-        print("\n📝 No memories stored yet.")
+        print("\n📝 No profile stored yet.")
     print()
 
 

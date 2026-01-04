@@ -73,7 +73,7 @@ agentic_agent = Agent(
         model=model,
         user_profile=UserProfileConfig(
             mode=LearningMode.AGENTIC,  # Agent decides
-            enable_tool=True,
+            enable_agent_tools=True,  # Updated from enable_tool
         ),
     ),
     markdown=True,

@@ -106,7 +106,7 @@ agent = Agent(
         knowledge=knowledge,
         user_profile=UserProfileConfig(
             mode=LearningMode.BACKGROUND,
-            enable_tool=True,  # Agent can also save explicitly
+            enable_agent_tools=True,  # Agent can also save explicitly (updated from enable_tool)
             instructions=(
                 "Extract: name, role, company, expertise, preferences, "
                 "communication style, current projects"
@@ -117,6 +117,7 @@ agent = Agent(
         ),
         learned_knowledge=LearnedKnowledgeConfig(
             mode=LearningMode.PROPOSE,  # Quality control
+            enable_agent_tools=True,  # Enable search/save tools
             enable_search=True,
             enable_save=True,
         ),
@@ -138,9 +139,13 @@ def debug_state(user_id: str, session_id: str):
     # User Profile
     profile = agent.learning.stores["user_profile"].get(user_id=user_id)
     print(f"\n👤 User Profile ({user_id}):")
-    if profile and profile.memories:
-        for mem in profile.memories:
-            print(f"   > {mem.get('content', mem)}")
+    if profile:
+        if profile.name:
+            print(f"   Name: {profile.name}")
+        if profile.memories:
+            print("   Memories:")
+            for mem in profile.memories:
+                print(f"     > {mem.get('content', mem)}")
     else:
         print("   (no profile yet)")
 

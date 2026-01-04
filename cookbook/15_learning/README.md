@@ -1,297 +1,384 @@
-# LearningMachine Cookbooks
+# Memory Part 2: The Learning Machine
 
-Build agents that remember, adapt, and improve over time.
-
----
-
-## What is LearningMachine?
-
-`LearningMachine` is a unified learning system that gives agents persistent memory across three dimensions:
+Learning Machine is a unified learning system that gives agents the ability to remember, adapt, and improve. It coordinates multiple learning stores that work together:
 
 ```
-LearningMachine
-├── User Profile        → "Alice is a data scientist who prefers concise answers"
-├── Session Context     → "We're building a REST API, completed steps 1-3"
-└── Learned Knowledge   → "For ETF comparisons, always check expense ratio AND tracking error"
+Learning Stores
+├── User Profile         — Long-term memory about users, accumulated over time
+├── Session Context      — State, summary, goal, plan, progress for the current session
+├── Learned Knowledge    — Reusable insights and patterns
+├── Entity Memory        — Facts, events and relationships about entities
+└── Not yet implemented
+    ├── Decision Logs        — Why decisions were made
+    ├── Behavioral Feedback  — What worked, what didn't
+    └── Self-Improvement     — Continuously improving instructions
 ```
-
-| Learning Type | What It Captures | Scope | Retrieval |
-|:--------------|:-----------------|:------|:----------|
-| **User Profile** | Preferences, facts, context | Per user | `user_id` lookup |
-| **Session Context** | Summary, goals, progress | Per session | `session_id` lookup |
-| **Learned Knowledge** | Insights, patterns, best practices | Shared | Semantic search |
 
 **The Goal:** An agent on interaction 1000 is fundamentally better than it was on interaction 1.
 
----
+**The Advantage:** Instead of building memory, knowledge, and feedback systems separately, developers configure one system that handles all learning with consistent patterns for storage, retrieval, and lifecycle.
 
-## Cookbooks
+Learning Stores can be configured to run in:
+- Background mode: Automatically extract from conversations without interrupting the agent.
+- Agentic mode: Agent calls tools directly to save information to the learning store.
+- Propose mode: Agent proposes in chat, user approves before saving.
+- Human-in-the-loop mode: Explicit human approval required using user control flows.
 
-### Tier 1: Getting Started
+## What You'll Build
 
-*Foundation — from zero to all three learning types*
+This cookbook contains **35 examples** across 9 categories:
 
-| # | File | What You'll Learn |
-|:--|:-----|:------------------|
-| 01 | `01_user_profile.py` | Simplest setup — `learning=True` enables automatic user memory |
-| 02 | `02_user_profile_agentic.py` | Agent decides when to save via `update_user_memory` tool |
-| 03 | `03_session_context.py` | Session summaries for conversation continuity |
-| 04 | `04_session_context_planning.py` | Planning mode with goal/plan/progress tracking |
-| 05 | `05_learned_knowledge.py` | Shared insights with semantic search |
-
-### Tier 2: Control & Modes
-
-*Understanding how to control learning behavior*
-
-| # | File | What You'll Learn |
-|:--|:-----|:------------------|
-| 06 | `06_learning_modes.py` | BACKGROUND vs AGENTIC vs PROPOSE comparison |
-| 07 | `07_propose_mode.py` | Human-in-the-loop — agent proposes, user confirms |
-
-### Tier 3: Agent Archetypes
-
-*Real agents you can adapt for your use case*
-
-| # | File | Agent Type | Key Pattern |
-|:--|:-----|:-----------|:------------|
-| 08 | `08_support_agent.py` | Customer Support | Issue memory, resolution patterns |
-| 09 | `09_research_agent.py` | Research Assistant | Web search + learns research patterns |
-| 10 | `10_coding_assistant.py` | Coding Helper | Code style, project patterns |
-| 11 | `11_personal_assistant.py` | Personal AI | Deep preference learning |
-| 12 | `12_team_knowledge.py` | Team Brain | Shared learnings, individual profiles |
-
-### Tier 4: Production Patterns
-
-*Building for real users*
-
-| # | File | What You'll Learn |
-|:--|:-----|:------------------|
-| 13 | `13_multi_user.py` | User isolation — no memory leakage between users |
-| 14 | `14_gpu_poor_learning.py` | Cheap models for extraction, expensive for responses |
-| 15 | `15_custom_schema.py` | Your own profile/context data structures |
-| 16 | `16_debugging.py` | Inspect stored data, troubleshoot issues |
-
-### Tier 5: Advanced
-
-*Maximum intelligence*
-
-| # | File | What You'll Learn |
-|:--|:-----|:------------------|
-| 17 | `17_custom_store.py` | Build your own learning type |
-| 18 | `18_continuous_learning.py` | Agent improves with every interaction |
-| 19 | `19_plan_and_learn.py` | PaL pattern — plan, execute, learn from outcomes |
-| 20 | `20_full_production.py` | Complete production agent with all patterns |
-
----
-
-## Learning Paths
-
-### "I just want it to work"
 ```
-01_user_profile.py → 05_learned_knowledge.py → 09_research_agent.py
+cookbook/15_learning/
+├── basics/                    # Start here (5 examples)
+├── user_profile/              # User memory deep dive (5 examples)
+├── session_context/           # Session state deep dive (4 examples)
+├── entity_memory/             # Entity knowledge deep dive (5 examples)
+├── learned_knowledge/         # Reusable insights deep dive (5 examples)
+├── combined/                  # Multiple learning types (4 examples)
+├── patterns/                  # Real-world agents (7 examples)
+├── advanced/                  # Power user features (6 examples)
+└── production/                # Production-ready examples (3 examples)
 ```
 
-### "I want to understand the system"
-```
-01 → 02 → 03 → 04 → 05 → 06 → 07
-```
+**Progressive complexity**: Start with `basics/`, master one learning store, combine them, then build production agents.
 
-### "I'm building a specific agent type"
-```
-01 → 05 → Pick from 08-12 (closest to your use case)
-```
+## Built-in Learning Stores
 
-### "I'm going to production"
-```
-01 → 05 → 13 → 14 → 16 → 20
-```
+### 1. User Profile Store
 
-### "I want maximum agent intelligence"
-```
-01 → 05 → 06 → 17 → 18 → 19
-```
+User Profile Store captures long-term memory about users. Persists forever. Accumulates over time. Can be run in background mode or agentic mode.
 
----
+**Two types of data can be captured:**
+- **Profile fields** (structured): name, preferred_name, custom fields you define.
+- **Memories** (unstructured): observations that don't fit fields.
 
-## Quick Start
-
-### 1. Start PostgreSQL with pgvector
-
-```bash
-docker run -d \
-  --name pgvector \
-  -e POSTGRES_USER=ai \
-  -e POSTGRES_PASSWORD=ai \
-  -e POSTGRES_DB=ai \
-  -p 5532:5432 \
-  pgvector/pgvector:pg17
-```
-
-### 2. Install dependencies
-
-```bash
-pip install agno psycopg[binary] pgvector openai
-```
-
-### 3. Set your API key
-
-```bash
-export OPENAI_API_KEY=your-key-here
-```
-
-### 4. Run your first cookbook
-
-```bash
-python 01_user_profile.py
-```
-
----
-
-## The Simplest Agent with Learning
+Quick example:
 
 ```python
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
+from agno.learn import LearningMachine, UserProfileConfig
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
-    learning=True,  # That's it!
-)
-
-# Agent now remembers users across sessions
-agent.print_response("I'm Alice, a data scientist at Netflix", user_id="alice")
-agent.print_response("What do you know about me?", user_id="alice")  # Remembers!
-```
-
----
-
-## Three Levels of Control
-
-### Level 1: Dead Simple
-
-```python
-agent = Agent(
-    model=model,
     db=db,
-    learning=True,  # Enables UserProfile in BACKGROUND mode
-)
-```
-
-### Level 2: Pick What You Want
-
-```python
-agent = Agent(
     model=model,
-    db=db,
     learning=LearningMachine(
-        db=db,
-        model=model,
-        knowledge=my_kb,           # Enables LearnedKnowledge
-        user_profile=True,         # Enabled by default
-        session_context=True,      # Opt-in
-    ),
-)
-```
-
-### Level 3: Full Control
-
-```python
-agent = Agent(
-    model=model,
-    db=db,
-    learning=LearningMachine(
-        db=db,
-        model=model,
-        knowledge=my_kb,
+        # Automatically extract user profile information in parallel
         user_profile=UserProfileConfig(
-            mode=LearningMode.AGENTIC,
-            enable_tool=True,
+            mode=LearningMode.BACKGROUND,
         ),
+  ),
+)
+
+# Session 1
+agent.run("I'm Alice, I work at Netflix", user_id="alice")
+
+# Session 2
+agent.run("What do you know about me?", user_id="alice")
+# → "You're Alice, you work at Netflix"
+```
+
+### 2. Session Context Store
+
+Session Context Store captures state and summary for the current session. Updated (not accumulated) on each extraction. Can be run in background mode, agentic mode, or propose mode.
+
+**Three types of data can be captured:**
+- **Summary** (text): A brief summary of the current session.
+- **Goal** (text): The goal of the current session.
+- **Plan** (list of text): The plan for the current session.
+- **Progress** (list of text): The progress of the current session.
+
+**Key behavior**: Builds on previous context. Even if message history is truncated, the context persists.
+
+Quick example:
+
+```python
+from agno.agent import Agent
+from agno.learn import LearningMachine, SessionContextConfig
+
+agent = Agent(
+    db=db,
+    model=model,
+    learning=LearningMachine(
+        # Track goal, plan, progress.
+        # Only recommended for certain types of agents. Will add lots of latency.
         session_context=SessionContextConfig(
             enable_planning=True,
         ),
+  ),
+)
+
+# Long conversation with many messages...
+# Session context automatically tracks:
+# - Summary: "Debugging a React performance issue"
+# - Goal: "Fix the slow render on the dashboard"
+# - Plan: ["Profile components", "Find bottleneck", "Optimize"]
+# - Progress: ["Profile components ✓"]
+```
+
+### 4. Learned Knowledge Store
+
+Learned Knowledge Store captures reusable insights, patterns, and rules that apply across users and sessions. Stored in a vector database for semantic search. Can be run in agentic mode or propose mode. Best used for self-improving agents, research agents, or any agent that should get smarter over time.
+
+```python
+from agno.learn import LearningMachine, LearnedKnowledgeConfig, LearningMode
+from agno.knowledge import Knowledge
+from agno.vectordb.pgvector import PgVector
+
+# Vector DB for semantic search
+knowledge_base = Knowledge(
+    vector_db=PgVector(
+        db_url=db_url,
+        table_name="agent_learnings",
+    ),
+)
+
+agent = Agent(
+    db=db,
+    model=model,
+    learning=LearningMachine(
+        # Knowledge base for storing learnings
+        knowledge=knowledge_base,
         learned_knowledge=LearnedKnowledgeConfig(
-            mode=LearningMode.PROPOSE,
+            # Agent decides when to save.
+            mode=LearningMode.AGENTIC,
         ),
     ),
 )
+
+# Agent discovers an insight and saves it
+agent.run("When comparing cloud providers, always check egress costs first")
+
+# Later, different user, agent searches and applies prior learnings
+agent.run("Help me compare AWS vs GCP")
+# Agent searches knowledge base, finds the egress insight, applies it
 ```
 
----
+### 3. Entity Memory Store
 
-## Learning Modes
+Entity Memory Store captures knowledge about external entities: companies, projects, people, products, systems. Can be run in background mode or agentic mode.
 
-| Mode | How It Works | Best For |
-|:-----|:-------------|:---------|
-| **BACKGROUND** | Automatic extraction after each response | User profiles, session summaries |
-| **AGENTIC** | Agent decides via tools when to save | Learnings, agent-controlled memory |
-| **PROPOSE** | Agent proposes, user confirms before saving | High-value insights, quality control |
+```python
+from agno.learn import LearningMachine, EntityMemoryConfig
 
----
+agent = Agent(
+    db=db,
+    model=model,
+    learning=LearningMachine(
+        entity_memory=EntityMemoryConfig(
+            namespace="global",  # Shared across all users
+            enable_agent_tools=True,  # Agent can create/update entities
+        ),
+    ),
+)
 
-## Key Concepts
+# Agent learns about entities from conversations
+agent.run("Acme Corp just migrated to PostgreSQL and hired Bob as CTO")
 
-| Concept | What It Does |
-|:--------|:-------------|
-| **LearningMachine** | Coordinates all learning stores — the main entry point |
-| **UserProfileStore** | Per-user memory that persists across sessions |
-| **SessionContextStore** | Per-session state, optionally with planning |
-| **LearnedKnowledgeStore** | Shared insights searchable via semantic similarity |
-| **`build_context()`** | Get memory to inject into system prompt |
-| **`process()`** | Extract and save learnings after conversation |
-| **`get_tools()`** | Get learning tools for the agent |
+# Later, agent can recall and use this knowledge
+agent.run("What database does Acme use?")
+# → "Acme Corp uses PostgreSQL"
+```
 
----
+**Three types of entity data:**
+- **Facts** (semantic memory): Timeless truths — "Uses PostgreSQL"
+- **Events** (episodic memory): Time-bound occurrences — "Launched v2 on Jan 15"
+- **Relationships** (graph edges): Connections — "Bob is CTO of Acme"
 
-## Data Scoping
+**When to use**: CRM-style agents, research agents, any agent that tracks external things. Best used for agents that need to know about external entities.
 
-Each store has a clear lookup key. `agent_id` and `team_id` are stored for audit only, never for filtering:
 
-| Store | Lookup Key | Scope |
-|:------|:-----------|:------|
-| UserProfileStore | `user_id` | Per user (shared across agents) |
-| SessionContextStore | `session_id` | Per session |
-| LearnedKnowledgeStore | Semantic search | Shared (all agents see all learnings) |
+## Getting Started
 
-For team isolation, use separate knowledge bases — not store-level filtering.
+### 1. Clone the repo
 
----
+```bash
+git clone https://github.com/agno-agi/agno.git
+cd agno
+```
+
+### 2. Create a virtual environment and install dependencies
+
+> `uv` must be installed.
+
+```bash
+./cookbook/15_learning/venv_setup.sh
+```
+
+### 3. Export environment variables
+
+```bash
+# Required for accessing OpenAI models
+export OPENAI_API_KEY=your-openai-api-key
+
+# Required for research agents using parallel search services
+export PARALLEL_API_KEY=your-parallel-api-key
+```
+
+### 4. Run Postgres with PgVector
+
+Postgres stores agent sessions, memory, knowledge, and state. Install [Docker Desktop](https://docs.docker.com/desktop/install/mac-install/) and run:
+
+```bash
+./cookbook/15_learning/run_pgvector.sh
+```
+
+### 5. Run Cookbook Examples Individually
+
+```bash
+python cookbook/15_learning/basics/01_hello_learning.py
+```
+
+### 6. Run the Agent OS
+
+Agno provides a web interface for interacting with agents. Start the server:
+
+```bash
+python cookbook/15_learning/run.py
+```
+
+Then visit [os.agno.com](https://os.agno.com/?utm_source=github&utm_medium=cookbook&utm_campaign=gemini&utm_content=cookbook-gemini-flash&utm_term=gemini-flash) and add `http://localhost:7777` as an endpoint.
 
 ## File Structure
 
 ```
-cookbooks/
-├── 01_user_profile.py              # Simplest setup
-├── 02_user_profile_agentic.py      # Agent-controlled memory
-├── 03_session_context.py           # Session summaries
-├── 04_session_context_planning.py  # Goal/plan/progress tracking
-├── 05_learned_knowledge.py         # Shared insights
-├── 06_learning_modes.py            # Mode comparison
-├── 07_propose_mode.py              # Human-in-the-loop
-├── 08_support_agent.py             # Customer support archetype
-├── 09_research_agent.py            # Research assistant archetype
-├── 10_coding_assistant.py          # Coding helper archetype
-├── 11_personal_assistant.py        # Personal AI archetype
-├── 12_team_knowledge.py            # Team brain archetype
-├── 13_multi_user.py                # User isolation
-├── 14_gpu_poor_learning.py         # Cost optimization
-├── 15_custom_schema.py             # Custom data structures
-├── 16_debugging.py                 # Inspection and troubleshooting
-├── 17_custom_store.py              # Build your own learning type
-├── 18_continuous_learning.py       # Self-improving agent
-├── 19_plan_and_learn.py            # PaL pattern
-├── 20_full_production.py           # Complete production agent
-└── README.md
+cookbook/15_learning/
+│
+├── README.md                           # You are here
+├── db.py                               # Shared database config
+├── requirements.txt                    # Dependencies
+├── run.py                              # AgentOS entrypoint
+├── config.yaml                         # AgentOS config
+│
+├── basics/                             # Start here
+│   ├── 01_hello_learning.py            # Minimal working example
+│   ├── 02_user_profile_quick.py        # User memory in 30 lines
+│   ├── 03_session_context_quick.py     # Session state in 30 lines
+│   ├── 04_entity_memory_quick.py       # Entity tracking in 30 lines
+│   └── 05_learned_knowledge_quick.py   # Knowledge capture in 30 lines
+│
+├── user_profile/                       # User memory deep dive
+│   ├── 01_background_extraction.py     # Automatic extraction
+│   ├── 02_agentic_mode.py              # Agent-driven updates
+│   ├── 03_custom_schema.py             # Extend with typed fields
+│   ├── 04_memory_vs_fields.py          # When to use which
+│   └── 05_memory_operations.py         # Add/update/delete flow
+│
+├── session_context/                    # Session state deep dive
+│   ├── 01_summary_mode.py              # Basic summarization
+│   ├── 02_planning_mode.py             # Goal → Plan → Progress
+│   ├── 03_context_continuity.py        # Building on previous
+│   └── 04_long_conversations.py        # Handling truncation
+│
+├── entity_memory/                      # Entity knowledge deep dive
+│   ├── 01_facts_and_events.py          # Semantic vs episodic
+│   ├── 02_entity_relationships.py      # Graph edges
+│   ├── 03_namespace_sharing.py         # Sharing boundaries
+│   ├── 04_background_extraction.py     # Auto-extract entities
+│   └── 05_entity_search.py             # Finding entities
+│
+├── learned_knowledge/                  # Reusable insights deep dive
+│   ├── 01_agentic_mode.py              # Agent saves directly
+│   ├── 02_propose_mode.py              # Human approval
+│   ├── 03_background_extraction.py     # Auto-extract
+│   ├── 04_search_and_apply.py          # Using prior learnings
+│   └── 05_namespace_scoping.py         # Private vs shared
+│
+├── combined/                           # Multiple types together
+│   ├── 01_user_plus_session.py         # Profile + session
+│   ├── 02_user_plus_entities.py        # Profile + entities
+│   ├── 03_full_learning_machine.py     # All four types
+│   └── 04_learning_machine_builder.py  # Factory patterns
+│
+├── patterns/                           # Real-world agents
+│   ├── support_agent.py                # Customer support
+│   ├── research_agent.py               # Self-improving researcher
+│   ├── coding_assistant.py             # Developer helper
+│   ├── personal_assistant.py           # Long-term personal AI
+│   ├── sales_agent.py                  # CRM-style tracking
+│   ├── team_knowledge_agent.py         # Shared team learnings
+│   └── onboarding_agent.py             # New user onboarding
+│
+├── advanced/                           # Power user features
+│   ├── 01_multi_user.py                # Multiple users
+│   ├── 02_curator_maintenance.py       # Pruning + dedup
+│   ├── 03_extraction_timing.py         # Before/parallel/after
+│   ├── 04_custom_store.py              # Implement your own
+│   ├── 05_async_patterns.py            # Full async
+│   └── 06_debugging.py                 # Debug mode
+│
+└── production/                         # Production-ready
+    ├── gpu_poor_learning.py            # System-level learning
+    ├── plan_and_learn.py               # PaL with LearningMachine
+    └── full_production_agent.py        # Complete setup
 ```
 
----
+## Best Practices
+
+### 1. Start simple
+
+Don't enable all four learning types at once. Start with `user_profile=True`, then add others as needed.
+
+### 2. Use the right mode
+
+- **BACKGROUND** for things you always want to capture (user info, session state)
+- **AGENTIC** for things the agent should decide (insights, learnings)
+- **PROPOSE** when you want human oversight
+
+### 3. Namespace thoughtfully
+
+- `"user"` for personal/private data
+- `"global"` for shared knowledge
+- Custom namespaces for teams or projects
+
+### 4. Maintain your memories
+
+Run the Curator periodically to prune old data and deduplicate.
+
+### 5. Custom schemas for production
+
+Extend the base schemas with typed fields for your domain. The LLM will understand and use them.
+
+```python
+from dataclasses import dataclass, field
+from typing import Optional
+from agno.learn.schemas import UserProfile
+
+@dataclass
+class MyUserProfile(UserProfile):
+    """Extended user profile with custom fields."""
+
+    company: Optional[str] = field(
+        default=None,
+        metadata={"description": "Company or organization"}
+    )
+    role: Optional[str] = field(
+        default=None,
+        metadata={"description": "Job title or role"}
+    )
+    timezone: Optional[str] = field(
+        default=None,
+        metadata={"description": "User's timezone"}
+    )
+    expertise_level: Optional[str] = field(
+        default=None,
+        metadata={"description": "beginner | intermediate | expert"}
+    )
+
+# Use your custom schema
+learning = LearningMachine(
+    db=db,
+    model=model,
+    user_profile=UserProfileConfig(
+        schema=MyUserProfile,
+    ),
+)
+```
+
+The LLM sees field descriptions and updates them appropriately.
 
 ## Learn More
 
 - [Agno Documentation](https://docs.agno.com)
+- [LearningMachine Reference](https://docs.agno.com/learn)
 
----
-
-Built with 💜 by the Agno team

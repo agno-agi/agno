@@ -24,7 +24,7 @@ db = PostgresDb(db_url=db_url)
 # Create Learning Agent
 # =============================================================================
 agent = Agent(
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o"),
     db=db,
     learning=True,  # Enables UserProfileStore in BACKGROUND mode
     markdown=True,
@@ -37,12 +37,20 @@ agent = Agent(
 def show_profile(user_id: str):
     """Display the stored user profile."""
     profile = agent.learning.stores["user_profile"].get(user_id=user_id)
-    if profile and profile.memories:
-        print("\n📝 Stored memories:")
-        for mem in profile.memories:
-            print(f"   > {mem.get('content', mem)}")
+    if profile:
+        # Show profile fields
+        if profile.name:
+            print(f"\n👤 Name: {profile.name}")
+        if profile.preferred_name:
+            print(f"   Preferred: {profile.preferred_name}")
+
+        # Show memories
+        if profile.memories:
+            print("\n📝 Memories:")
+            for mem in profile.memories:
+                print(f"   > {mem.get('content', mem)}")
     else:
-        print("\n📝 No memories stored yet.")
+        print("\n📝 No profile stored yet.")
     print()
 
 
