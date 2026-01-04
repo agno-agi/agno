@@ -439,10 +439,12 @@ class UserProfileStore(LearningStore):
                 log_warning(f"Error updating profile: {e}")
                 return f"Error: {e}"
 
-        # Set the signature and docstring
+        # Set the signature, docstring, and annotations
         update_profile.__signature__ = inspect.Signature(params)
         update_profile.__doc__ = docstring
         update_profile.__name__ = "update_profile"
+        update_profile.__annotations__ = {field_name: Optional[str] for field_name in updateable}
+        update_profile.__annotations__["return"] = str
 
         return update_profile
 
@@ -512,9 +514,12 @@ class UserProfileStore(LearningStore):
                 log_warning(f"Error updating profile: {e}")
                 return f"Error: {e}"
 
+        # Set the signature, docstring, and annotations
         update_profile.__signature__ = inspect.Signature(params)
         update_profile.__doc__ = docstring
         update_profile.__name__ = "update_profile"
+        update_profile.__annotations__ = {field_name: Optional[str] for field_name in updateable}
+        update_profile.__annotations__["return"] = str
 
         return update_profile
 
