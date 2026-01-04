@@ -239,98 +239,178 @@ class LearnedKnowledgeStore(LearningStore):
     def _build_agentic_mode_context(self, data: Any) -> str:
         """Build context for AGENTIC mode."""
         instructions = dedent("""\
-            <learnings_system>
-            ## Knowledge Tools
+            <learned_knowledge_system>
+            You have access to a knowledge base of reusable learnings - insights, patterns, and best practices
+            discovered through past interactions that may help with future tasks.
 
-            You have access to a knowledge base of reusable learnings:
+            ## Philosophy
 
-            | Tool | Purpose |
-            |------|---------|
-            | `search_learnings` | Find relevant prior insights before answering |
-            | `save_learning` | Store a new reusable insight |
+            Learnings are different from user memories:
+            - **User memories** = what you know about THIS person
+            - **Learnings** = reusable insights that help with similar TASKS
+
+            Think of learnings as the wisdom a skilled practitioner accumulates - not facts they memorized,
+            but patterns they recognized, approaches that worked, and pitfalls to avoid.
+
+            ## Available Tools
+
+            | Tool | When to Use |
+            |------|-------------|
+            | `search_learnings` | Before complex tasks - find relevant prior insights |
+            | `save_learning` | After discovering something genuinely reusable |
 
             ## Workflow
 
-            1. **Search First** — Before complex tasks, call `search_learnings` with key concepts.
-               Apply any relevant learnings naturally.
+            **1. Search Before Complex Work**
+            Before tackling tasks that might benefit from prior experience, search with key concepts.
+            Examples of good search moments:
+            - "How should I structure this API?" → search "API design patterns"
+            - "Debug this performance issue" → search "performance debugging"
+            - "Help me with this migration" → search "migration strategies"
 
-            2. **Work** — Complete the task using available tools and information.
+            **2. Apply Learnings Naturally**
+            When you find relevant learnings, integrate them into your approach without
+            explicitly citing them. They should inform your work, not be quoted.
 
-            3. **Reflect** — After answering, consider: did this reveal a genuinely reusable insight?
-               Most queries will NOT produce a learning. That's expected.
+            **3. Reflect After Completing Work**
+            Did this interaction reveal something genuinely reusable? Most won't - that's expected.
+            A learning worth saving typically emerges when:
+            - You solved a non-obvious problem
+            - You discovered a pattern or anti-pattern
+            - You found an approach that was surprisingly effective
+            - You encountered a gotcha that others would hit
 
-            4. **Save** — If you discovered something worth preserving, call `save_learning` directly.
+            **4. Save Sparingly**
+            If you discovered something worth preserving, save it. But maintain a high bar:
+            - One excellent learning beats five mediocre ones
+            - If you're unsure whether it's worth saving, it probably isn't
 
-            ## What Makes a Good Learning
+            ## What Makes a Learning Worth Saving
 
-            Save if it's:
-            - **Specific**: "When comparing ETFs, check expense ratio AND tracking error" not "Look at metrics"
-            - **Actionable**: Can be directly applied to future similar tasks
-            - **Generalizable**: Useful beyond this specific question
+            **SAVE when you discover:**
+            - Non-obvious solutions: "When X doesn't work, try Y because Z"
+            - Validated patterns: "For problems like X, this approach works well"
+            - Learned gotchas: "Watch out for X when doing Y - it causes Z"
+            - Effective frameworks: "When facing X, consider these dimensions: A, B, C"
 
-            Do NOT save: Raw facts, one-off answers, summaries, obvious information, or user-specific details.
-            </learnings_system>\
+            **DO NOT SAVE:**
+            - Raw facts (use web search for retrieval)
+            - User-specific information (use user memory)
+            - Common knowledge or obvious best practices
+            - One-off answers unlikely to recur
+            - Highly time-sensitive information that will become stale
+
+            ## Writing Good Learnings
+
+            **Good examples:**
+            - Title: "PostgreSQL JSONB indexing for nested queries"
+              Learning: "For frequently queried nested JSONB paths, create a GIN index on the specific path
+              (e.g., CREATE INDEX ON table USING GIN ((data->'nested'->'path'))). Generic JSONB indexes
+              won't help with deep path queries."
+              Context: "When query performance degrades on JSONB columns with nested access patterns"
+
+            - Title: "Handling rate limits in async API clients"
+              Learning: "Implement exponential backoff with jitter at the client level, not per-request.
+              Track remaining quota across all requests and preemptively slow down before hitting limits.
+              Retry-After headers should override calculated backoff."
+              Context: "When building clients for rate-limited APIs"
+
+            **Bad examples:**
+            - "Python is good for scripting" (obvious, not actionable)
+            - "User prefers dark mode" (belongs in user memory)
+            - "The API returned a 404 error" (one-off fact, not insight)
+            - "Testing is important" (too vague to be useful)
+            </learned_knowledge_system>\
         """)
 
         if data:
             learnings = data if isinstance(data, list) else [data]
             if learnings:
                 formatted = self._format_learnings_for_context(learnings=learnings)
-                instructions += f"\n\n<prior_learnings>\n{formatted}\n</prior_learnings>"
+                instructions += f"\n\n<relevant_learnings>\nPrior insights that may help with this task:\n\n{formatted}\n\nApply these naturally if relevant. Current context takes precedence.\n</relevant_learnings>"
 
         return instructions
 
     def _build_propose_mode_context(self, data: Any) -> str:
         """Build context for PROPOSE mode."""
         instructions = dedent("""\
-            <learnings_system>
-            ## Knowledge Tools
+            <learned_knowledge_system>
+            You have access to a knowledge base of reusable learnings - insights, patterns, and best practices
+            that may help with future tasks. In this mode, saving new learnings requires user approval.
 
-            You have access to a knowledge base of reusable learnings:
+            ## Available Tools
 
-            | Tool | Purpose |
-            |------|---------|
-            | `search_learnings` | Find relevant prior insights before answering |
-            | `save_learning` | Store a new insight (REQUIRES user approval first) |
+            | Tool | When to Use |
+            |------|-------------|
+            | `search_learnings` | Before complex tasks - find relevant prior insights |
+            | `save_learning` | ONLY after user approves a proposed learning |
 
             ## Workflow
 
-            1. **Search First** — Before complex tasks, call `search_learnings` with key concepts.
+            **1. Search Before Complex Work**
+            Before tackling tasks that might benefit from prior experience, search for relevant insights.
 
-            2. **Work** — Complete the task using available tools and information.
+            **2. Complete the Task**
+            Do your work, applying any relevant learnings you found.
 
-            3. **Reflect** — After answering, consider: did this reveal a genuinely reusable insight?
+            **3. Reflect**
+            After completing work, consider: did this interaction reveal something genuinely reusable?
+            Most interactions won't - that's expected and fine.
 
-            4. **Propose** — If you have a genuine insight, propose it at the end of your response:
+            **4. Propose (If Warranted)**
+            If you discovered something worth preserving, propose it at the end of your response:
 
             ---
-            **Proposed Learning**
+            **💡 Proposed Learning**
 
-            **Title:** [concise, descriptive title]
-            **Context:** [when this applies]
-            **Learning:** [the insight — specific and actionable]
+            **Title:** [Concise, searchable title]
+            **When this applies:** [Context/situation where this is relevant]
+            **Insight:** [The actual learning - specific and actionable]
 
-            Save this learning? (yes/no)
+            Would you like me to save this to the knowledge base? (yes/no)
             ---
 
-            5. **Wait for Approval** — Only call `save_learning` AFTER the user says "yes".
+            **5. Wait for Approval**
+            Only call `save_learning` AFTER the user explicitly approves.
 
-            ## What Makes a Good Learning
+            ## Quality Bar for Proposing
 
-            Propose if it's:
-            - **Specific**: "When comparing ETFs, check expense ratio AND tracking error" not "Look at metrics"
-            - **Actionable**: Can be directly applied to future similar tasks
-            - **Generalizable**: Useful beyond this specific question
+            **Propose when you discover:**
+            - Non-obvious solutions that required investigation
+            - Patterns that would help with similar future tasks
+            - Gotchas or edge cases that weren't initially apparent
+            - Effective approaches that emerged through iteration
 
-            Do NOT propose: Raw facts, one-off answers, summaries, obvious information, or user-specific details.
-            </learnings_system>\
+            **Do NOT propose:**
+            - Information the user already knew (they just asked for help applying it)
+            - Raw facts or data points
+            - User-specific preferences (those belong in user memory)
+            - Common knowledge or standard practices
+            - Things you're uncertain about
+
+            ## Writing Good Proposals
+
+            Be specific enough that the learning is actionable, but general enough that it applies
+            beyond this exact situation.
+
+            **Good proposal:**
+            > **Title:** Debugging React useEffect infinite loops
+            > **When this applies:** When a useEffect runs repeatedly causing performance issues
+            > **Insight:** Check for object/array dependencies created inline - even if values are the
+            > same, new references trigger re-runs. Move creation outside component or use useMemo.
+
+            **Poor proposal:**
+            > **Title:** React hooks
+            > **Insight:** Be careful with useEffect dependencies
+            > (Too vague to be actionable)
+            </learned_knowledge_system>\
         """)
 
         if data:
             learnings = data if isinstance(data, list) else [data]
             if learnings:
                 formatted = self._format_learnings_for_context(learnings=learnings)
-                instructions += f"\n\n<prior_learnings>\n{formatted}\n</prior_learnings>"
+                instructions += f"\n\n<relevant_learnings>\nPrior insights that may help:\n\n{formatted}\n\nApply these naturally if relevant.\n</relevant_learnings>"
 
         return instructions
 
@@ -346,11 +426,12 @@ class LearnedKnowledgeStore(LearningStore):
         formatted = self._format_learnings_for_context(learnings=learnings)
         return dedent(f"""\
             <relevant_learnings>
-            Previously learned insights that may be relevant:
+            Prior insights that may help with this task:
 
             {formatted}
 
-            Use these if helpful. Current conversation takes precedence.
+            Apply these naturally if they're relevant to the current request.
+            Your current analysis and the user's specific context take precedence.
             </relevant_learnings>\
         """)
 
@@ -529,26 +610,36 @@ class LearnedKnowledgeStore(LearningStore):
             tags: Optional[List[str]] = None,
             namespace: Optional[str] = None,
         ) -> str:
-            """Save a reusable insight or learning to the knowledge base.
+            """Save a reusable insight to the knowledge base for future reference.
 
-            Use this when you discover something that would be useful to
-            remember for future conversations - patterns, best practices,
-            solutions to problems, or insights from the current interaction.
+            Use this when you discover something genuinely worth preserving - a pattern,
+            approach, or insight that would help with similar tasks in the future.
 
-            Good learnings are:
-            - Reusable across different contexts
-            - Specific and actionable
-            - Not user-specific (use user memory for that)
+            **When to save:**
+            - Non-obvious solutions you discovered through investigation
+            - Patterns or anti-patterns that emerged from the work
+            - Approaches that proved effective (or ineffective)
+            - Gotchas that weren't initially apparent
+
+            **When NOT to save:**
+            - Raw facts (retrievable via search)
+            - User-specific preferences (use user memory)
+            - Common knowledge or obvious best practices
+            - One-off answers unlikely to recur
 
             Args:
-                title: Short descriptive title (e.g., "Python async best practices")
-                learning: The actual insight or knowledge to save.
-                context: When/where this applies (optional).
-                tags: Categories for this learning (optional).
-                namespace: Scope for this learning (optional).
-                    - "global": Shared with everyone (default)
-                    - "user": Private to current user
-                    - "<custom>": Custom grouping (e.g., "engineering")
+                title: Concise, searchable title (e.g., "Handling OAuth token refresh in SPAs").
+                       Should be specific enough to find later.
+                learning: The actual insight. Be specific and actionable - someone facing
+                         a similar situation should be able to apply this directly.
+                         Bad: "Be careful with caching"
+                         Good: "When caching user-specific data, include user ID in cache keys
+                               and set TTL shorter than session timeout to prevent stale data
+                               after permission changes"
+                context: When/where this applies. Helps with relevance matching.
+                        (e.g., "When building multi-tenant SaaS applications")
+                tags: Categories for organization (e.g., ["python", "async", "debugging"])
+                namespace: Access scope - "global" (shared), "user" (private), or custom grouping
 
             Returns:
                 Confirmation message.
@@ -588,26 +679,36 @@ class LearnedKnowledgeStore(LearningStore):
             tags: Optional[List[str]] = None,
             namespace: Optional[str] = None,
         ) -> str:
-            """Save a reusable insight or learning to the knowledge base.
+            """Save a reusable insight to the knowledge base for future reference.
 
-            Use this when you discover something that would be useful to
-            remember for future conversations - patterns, best practices,
-            solutions to problems, or insights from the current interaction.
+            Use this when you discover something genuinely worth preserving - a pattern,
+            approach, or insight that would help with similar tasks in the future.
 
-            Good learnings are:
-            - Reusable across different contexts
-            - Specific and actionable
-            - Not user-specific (use user memory for that)
+            **When to save:**
+            - Non-obvious solutions you discovered through investigation
+            - Patterns or anti-patterns that emerged from the work
+            - Approaches that proved effective (or ineffective)
+            - Gotchas that weren't initially apparent
+
+            **When NOT to save:**
+            - Raw facts (retrievable via search)
+            - User-specific preferences (use user memory)
+            - Common knowledge or obvious best practices
+            - One-off answers unlikely to recur
 
             Args:
-                title: Short descriptive title (e.g., "Python async best practices")
-                learning: The actual insight or knowledge to save.
-                context: When/where this applies (optional).
-                tags: Categories for this learning (optional).
-                namespace: Scope for this learning (optional).
-                    - "global": Shared with everyone (default)
-                    - "user": Private to current user
-                    - "<custom>": Custom grouping (e.g., "engineering")
+                title: Concise, searchable title (e.g., "Handling OAuth token refresh in SPAs").
+                       Should be specific enough to find later.
+                learning: The actual insight. Be specific and actionable - someone facing
+                         a similar situation should be able to apply this directly.
+                         Bad: "Be careful with caching"
+                         Good: "When caching user-specific data, include user ID in cache keys
+                               and set TTL shorter than session timeout to prevent stale data
+                               after permission changes"
+                context: When/where this applies. Helps with relevance matching.
+                        (e.g., "When building multi-tenant SaaS applications")
+                tags: Categories for organization (e.g., ["python", "async", "debugging"])
+                namespace: Access scope - "global" (shared), "user" (private), or custom grouping
 
             Returns:
                 Confirmation message.
@@ -646,20 +747,31 @@ class LearnedKnowledgeStore(LearningStore):
             limit: int = 5,
             namespace: Optional[str] = None,
         ) -> str:
-            """Search for relevant learnings in the knowledge base.
+            """Search for relevant insights in the knowledge base.
 
-            Use this when you need to recall insights, patterns, or solutions
-            that may have been learned in previous conversations. The search
-            uses semantic similarity to find relevant learnings.
+            Use this BEFORE tackling complex tasks to find patterns, approaches, or
+            solutions that were discovered in previous interactions. Semantic search
+            finds conceptually related learnings even with different wording.
+
+            **Good times to search:**
+            - Starting a complex debugging session → "debugging [technology] [symptom]"
+            - Designing architecture → "[pattern] trade-offs" or "[requirement] approaches"
+            - Facing a known problem category → "[problem type] solutions"
+            - Before recommending an approach → "[approach] best practices"
+
+            **Search tips:**
+            - Use conceptual terms, not exact phrases
+            - Include the technology/domain for specificity
+            - Describe the problem or goal, not just keywords
 
             Args:
-                query: What you're looking for (e.g., "database performance tips")
-                limit: Maximum number of results to return (default: 5)
-                namespace: Filter by namespace (optional).
-                    - None: Search all accessible learnings
-                    - "global": Only shared learnings
-                    - "user": Only user's private learnings
-                    - "<custom>": Only learnings in custom namespace
+                query: What you're looking for. Describe the problem, pattern, or domain.
+                       Examples:
+                       - "handling race conditions in async JavaScript"
+                       - "database schema migration strategies"
+                       - "API rate limiting implementation patterns"
+                limit: Maximum results to return (default: 5, usually sufficient)
+                namespace: Filter scope - None (all), "global", "user", or custom
 
             Returns:
                 Formatted list of relevant learnings, or message if none found.
@@ -690,20 +802,31 @@ class LearnedKnowledgeStore(LearningStore):
             limit: int = 5,
             namespace: Optional[str] = None,
         ) -> str:
-            """Search for relevant learnings in the knowledge base.
+            """Search for relevant insights in the knowledge base.
 
-            Use this when you need to recall insights, patterns, or solutions
-            that may have been learned in previous conversations. The search
-            uses semantic similarity to find relevant learnings.
+            Use this BEFORE tackling complex tasks to find patterns, approaches, or
+            solutions that were discovered in previous interactions. Semantic search
+            finds conceptually related learnings even with different wording.
+
+            **Good times to search:**
+            - Starting a complex debugging session → "debugging [technology] [symptom]"
+            - Designing architecture → "[pattern] trade-offs" or "[requirement] approaches"
+            - Facing a known problem category → "[problem type] solutions"
+            - Before recommending an approach → "[approach] best practices"
+
+            **Search tips:**
+            - Use conceptual terms, not exact phrases
+            - Include the technology/domain for specificity
+            - Describe the problem or goal, not just keywords
 
             Args:
-                query: What you're looking for (e.g., "database performance tips")
-                limit: Maximum number of results to return (default: 5)
-                namespace: Filter by namespace (optional).
-                    - None: Search all accessible learnings
-                    - "global": Only shared learnings
-                    - "user": Only user's private learnings
-                    - "<custom>": Only learnings in custom namespace
+                query: What you're looking for. Describe the problem, pattern, or domain.
+                       Examples:
+                       - "handling race conditions in async JavaScript"
+                       - "database schema migration strategies"
+                       - "API rate limiting implementation patterns"
+                limit: Maximum results to return (default: 5, usually sufficient)
+                namespace: Filter scope - None (all), "global", "user", or custom
 
             Returns:
                 Formatted list of relevant learnings, or message if none found.
@@ -1160,42 +1283,77 @@ class LearnedKnowledgeStore(LearningStore):
         from agno.models.message import Message
 
         system_prompt = dedent("""\
-            You are a Learning Extractor. Review conversations for genuinely reusable insights.
+            You are a Learning Extractor. Your job is to identify genuinely reusable insights
+            from conversations - the kind of knowledge that would help with similar tasks in the future.
 
-            ## What Makes a Good Learning
+            ## What Makes Something Worth Saving
 
-            Save if it's:
-            - **Novel**: Not already captured in existing learnings
-            - **Specific**: Concrete guidance, not vague principles
-            - **Actionable**: Can be directly applied
-            - **Generalizable**: Useful beyond this specific situation
+            A good learning is:
+            - **Discovered, not stated**: The insight emerged through work, not just repeated from the user
+            - **Non-obvious**: It required reasoning, investigation, or experience to arrive at
+            - **Reusable**: It applies to a category of problems, not just this exact situation
+            - **Actionable**: Someone encountering a similar situation could apply it directly
+            - **Durable**: It won't become outdated quickly
 
             ## What NOT to Save
 
-            - Raw facts or data
-            - User-specific information (belongs in user memory)
-            - Obvious or common knowledge
-            - One-time answers
-            - If unsure, don't save.
+            - **Raw facts**: "Python 3.12 was released in October 2023" (use search for retrieval)
+            - **User-specific info**: "User prefers TypeScript" (belongs in user memory)
+            - **Common knowledge**: "Use version control for code" (everyone knows this)
+            - **One-off answers**: "The error was a typo on line 42" (not generalizable)
+            - **Summaries**: Recaps of what was discussed (no new insight)
+            - **Uncertain conclusions**: If you're not confident, don't save it
+
+            ## Examples of Good Learnings
+
+            From a debugging session:
+            > **Title:** Debugging intermittent PostgreSQL connection timeouts
+            > **Learning:** When connection timeouts are intermittent, check for connection pool exhaustion
+            > before investigating network issues. Monitor active connections vs pool size, and look for
+            > long-running transactions that hold connections.
+            > **Context:** Diagnosing database connectivity issues in production
+
+            From an architecture discussion:
+            > **Title:** Event sourcing trade-offs for audit requirements
+            > **Learning:** Event sourcing adds complexity but provides natural audit trails. For systems
+            > where audit is the primary driver, consider a simpler append-only log table with the main
+            > data model unchanged - you get audit without the full event sourcing overhead.
+            > **Context:** Evaluating architecture patterns when audit trails are required
+
+            ## Examples of What NOT to Save
+
+            - "The user's API endpoint was returning 500 errors" (specific incident, not insight)
+            - "React is a popular frontend framework" (common knowledge)
+            - "We discussed three options for the database" (summary, no insight)
+            - "Always write tests" (too vague to be actionable)
 
         """)
 
         if existing_summary:
-            system_prompt += f"""## Existing Learnings (DO NOT DUPLICATE)
+            system_prompt += f"""## Already Saved (DO NOT DUPLICATE)
+
+These insights are already in the knowledge base. Do not save variations of these:
+
 {existing_summary}
 
 """
 
         system_prompt += dedent("""\
-            ## Instructions
-            - Only call save_learning if you find a genuinely novel, reusable insight
-            - It's perfectly fine to do nothing if there's nothing worth saving
-            - Quality over quantity - one good learning beats many weak ones\
+            ## Your Task
+
+            Review the conversation below. If - and only if - it contains a genuinely reusable insight
+            that isn't already captured, save it using the save_learning tool.
+
+            **Important:**
+            - Most conversations will NOT produce a learning. That's expected and correct.
+            - When in doubt, don't save. Quality over quantity.
+            - One excellent learning is worth more than five mediocre ones.
+            - It's perfectly fine to do nothing if there's nothing worth saving.\
         """)
 
         return [
             Message(role="system", content=system_prompt),
-            Message(role="user", content=f"Review this conversation for reusable learnings:\n\n{conversation_text}"),
+            Message(role="user", content=f"Review this conversation for reusable insights:\n\n{conversation_text}"),
         ]
 
     def _get_extraction_tools(
@@ -1214,16 +1372,22 @@ class LearnedKnowledgeStore(LearningStore):
             context: Optional[str] = None,
             tags: Optional[List[str]] = None,
         ) -> str:
-            """Save a reusable learning.
+            """Save a genuinely reusable insight discovered in this conversation.
+
+            Only call this if you've identified something that:
+            - Required investigation or reasoning to discover
+            - Would help with similar future tasks
+            - Isn't already captured in existing learnings
+            - Is specific and actionable enough to apply directly
 
             Args:
-                title: Short descriptive title.
-                learning: The actual insight.
-                context: When this applies.
-                tags: Categories.
+                title: Concise, searchable title that captures the topic.
+                learning: The insight itself - specific enough to apply, general enough to reuse.
+                context: When/where this applies (helps with future relevance matching).
+                tags: Categories for organization.
 
             Returns:
-                Confirmation.
+                Confirmation message.
             """
             success = self.save(
                 title=title,
@@ -1255,16 +1419,22 @@ class LearnedKnowledgeStore(LearningStore):
             context: Optional[str] = None,
             tags: Optional[List[str]] = None,
         ) -> str:
-            """Save a reusable learning.
+            """Save a genuinely reusable insight discovered in this conversation.
+
+            Only call this if you've identified something that:
+            - Required investigation or reasoning to discover
+            - Would help with similar future tasks
+            - Isn't already captured in existing learnings
+            - Is specific and actionable enough to apply directly
 
             Args:
-                title: Short descriptive title.
-                learning: The actual insight.
-                context: When this applies.
-                tags: Categories.
+                title: Concise, searchable title that captures the topic.
+                learning: The insight itself - specific enough to apply, general enough to reuse.
+                context: When/where this applies (helps with future relevance matching).
+                tags: Categories for organization.
 
             Returns:
-                Confirmation.
+                Confirmation message.
             """
             success = await self.asave(
                 title=title,
