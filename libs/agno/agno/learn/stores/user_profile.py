@@ -1270,7 +1270,7 @@ class UserProfileStore(LearningStore):
             - Information they'd find creepy to have remembered
             - Inferences or assumptions - only save what they've actually stated
             - Duplicates of existing memories (update instead)
-            - Trivial preferences that don't affect interactions
+            - Trivial preferences that don't affect interactions\
         """)
 
         system_prompt += profile_capture_instructions
@@ -1340,7 +1340,6 @@ class UserProfileStore(LearningStore):
 
         # Examples
         system_prompt += dedent("""
-
             ## Examples
 
             **Example 1: New user introduction**
@@ -1371,7 +1370,7 @@ class UserProfileStore(LearningStore):
             - Quality over quantity: 5 great memories beat 20 mediocre ones
             - Durability matters: save information that will still be relevant next month
             - Respect boundaries: when in doubt about whether to save something, don't
-            - It's fine to do nothing if the conversation reveals nothing worth remembering
+            - It's fine to do nothing if the conversation reveals nothing worth remembering\
         """)
 
         if self.config.additional_instructions:
