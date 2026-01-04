@@ -41,7 +41,7 @@ agent.print_response(
 
 ## Cookbook Structure
 
-### 📁 basics/
+### 📁 01_basics/
 Quick-start examples
 - `01_hello_learning.py` - Minimal working example
 - `02_user_profile_quick.py` - User memory basics
@@ -49,7 +49,7 @@ Quick-start examples
 - `04_entity_memory_quick.py` - Entity tracking basics
 - `05_learned_knowledge_quick.py` - Knowledge capture basics
 
-### 📁 user_profile/
+### 📁 02_user_profile/
 Deep dive into user memory:
 - `01_background_extraction.py` - Automatic profile extraction
 - `02_agentic_mode.py` - Agent-controlled memory
@@ -57,14 +57,14 @@ Deep dive into user memory:
 - `04_memory_vs_fields.py` - When to use each
 - `05_memory_operations.py` - Add, update, delete lifecycle
 
-### 📁 session_context/
+### 📁 03_session_context/
 Deep dive into session tracking:
 - `01_summary_mode.py` - Basic conversation summaries
 - `02_planning_mode.py` - Goal → Plan → Progress tracking
 - `03_context_continuity.py` - Building on previous context
 - `04_long_conversations.py` - Handling context limits
 
-### 📁 entity_memory/
+### 📁 04_entity_memory/
 Deep dive into entity knowledge:
 - `01_facts_and_events.py` - Semantic vs episodic memory
 - `02_entity_relationships.py` - Graph edges between entities
@@ -72,7 +72,7 @@ Deep dive into entity knowledge:
 - `04_background_extraction.py` - Auto-extract entities
 - `05_entity_search.py` - Query the entity database
 
-### 📁 learned_knowledge/
+### 📁 05_learned_knowledge/
 Deep dive into knowledge capture:
 - `01_agentic_mode.py` - Agent decides what to save
 - `02_propose_mode.py` - Human approval workflow
@@ -80,14 +80,14 @@ Deep dive into knowledge capture:
 - `04_search_and_apply.py` - Use learnings in responses
 - `05_namespace_scoping.py` - Sharing boundaries
 
-### 📁 combined/
+### 📁 06_combined/
 Multiple stores working together:
 - `01_user_plus_session.py` - Profile + session context
 - `02_user_plus_entities.py` - Profile + entity memory
 - `03_full_learning_machine.py` - All stores enabled
 - `04_learning_machine_builder.py` - Configuration patterns
 
-### 📁 patterns/
+### 📁 07_patterns/
 Real-world agent implementations:
 - `support_agent.py` - Customer support with memory
 - `research_agent.py` - Research with knowledge capture
@@ -97,7 +97,7 @@ Real-world agent implementations:
 - `team_knowledge_agent.py` - Shared team knowledge
 - `onboarding_agent.py` - New hire assistant
 
-### 📁 advanced/
+### 📁 08_advanced/
 Power user features:
 - `01_multi_user.py` - Multi-user data scoping
 - `02_curator_maintenance.py` - Prune and deduplicate
@@ -106,12 +106,14 @@ Power user features:
 - `05_async_patterns.py` - Async operations
 - `06_debugging.py` - Troubleshooting techniques
 
-### 📁 production/
+### 📁 09_production/
 Production-ready patterns:
 - `gpu_poor_learning.py` - Cost-optimized learning
 - `plan_and_learn.py` - Strategic task execution
 
-## Getting Started
+---
+
+## Running the Cookbooks
 
 ### 1. Clone the repo
 
@@ -140,9 +142,6 @@ pip install -r cookbook/15_learning/requirements.txt
 ```bash
 # Required for accessing OpenAI models
 export OPENAI_API_KEY=your-openai-api-key
-
-# Required for research agents using parallel search services
-export PARALLEL_API_KEY=your-parallel-api-key
 ```
 
 ### 4. Run Postgres with PgVector
@@ -150,7 +149,7 @@ export PARALLEL_API_KEY=your-parallel-api-key
 Postgres stores agent sessions, memory, knowledge, and state. Install [Docker Desktop](https://docs.docker.com/desktop/install/mac-install/) and run:
 
 ```bash
-./cookbook/15_learning/run_pgvector.sh
+./cookbook/scripts/run_pgvector.sh
 ```
 
 Or run directly:
@@ -166,7 +165,7 @@ docker run -d \
   agnohq/pgvector:18
 ```
 
-### 5. Run Cookbook Examples Individually
+### 5. Run Cookbooks
 
 ```bash
 # Start with the basics
@@ -177,16 +176,6 @@ python cookbook/15_learning/user_profile/02_agentic_mode.py
 python cookbook/15_learning/patterns/research_agent.py
 ```
 
-### 6. Run via AgentOS
-
-Agno provides a web interface for interacting with agents. Start the server:
-
-```bash
-python cookbook/15_learning/run.py
-```
-
-Then visit [os.agno.com](https://os.agno.com) and add `http://localhost:7777` as an endpoint.
-
 ---
 
 ## Key Concepts
@@ -196,29 +185,6 @@ An agent on interaction 1000 is fundamentally better than it was on interaction 
 
 ### The Advantage
 Instead of building memory, knowledge, and feedback systems separately, configure one system that handles all learning with consistent patterns.
-
-### Learning Modes
-
-Each Learning Store can be configured to run in different modes:
-
-```python
-from agno.learn import LearningMode
-
-# BACKGROUND (default for user_profile, session_context)
-# - Automatic extraction after conversations
-# - No agent tools needed
-# - Extra LLM call per interaction
-
-# AGENTIC (default for learned_knowledge)
-# - Agent decides when to save via tools
-# - More control, less noise
-# - No extra LLM calls
-
-# PROPOSE
-# - Agent proposes, user confirms
-# - Human-in-the-loop quality control
-# - Good for high-stakes knowledge
-```
 
 ### Three DX Levels
 
@@ -256,6 +222,29 @@ agent = Agent(
         ),
     ),
 )
+```
+
+### Learning Modes
+
+Each Learning Store can be configured to run in different modes:
+
+```python
+from agno.learn import LearningMode
+
+# BACKGROUND (default for user_profile, session_context)
+# - Automatic extraction after conversations
+# - No agent tools needed
+# - Extra LLM call per interaction
+
+# AGENTIC (default for learned_knowledge)
+# - Agent decides when to save via tools
+# - More control, less noise
+# - No extra LLM calls
+
+# PROPOSE
+# - Agent proposes, user confirms
+# - Human-in-the-loop quality control
+# - Good for high-stakes knowledge
 ```
 
 ### Built-in Learning Stores
@@ -464,6 +453,5 @@ learning = LearningMachine(
 ## Learn More
 
 - [Agno Documentation](https://docs.agno.com)
-- [Learning Machine Reference](https://docs.agno.com/learn)
 
 Built with 💜 by the Agno team
