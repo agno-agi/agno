@@ -26,7 +26,7 @@ from typing import Optional
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.learn import LearningMachine, UserProfileConfig, LearningMode
+from agno.learn import LearningMachine, LearningMode, UserProfileConfig
 from agno.learn.schemas import UserProfile
 from agno.models.openai import OpenAIResponses
 
@@ -44,12 +44,12 @@ model = OpenAIResponses(id="gpt-5.2")
 @dataclass
 class HybridProfile(UserProfile):
     """Profile with structured fields for queryable data.
-    
+
     Fields are good for:
     - Data you might filter/query on
     - Data with a clear structure
     - Data that rarely changes
-    
+
     Memories are good for:
     - Observations that don't fit a field
     - Context that varies in structure
@@ -58,20 +58,16 @@ class HybridProfile(UserProfile):
 
     # FIELDS: Structured, queryable
     company: Optional[str] = field(
-        default=None,
-        metadata={"description": "Company name"}
+        default=None, metadata={"description": "Company name"}
     )
     role: Optional[str] = field(
-        default=None,
-        metadata={"description": "Job title or role"}
+        default=None, metadata={"description": "Job title or role"}
     )
     timezone: Optional[str] = field(
-        default=None,
-        metadata={"description": "Timezone (e.g., America/New_York)"}
+        default=None, metadata={"description": "Timezone (e.g., America/New_York)"}
     )
     expertise_level: Optional[str] = field(
-        default=None,
-        metadata={"description": "beginner | intermediate | expert"}
+        default=None, metadata={"description": "beginner | intermediate | expert"}
     )
 
     # MEMORIES: Inherited from UserProfile
@@ -155,7 +151,7 @@ def demo_decision_guide():
     print("\n" + "=" * 60)
     print("Decision Guide: Fields vs Memories")
     print("=" * 60)
-    
+
     print("""
 ┌─────────────────────────────────────────────────────────────┐
 │ USE PROFILE FIELDS FOR:                                     │

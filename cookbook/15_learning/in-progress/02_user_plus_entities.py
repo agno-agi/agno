@@ -19,10 +19,10 @@ Run:
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.learn import (
-    LearningMachine,
-    UserProfileConfig,
     EntityMemoryConfig,
+    LearningMachine,
     LearningMode,
+    UserProfileConfig,
 )
 from agno.models.openai import OpenAIResponses
 

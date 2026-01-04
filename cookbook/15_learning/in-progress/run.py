@@ -12,17 +12,16 @@ Then visit https://os.agno.com and add http://localhost:7777 as an endpoint.
 from pathlib import Path
 
 from agno.os import AgentOS
-
 from db import db
+from patterns.coding_assistant import coding_assistant
+from patterns.onboarding_agent import onboarding_agent
+from patterns.personal_assistant import personal_assistant
+from patterns.research_agent import research_agent
+from patterns.sales_agent import sales_agent
 
 # Import pattern agents
 from patterns.support_agent import support_agent
-from patterns.research_agent import research_agent
-from patterns.coding_assistant import coding_assistant
-from patterns.personal_assistant import personal_assistant
-from patterns.sales_agent import sales_agent
 from patterns.team_knowledge_agent import team_knowledge_agent
-from patterns.onboarding_agent import onboarding_agent
 
 # Import production agents
 from production.gpu_poor_learning import gpu_poor_agent

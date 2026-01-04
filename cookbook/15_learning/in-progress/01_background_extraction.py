@@ -20,7 +20,7 @@ Run:
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.learn import LearningMachine, UserProfileConfig, LearningMode
+from agno.learn import LearningMachine, LearningMode, UserProfileConfig
 from agno.models.openai import OpenAIResponses
 
 # ============================================================================
@@ -43,8 +43,8 @@ agent = Agent(
         user_profile=UserProfileConfig(
             mode=LearningMode.BACKGROUND,  # Auto-extract after each response
             # What operations to enable during extraction:
-            enable_add_memory=True,      # Add new observations
-            enable_update_memory=True,   # Update existing ones
+            enable_add_memory=True,  # Add new observations
+            enable_update_memory=True,  # Update existing ones
             enable_delete_memory=False,  # Don't auto-delete (safer)
             enable_update_profile=True,  # Update name, preferred_name
         ),

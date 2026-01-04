@@ -160,8 +160,7 @@ def demo_context_evolution():
     # Phase 4: Solution
     print("\n--- Phase 4: Solution ---\n")
     agent.print_response(
-        "I added select_related and prefetch_related. "
-        "Now down to 3 queries per page!",
+        "I added select_related and prefetch_related. Now down to 3 queries per page!",
         user_id=user,
         session_id=session,
         stream=True,

@@ -25,7 +25,7 @@ Run:
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.learn import LearningMachine, EntityMemoryConfig, LearningMode
+from agno.learn import EntityMemoryConfig, LearningMachine, LearningMode
 from agno.models.openai import OpenAIResponses
 
 # ============================================================================
@@ -268,5 +268,5 @@ if __name__ == "__main__":
     print("✅ Namespace controls sharing boundaries")
     print('   "global" = shared with everyone')
     print('   "user" = private per user')
-    print('   custom = team/department isolation')
+    print("   custom = team/department isolation")
     print("=" * 60)

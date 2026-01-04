@@ -18,7 +18,7 @@ Run:
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.learn import LearningMachine, EntityMemoryConfig, LearningMode
+from agno.learn import EntityMemoryConfig, LearningMachine, LearningMode
 from agno.models.openai import OpenAIResponses
 
 # ============================================================================

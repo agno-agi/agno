@@ -22,11 +22,11 @@ from agno.db.postgres import PostgresDb
 from agno.knowledge import Knowledge
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.learn import (
+    LearnedKnowledgeConfig,
     LearningMachine,
     LearningMode,
-    UserProfileConfig,
     SessionContextConfig,
-    LearnedKnowledgeConfig,
+    UserProfileConfig,
 )
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.pgvector import PgVector, SearchType

@@ -14,16 +14,16 @@ Run:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import List, Optional
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.learn import (
+    EntityMemoryConfig,
     LearningMachine,
     LearningMode,
-    UserProfileConfig,
     SessionContextConfig,
-    EntityMemoryConfig,
+    UserProfileConfig,
 )
 from agno.learn.schemas import UserProfile
 from agno.models.openai import OpenAIResponses
@@ -45,19 +45,17 @@ class SalesRepProfile(UserProfile):
 
     territory: Optional[str] = field(
         default=None,
-        metadata={"description": "Sales territory (e.g., West Coast, EMEA)"}
+        metadata={"description": "Sales territory (e.g., West Coast, EMEA)"},
     )
     quota: Optional[str] = field(
-        default=None,
-        metadata={"description": "Quarterly quota amount"}
+        default=None, metadata={"description": "Quarterly quota amount"}
     )
     product_specialty: Optional[List[str]] = field(
-        default=None,
-        metadata={"description": "Products they specialize in"}
+        default=None, metadata={"description": "Products they specialize in"}
     )
     preferred_crm: Optional[str] = field(
         default=None,
-        metadata={"description": "CRM system preference (Salesforce, HubSpot, etc.)"}
+        metadata={"description": "CRM system preference (Salesforce, HubSpot, etc.)"},
     )
 
 

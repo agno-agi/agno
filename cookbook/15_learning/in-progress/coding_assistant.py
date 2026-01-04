@@ -17,19 +17,19 @@ Or via AgentOS:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import List, Optional
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge import Knowledge
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.learn import (
-    LearningMachine,
-    UserProfileConfig,
-    SessionContextConfig,
-    LearnedKnowledgeConfig,
     EntityMemoryConfig,
+    LearnedKnowledgeConfig,
+    LearningMachine,
     LearningMode,
+    SessionContextConfig,
+    UserProfileConfig,
 )
 from agno.learn.schemas import UserProfile
 from agno.models.openai import OpenAIResponses
@@ -52,31 +52,37 @@ class DeveloperProfile(UserProfile):
 
     primary_languages: Optional[List[str]] = field(
         default=None,
-        metadata={"description": "Primary programming languages (e.g., Python, TypeScript)"}
+        metadata={
+            "description": "Primary programming languages (e.g., Python, TypeScript)"
+        },
     )
     frameworks: Optional[List[str]] = field(
         default=None,
-        metadata={"description": "Frameworks used (e.g., FastAPI, React, Django)"}
+        metadata={"description": "Frameworks used (e.g., FastAPI, React, Django)"},
     )
     editor: Optional[str] = field(
         default=None,
-        metadata={"description": "Preferred editor: VS Code | Neovim | PyCharm | other"}
+        metadata={
+            "description": "Preferred editor: VS Code | Neovim | PyCharm | other"
+        },
     )
     os: Optional[str] = field(
         default=None,
-        metadata={"description": "Operating system: macOS | Linux | Windows"}
+        metadata={"description": "Operating system: macOS | Linux | Windows"},
     )
     style_preferences: Optional[str] = field(
         default=None,
-        metadata={"description": "Code style preferences (type hints, docstrings, etc.)"}
+        metadata={
+            "description": "Code style preferences (type hints, docstrings, etc.)"
+        },
     )
     expertise_level: Optional[str] = field(
         default=None,
-        metadata={"description": "Experience level: junior | mid | senior | principal"}
+        metadata={"description": "Experience level: junior | mid | senior | principal"},
     )
     test_preferences: Optional[str] = field(
         default=None,
-        metadata={"description": "Testing preferences (TDD, pytest, jest, etc.)"}
+        metadata={"description": "Testing preferences (TDD, pytest, jest, etc.)"},
     )
 
 

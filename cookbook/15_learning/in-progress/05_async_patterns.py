@@ -23,7 +23,7 @@ from typing import List
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.learn import LearningMachine, UserProfileConfig, LearningMode
+from agno.learn import LearningMachine, LearningMode, UserProfileConfig
 from agno.models.openai import OpenAIResponses
 
 # ============================================================================
@@ -96,7 +96,7 @@ async def demo_concurrent():
 
     # Run all concurrently
     print("\n--- Running 3 requests concurrently ---\n")
-    
+
     async def process_user(user_id: str, message: str):
         response = await agent.arun(
             message,
@@ -105,10 +105,9 @@ async def demo_concurrent():
         )
         return f"{user_id}: Done"
 
-    results = await asyncio.gather(*[
-        process_user(user, msg)
-        for user, msg in zip(users, messages)
-    ])
+    results = await asyncio.gather(
+        *[process_user(user, msg) for user, msg in zip(users, messages)]
+    )
 
     for result in results:
         print(result)

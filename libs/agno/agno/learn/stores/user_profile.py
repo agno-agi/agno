@@ -188,6 +188,10 @@ class UserProfileStore(LearningStore):
     def build_context(self, data: Any) -> str:
         """Build context for the agent.
 
+        Formats user profile data for injection into the agent's system prompt.
+        Designed to enable natural, personalized responses without meta-commentary
+        about memory systems.
+
         Args:
             data: User profile data from recall().
 
@@ -197,11 +201,12 @@ class UserProfileStore(LearningStore):
         if not data:
             if self.config.enable_agent_tools:
                 return dedent("""\
-                    <user_profile>
+                    <user_memory>
                     No information saved about this user yet.
 
-                    You can use `update_user_memory` to save information worth remembering about this user.
-                    </user_profile>""")
+                    Use `update_user_memory` when you learn something worth remembering - information
+                    that would help personalize future conversations or avoid asking the same questions.
+                    </user_memory>""")
             return ""
 
         # Build profile fields section
@@ -210,7 +215,7 @@ class UserProfileStore(LearningStore):
         for field_name in updateable_fields:
             value = getattr(data, field_name, None)
             if value:
-                profile_parts.append(f"- {field_name.replace('_', ' ').title()}: {value}")
+                profile_parts.append(f"{field_name.replace('_', ' ').title()}: {value}")
 
         # Build memories section
         memories_text = None
@@ -222,37 +227,48 @@ class UserProfileStore(LearningStore):
         if not profile_parts and not memories_text:
             if self.config.enable_agent_tools:
                 return dedent("""\
-                    <user_profile>
+                    <user_memory>
                     No information saved about this user yet.
 
-                    You can use `update_user_memory` to save information worth remembering about this user.
-                    </user_profile>""")
+                    Use `update_user_memory` when you learn something worth remembering - information
+                    that would help personalize future conversations or avoid asking the same questions.
+                    </user_memory>""")
             return ""
 
-        context = dedent("""\
-            <user_profile>
-            What you know about this user:
-            """)
+        context = "<user_memory>\n"
 
         if profile_parts:
             context += "\n".join(profile_parts) + "\n"
 
         if memories_text:
             if profile_parts:
-                context += "\nObservations:\n"
+                context += "\n"
             context += memories_text
+
+        context += dedent("""
+
+            <memory_application_guidelines>
+            Apply this knowledge naturally - respond as if you inherently know this information,
+            exactly as a colleague would recall shared history without narrating their thought process.
+
+            - Selectively apply memories based on relevance to the current query
+            - Never say "based on my memory" or "I remember that" - just use the information naturally
+            - Current conversation always takes precedence over stored memories
+            - Use memories to calibrate tone, depth, and examples without announcing it
+            </memory_application_guidelines>""")
 
         if self.config.enable_agent_tools:
             context += dedent("""
 
-            You can use `update_user_memory` to save new information or update existing memories.
-            Use this to personalize responses. Current conversation takes precedence.
-            </user_profile>""")
-        else:
-            context += dedent("""
+            <memory_updates>
+            Use `update_user_memory` to save new information or update existing memories when you learn
+            something that would improve future interactions. Focus on information that helps you:
+            - Personalize responses to their context and preferences
+            - Avoid asking questions you should already know the answer to
+            - Provide continuity across conversations
+            </memory_updates>""")
 
-            Use this to personalize responses. Current conversation takes precedence.
-            </user_profile>""")
+        context += "\n</user_memory>"
 
         return context
 
@@ -549,19 +565,24 @@ class UserProfileStore(LearningStore):
         if self.config.agent_can_update_memories:
 
             def update_user_memory(task: str) -> str:
-                """Update information about the user.
+                """Save or update information about this user for future conversations.
 
-                Use this to save, update, or delete information about the user.
+                Use this when you learn something worth remembering - information that would
+                help personalize future interactions or provide continuity across sessions.
 
                 Args:
-                    task: What to remember, update, or forget about the user.
-                          Examples:
-                          - "Remember that user's name is John"
-                          - "User now prefers dark mode"
-                          - "Forget user's old address"
+                    task: What to save, update, or remove. Be specific and factual.
+                          Good examples:
+                          - "User is a senior engineer at Stripe working on payments"
+                          - "Prefers concise responses without lengthy explanations"
+                          - "Update: User moved from NYC to London"
+                          - "Remove the memory about their old job at Acme"
+                          Bad examples:
+                          - "User seems nice" (too vague)
+                          - "Had a meeting today" (not durable)
 
                 Returns:
-                    Confirmation message.
+                    Confirmation of what was saved/updated.
                 """
                 return self.run_user_profile_update(
                     task=task,
@@ -596,19 +617,24 @@ class UserProfileStore(LearningStore):
         if self.config.agent_can_update_memories:
 
             async def update_user_memory(task: str) -> str:
-                """Update information about the user.
+                """Save or update information about this user for future conversations.
 
-                Use this to save, update, or delete information about the user.
+                Use this when you learn something worth remembering - information that would
+                help personalize future interactions or provide continuity across sessions.
 
                 Args:
-                    task: What to remember, update, or forget about the user.
-                          Examples:
-                          - "Remember that user's name is John"
-                          - "User now prefers dark mode"
-                          - "Forget user's old address"
+                    task: What to save, update, or remove. Be specific and factual.
+                          Good examples:
+                          - "User is a senior engineer at Stripe working on payments"
+                          - "Prefers concise responses without lengthy explanations"
+                          - "Update: User moved from NYC to London"
+                          - "Remove the memory about their old job at Acme"
+                          Bad examples:
+                          - "User seems nice" (too vague)
+                          - "Had a meeting today" (not durable)
 
                 Returns:
-                    Confirmation message.
+                    Confirmation of what was saved/updated.
                 """
                 return await self.arun_user_profile_update(
                     task=task,
@@ -1153,146 +1179,199 @@ class UserProfileStore(LearningStore):
         existing_data: List[dict],
         existing_profile: Optional[Any] = None,
     ) -> "Message":
-        """Build system message for extraction.
+        """Build system message for memory extraction.
 
-        The system message now clearly separates:
-        1. Profile Fields (structured) - updated via update_profile
-        2. Memories (unstructured) - updated via add_memory, update_memory, delete_memory
+        Guides the model to extract and organize user information in a way that
+        enables natural, personalized future interactions - not as a database,
+        but as working knowledge that informs how to engage with this person.
         """
         from agno.models.message import Message
 
         if self.config.system_message is not None:
             return Message(role="system", content=self.config.system_message)
 
-        # Get updateable fields from schema
         profile_fields = self._get_updateable_fields()
 
         system_prompt = dedent("""\
-            You are a User Profile Manager. Your job is to extract and organize
-            information about the user from conversations.
+            You are building a memory of this user to enable personalized, contextual interactions.
 
-            ## Two Types of Information
+            Your goal is NOT to create a database of facts, but to build working knowledge that helps
+            an AI assistant engage naturally with this person - knowing their context, adapting to their
+            preferences, and providing continuity across conversations.
+
+            ## Memory Philosophy
+
+            Think of memories as what a thoughtful colleague would remember after working with someone:
+            - Their role and what they're working on
+            - How they prefer to communicate
+            - What matters to them and what frustrates them
+            - Ongoing projects or situations worth tracking
+
+            Memories should make future interactions feel informed and personal, not robotic or surveillance-like.
 
         """)
 
         # Profile Fields section
         if profile_fields and self.config.enable_update_profile:
             system_prompt += dedent("""\
-                ### 1. Profile Fields (Structured)
-                Use `update_profile` for concrete facts that fit these fields:
+                ## Profile Fields
+
+                Use `update_profile` for stable identity information:
             """)
 
             for field_name, field_info in profile_fields.items():
                 description = field_info.get("description", f"User's {field_name.replace('_', ' ')}")
-                system_prompt += f"    - **{field_name}**: {description}\n"
+                system_prompt += f"- **{field_name}**: {description}\n"
 
-            # Show current values if profile exists
             if existing_profile:
-                system_prompt += "\n    Current values:\n"
+                has_values = False
                 for field_name in profile_fields:
-                    value = getattr(existing_profile, field_name, None)
-                    if value:
-                        system_prompt += f"    - {field_name}: {value}\n"
-                    else:
-                        system_prompt += f"    - {field_name}: (not set)\n"
+                    if getattr(existing_profile, field_name, None):
+                        has_values = True
+                        break
+
+                if has_values:
+                    system_prompt += "\nCurrent values:\n"
+                    for field_name in profile_fields:
+                        value = getattr(existing_profile, field_name, None)
+                        if value:
+                            system_prompt += f"- {field_name}: {value}\n"
 
             system_prompt += "\n"
 
-        # Memories section
+        # Memories section with improved categories
         system_prompt += dedent("""\
-            ### 2. Memories (Unstructured)
-            Use memory tools for observations that don't fit the fields above:
-            - Preferences and opinions
-            - Behavioral patterns
-            - Context that might be useful later
-            - Anything that doesn't have a dedicated field
+            ## Memories
+
+            Use memory tools for contextual information organized by relevance:
+
+            **Work/Project Context** - What they're building, their role, current focus
+            **Personal Context** - Preferences, communication style, background that shapes interactions
+            **Top of Mind** - Active situations, ongoing challenges, time-sensitive context
+            **Patterns** - How they work, what they value, recurring themes
 
         """)
 
-        # Custom instructions
+        # Custom instructions or defaults
         profile_capture_instructions = self.config.instructions or dedent("""\
-            **What to capture in memories:**
-            - How they think and work (problem-solving style, communication preferences)
-            - What matters to them (goals, priorities, frustrations)
-            - Patterns and preferences (tools, methods, feedback style)
+            ## What To Capture
 
-            **Do NOT capture:**
-            - Information that fits a profile field (use update_profile instead)
-            - One-time events unless they reveal a pattern
-            - Trivial details unlikely to matter later
-            - Inferences or assumptions not directly stated\
+            **DO save:**
+            - Role, company, and what they're working on
+            - Communication preferences (brevity vs detail, technical depth, tone)
+            - Goals, priorities, and current challenges
+            - Preferences that affect how to help them (tools, frameworks, approaches)
+            - Context that would be awkward to ask about again
+            - Patterns in how they think and work
+
+            **DO NOT save:**
+            - Sensitive personal information (health conditions, financial details, relationships) unless directly relevant to helping them
+            - One-off details unlikely to matter in future conversations
+            - Information they'd find creepy to have remembered
+            - Inferences or assumptions - only save what they've actually stated
+            - Duplicates of existing memories (update instead)
+            - Trivial preferences that don't affect interactions
         """)
 
         system_prompt += profile_capture_instructions
 
         system_prompt += dedent("""
 
-            ## How To Write Memory Entries
-            - Write in third person: "User is..." or "User prefers..."
-            - Be specific and factual, not vague
-            - One clear fact per entry
-            - Preserve nuance - don't overgeneralize
+            ## Writing Style
 
-            ## Current Memories
+            Write memories as concise, factual statements in third person:
+
+            **Good memories:**
+            - "Founder and CEO of Acme, a 10-person AI startup"
+            - "Prefers direct feedback without excessive caveats"
+            - "Currently preparing for Series A fundraise, targeting $50M"
+            - "Values simplicity over cleverness in code architecture"
+
+            **Bad memories:**
+            - "User mentioned they work at a company" (too vague)
+            - "User seems to like technology" (obvious/not useful)
+            - "Had a meeting yesterday" (not durable)
+            - "User is stressed about fundraising" (inference without direct statement)
+
+            ## Consolidation Over Accumulation
+
+            **Critical:** Prefer updating existing memories over adding new ones.
+
+            - If new information extends an existing memory, UPDATE it
+            - If new information contradicts an existing memory, REPLACE it
+            - If information is truly new and distinct, then add it
+            - Periodically consolidate related memories into cohesive summaries
+            - Delete memories that are no longer accurate or relevant
+
+            Think of memory maintenance like note-taking: a few well-organized notes beat many scattered fragments.
+
         """)
 
+        # Current memories section
+        system_prompt += "## Current Memories\n\n"
+
         if existing_data:
-            system_prompt += "The user already has these memories saved:\n"
+            system_prompt += "Existing memories for this user:\n"
             for entry in existing_data:
                 system_prompt += f"- [{entry['id']}] {entry['content']}\n"
-            system_prompt += "\nYou can update or delete these if the conversation indicates changes.\n"
+            system_prompt += dedent("""
+                Review these before adding new ones:
+                - UPDATE if new information extends or modifies an existing memory
+                - DELETE if a memory is no longer accurate
+                - Only ADD if the information is genuinely new and distinct
+            """)
         else:
-            system_prompt += "No existing memories for this user.\n"
+            system_prompt += "No existing memories. Extract what's worth remembering from this conversation.\n"
 
-        system_prompt += "\n## Available Actions\n"
+        # Available actions
+        system_prompt += "\n## Available Actions\n\n"
 
         if self.config.enable_update_profile and profile_fields:
             fields_list = ", ".join(profile_fields.keys())
-            system_prompt += f"- `update_profile`: Update profile fields ({fields_list})\n"
+            system_prompt += f"- `update_profile`: Set profile fields ({fields_list})\n"
         if self.config.enable_add_memory:
-            system_prompt += "- `add_memory`: Add a new memory about the user\n"
+            system_prompt += "- `add_memory`: Add a new memory (only if genuinely new information)\n"
         if self.config.enable_update_memory:
-            system_prompt += "- `update_memory`: Update an existing memory by its ID\n"
+            system_prompt += "- `update_memory`: Update existing memory with new/corrected information\n"
         if self.config.enable_delete_memory:
-            system_prompt += "- `delete_memory`: Delete a memory that is no longer accurate\n"
+            system_prompt += "- `delete_memory`: Remove outdated or incorrect memory\n"
         if self.config.enable_clear_memories:
-            system_prompt += "- `clear_all_memories`: Remove all memories (use sparingly)\n"
+            system_prompt += "- `clear_all_memories`: Reset all memories (use rarely)\n"
 
+        # Examples
         system_prompt += dedent("""
 
             ## Examples
 
-            User says: "I'm Alice, CTO at Acme, based in London"
+            **Example 1: New user introduction**
+            User: "I'm Sarah, I run engineering at Stripe. We're migrating to Kubernetes."
         """)
 
-        if profile_fields and self.config.enable_update_profile:
-            example_fields = []
-            if "name" in profile_fields:
-                example_fields.append('name="Alice"')
-            if "role" in profile_fields:
-                example_fields.append('role="CTO"')
-            if "company" in profile_fields:
-                example_fields.append('company="Acme"')
-            if "location" in profile_fields:
-                example_fields.append('location="London"')
+        if profile_fields and self.config.enable_update_profile and "name" in profile_fields:
+            system_prompt += '→ update_profile(name="Sarah")\n'
 
-            if example_fields:
-                system_prompt += f"→ update_profile({', '.join(example_fields)})\n"
-            else:
-                system_prompt += '→ add_memory("User is Alice, CTO at Acme, based in London")\n'
-        else:
-            system_prompt += '→ add_memory("User is Alice, CTO at Acme, based in London")\n'
+        system_prompt += dedent("""\
+            → add_memory("Engineering lead at Stripe, currently migrating infrastructure to Kubernetes")
 
-        system_prompt += dedent("""
-            User says: "I prefer detailed explanations with code examples"
-            → add_memory("User prefers detailed explanations with code examples")
+            **Example 2: Updating existing context**
+            Existing memory: "Working on Series A fundraise"
+            User: "We closed our Series A last week! $12M from Sequoia."
+            → update_memory(id, "Closed $12M Series A from Sequoia")
 
-            ## Important
-            - Profile fields are for FACTS, memories are for OBSERVATIONS
-            - Don't duplicate: if it fits a field, don't also add as memory
-            - Update existing values when new info contradicts old
-            - Quality over quantity - fewer accurate entries beats many vague ones
-            - It's fine to do nothing if there's no profile-relevant content\
+            **Example 3: Learning preferences**
+            User: "Can you skip the explanations and just give me the code?"
+            → add_memory("Prefers concise responses with code over lengthy explanations")
+
+            **Example 4: Nothing worth saving**
+            User: "What's the weather like?"
+            → No action needed (trivial, no lasting relevance)
+
+            ## Final Guidance
+
+            - Quality over quantity: 5 great memories beat 20 mediocre ones
+            - Durability matters: save information that will still be relevant next month
+            - Respect boundaries: when in doubt about whether to save something, don't
+            - It's fine to do nothing if the conversation reveals nothing worth remembering
         """)
 
         if self.config.additional_instructions:
@@ -1325,10 +1404,15 @@ class UserProfileStore(LearningStore):
         if self.config.enable_add_memory:
 
             def add_memory(memory: str) -> str:
-                """Add a new memory about the user.
+                """Save a new memory about this user.
+
+                Only add genuinely new information that will help personalize future interactions.
+                Before adding, check if this extends an existing memory (use update_memory instead).
 
                 Args:
-                    memory: The memory to save. Write in third person, e.g. "User prefers dark mode"
+                    memory: Concise, factual statement in third person.
+                           Good: "Senior engineer at Stripe, working on payment infrastructure"
+                           Bad: "User works at a company" (too vague)
 
                 Returns:
                     Confirmation message.
@@ -1363,11 +1447,15 @@ class UserProfileStore(LearningStore):
         if self.config.enable_update_memory:
 
             def update_memory(memory_id: str, memory: str) -> str:
-                """Update an existing memory.
+                """Update an existing memory with new or corrected information.
+
+                Prefer updating over adding when new information extends or modifies
+                something already stored. This keeps memories consolidated and accurate.
 
                 Args:
-                    memory_id: The ID of the memory to update.
-                    memory: The new memory content.
+                    memory_id: The ID of the memory to update (shown in brackets like [abc123]).
+                    memory: The updated memory content. Should be a complete replacement,
+                           not a diff or addition.
 
                 Returns:
                     Confirmation message.
@@ -1401,10 +1489,15 @@ class UserProfileStore(LearningStore):
         if self.config.enable_delete_memory:
 
             def delete_memory(memory_id: str) -> str:
-                """Delete a memory that is no longer accurate.
+                """Remove a memory that is outdated, incorrect, or no longer relevant.
+
+                Delete when:
+                - Information is no longer accurate (e.g., they changed jobs)
+                - The memory was a misunderstanding
+                - It's been superseded by a more complete memory
 
                 Args:
-                    memory_id: The ID of the memory to delete.
+                    memory_id: The ID of the memory to delete (shown in brackets like [abc123]).
 
                 Returns:
                     Confirmation message.
@@ -1479,10 +1572,15 @@ class UserProfileStore(LearningStore):
         if self.config.enable_add_memory:
 
             async def add_memory(memory: str) -> str:
-                """Add a new memory about the user.
+                """Save a new memory about this user.
+
+                Only add genuinely new information that will help personalize future interactions.
+                Before adding, check if this extends an existing memory (use update_memory instead).
 
                 Args:
-                    memory: The memory to save. Write in third person, e.g. "User prefers dark mode"
+                    memory: Concise, factual statement in third person.
+                           Good: "Senior engineer at Stripe, working on payment infrastructure"
+                           Bad: "User works at a company" (too vague)
 
                 Returns:
                     Confirmation message.
@@ -1517,11 +1615,15 @@ class UserProfileStore(LearningStore):
         if self.config.enable_update_memory:
 
             async def update_memory(memory_id: str, memory: str) -> str:
-                """Update an existing memory.
+                """Update an existing memory with new or corrected information.
+
+                Prefer updating over adding when new information extends or modifies
+                something already stored. This keeps memories consolidated and accurate.
 
                 Args:
-                    memory_id: The ID of the memory to update.
-                    memory: The new memory content.
+                    memory_id: The ID of the memory to update (shown in brackets like [abc123]).
+                    memory: The updated memory content. Should be a complete replacement,
+                           not a diff or addition.
 
                 Returns:
                     Confirmation message.
@@ -1555,10 +1657,15 @@ class UserProfileStore(LearningStore):
         if self.config.enable_delete_memory:
 
             async def delete_memory(memory_id: str) -> str:
-                """Delete a memory that is no longer accurate.
+                """Remove a memory that is outdated, incorrect, or no longer relevant.
+
+                Delete when:
+                - Information is no longer accurate (e.g., they changed jobs)
+                - The memory was a misunderstanding
+                - It's been superseded by a more complete memory
 
                 Args:
-                    memory_id: The ID of the memory to delete.
+                    memory_id: The ID of the memory to delete (shown in brackets like [abc123]).
 
                 Returns:
                     Confirmation message.

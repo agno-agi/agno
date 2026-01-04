@@ -20,8 +20,8 @@ Run:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any, Callable
 from datetime import datetime
+from typing import Any, Callable, Dict, List, Optional
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
@@ -77,7 +77,9 @@ class ProjectContext:
             team_members=data.get("team_members", []),
             milestones=data.get("milestones", []),
             notes=data.get("notes", []),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else None,
+            updated_at=datetime.fromisoformat(data["updated_at"])
+            if data.get("updated_at")
+            else None,
         )
 
 
@@ -98,7 +100,7 @@ class ProjectContextConfig:
 class ProjectContextStore:
     """
     Custom learning store for project-specific context.
-    
+
     Implements the LearningStore protocol.
     """
 
@@ -127,7 +129,7 @@ class ProjectContextStore:
     def process(self, messages: List[Any], project_id: str, **kwargs) -> None:
         """
         Extract and save project context from messages.
-        
+
         In a real implementation, this would:
         1. Parse messages for project-related info
         2. Update the project context
@@ -148,7 +150,7 @@ class ProjectContextStore:
             return ""
 
         parts = [f"<project_context project_id='{data.project_id}'>"]
-        
+
         if data.name:
             parts.append(f"Project: {data.name}")
         if data.description:
@@ -162,7 +164,9 @@ class ProjectContextStore:
         if data.milestones:
             parts.append("Milestones:")
             for m in data.milestones:
-                parts.append(f"  - {m.get('name', 'Unknown')}: {m.get('status', 'pending')}")
+                parts.append(
+                    f"  - {m.get('name', 'Unknown')}: {m.get('status', 'pending')}"
+                )
         if data.notes:
             parts.append("Notes:")
             for note in data.notes[-5:]:  # Last 5 notes
@@ -187,9 +191,9 @@ class ProjectContextStore:
             """Update project context."""
             if project_id not in self._storage:
                 self._storage[project_id] = ProjectContext(project_id=project_id)
-            
+
             ctx = self._storage[project_id]
-            
+
             if name:
                 ctx.name = name
             if description:
@@ -202,10 +206,10 @@ class ProjectContextStore:
                 ctx.team_members.append(add_member)
             if add_note:
                 ctx.notes.append(add_note)
-            
+
             ctx.updated_at = datetime.now()
             self._updated = True
-            
+
             return f"Updated project {project_id}"
 
         return [update_project]
@@ -265,7 +269,7 @@ def demo():
 
     # Create project context
     print("\n--- Setup Project ---\n")
-    
+
     # Manually set up project for demo
     project_store._storage[project_id] = ProjectContext(
         project_id=project_id,

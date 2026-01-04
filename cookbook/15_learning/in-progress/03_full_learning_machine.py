@@ -24,12 +24,12 @@ from agno.db.postgres import PostgresDb
 from agno.knowledge import Knowledge
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.learn import (
-    LearningMachine,
-    UserProfileConfig,
-    SessionContextConfig,
-    LearnedKnowledgeConfig,
     EntityMemoryConfig,
+    LearnedKnowledgeConfig,
+    LearningMachine,
     LearningMode,
+    SessionContextConfig,
+    UserProfileConfig,
 )
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.pgvector import PgVector, SearchType
@@ -210,7 +210,7 @@ def demo_persistence():
     print("=" * 60)
 
     user = "full_demo@example.com"  # Same user
-    session = "new_session"         # New session
+    session = "new_session"  # New session
 
     print("\n--- New session, same user ---\n")
     agent.print_response(

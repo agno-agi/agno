@@ -14,18 +14,18 @@ Run:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import List, Optional
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge import Knowledge
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.learn import (
+    LearnedKnowledgeConfig,
     LearningMachine,
     LearningMode,
-    UserProfileConfig,
     SessionContextConfig,
-    LearnedKnowledgeConfig,
+    UserProfileConfig,
 )
 from agno.learn.schemas import UserProfile
 from agno.models.openai import OpenAIResponses
@@ -57,31 +57,28 @@ class NewHireProfile(UserProfile):
 
     role: Optional[str] = field(
         default=None,
-        metadata={"description": "Job role (e.g., Software Engineer, Product Manager)"}
+        metadata={"description": "Job role (e.g., Software Engineer, Product Manager)"},
     )
     team: Optional[str] = field(
-        default=None,
-        metadata={"description": "Team assignment"}
+        default=None, metadata={"description": "Team assignment"}
     )
     start_date: Optional[str] = field(
-        default=None,
-        metadata={"description": "Start date at company"}
+        default=None, metadata={"description": "Start date at company"}
     )
     manager: Optional[str] = field(
-        default=None,
-        metadata={"description": "Direct manager name"}
+        default=None, metadata={"description": "Direct manager name"}
     )
     onboarding_stage: Optional[str] = field(
         default=None,
-        metadata={"description": "Current stage: orientation | training | ramping | complete"}
+        metadata={
+            "description": "Current stage: orientation | training | ramping | complete"
+        },
     )
     completed_topics: Optional[List[str]] = field(
-        default=None,
-        metadata={"description": "Topics they've completed"}
+        default=None, metadata={"description": "Topics they've completed"}
     )
     tech_background: Optional[List[str]] = field(
-        default=None,
-        metadata={"description": "Technologies they already know"}
+        default=None, metadata={"description": "Technologies they already know"}
     )
 
 
@@ -156,20 +153,15 @@ def seed_knowledge():
     topics = [
         "Dev Environment: Use VS Code with our extension pack. Clone repos from "
         "GitHub Enterprise. Run ./scripts/setup.sh for initial configuration.",
-
         "Git Workflow: We use trunk-based development. Create feature branches "
         "from main, keep PRs small (<400 lines), require 2 approvals. Always "
         "squash merge.",
-
         "Code Style: Python code follows Black formatting. TypeScript uses "
         "Prettier + ESLint. Run pre-commit hooks before pushing.",
-
         "Architecture: We're a microservices shop. API Gateway routes to services. "
         "Each service owns its data. Use async messaging for cross-service comms.",
-
         "Incident Response: For P1 incidents, page the on-call (PagerDuty). "
         "Create an incident channel in Slack. Post updates every 30 minutes.",
-
         "Meetings: Daily standup at 10am PT. Sprint planning Mondays. "
         "Retros every other Friday. 1:1s are weekly with your manager.",
     ]

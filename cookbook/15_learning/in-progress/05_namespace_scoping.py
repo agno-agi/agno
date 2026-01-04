@@ -22,7 +22,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge import Knowledge
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.learn import LearningMachine, LearnedKnowledgeConfig, LearningMode
+from agno.learn import LearnedKnowledgeConfig, LearningMachine, LearningMode
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.pgvector import PgVector, SearchType
 
@@ -283,5 +283,5 @@ if __name__ == "__main__":
     print("✅ Namespace scoping controls visibility")
     print('   "global" = shared with everyone')
     print('   "user" = private per user')
-    print('   custom = team/department isolation')
+    print("   custom = team/department isolation")
     print("=" * 60)

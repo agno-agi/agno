@@ -20,9 +20,9 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.learn import (
     LearningMachine,
-    UserProfileConfig,
-    SessionContextConfig,
     LearningMode,
+    SessionContextConfig,
+    UserProfileConfig,
 )
 from agno.models.openai import OpenAIResponses
 
@@ -106,7 +106,7 @@ def demo_returning_user():
     print("=" * 60)
 
     user = "new_user@example.com"  # Same user
-    session = "new_task_session"   # New session
+    session = "new_task_session"  # New session
 
     print("\n--- New session (user should be recognized) ---\n")
     agent.print_response(

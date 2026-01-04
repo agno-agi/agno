@@ -21,7 +21,7 @@ Run:
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.learn import LearningMachine, UserProfileConfig, LearningMode
+from agno.learn import LearningMachine, LearningMode, UserProfileConfig
 from agno.models.openai import OpenAIResponses
 
 # ============================================================================
@@ -62,7 +62,7 @@ Don't save:
         model=model,
         user_profile=UserProfileConfig(
             mode=LearningMode.AGENTIC,  # Agent calls tools
-            enable_agent_tools=True,    # Expose update_user_memory tool
+            enable_agent_tools=True,  # Expose update_user_memory tool
             agent_can_update_memories=True,
             agent_can_update_profile=True,
         ),

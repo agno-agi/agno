@@ -21,7 +21,7 @@ Run:
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.learn import LearningMachine, UserProfileConfig, LearningMode
+from agno.learn import LearningMachine, LearningMode, UserProfileConfig
 from agno.models.openai import OpenAIResponses
 
 # ============================================================================
@@ -114,7 +114,7 @@ def demo_deduplicate(user_id: str):
 
     # Access curator through the learning machine
     learning = agent.learning
-    
+
     print("\nRunning deduplication...")
     try:
         removed = learning.curator.deduplicate(user_id=user_id)
@@ -134,7 +134,7 @@ def demo_prune_by_count(user_id: str):
     print("=" * 60)
 
     learning = agent.learning
-    
+
     print("\nRunning prune(max_count=5)...")
     try:
         removed = learning.curator.prune(user_id=user_id, max_count=5)
@@ -153,7 +153,7 @@ def demo_prune_by_age(user_id: str):
     print("=" * 60)
 
     learning = agent.learning
-    
+
     print("\nRunning prune(max_age_days=90)...")
     try:
         removed = learning.curator.prune(user_id=user_id, max_age_days=90)

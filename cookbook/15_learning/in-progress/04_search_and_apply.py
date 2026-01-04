@@ -20,7 +20,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge import Knowledge
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.learn import LearningMachine, LearnedKnowledgeConfig, LearningMode
+from agno.learn import LearnedKnowledgeConfig, LearningMachine, LearningMode
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.pgvector import PgVector, SearchType
 
@@ -96,25 +96,18 @@ def seed_learnings():
     learnings = [
         "Database: Always use connection pooling in production. Without it, "
         "creating new connections for each request adds ~50ms latency.",
-
         "Caching: Cache at multiple levels (CDN, application, database) but "
         "always plan for cache invalidation. Stale data is often worse than slow data.",
-
         "API Design: Use plural nouns for resources (/users not /user) and "
         "nest related resources logically (/users/{id}/posts).",
-
         "Error Handling: Never expose internal errors to users. Log the details, "
         "return a generic message with a correlation ID for support.",
-
         "Security: Store secrets in environment variables or a secrets manager, "
         "never in code or config files. Rotate credentials regularly.",
-
         "Testing: Write tests for the happy path first, then edge cases, then "
         "error conditions. Aim for 80% coverage on business logic.",
-
         "Deployment: Always use blue-green or canary deployments in production. "
         "The ability to instantly rollback is worth the complexity.",
-
         "Monitoring: Alert on symptoms (error rates, latency) not causes. "
         "High CPU doesn't always mean a problem; high error rate does.",
     ]

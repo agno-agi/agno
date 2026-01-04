@@ -17,11 +17,11 @@ Run:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import List, Optional
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.learn import LearningMachine, UserProfileConfig, LearningMode
+from agno.learn import LearningMachine, LearningMode, UserProfileConfig
 from agno.learn.schemas import UserProfile
 from agno.models.openai import OpenAIResponses
 
@@ -39,34 +39,37 @@ model = OpenAIResponses(id="gpt-5.2")
 @dataclass
 class SupportProfile(UserProfile):
     """Extended user profile for customer support agents.
-    
+
     The LLM sees field descriptions and updates them when mentioned
     in conversation. This provides structured data alongside memories.
     """
 
     company: Optional[str] = field(
         default=None,
-        metadata={"description": "Company or organization the user works for"}
+        metadata={"description": "Company or organization the user works for"},
     )
     plan_tier: Optional[str] = field(
         default=None,
-        metadata={"description": "Subscription tier: free | pro | enterprise"}
+        metadata={"description": "Subscription tier: free | pro | enterprise"},
     )
     timezone: Optional[str] = field(
         default=None,
-        metadata={"description": "User's timezone (e.g., America/New_York, Europe/London)"}
+        metadata={
+            "description": "User's timezone (e.g., America/New_York, Europe/London)"
+        },
     )
     expertise_level: Optional[str] = field(
         default=None,
-        metadata={"description": "Technical level: beginner | intermediate | expert"}
+        metadata={"description": "Technical level: beginner | intermediate | expert"},
     )
     primary_language: Optional[str] = field(
-        default=None,
-        metadata={"description": "Primary programming language they use"}
+        default=None, metadata={"description": "Primary programming language they use"}
     )
     integrations: Optional[List[str]] = field(
         default=None,
-        metadata={"description": "List of integrations or tools they use with our product"}
+        metadata={
+            "description": "List of integrations or tools they use with our product"
+        },
     )
 
 
@@ -78,28 +81,35 @@ class DeveloperProfile(UserProfile):
     """Extended user profile for coding assistants."""
 
     github_username: Optional[str] = field(
-        default=None,
-        metadata={"description": "GitHub username"}
+        default=None, metadata={"description": "GitHub username"}
     )
     primary_languages: Optional[List[str]] = field(
         default=None,
-        metadata={"description": "Programming languages they use most (e.g., Python, TypeScript)"}
+        metadata={
+            "description": "Programming languages they use most (e.g., Python, TypeScript)"
+        },
     )
     frameworks: Optional[List[str]] = field(
         default=None,
-        metadata={"description": "Frameworks they work with (e.g., FastAPI, React, Django)"}
+        metadata={
+            "description": "Frameworks they work with (e.g., FastAPI, React, Django)"
+        },
     )
     editor: Optional[str] = field(
         default=None,
-        metadata={"description": "Preferred code editor (e.g., VS Code, Neovim, PyCharm)"}
+        metadata={
+            "description": "Preferred code editor (e.g., VS Code, Neovim, PyCharm)"
+        },
     )
     os: Optional[str] = field(
         default=None,
-        metadata={"description": "Operating system: macOS | Linux | Windows"}
+        metadata={"description": "Operating system: macOS | Linux | Windows"},
     )
     style_preferences: Optional[str] = field(
         default=None,
-        metadata={"description": "Coding style preferences (e.g., type hints, docstrings, tests)"}
+        metadata={
+            "description": "Coding style preferences (e.g., type hints, docstrings, tests)"
+        },
     )
 
 

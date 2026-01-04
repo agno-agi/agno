@@ -93,8 +93,7 @@ def demo_long_conversation():
     # Turn 2: First component
     print("\n--- Turn 2: Auth discussion ---\n")
     agent.print_response(
-        "Let's start with auth. I want to use JWT tokens "
-        "with refresh token rotation.",
+        "Let's start with auth. I want to use JWT tokens with refresh token rotation.",
         user_id=user,
         session_id=session,
         stream=True,
@@ -167,8 +166,7 @@ def demo_long_conversation():
     # Turn 9: Overall progress
     print("\n--- Turn 9: Overall status ---\n")
     agent.print_response(
-        "Give me a summary of everything we've built so far "
-        "and what's left to do.",
+        "Give me a summary of everything we've built so far and what's left to do.",
         user_id=user,
         session_id=session,
         stream=True,
@@ -202,9 +200,9 @@ def demo_context_recovery():
 
     # Several turns later
     for i in range(5):
-        print(f"\n--- Turn {i+2}: Technical discussion ---\n")
+        print(f"\n--- Turn {i + 2}: Technical discussion ---\n")
         agent.print_response(
-            f"Technical question #{i+1}: What about using Redis for order queueing?",
+            f"Technical question #{i + 1}: What about using Redis for order queueing?",
             user_id=user,
             session_id=session,
             stream=True,

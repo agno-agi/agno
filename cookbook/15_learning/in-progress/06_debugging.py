@@ -20,7 +20,7 @@ from typing import Any
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.learn import LearningMachine, UserProfileConfig, LearningMode
+from agno.learn import LearningMachine, LearningMode, UserProfileConfig
 from agno.models.openai import OpenAIResponses
 
 # ============================================================================
@@ -72,7 +72,9 @@ def debug_learning_machine():
     for store_name, store in learning.stores.items():
         print(f"  {store_name}:")
         print(f"    - Type: {store.learning_type}")
-        print(f"    - Schema: {store.schema.__name__ if hasattr(store.schema, '__name__') else store.schema}")
+        print(
+            f"    - Schema: {store.schema.__name__ if hasattr(store.schema, '__name__') else store.schema}"
+        )
         print(f"    - Has tools: {len(store.get_tools()) > 0}")
 
 
@@ -86,7 +88,7 @@ def debug_user_profile(user_id: str):
     print("=" * 60)
 
     learning = agent.learning
-    
+
     # Direct recall
     profile = learning.stores.get("user_profile")
     if profile:
@@ -118,7 +120,7 @@ def debug_tool_calls():
     user = "debug_trace@example.com"
 
     print("\n--- Interaction with tool tracing ---\n")
-    
+
     # Run with full response for inspection
     response = agent.run(
         "My name is Debug User. Please remember this.",
@@ -128,9 +130,9 @@ def debug_tool_calls():
     )
 
     print(f"Response: {response.content[:200]}...")
-    
+
     # Check for tool calls in response
-    if hasattr(response, 'tool_calls') and response.tool_calls:
+    if hasattr(response, "tool_calls") and response.tool_calls:
         print("\n--- Tool Calls Made ---")
         for tc in response.tool_calls:
             print(f"  Tool: {tc.name}")
@@ -176,22 +178,25 @@ def debug_database():
     print("=" * 60)
 
     print(f"\nDatabase URL: {db_url[:30]}...")
-    
+
     try:
         # Try to query the database
         from sqlalchemy import create_engine, text
+
         engine = create_engine(db_url)
         with engine.connect() as conn:
             result = conn.execute(text("SELECT 1"))
             print("✅ Database connection successful")
-            
+
             # Check for learning tables
-            result = conn.execute(text("""
+            result = conn.execute(
+                text("""
                 SELECT table_name 
                 FROM information_schema.tables 
                 WHERE table_schema = 'public' 
                 AND table_name LIKE '%agent%' OR table_name LIKE '%learn%' OR table_name LIKE '%memory%'
-            """))
+            """)
+            )
             tables = [row[0] for row in result]
             print(f"\nRelevant tables found: {tables or 'None'}")
     except Exception as e:
@@ -253,7 +258,7 @@ def debug_common_issues():
 # ============================================================================
 if __name__ == "__main__":
     debug_learning_machine()
-    
+
     # Create some data first
     user = "debug_user@example.com"
     agent.print_response(
@@ -262,7 +267,7 @@ if __name__ == "__main__":
         session_id="setup_debug",
         stream=True,
     )
-    
+
     debug_user_profile(user)
     debug_tool_calls()
     debug_context_injection(user)

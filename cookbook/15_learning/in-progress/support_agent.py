@@ -17,19 +17,19 @@ Or via AgentOS:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import List, Optional
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge import Knowledge
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.learn import (
-    LearningMachine,
-    UserProfileConfig,
-    SessionContextConfig,
-    LearnedKnowledgeConfig,
     EntityMemoryConfig,
+    LearnedKnowledgeConfig,
+    LearningMachine,
     LearningMode,
+    SessionContextConfig,
+    UserProfileConfig,
 )
 from agno.learn.schemas import UserProfile
 from agno.models.openai import OpenAIResponses
@@ -51,28 +51,23 @@ class SupportCustomerProfile(UserProfile):
     """Extended profile for support customers."""
 
     company: Optional[str] = field(
-        default=None,
-        metadata={"description": "Customer's company name"}
+        default=None, metadata={"description": "Customer's company name"}
     )
     plan_tier: Optional[str] = field(
-        default=None,
-        metadata={"description": "Subscription: free | pro | enterprise"}
+        default=None, metadata={"description": "Subscription: free | pro | enterprise"}
     )
     expertise_level: Optional[str] = field(
         default=None,
-        metadata={"description": "Technical level: beginner | intermediate | expert"}
+        metadata={"description": "Technical level: beginner | intermediate | expert"},
     )
     primary_use_case: Optional[str] = field(
-        default=None,
-        metadata={"description": "Main use case for our product"}
+        default=None, metadata={"description": "Main use case for our product"}
     )
     integrations: Optional[List[str]] = field(
-        default=None,
-        metadata={"description": "Integrations they use"}
+        default=None, metadata={"description": "Integrations they use"}
     )
     previous_issues: Optional[List[str]] = field(
-        default=None,
-        metadata={"description": "Summary of past support issues"}
+        default=None, metadata={"description": "Summary of past support issues"}
     )
 
 
@@ -199,7 +194,7 @@ def demo_returning():
     print("=" * 60)
 
     user = "customer@techstartup.com"  # Same customer
-    session = "ticket_002"             # New ticket
+    session = "ticket_002"  # New ticket
 
     print("\n--- Customer returns with new issue ---\n")
     support_agent.print_response(
