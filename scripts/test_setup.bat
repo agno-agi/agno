@@ -34,7 +34,7 @@ ECHO [INFO] Installing dependencies from %AGNO_DIR%\requirements.txt
 pip install -r "%AGNO_DIR%\requirements.txt"
 
 CALL :print_heading "Installing agno in editable mode with tests dependencies"
-pip install -e "%AGNO_DIR%[tests]"
+pip install -e "%AGNO_DIR%[tests,dev]"
 
 CALL :print_heading "Installing agno-os"
 ECHO [INFO] Installing dependencies from %AGNO_INFRA_DIR%\requirements.txt
