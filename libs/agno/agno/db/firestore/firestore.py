@@ -25,6 +25,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.user_memory import UserMemoryV2
 from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
@@ -51,6 +52,7 @@ class FirestoreDb(BaseDb):
         culture_collection: Optional[str] = None,
         traces_collection: Optional[str] = None,
         spans_collection: Optional[str] = None,
+        user_profiles_collection: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -67,6 +69,7 @@ class FirestoreDb(BaseDb):
             culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
+            user_profiles_collection (Optional[str]): Name of the collection to store user memory profiles.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -86,6 +89,7 @@ class FirestoreDb(BaseDb):
             culture_table=culture_collection,
             traces_table=traces_collection,
             spans_table=spans_collection,
+            user_memory_table=user_profiles_collection,
         )
 
         _client: Optional[Client] = db_client
@@ -209,6 +213,17 @@ class FirestoreDb(BaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.spans_collection
+
+        if table_type == "user_memory":
+            if not hasattr(self, "user_profiles_collection"):
+                if self.user_memory_table_name is None:
+                    raise ValueError("User profiles collection was not provided on initialization")
+                self.user_profiles_collection = self._get_or_create_collection(
+                    collection_name=self.user_memory_table_name,
+                    collection_type="user_memory",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.user_profiles_collection
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -2377,3 +2392,105 @@ class FirestoreDb(BaseDb):
         except Exception as e:
             log_error(f"Error getting spans: {e}")
             return []
+
+    def get_user_memory_v2(
+        self,
+        user_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+        """Get a user memory from the database.
+
+        Args:
+            user_id: The unique user identifier
+            deserialize: Whether to deserialize to UserMemoryV2 object
+
+        Returns:
+            UserMemoryV2 or dict if found, None otherwise
+        """
+        try:
+            collection_ref = self._get_collection(table_type="user_memory")
+            if collection_ref is None:
+                return None
+
+            doc_ref = collection_ref.document(user_id)
+            doc = doc_ref.get()
+
+            if not doc.exists:
+                return None
+
+            result = doc.to_dict()
+            result["user_id"] = user_id
+
+            if not deserialize:
+                return result
+
+            return UserMemoryV2.from_dict(result)
+
+        except Exception as e:
+            log_error(f"Error getting user memory: {e}")
+            raise e
+
+    def upsert_user_memory_v2(
+        self,
+        user_memory: UserMemoryV2,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+        """Upsert a user memory in the database.
+
+        Args:
+            user_profile: The user memory to upsert
+            deserialize: Whether to deserialize to UserMemoryV2 object
+
+        Returns:
+            UserMemoryV2 or dict if successful, None otherwise
+        """
+        try:
+            collection_ref = self._get_collection(table_type="user_memory", create_collection_if_not_found=True)
+            if collection_ref is None:
+                return None
+
+            current_time = int(time.time())
+
+            doc_data = {
+                "profile": user_memory.profile,
+                "layers": user_memory.layers,
+                "metadata": user_memory.metadata,
+                "created_at": user_memory.created_at or current_time,
+                "updated_at": current_time,
+            }
+
+            doc_ref = collection_ref.document(user_memory.user_id)
+            doc_ref.set(doc_data, merge=True)
+
+            # Fetch the upserted document
+            doc = doc_ref.get()
+            result = doc.to_dict()
+            result["user_id"] = user_memory.user_id
+
+            if not deserialize:
+                return result
+
+            return UserMemoryV2.from_dict(result)
+
+        except Exception as e:
+            log_error(f"Error upserting user memory: {e}")
+            raise e
+
+    def delete_user_memory_v2(self, user_id: str) -> None:
+        """Delete a user memory.
+
+        Args:
+            user_id: The unique user identifier to delete
+        """
+        try:
+            collection_ref = self._get_collection(table_type="user_memory")
+            if collection_ref is None:
+                return
+
+            doc_ref = collection_ref.document(user_id)
+            doc_ref.delete()
+            log_debug(f"Deleted user memory: {user_id}")
+
+        except Exception as e:
+            log_error(f"Error deleting user memory: {e}")
+            raise e

@@ -17,6 +17,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.user_memory import UserMemoryV2
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -36,6 +37,7 @@ class InMemoryDb(BaseDb):
         self._eval_runs: List[Dict[str, Any]] = []
         self._knowledge: List[Dict[str, Any]] = []
         self._cultural_knowledge: List[Dict[str, Any]] = []
+        self._user_memory: Dict[str, Dict[str, Any]] = {}
 
     def table_exists(self, table_name: str) -> bool:
         """In-memory implementation, always returns True."""
@@ -1310,3 +1312,85 @@ class InMemoryDb(BaseDb):
             List[Span]: List of matching spans.
         """
         raise NotImplementedError
+
+    def get_user_memory_v2(
+        self,
+        user_id: str,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+        """Get user memory from the database.
+
+        Args:
+            user_id: The unique user identifier
+            deserialize: Whether to deserialize to UserMemoryV2 object
+
+        Returns:
+            UserMemoryV2 or dict if found, None otherwise
+        """
+        try:
+            result = self._user_memory.get(user_id)
+            if result is None:
+                return None
+
+            result_copy = deepcopy(result)
+
+            if not deserialize:
+                return result_copy
+
+            return UserMemoryV2.from_dict(result_copy)
+
+        except Exception as e:
+            log_error(f"Error getting user memory: {e}")
+            raise e
+
+    def upsert_user_memory_v2(
+        self,
+        user_memory: UserMemoryV2,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[UserMemoryV2, Dict[str, Any]]]:
+        """Upsert user memory in the database.
+
+        Args:
+            user_memory: The user memory to upsert
+            deserialize: Whether to deserialize to UserMemoryV2 object
+
+        Returns:
+            UserMemoryV2 or dict if successful, None otherwise
+        """
+        try:
+            current_time = int(time.time())
+
+            item_data = {
+                "user_id": user_memory.user_id,
+                "profile": user_memory.profile,
+                "layers": user_memory.layers,
+                "metadata": user_memory.metadata,
+                "created_at": user_memory.created_at or current_time,
+                "updated_at": current_time,
+            }
+
+            self._user_memory[user_memory.user_id] = item_data
+
+            if not deserialize:
+                return deepcopy(item_data)
+
+            return UserMemoryV2.from_dict(deepcopy(item_data))
+
+        except Exception as e:
+            log_error(f"Error upserting user memory: {e}")
+            raise e
+
+    def delete_user_memory_v2(self, user_id: str) -> None:
+        """Delete user memory.
+
+        Args:
+            user_id: The unique user identifier to delete
+        """
+        try:
+            if user_id in self._user_memory:
+                del self._user_memory[user_id]
+            log_debug(f"Deleted user memory: {user_id}")
+
+        except Exception as e:
+            log_error(f"Error deleting user memory: {e}")
+            raise e
