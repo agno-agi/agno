@@ -245,10 +245,6 @@ class LearnedKnowledgeStore(LearningStore):
 
             ## Philosophy
 
-            Learnings are different from user memories:
-            - **User memories** = what you know about THIS person
-            - **Learnings** = reusable insights that help with similar TASKS
-
             Think of learnings as the wisdom a skilled practitioner accumulates - not facts they memorized,
             but patterns they recognized, approaches that worked, and pitfalls to avoid.
 

@@ -707,10 +707,6 @@ class SessionContextStore(LearningStore):
                 - Where things stand, not every step of how we got here
                 - What someone would need to pick up exactly where we left off
 
-                Session context is different from user memory:
-                - **User memory** = persistent knowledge about the person (across all sessions)
-                - **Session context** = state of THIS conversation (resets between sessions)
-
                 ## What to Capture
 
                 1. **Summary**: The essential narrative of this session
@@ -785,10 +781,6 @@ class SessionContextStore(LearningStore):
                 - What was discussed, decided, and concluded
                 - Current state of any ongoing work
                 - What someone would need to pick up where we left off
-
-                Session context is different from user memory:
-                - **User memory** = persistent knowledge about the person (across all sessions)
-                - **Session context** = state of THIS conversation (resets between sessions)
 
                 ## What to Capture
 
