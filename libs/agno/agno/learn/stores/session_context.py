@@ -183,6 +183,10 @@ class SessionContextStore(LearningStore):
     def build_context(self, data: Any) -> str:
         """Build context for the agent.
 
+        Formats session context for injection into the agent's system prompt.
+        Session context provides continuity within a single conversation,
+        especially useful when message history gets truncated.
+
         Args:
             data: Session context data from recall().
 
@@ -203,10 +207,19 @@ class SessionContextStore(LearningStore):
 
         return dedent(f"""\
             <session_context>
-            Earlier in this session:
+            This is a continuation of an ongoing session. Here's where things stand:
+
             {context_text}
 
-            Use this for continuity. Current conversation takes precedence.
+            <session_context_guidelines>
+            Use this context to maintain continuity:
+            - Reference earlier decisions and conclusions naturally
+            - Don't re-ask questions that have already been answered
+            - Build on established understanding rather than starting fresh
+            - If the user references something from "earlier," this context has the details
+
+            Current messages take precedence if there's any conflict with this summary.
+            </session_context_guidelines>
             </session_context>\
         """)
 
@@ -607,24 +620,24 @@ class SessionContextStore(LearningStore):
         return f"session_context_{session_id}"
 
     def _format_context(self, context: Any) -> str:
-        """Format context data for display."""
+        """Format context data for display in agent prompt."""
         parts = []
 
         if hasattr(context, "summary") and context.summary:
-            parts.append(f"Summary: {context.summary}")
+            parts.append(f"**Summary:** {context.summary}")
 
         if hasattr(context, "goal") and context.goal:
-            parts.append(f"Goal: {context.goal}")
+            parts.append(f"**Current Goal:** {context.goal}")
 
         if hasattr(context, "plan") and context.plan:
-            plan_text = ", ".join(context.plan)
-            parts.append(f"Plan: {plan_text}")
+            plan_items = "\n  - ".join(context.plan)
+            parts.append(f"**Plan:**\n  - {plan_items}")
 
         if hasattr(context, "progress") and context.progress:
-            progress_text = ", ".join(context.progress)
-            parts.append(f"Progress: {progress_text}")
+            progress_items = "\n  - ".join(f"✓ {item}" for item in context.progress)
+            parts.append(f"**Completed:**\n  - {progress_items}")
 
-        return "\n".join(parts)
+        return "\n\n".join(parts)
 
     def _messages_to_text(self, messages: List["Message"]) -> str:
         """Convert messages to text for extraction."""
@@ -647,7 +660,8 @@ class SessionContextStore(LearningStore):
     ) -> "Message":
         """Build system message for extraction.
 
-        Includes previous context so the model can update rather than recreate.
+        Creates a prompt that guides the model to extract and update session context,
+        building on previous context rather than starting fresh each time.
         """
         from agno.models.message import Message
 
@@ -660,35 +674,68 @@ class SessionContextStore(LearningStore):
         # Build previous context section
         previous_context_section = ""
         if existing_context:
-            previous_context_section = "\n## Previous Context (update this, don't start fresh)\n"
+            previous_context_section = dedent("""\
+                ## Previous Context
+
+                This session already has context from earlier exchanges. Your job is to UPDATE it,
+                not replace it. Integrate new information while preserving what's still relevant.
+
+            """)
             if hasattr(existing_context, "summary") and existing_context.summary:
-                previous_context_section += f"Previous summary: {existing_context.summary}\n"
+                previous_context_section += f"**Previous summary:**\n{existing_context.summary}\n\n"
             if enable_planning:
                 if hasattr(existing_context, "goal") and existing_context.goal:
-                    previous_context_section += f"Previous goal: {existing_context.goal}\n"
+                    previous_context_section += f"**Established goal:** {existing_context.goal}\n"
                 if hasattr(existing_context, "plan") and existing_context.plan:
-                    previous_context_section += f"Previous plan: {', '.join(existing_context.plan)}\n"
+                    previous_context_section += f"**Current plan:** {', '.join(existing_context.plan)}\n"
                 if hasattr(existing_context, "progress") and existing_context.progress:
-                    previous_context_section += f"Previous progress: {', '.join(existing_context.progress)}\n"
+                    previous_context_section += f"**Completed so far:** {', '.join(existing_context.progress)}\n"
             previous_context_section += "\n"
 
         if enable_planning:
             system_prompt = (
                 dedent("""\
-                You are a Session Context Manager. Your job is to capture and UPDATE the current state of this conversation.
+                You are a Session Context Manager. Your job is to maintain a living summary of this
+                conversation that enables continuity - especially important when message history
+                gets truncated.
 
-                ## Your Task
-                Analyze the conversation and update the context:
-                1. **Summary**: What's been discussed? Key decisions, conclusions, important points.
-                   Build on the previous summary - don't lose earlier context.
-                2. **Goal**: What is the user trying to accomplish? (if apparent)
-                3. **Plan**: What steps have been outlined to achieve the goal? (if any)
-                4. **Progress**: Which steps have been completed? (if any)
+                ## Philosophy
+
+                Think of session context like notes a colleague would take during a working session:
+                - Not a transcript, but the current STATE of the work
+                - What's been decided, what's still open
+                - Where things stand, not every step of how we got here
+                - What someone would need to pick up exactly where we left off
+
+                Session context is different from user memory:
+                - **User memory** = persistent knowledge about the person (across all sessions)
+                - **Session context** = state of THIS conversation (resets between sessions)
+
+                ## What to Capture
+
+                1. **Summary**: The essential narrative of this session
+                   - Key topics and how they were resolved
+                   - Important decisions and their rationale
+                   - Current state of any work in progress
+                   - Open questions or unresolved items
+
+                2. **Goal**: What the user is ultimately trying to accomplish
+                   - May evolve as the conversation progresses
+                   - Keep updating if the user clarifies or pivots
+
+                3. **Plan**: The approach being taken (if one has emerged)
+                   - Steps that have been outlined
+                   - Update if the plan changes
+
+                4. **Progress**: What's been completed
+                   - Helps track where we are in multi-step work
+                   - Mark items done as they're completed
 
             """)
                 + previous_context_section
                 + dedent("""\
-                ## New Conversation
+                ## New Conversation to Integrate
+
                 <conversation>
             """)
                 + conversation_text
@@ -696,35 +743,67 @@ class SessionContextStore(LearningStore):
                 </conversation>
 
                 ## Guidelines
-                - **BUILD ON** previous context - don't lose earlier information
-                - Incorporate new information into existing summary
-                - Update goal/plan/progress if they've changed
-                - Be concise but capture what matters
-                - Focus on information needed to continue the conversation later
-                - The summary should stand alone - someone reading it should understand the full session
+
+                **Integration, not replacement:**
+                - BUILD ON previous context - don't lose earlier information
+                - If previous summary mentioned topic X and it's still relevant, keep it
+                - If something was resolved or superseded, update accordingly
+
+                **Quality of summary:**
+                - Should stand alone - reader should understand the full session
+                - Capture conclusions and current state, not conversation flow
+                - Be concise but complete - aim for density of useful information
+                - Include enough detail that work could continue seamlessly
+
+                **Good summary characteristics:**
+                - "User is building a REST API for inventory management. Decided on FastAPI over Flask
+                  for async support. Schema design complete with Products, Categories, and Suppliers tables.
+                  Currently implementing the Products endpoint with pagination."
+
+                **Poor summary characteristics:**
+                - "User asked about APIs. We discussed some options. Made some decisions."
+                  (Too vague - doesn't capture what was actually decided)
 
             """)
                 + custom_instructions
                 + dedent("""
-                Use the save_session_context tool to save your updated analysis.\
+
+                Save your updated context using the save_session_context tool.\
             """)
             )
         else:
             system_prompt = (
                 dedent("""\
-                You are a Session Context Manager. Your job is to summarize and UPDATE this conversation.
+                You are a Session Context Manager. Your job is to maintain a living summary of this
+                conversation that enables continuity - especially important when message history
+                gets truncated.
 
-                ## Your Task
-                Create an updated summary capturing:
-                - Key topics discussed (including from previous context)
-                - Important decisions or conclusions
-                - Outstanding questions or next steps
-                - Any context needed to continue the conversation
+                ## Philosophy
+
+                Think of session context like meeting notes:
+                - Not a transcript, but what matters for continuity
+                - What was discussed, decided, and concluded
+                - Current state of any ongoing work
+                - What someone would need to pick up where we left off
+
+                Session context is different from user memory:
+                - **User memory** = persistent knowledge about the person (across all sessions)
+                - **Session context** = state of THIS conversation (resets between sessions)
+
+                ## What to Capture
+
+                Create a summary that includes:
+                - **Topics covered** and how they were addressed
+                - **Decisions made** and key conclusions
+                - **Current state** of any work in progress
+                - **Open items** - questions pending, next steps discussed
+                - **Important details** that would be awkward to re-establish
 
             """)
                 + previous_context_section
                 + dedent("""\
-                ## New Conversation
+                ## New Conversation to Integrate
+
                 <conversation>
             """)
                 + conversation_text
@@ -732,17 +811,36 @@ class SessionContextStore(LearningStore):
                 </conversation>
 
                 ## Guidelines
-                - **BUILD ON** the previous summary - don't lose earlier context
-                - Integrate new information with what was already captured
-                - Be concise but complete
-                - Focus on what would help someone pick up where this left off
-                - Don't include trivial details
-                - Capture the essence, not every exchange
+
+                **Integration, not replacement:**
+                - BUILD ON previous summary - don't lose earlier context
+                - Weave new information into existing narrative
+                - If something is superseded, update it; if still relevant, preserve it
+
+                **Quality standards:**
+
+                *Good summary:*
+                "Helping user debug a memory leak in their Node.js application. Identified that the
+                issue occurs in the WebSocket handler - connections aren't being cleaned up on
+                disconnect. Reviewed the connection management code and found missing event listener
+                removal. User is implementing the fix with a connection registry pattern. Next step:
+                test under load to verify the leak is resolved."
+
+                *Poor summary:*
+                "User had a bug. We looked at code. Found some issues. Working on fixing it."
+                (Missing: what bug, what code, what issues, what fix)
+
+                **Aim for:**
+                - Density of useful information
+                - Standalone comprehensibility
+                - Enough detail to continue seamlessly
+                - Focus on state over story
 
             """)
                 + custom_instructions
                 + dedent("""
-                Use the save_session_context tool to save your updated summary.\
+
+                Save your updated summary using the save_session_context tool.\
             """)
             )
 
@@ -791,14 +889,37 @@ class SessionContextStore(LearningStore):
             plan: Optional[List[str]] = None,
             progress: Optional[List[str]] = None,
         ) -> str:
-            """Save the session context.
+            """Save the updated session context.
+
+            The summary should capture the current state of the conversation in a way that
+            enables seamless continuation. Think: "What would someone need to know to pick
+            up exactly where we left off?"
 
             Args:
-                summary: Brief summary of what's been discussed in this session.
-                         Build on previous summary - don't lose earlier context.
-                goal: The user's main objective (if apparent from conversation).
-                plan: Steps to achieve the goal (if discussed).
-                progress: Which steps have been completed (if any).
+                summary: A comprehensive summary that integrates previous context with new
+                        developments. Should be standalone - readable without seeing the
+                        actual messages. Capture:
+                        - What's being worked on and why
+                        - Key decisions made and their rationale
+                        - Current state of any work in progress
+                        - Open questions or pending items
+
+                        Good: "Debugging a React performance issue in the user's dashboard.
+                        Identified unnecessary re-renders in the DataTable component caused by
+                        inline object creation in props. Implemented useMemo for the column
+                        definitions. Testing shows 60% render reduction. Next: profile the
+                        filtering logic which may have similar issues."
+
+                        Bad: "Looked at React code. Found some performance issues. Made changes."
+
+                goal: The user's primary objective for this session (if one is apparent).
+                      Update if the goal has evolved or been clarified.
+
+                plan: Current plan of action as a list of steps (if a structured approach
+                      has emerged). Update as the plan evolves.
+
+                progress: Steps from the plan that have been completed. Add items as work
+                         is finished to track advancement through the plan.
 
             Returns:
                 Confirmation message.
@@ -859,14 +980,37 @@ class SessionContextStore(LearningStore):
             plan: Optional[List[str]] = None,
             progress: Optional[List[str]] = None,
         ) -> str:
-            """Save the session context.
+            """Save the updated session context.
+
+            The summary should capture the current state of the conversation in a way that
+            enables seamless continuation. Think: "What would someone need to know to pick
+            up exactly where we left off?"
 
             Args:
-                summary: Brief summary of what's been discussed in this session.
-                         Build on previous summary - don't lose earlier context.
-                goal: The user's main objective (if apparent from conversation).
-                plan: Steps to achieve the goal (if discussed).
-                progress: Which steps have been completed (if any).
+                summary: A comprehensive summary that integrates previous context with new
+                        developments. Should be standalone - readable without seeing the
+                        actual messages. Capture:
+                        - What's being worked on and why
+                        - Key decisions made and their rationale
+                        - Current state of any work in progress
+                        - Open questions or pending items
+
+                        Good: "Debugging a React performance issue in the user's dashboard.
+                        Identified unnecessary re-renders in the DataTable component caused by
+                        inline object creation in props. Implemented useMemo for the column
+                        definitions. Testing shows 60% render reduction. Next: profile the
+                        filtering logic which may have similar issues."
+
+                        Bad: "Looked at React code. Found some performance issues. Made changes."
+
+                goal: The user's primary objective for this session (if one is apparent).
+                      Update if the goal has evolved or been clarified.
+
+                plan: Current plan of action as a list of steps (if a structured approach
+                      has emerged). Update as the plan evolves.
+
+                progress: Steps from the plan that have been completed. Add items as work
+                         is finished to track advancement through the plan.
 
             Returns:
                 Confirmation message.
