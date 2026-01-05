@@ -96,6 +96,8 @@ class LocalSkills(SkillLoader):
             # Get optional fields
             license_info = frontmatter.get("license")
             metadata = frontmatter.get("metadata")
+            compatibility = frontmatter.get("compatibility")
+            allowed_tools = frontmatter.get("allowed-tools")
 
             # Discover scripts
             scripts = self._discover_scripts(folder)
@@ -112,6 +114,8 @@ class LocalSkills(SkillLoader):
                 references=references,
                 metadata=metadata,
                 license=license_info,
+                compatibility=compatibility,
+                allowed_tools=allowed_tools,
             )
 
         except SkillValidationError:

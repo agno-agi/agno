@@ -18,6 +18,8 @@ class Skill:
         source_path: Filesystem path to the skill folder
         metadata: Optional metadata from frontmatter (version, author, tags, etc.)
         license: Optional license information
+        compatibility: Optional compatibility requirements
+        allowed_tools: Optional list of tools this skill is allowed to use
     """
 
     name: str
@@ -28,6 +30,8 @@ class Skill:
     references: List[str] = field(default_factory=list)
     metadata: Optional[Dict[str, Any]] = None
     license: Optional[str] = None
+    compatibility: Optional[str] = None
+    allowed_tools: Optional[List[str]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert the Skill to a dictionary representation."""
@@ -40,6 +44,8 @@ class Skill:
             "references": self.references,
             "metadata": self.metadata,
             "license": self.license,
+            "compatibility": self.compatibility,
+            "allowed_tools": self.allowed_tools,
         }
 
     @classmethod
@@ -54,4 +60,6 @@ class Skill:
             references=data.get("references", []),
             metadata=data.get("metadata"),
             license=data.get("license"),
+            compatibility=data.get("compatibility"),
+            allowed_tools=data.get("allowed_tools"),
         )
