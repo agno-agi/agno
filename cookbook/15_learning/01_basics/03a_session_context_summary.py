@@ -1,14 +1,15 @@
 """
-Session Context Quick Start
-===========================
-Track conversation state across runs.
-
-Session Context captures state for the current conversation:
-- Summary of what's been discussed
-- Current goals and progress
+Session Context: Summary Mode
+=============================
+Session Context tracks the current conversation's state:
+- What's been discussed
 - Key decisions made
+- Important context
 
-This example uses summary-only mode for fast, lightweight tracking.
+SUMMARY mode (enable_planning=False) provides lightweight tracking -
+just a running summary of the conversation without goal/plan tracking.
+
+Compare with: 03b_session_context_planning.py for goal-oriented tracking.
 """
 
 from agno.agent import Agent
@@ -19,14 +20,14 @@ from agno.models.openai import OpenAIResponses
 # ============================================================================
 # Create Agent
 # ============================================================================
-# Session context tracks the current conversation's state.
-# Unlike user profile (long-term), this is ephemeral per session.
+# Summary mode: Just tracks what's been discussed, no planning overhead.
+# Good for general conversations where you want continuity without structure.
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
     learning=LearningMachine(
         session_context=SessionContextConfig(
-            enable_planning=False,  # Summary only (faster)
+            enable_planning=False,  # Summary only
         ),
     ),
     markdown=True,
@@ -50,14 +51,15 @@ def show_context(user_id: str, session_id: str) -> None:
 # ============================================================================
 if __name__ == "__main__":
     user_id = "session@example.com"
-    session_id = "api_design_session"
+    session_id = "api_design"
 
-    # Turn 1: Start a project discussion
+    # Turn 1: Quick focused question
     print("\n" + "=" * 60)
-    print("TURN 1: Start project")
+    print("TURN 1: Start discussion")
     print("=" * 60 + "\n")
     agent.print_response(
-        "I'm building a REST API for a todo app. Help me design it.",
+        "I'm building a todo app API. What's the single most important "
+        "endpoint to implement first? Just one.",
         user_id=user_id,
         session_id=session_id,
         stream=True,
@@ -65,12 +67,12 @@ if __name__ == "__main__":
     print("\n--- Session Context ---")
     show_context(user_id, session_id)
 
-    # Turn 2: Continue the discussion
+    # Turn 2: Follow-up
     print("\n" + "=" * 60)
-    print("TURN 2: Dive deeper")
+    print("TURN 2: Follow-up")
     print("=" * 60 + "\n")
     agent.print_response(
-        "What endpoints should I create for tasks?",
+        "Good. What HTTP method and path would you use for that?",
         user_id=user_id,
         session_id=session_id,
         stream=True,
@@ -83,7 +85,7 @@ if __name__ == "__main__":
     print("TURN 3: Test context recall")
     print("=" * 60 + "\n")
     agent.print_response(
-        "Summarize what we've decided so far.",
+        "What endpoint did we decide on?",
         user_id=user_id,
         session_id=session_id,
         stream=True,
