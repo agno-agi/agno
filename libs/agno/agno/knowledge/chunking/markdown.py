@@ -35,7 +35,8 @@ class MarkdownChunking(ChunkingStrategy):
                 elements = partition_md(filename=temp_file_path)
 
                 if not elements:
-                    return self.clean_text(content).split("\n\n")
+                    raw_paragraphs = content.split("\n\n")
+                    return [self.clean_text(para) for para in raw_paragraphs]
 
                 # Chunk by title with some default values
                 chunked_elements = chunk_by_title(
@@ -57,7 +58,10 @@ class MarkdownChunking(ChunkingStrategy):
                     if chunk_text.strip():
                         text_chunks.append(chunk_text.strip())
 
-                return text_chunks if text_chunks else self.clean_text(content).split("\n\n")
+                if text_chunks:
+                    return text_chunks
+                raw_paragraphs = content.split("\n\n")
+                return [self.clean_text(para) for para in raw_paragraphs]
 
             # Always clean up the temporary file
             finally:
@@ -65,7 +69,8 @@ class MarkdownChunking(ChunkingStrategy):
 
         # Fallback to simple paragraph splitting if the markdown chunking fails
         except Exception:
-            return self.clean_text(content).split("\n\n")
+            raw_paragraphs = content.split("\n\n")
+            return [self.clean_text(para) for para in raw_paragraphs]
 
     def chunk(self, document: Document) -> List[Document]:
         """Split markdown document into chunks based on markdown structure"""
