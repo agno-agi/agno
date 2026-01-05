@@ -150,12 +150,6 @@ class UserProfileConfig:
     additional_instructions: Optional[str] = None
     system_message: Optional[str] = None
 
-    def __post_init__(self):
-        """Auto-configure based on mode."""
-        # AGENTIC mode requires agent tools to be enabled
-        if self.mode == LearningMode.AGENTIC and not self.enable_agent_tools:
-            self.enable_agent_tools = True
-
     def __repr__(self) -> str:
         return f"UserProfileConfig(mode={self.mode.value}, enable_agent_tools={self.enable_agent_tools})"
 
@@ -364,12 +358,6 @@ class EntityMemoryConfig:
     instructions: Optional[str] = None
     additional_instructions: Optional[str] = None
     system_message: Optional[str] = None
-
-    def __post_init__(self):
-        """Auto-configure based on mode."""
-        # AGENTIC mode requires agent tools to be enabled
-        if self.mode == LearningMode.AGENTIC and not self.enable_agent_tools:
-            self.enable_agent_tools = True
 
     def __repr__(self) -> str:
         return f"EntityMemoryConfig(mode={self.mode.value}, namespace={self.namespace}, enable_agent_tools={self.enable_agent_tools})"
