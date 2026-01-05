@@ -203,12 +203,16 @@ class UserProfileStore(LearningStore):
 
         if not data:
             if self._should_expose_tools:
-                return dedent(f"""\
+                return (
+                    dedent(f"""\
                     <user_memory>
                     No information saved about this user yet.
 
-                    {tool_docs}
+                    """)
+                    + tool_docs
+                    + dedent("""
                     </user_memory>""")
+                )
             return ""
 
         # Build profile fields section
@@ -228,12 +232,16 @@ class UserProfileStore(LearningStore):
 
         if not profile_parts and not memories_text:
             if self._should_expose_tools:
-                return dedent(f"""\
+                return (
+                    dedent(f"""\
                     <user_memory>
                     No information saved about this user yet.
 
-                    {tool_docs}
+                    """)
+                    + tool_docs
+                    + dedent("""
                     </user_memory>""")
+                )
             return ""
 
         context = "<user_memory>\n"
@@ -259,11 +267,16 @@ class UserProfileStore(LearningStore):
             </memory_application_guidelines>""")
 
         if self._should_expose_tools:
-            context += dedent(f"""
+            context += (
+                dedent(f"""
 
             <memory_updates>
-            {tool_docs}
+
+            """)
+                + tool_docs
+                + dedent("""
             </memory_updates>""")
+            )
 
         context += "\n</user_memory>"
 

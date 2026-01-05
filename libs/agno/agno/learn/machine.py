@@ -317,9 +317,6 @@ class LearningMachine:
             **kwargs,
         )
 
-        if not results:
-            return ""
-
         return self._format_results(results=results)
 
     async def abuild_context(
@@ -346,9 +343,6 @@ class LearningMachine:
             team_id=team_id,
             **kwargs,
         )
-
-        if not results:
-            return ""
 
         return self._format_results(results=results)
 
@@ -540,9 +534,8 @@ class LearningMachine:
         for name, store in self.stores.items():
             try:
                 result = store.recall(**context)
-                if result is not None:
-                    results[name] = result
-                    log_debug(f"Recalled from {name}: {type(result)}")
+                results[name] = result
+                log_debug(f"Recalled from {name}: {type(result)}")
             except Exception as e:
                 log_warning(f"Error recalling from {name}: {e}")
 
@@ -592,7 +585,7 @@ class LearningMachine:
 
         for name, data in results.items():
             store = self.stores.get(name)
-            if store and data is not None:
+            if store:
                 try:
                     formatted = store.build_context(data=data)
                     if formatted:
