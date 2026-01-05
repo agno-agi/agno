@@ -104,7 +104,7 @@ def test_openai_chat_with_o4_model():
     """Test OpenAIChat model with o4 in ID returns True."""
     model = MockModel(
         class_name="OpenAIChat",
-        model_id="gpt-o4",
+        model_id="o4-preview",
     )
     assert is_openai_reasoning_model(model) is True
 
@@ -113,7 +113,7 @@ def test_openai_chat_with_o3_model():
     """Test OpenAIChat model with o3 in ID returns True."""
     model = MockModel(
         class_name="OpenAIChat",
-        model_id="gpt-o3-mini",
+        model_id="o3-mini",
     )
     assert is_openai_reasoning_model(model) is True
 
@@ -158,7 +158,7 @@ def test_azure_openai_with_reasoning_model():
     """Test AzureOpenAI model with o3 in ID returns True."""
     model = MockModel(
         class_name="AzureOpenAI",
-        model_id="gpt-o3",
+        model_id="o3-mini",
     )
     assert is_openai_reasoning_model(model) is True
 
@@ -507,7 +507,7 @@ def test_ai_foundry_with_o1():
     """Test AzureAIFoundry model with o1 in ID returns True."""
     model = MockModel(
         class_name="AzureAIFoundry",
-        model_id="gpt-o1-preview",
+        model_id="o1-preview",
     )
     assert is_ai_foundry_reasoning_model(model) is True
 
@@ -516,7 +516,7 @@ def test_ai_foundry_with_o3():
     """Test AzureAIFoundry model with o3 in ID returns True."""
     model = MockModel(
         class_name="AzureAIFoundry",
-        model_id="gpt-o3-mini",
+        model_id="o3-mini",
     )
     assert is_ai_foundry_reasoning_model(model) is True
 
@@ -525,7 +525,7 @@ def test_ai_foundry_with_o4():
     """Test AzureAIFoundry model with o4 in ID returns True."""
     model = MockModel(
         class_name="AzureAIFoundry",
-        model_id="gpt-o4",
+        model_id="o4-preview",
     )
     assert is_ai_foundry_reasoning_model(model) is True
 
