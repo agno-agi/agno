@@ -51,7 +51,7 @@ class MultiMCPTools(Toolkit):
         exclude_tools: Optional[list[str]] = None,
         refresh_connection: bool = False,
         allow_partial_failure: bool = False,
-        header_provider: Optional[Callable[["RunContext"], dict[str, Any]]] = None,
+        header_provider: Optional[Callable[..., dict[str, Any]]] = None,
         **kwargs,
     ):
         """
@@ -97,20 +97,8 @@ class MultiMCPTools(Toolkit):
         # Validate header_provider signature
         if header_provider:
             try:
-                sig = inspect.signature(header_provider)
-                params = list(sig.parameters.values())
-
-                # Check if function accepts **kwargs (VAR_KEYWORD)
-                has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
-
-                # Must have at least one parameter or **kwargs
-                if not has_var_keyword and len(params) == 0:
-                    raise ValueError(
-                        "header_provider must accept at least one parameter (run_context). "
-                        "Expected signature: header_provider(run_context: RunContext) -> dict[str, Any]"
-                    )
-            except ValueError:
-                raise
+                # Just verify we can inspect the signature - no parameter requirements
+                inspect.signature(header_provider)
             except Exception as e:
                 log_warning(f"Could not validate header_provider signature: {e}")
 
@@ -187,6 +175,43 @@ class MultiMCPTools(Toolkit):
         except (RuntimeError, BaseException):
             return False
 
+    def _call_header_provider(self, run_context: Optional["RunContext"] = None) -> dict[str, Any]:
+        """Call the header_provider with or without run_context based on its signature.
+
+        Args:
+            run_context: The RunContext for the current agent run
+
+        Returns:
+            dict[str, Any]: The headers returned by the header_provider
+        """
+        header_provider = getattr(self, "header_provider", None)
+        if header_provider is None:
+            return {}
+
+        try:
+            sig = inspect.signature(header_provider)
+            params = list(sig.parameters.values())
+
+            # Check if function accepts **kwargs (VAR_KEYWORD)
+            has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
+
+            # Check if function has at least one positional parameter
+            positional_params = [
+                p
+                for p in params
+                if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            ]
+
+            # Call with run_context if the function accepts it
+            if has_var_keyword or len(positional_params) > 0:
+                return header_provider(run_context)
+            else:
+                # Function takes no parameters
+                return header_provider()
+        except Exception as e:
+            log_warning(f"Error calling header_provider: {e}")
+            return {}
+
     async def get_session_for_run(
         self, run_context: Optional["RunContext"] = None, server_idx: int = 0
     ) -> ClientSession:
@@ -220,7 +245,7 @@ class MultiMCPTools(Toolkit):
         log_debug(f"Creating new session for run_id={run_id}, server_idx={server_idx} with dynamic headers")
 
         # Generate dynamic headers from the provider
-        dynamic_headers = self.header_provider(run_context)
+        dynamic_headers = self._call_header_provider(run_context)
 
         # Get the server params for this server index
         if server_idx >= len(self.server_params_list):
@@ -249,7 +274,9 @@ class MultiMCPTools(Toolkit):
             client_timeout = min(self.timeout_seconds, params_timeout)
         else:
             # stdio doesn't support headers, fall back to default session
-            log_warning(f"Cannot use dynamic headers with stdio transport for server {server_idx}, using default session")
+            log_warning(
+                f"Cannot use dynamic headers with stdio transport for server {server_idx}, using default session"
+            )
             if server_idx < len(self._sessions):
                 return self._sessions[server_idx]
             raise ValueError(f"Server index {server_idx} out of range")

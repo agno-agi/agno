@@ -48,7 +48,7 @@ class MCPTools(Toolkit):
         exclude_tools: Optional[list[str]] = None,
         refresh_connection: bool = False,
         tool_name_prefix: Optional[str] = None,
-        header_provider: Optional[Callable[["RunContext"], dict[str, Any]]] = None,
+        header_provider: Optional[Callable[..., dict[str, Any]]] = None,
         **kwargs,
     ):
         """
@@ -82,38 +82,6 @@ class MCPTools(Toolkit):
         self.refresh_connection = refresh_connection
         self.tool_name_prefix = tool_name_prefix
 
-        self.header_provider = header_provider
-
-        # Validate dynamic header configuration
-        if header_provider:
-            # Validate that header_provider has the correct signature
-            try:
-                sig = inspect.signature(header_provider)
-                params = list(sig.parameters.values())
-
-                # Check if function accepts **kwargs (VAR_KEYWORD)
-                has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
-
-                # Must have at least one parameter or **kwargs
-                if not has_var_keyword and len(params) == 0:
-                    raise ValueError(
-                        "header_provider must accept at least one parameter (run_context). "
-                        "Expected signature: header_provider(run_context: RunContext) -> dict[str, Any]"
-                    )
-            except ValueError:
-                raise
-            except Exception as e:
-                log_warning(f"Could not validate header_provider signature: {e}")
-
-            if transport not in ["sse", "streamable-http"]:
-                log_warning(
-                    f"header_provider specified but transport is '{transport}'. "
-                    "Dynamic headers only work with 'sse' or 'streamable-http' transports. "
-                    "Headers will be ignored."
-                )
-            else:
-                log_debug("Dynamic header support enabled for MCP tools")
-
         if session is None and server_params is None:
             if transport == "sse" and url is None:
                 raise ValueError("One of 'url' or 'server_params' parameters must be provided when using SSE transport")
@@ -144,12 +112,16 @@ class MCPTools(Toolkit):
                         "If using the streamable-http transport, server_params must be an instance of StreamableHTTPClientParams."
                     )
 
+        self.transport = transport
+
+        if self._is_valid_header_provider(header_provider):
+            self.header_provider = header_provider
+
         self.timeout_seconds = timeout_seconds
         self.session: Optional[ClientSession] = session
         self.server_params: Optional[Union[StdioServerParameters, SSEClientParams, StreamableHTTPClientParams]] = (
             server_params
         )
-        self.transport = transport
         self.url = url
 
         # Merge provided env with system env
@@ -191,6 +163,66 @@ class MCPTools(Toolkit):
     def initialized(self) -> bool:
         return self._initialized
 
+    def _is_valid_header_provider(self, header_provider: Optional[Callable[..., dict[str, Any]]]) -> bool:
+        """Logic to validate a given header_provider function.
+
+        Args:
+            header_provider: The header_provider function to validate
+
+        Raises:
+            Exception: If there is an error validating the header_provider.
+        """
+        if not header_provider:
+            return False
+
+        if self.transport not in ["sse", "streamable-http"]:
+            log_warning(
+                f"header_provider specified but transport is '{self.transport}'. "
+                "Dynamic headers only work with 'sse' or 'streamable-http' transports. "
+                "The header_provider logic will be ignored."
+            )
+            return False
+
+        log_debug("Dynamic header support enabled for MCP tools")
+        return True
+
+    def _call_header_provider(self, run_context: Optional["RunContext"] = None) -> dict[str, Any]:
+        """Call the header_provider with or without run_context based on its signature.
+
+        Args:
+            run_context: The RunContext for the current agent run
+
+        Returns:
+            dict[str, Any]: The headers returned by the header_provider
+        """
+        header_provider = getattr(self, "header_provider", None)
+        if header_provider is None:
+            return {}
+
+        try:
+            sig = inspect.signature(header_provider)
+            params = list(sig.parameters.values())
+
+            # Check if function accepts **kwargs (VAR_KEYWORD)
+            has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
+
+            # Check if function has at least one positional parameter
+            positional_params = [
+                p
+                for p in params
+                if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            ]
+
+            # Call with run_context if the function accepts it
+            if has_var_keyword or len(positional_params) > 0:
+                return header_provider(run_context)
+            else:
+                # Function takes no parameters
+                return header_provider()
+        except Exception as e:
+            log_warning(f"Error calling header_provider: {e}")
+            return {}
+
     async def get_session_for_run(self, run_context: Optional["RunContext"] = None) -> ClientSession:
         """
         Get or create a session for the given run context.
@@ -219,7 +251,7 @@ class MCPTools(Toolkit):
         log_debug(f"Creating new session for run_id={run_id} with dynamic headers")
 
         # Generate dynamic headers from the provider
-        dynamic_headers = self.header_provider(run_context)
+        dynamic_headers = self._call_header_provider(run_context)
 
         # Create new session with merged headers based on transport type
         if self.transport == "sse":
