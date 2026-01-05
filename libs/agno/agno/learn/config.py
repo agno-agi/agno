@@ -272,25 +272,6 @@ class LearnedKnowledgeConfig:
     additional_instructions: Optional[str] = None
     system_message: Optional[str] = None
 
-    def __post_init__(self):
-        """Validate configuration."""
-        from agno.utils.log import log_warning
-
-        # Warn if knowledge is missing - learnings won't work without it
-        if self.knowledge is None:
-            log_warning(
-                "LearnedKnowledgeConfig: knowledge base is None. "
-                "Learnings cannot be saved or searched without a knowledge base. "
-                "Provide a Knowledge instance to LearnedKnowledgeConfig or LearningMachine."
-            )
-
-        # Warn if BACKGROUND mode but no model
-        if self.mode == LearningMode.BACKGROUND and self.model is None:
-            log_warning(
-                "LearnedKnowledgeConfig: BACKGROUND mode requires a model for extraction. "
-                "Provide a model to LearnedKnowledgeConfig or LearningMachine."
-            )
-
     def __repr__(self) -> str:
         has_knowledge = self.knowledge is not None
         return f"LearnedKnowledgeConfig(mode={self.mode.value}, knowledge={has_knowledge}, enable_agent_tools={self.enable_agent_tools})"
