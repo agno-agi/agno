@@ -23,7 +23,7 @@ async def multi_turn_conversation():
     print("Multi-Turn A2A Conversation")
     print("=" * 60)
 
-    client = A2AClient("http://localhost:7777/a2a/agents/basic_agent")
+    client = A2AClient("http://localhost:7003/a2a/agents/basic-agent")
 
     # First message - introduce ourselves
     print("\nUser: My name is Alice and I love Python programming.")
@@ -59,7 +59,7 @@ async def streaming_multi_turn():
     print("Streaming Multi-Turn Conversation")
     print("=" * 60)
 
-    client = A2AClient("http://localhost:7777/a2a/agents/basic_agent")
+    client = A2AClient("http://localhost:7003/a2a/agents/basic-agent")
     context_id = None
 
     questions = [

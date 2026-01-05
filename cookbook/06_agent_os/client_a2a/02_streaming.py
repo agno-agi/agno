@@ -23,7 +23,7 @@ async def basic_streaming():
     print("Streaming A2A Response")
     print("=" * 60)
 
-    client = A2AClient("http://localhost:7777/a2a/agents/basic_agent")
+    client = A2AClient("http://localhost:7003/a2a/agents/basic-agent")
     print("\nStreaming response from agent...")
     print("\nResponse: ", end="", flush=True)
 
@@ -41,7 +41,7 @@ async def streaming_with_events():
     print("Streaming with Event Details")
     print("=" * 60)
 
-    client = A2AClient("http://localhost:7777/a2a/agents/basic_agent")
+    client = A2AClient("http://localhost:7003/a2a/agents/basic-agent")
     print("\nEvent log:")
 
     content_buffer = []
