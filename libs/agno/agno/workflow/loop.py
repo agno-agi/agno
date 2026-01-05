@@ -150,6 +150,7 @@ class Loop:
 
         all_results = []
         iteration = 0
+        early_termination = False
 
         while iteration < self.max_iterations:
             # Execute all steps in this iteration - mirroring workflow logic
@@ -182,6 +183,7 @@ class Loop:
 
                         if any(output.stop for output in step_output):
                             logger.info(f"Early termination requested by step {step_name}")
+                            early_termination = True
                             break
                 else:
                     # Single StepOutput
@@ -191,6 +193,7 @@ class Loop:
 
                     if step_output.stop:
                         logger.info(f"Early termination requested by step {step_name}")
+                        early_termination = True
                         break
 
                 # Update step input for next step
@@ -209,7 +212,11 @@ class Loop:
                         break
                 except Exception as e:
                     logger.warning(f"End condition evaluation failed: {e}")
-                    # Continue with loop if end condition fails
+
+            # Break out of iteration loop if early termination was requested
+            if early_termination:
+                log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
+                break
 
         log_debug(f"Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
@@ -224,6 +231,7 @@ class Loop:
             step_type=StepType.LOOP,
             content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
             success=all(result.success for result in flattened_results) if flattened_results else True,
+            stop=any(result.stop for result in flattened_results) if flattened_results else False,
             steps=flattened_results,
         )
 
@@ -434,6 +442,7 @@ class Loop:
             step_type=StepType.LOOP,
             content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
             success=all(result.success for result in flattened_results) if flattened_results else True,
+            stop=any(result.stop for result in flattened_results) if flattened_results else False,
             steps=flattened_results,
         )
 
@@ -462,6 +471,7 @@ class Loop:
 
         all_results = []
         iteration = 0
+        early_termination = False
 
         while iteration < self.max_iterations:
             # Execute all steps in this iteration - mirroring workflow logic
@@ -494,6 +504,7 @@ class Loop:
 
                         if any(output.stop for output in step_output):
                             logger.info(f"Early termination requested by step {step_name}")
+                            early_termination = True
                             break
                 else:
                     # Single StepOutput
@@ -503,6 +514,7 @@ class Loop:
 
                     if step_output.stop:
                         logger.info(f"Early termination requested by step {step_name}")
+                        early_termination = True
                         break
 
                 # Update step input for next step
@@ -525,6 +537,11 @@ class Loop:
                 except Exception as e:
                     logger.warning(f"End condition evaluation failed: {e}")
 
+            # Break out of iteration loop if early termination was requested
+            if early_termination:
+                log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
+                break
+
         # Use workflow logger for async loop completion
         log_debug(f"Async Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
@@ -539,6 +556,7 @@ class Loop:
             step_type=StepType.LOOP,
             content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
             success=all(result.success for result in flattened_results) if flattened_results else True,
+            stop=any(result.stop for result in flattened_results) if flattened_results else False,
             steps=flattened_results,
         )
 
@@ -752,5 +770,6 @@ class Loop:
             step_type=StepType.LOOP,
             content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
             success=all(result.success for result in flattened_results) if flattened_results else True,
+            stop=any(result.stop for result in flattened_results) if flattened_results else False,
             steps=flattened_results,
         )
