@@ -13,9 +13,7 @@ skills_agent = Agent(
     name="Skills Agent",
     model=OpenAIChat(id="gpt-4o"),
     skills=Skills(loaders=[LocalSkills(str(skills_dir))]),
-    instructions=[
-        "You are a helpful assistant with access to specialized skills."
-    ],
+    instructions=["You are a helpful assistant with access to specialized skills."],
     markdown=True,
 )
 

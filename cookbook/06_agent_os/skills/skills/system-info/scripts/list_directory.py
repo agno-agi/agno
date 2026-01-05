@@ -14,11 +14,15 @@ try:
     entries = []
     for entry in os.listdir(path):
         full_path = os.path.join(path, entry)
-        entries.append({
-            "name": entry,
-            "is_dir": os.path.isdir(full_path),
-            "size": os.path.getsize(full_path) if os.path.isfile(full_path) else None,
-        })
+        entries.append(
+            {
+                "name": entry,
+                "is_dir": os.path.isdir(full_path),
+                "size": os.path.getsize(full_path)
+                if os.path.isfile(full_path)
+                else None,
+            }
+        )
 
     result = {
         "path": os.path.abspath(path),
