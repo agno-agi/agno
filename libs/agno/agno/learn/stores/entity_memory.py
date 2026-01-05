@@ -2639,6 +2639,8 @@ class EntityMemoryStore(LearningStore):
             return
 
         try:
+            from agno.models.message import Message
+
             conversation_text = self._messages_to_text(messages=messages)
 
             tools = self._get_extraction_tools(
@@ -2652,7 +2654,7 @@ class EntityMemoryStore(LearningStore):
 
             messages_for_model = [
                 self._get_extraction_system_message(),
-                {"role": "user", "content": f"Extract entities from this conversation:\n\n{conversation_text}"},
+                Message(role="user", content=f"Extract entities from this conversation:\n\n{conversation_text}"),
             ]
 
             model_copy = deepcopy(self.model)
@@ -2681,6 +2683,8 @@ class EntityMemoryStore(LearningStore):
             return
 
         try:
+            from agno.models.message import Message
+
             conversation_text = self._messages_to_text(messages=messages)
 
             tools = self._aget_extraction_tools(
@@ -2694,7 +2698,7 @@ class EntityMemoryStore(LearningStore):
 
             messages_for_model = [
                 self._get_extraction_system_message(),
-                {"role": "user", "content": f"Extract entities from this conversation:\n\n{conversation_text}"},
+                Message(role="user", content=f"Extract entities from this conversation:\n\n{conversation_text}"),
             ]
 
             model_copy = deepcopy(self.model)
@@ -2710,13 +2714,15 @@ class EntityMemoryStore(LearningStore):
         except Exception as e:
             log_warning(f"EntityMemoryStore.aextract_and_save failed: {e}")
 
-    def _get_extraction_system_message(self) -> Dict[str, str]:
+    def _get_extraction_system_message(self) -> "Message":
         """Get system message for extraction."""
+        from agno.models.message import Message
+
         custom_instructions = self.config.instructions or ""
         additional = self.config.additional_instructions or ""
 
         if self.config.system_message:
-            return {"role": "system", "content": self.config.system_message}
+            return Message(role="system", content=self.config.system_message)
 
         content = dedent("""\
             You are an Entity Extractor. Your job is to identify and capture knowledge about
@@ -2839,7 +2845,7 @@ class EntityMemoryStore(LearningStore):
         if additional:
             content += f"\n{additional}\n"
 
-        return {"role": "system", "content": content}
+        return Message(role="system", content=content)
 
     def _get_extraction_tools(
         self,
