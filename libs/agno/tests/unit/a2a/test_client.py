@@ -3,13 +3,13 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agno.a2a import (
+from httpx import HTTPStatusError, Request, Response
+
+from agno.client.a2a import (
     A2AClient,
     StreamEvent,
     TaskResult,
 )
-from httpx import HTTPStatusError, Request, Response
-
 from agno.exceptions import RemoteServerUnavailableError
 
 
@@ -21,23 +21,28 @@ class TestA2AClientInit:
         client = A2AClient("http://localhost:7777")
         assert client.base_url == "http://localhost:7777"
         assert client.timeout == 30
-        assert client.a2a_prefix == "/a2a"
+        assert client.protocol == "rest"
 
     def test_init_custom_values(self):
         """Test client initialization with custom values."""
         client = A2AClient(
             "http://localhost:8080/",
-            timeout=60.0,
-            a2a_prefix="/api/a2a",
+            timeout=60,
+            protocol="json-rpc",
         )
         assert client.base_url == "http://localhost:8080"  # Trailing slash stripped
-        assert client.timeout == 60.0
-        assert client.a2a_prefix == "/api/a2a"
+        assert client.timeout == 60
+        assert client.protocol == "json-rpc"
 
-    def test_get_endpoint(self):
-        """Test endpoint URL building."""
-        client = A2AClient("http://localhost:7777")
-        assert client._get_endpoint("/message/send") == "http://localhost:7777/a2a/message/send"
+    def test_get_endpoint_rest_mode(self):
+        """Test endpoint URL building in REST mode."""
+        client = A2AClient("http://localhost:7777", protocol="rest")
+        assert client._get_endpoint("/v1/message:send") == "http://localhost:7777/v1/message:send"
+
+    def test_get_endpoint_json_rpc_mode(self):
+        """Test endpoint URL building in JSON-RPC mode."""
+        client = A2AClient("http://localhost:7777", protocol="json-rpc")
+        assert client._get_endpoint("/v1/message:send") == "http://localhost:7777/"
 
 
 class TestBuildMessageRequest:
@@ -47,7 +52,6 @@ class TestBuildMessageRequest:
         """Test building basic message request."""
         client = A2AClient("http://localhost:7777")
         request = client._build_message_request(
-            agent_id="my-agent",
             message="Hello",
             stream=False,
         )
@@ -55,7 +59,6 @@ class TestBuildMessageRequest:
         assert request["jsonrpc"] == "2.0"
         assert request["method"] == "message/send"
         assert "id" in request
-        assert request["params"]["message"]["agentId"] == "my-agent"
         assert request["params"]["message"]["role"] == "user"
         assert request["params"]["message"]["parts"][0]["kind"] == "text"
         assert request["params"]["message"]["parts"][0]["text"] == "Hello"
@@ -64,7 +67,6 @@ class TestBuildMessageRequest:
         """Test building streaming message request."""
         client = A2AClient("http://localhost:7777")
         request = client._build_message_request(
-            agent_id="my-agent",
             message="Hello",
             stream=True,
         )
@@ -75,7 +77,6 @@ class TestBuildMessageRequest:
         """Test building request with context ID."""
         client = A2AClient("http://localhost:7777")
         request = client._build_message_request(
-            agent_id="my-agent",
             message="Hello",
             context_id="session-123",
             user_id="user-456",
@@ -237,7 +238,7 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_send_message_success(self):
         """Test successful message send."""
-        with patch("agno.a2a.client.get_default_async_client") as mock_get_client:
+        with patch("agno.client.a2a.client.get_default_async_client") as mock_get_client:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.json.return_value = {
@@ -263,7 +264,6 @@ class TestSendMessage:
 
             client = A2AClient("http://localhost:7777")
             result = await client.send_message(
-                agent_id="my-agent",
                 message="What is 2 + 2?",
             )
 
@@ -274,7 +274,7 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_send_message_http_error(self):
         """Test send_message with HTTP error."""
-        with patch("agno.a2a.client.get_default_async_client") as mock_get_client:
+        with patch("agno.client.a2a.client.get_default_async_client") as mock_get_client:
             mock_response = Response(404, request=Request("POST", "http://test"))
             mock_http_client = AsyncMock()
             mock_http_client.post.side_effect = HTTPStatusError(
@@ -285,7 +285,6 @@ class TestSendMessage:
             client = A2AClient("http://localhost:7777")
             with pytest.raises(HTTPStatusError) as exc_info:
                 await client.send_message(
-                    agent_id="nonexistent-agent",
                     message="Hello",
                 )
             assert exc_info.value.response.status_code == 404
@@ -293,7 +292,7 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_send_message_connection_error(self):
         """Test send_message with connection error."""
-        with patch("agno.a2a.client.get_default_async_client") as mock_get_client:
+        with patch("agno.client.a2a.client.get_default_async_client") as mock_get_client:
             from httpx import ConnectError
 
             mock_http_client = AsyncMock()
@@ -303,7 +302,6 @@ class TestSendMessage:
             client = A2AClient("http://localhost:7777")
             with pytest.raises(RemoteServerUnavailableError) as exc_info:
                 await client.send_message(
-                    agent_id="my-agent",
                     message="Hello",
                 )
             assert "Failed to connect" in str(exc_info.value)
@@ -312,7 +310,7 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_send_message_timeout(self):
         """Test send_message with timeout."""
-        with patch("agno.a2a.client.get_default_async_client") as mock_get_client:
+        with patch("agno.client.a2a.client.get_default_async_client") as mock_get_client:
             from httpx import TimeoutException
 
             mock_http_client = AsyncMock()
@@ -322,7 +320,6 @@ class TestSendMessage:
             client = A2AClient("http://localhost:7777")
             with pytest.raises(RemoteServerUnavailableError) as exc_info:
                 await client.send_message(
-                    agent_id="my-agent",
                     message="Hello",
                 )
             assert "timed out" in str(exc_info.value)
@@ -330,7 +327,7 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_send_message_failed_task_returns_result(self):
         """Test send_message returns TaskResult even when task reports failed status."""
-        with patch("agno.a2a.client.get_default_async_client") as mock_get_client:
+        with patch("agno.client.a2a.client.get_default_async_client") as mock_get_client:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.json.return_value = {
@@ -354,7 +351,6 @@ class TestSendMessage:
 
             client = A2AClient("http://localhost:7777")
             result = await client.send_message(
-                agent_id="my-agent",
                 message="Do something",
             )
             assert result.is_failed
@@ -367,14 +363,14 @@ class TestStreamMessage:
     @pytest.mark.asyncio
     async def test_stream_message_success(self):
         """Test successful message streaming."""
-        with patch("agno.a2a.client.get_default_async_client") as mock_get_client:
+        with patch("agno.client.a2a.client.get_default_async_client") as mock_get_client:
             # Create mock streaming response
             async def mock_aiter_lines():
                 lines = [
-                    '{"result": {"task_id": "task-123", "status": {"state": "working"}}}',
-                    '{"result": {"messageId": "m1", "parts": [{"text": "Hello"}]}}',
-                    '{"result": {"messageId": "m2", "parts": [{"text": " World"}]}}',
-                    '{"result": {"task_id": "task-123", "status": {"state": "completed"}, "final": true}}',
+                    '{"result": {"kind": "status-update", "taskId": "task-123", "status": {"state": "working"}}}',
+                    '{"result": {"kind": "message", "messageId": "m1", "parts": [{"kind": "text", "text": "Hello"}]}}',
+                    '{"result": {"kind": "message", "messageId": "m2", "parts": [{"kind": "text", "text": " World"}]}}',
+                    '{"result": {"kind": "status-update", "taskId": "task-123", "status": {"state": "completed"}, "final": true}}',
                 ]
                 for line in lines:
                     yield line
@@ -396,7 +392,6 @@ class TestStreamMessage:
             events = []
             client = A2AClient("http://localhost:7777")
             async for event in client.stream_message(
-                agent_id="my-agent",
                 message="Hello",
             ):
                 events.append(event)
