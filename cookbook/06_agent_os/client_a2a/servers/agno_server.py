@@ -14,15 +14,19 @@ The server will start at http://localhost:7003
 
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 
+db=SqliteDb(db_file="tmp/agent.db")
 chat_agent = Agent(
     name="basic-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     id="basic-agent",
+    db=db,
     description="A helpful AI assistant that provides thoughtful answers.",
     instructions="You are a helpful AI assistant.",
     add_datetime_to_context=True,
+    add_history_to_context=True,
     markdown=True,
 )
 
