@@ -2030,9 +2030,9 @@ class Knowledge:
 
         else:
             if self.name:
-                log_warning(f"Contents DB not found for knowledge base: {self.name}")
+                log_debug(f"Contents DB not found for knowledge base: {self.name}")
             else:
-                log_warning("Contents DB not found for knowledge base")
+                log_debug("Contents DB not found for knowledge base")
             return None
 
     async def _aupdate_content(self, content: Content) -> Optional[Dict[str, Any]]:
@@ -2076,9 +2076,9 @@ class Knowledge:
 
         else:
             if self.name:
-                log_warning(f"Contents DB not found for knowledge base: {self.name}")
+                log_debug(f"Contents DB not found for knowledge base: {self.name}")
             else:
-                log_warning("Contents DB not found for knowledge base")
+                log_debug("Contents DB not found for knowledge base")
             return None
 
     async def _process_lightrag_content_async(self, content: Content, content_type: KnowledgeContentOrigin) -> None:

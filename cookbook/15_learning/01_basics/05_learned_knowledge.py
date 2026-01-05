@@ -24,6 +24,9 @@ from agno.learn import LearnedKnowledgeConfig, LearningMachine, LearningMode
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.pgvector import PgVector, SearchType
 
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db=PostgresDb(db_url=db_url)
+
 # ============================================================================
 # Create Agent
 # ============================================================================
@@ -36,11 +39,13 @@ knowledge = Knowledge(
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
+    max_results=5,
+    contents_db=db,
 )
 
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
-    db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
+    db=db,
     instructions="Learn from conversations and apply prior knowledge. "
     "Save valuable insights for future use.",
     learning=LearningMachine(
@@ -77,7 +82,7 @@ if __name__ == "__main__":
     print("SESSION 1: Save a learning (watch for tool calls)")
     print("=" * 60 + "\n")
     agent.print_response(
-        "Save this insight: When comparing cloud providers, always "
+        "When comparing cloud providers, always "
         "check egress costs first - they can vary by 10x and often "
         "dominate total costs for data-intensive workloads.",
         user_id=user_id,
@@ -99,32 +104,4 @@ if __name__ == "__main__":
         stream=True,
     )
     print("\n--- Learnings ---")
-    show_learnings()
-
-    # Session 3: Add another learning
-    print("\n" + "=" * 60)
-    print("SESSION 3: Save another insight")
-    print("=" * 60 + "\n")
-    agent.print_response(
-        "Good point about egress! I also learned that reserved instances "
-        "can save 40-60% but require 1-3 year commitments. Worth noting "
-        "for future cloud cost discussions.",
-        user_id=user_id,
-        session_id="session_3",
-        stream=True,
-    )
-    print("\n--- Updated Learnings ---")
-    show_learnings()
-
-    # Session 4: Different user benefits
-    print("\n" + "=" * 60)
-    print("SESSION 4: Different user, collective knowledge")
-    print("=" * 60 + "\n")
-    agent.print_response(
-        "What are the key things to evaluate when choosing a cloud provider?",
-        user_id="other@example.com",  # Different user
-        session_id="session_4",
-        stream=True,
-    )
-    print("\n--- Final Learnings ---")
     show_learnings()
