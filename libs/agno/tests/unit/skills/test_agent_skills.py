@@ -464,13 +464,10 @@ def test_skill_script_execute_script_not_found(mock_loader: MockSkillLoader) -> 
 
 def test_skill_script_execute_success(temp_skill_dir: Path) -> None:
     """Test successful script execution."""
-    import os
-
-    # Create a simple test script with shebang
+    # Create a simple test script with shebang (chmod handled automatically)
     scripts_dir = temp_skill_dir / "scripts"
     test_script = scripts_dir / "test_runner.py"
     test_script.write_text('#!/usr/bin/env python3\nprint("Hello from script")')
-    os.chmod(test_script, 0o755)
 
     loader = LocalSkills(str(temp_skill_dir))
     skills = Skills(loaders=[loader])
@@ -487,12 +484,9 @@ def test_skill_script_execute_success(temp_skill_dir: Path) -> None:
 
 def test_skill_script_execute_with_args(temp_skill_dir: Path) -> None:
     """Test script execution with arguments."""
-    import os
-
     scripts_dir = temp_skill_dir / "scripts"
     test_script = scripts_dir / "echo_args.py"
     test_script.write_text('#!/usr/bin/env python3\nimport sys; print(" ".join(sys.argv[1:]))')
-    os.chmod(test_script, 0o755)
 
     loader = LocalSkills(str(temp_skill_dir))
     skills = Skills(loaders=[loader])
@@ -506,12 +500,9 @@ def test_skill_script_execute_with_args(temp_skill_dir: Path) -> None:
 
 def test_skill_script_execute_captures_stderr(temp_skill_dir: Path) -> None:
     """Test that stderr is captured."""
-    import os
-
     scripts_dir = temp_skill_dir / "scripts"
     test_script = scripts_dir / "stderr_test.py"
     test_script.write_text('#!/usr/bin/env python3\nimport sys; print("error message", file=sys.stderr)')
-    os.chmod(test_script, 0o755)
 
     loader = LocalSkills(str(temp_skill_dir))
     skills = Skills(loaders=[loader])
@@ -525,12 +516,9 @@ def test_skill_script_execute_captures_stderr(temp_skill_dir: Path) -> None:
 
 def test_skill_script_execute_nonzero_exit(temp_skill_dir: Path) -> None:
     """Test script with non-zero exit code."""
-    import os
-
     scripts_dir = temp_skill_dir / "scripts"
     test_script = scripts_dir / "exit_code.py"
     test_script.write_text("#!/usr/bin/env python3\nimport sys; sys.exit(42)")
-    os.chmod(test_script, 0o755)
 
     loader = LocalSkills(str(temp_skill_dir))
     skills = Skills(loaders=[loader])

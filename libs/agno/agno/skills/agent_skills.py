@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -350,7 +352,12 @@ class Skills:
                     }
                 )
 
-        # Execute mode: run the script directly (relies on shebang or executable bit)
+        # Execute mode: run the script directly (relies on shebang)
+        # Ensure script is executable
+        current_mode = script_file.stat().st_mode
+        if not (current_mode & stat.S_IXUSR):
+            os.chmod(script_file, current_mode | stat.S_IXUSR)
+
         cmd = [str(script_file), *(args or [])]
 
         try:
