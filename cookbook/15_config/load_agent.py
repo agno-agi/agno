@@ -1,3 +1,5 @@
+from sys import version
+
 from agno.agent.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
@@ -16,12 +18,6 @@ agent = Agent(
 # Save the agent to the database
 agent.save()
 
-# By default, saving an agent will create a new version of the agent
+agent.load(version=1)
 
-# Delete the agent from the database.
-# By default, delete will delete the current version of the agent. And set the next version as the current version.
-# agent.delete()
-
-# Delete all versions of the agent
-# This will delete all versions of the agent
-# agent.delete(all_versions=True)
+agent.print_response("How many people live in Canada?")

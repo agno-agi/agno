@@ -5,7 +5,7 @@ from typing import Any
 
 try:
     from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import BigInteger, Boolean, Date, String, Text
+    from sqlalchemy.types import BigInteger, Boolean, Date, Integer, String, Text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -158,18 +158,49 @@ SPAN_TABLE_SCHEMA = {
     "created_at": {"type": String, "nullable": False, "index": True},  # ISO 8601 datetime string
 }
 
-CONFIG_TABLE = {
-    "config_id": {"type": String, "primary_key": True},
-    "version": {"type": String, "primary_key": True},
-    "config_type": {"type": String, "nullable": False, "index": True},  # "agent", "team", "workflow"
-    "name": {"type": String, "nullable": True, "index": True},
-    "description": {"type": String, "nullable": True},
-    "config": {"type": JSONB, "nullable": False},
-    "is_current": {"type": Boolean, "default": False, "index": True},
-    "notes": {"type": String, "nullable": True},
+ENTITIES_TABLE_SCHEMA = {
+    "entity_id": {"type": String, "primary_key": True},
+    "entity_type": {"type": String, "nullable": False, "index": True},  # agent|team|workflow
+    "name": {"type": String, "nullable": False, "index": True},
+    "description": {"type": Text, "nullable": True},
+    "current_version": {"type": Integer, "nullable": True, "index": True},
+    "metadata": {"type": JSONB, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "deleted_at": {"type": BigInteger, "nullable": True},
+}
+
+CONFIGS_TABLE_SCHEMA = {
+    "entity_id": {"type": String, "primary_key": True, "foreign_key": "entities.entity_id"},
+    "version": {"type": Integer, "primary_key": True},
+    "version_label": {"type": String, "nullable": True},  # stable|v1.2.0|pre-refactor
+    "stage": {"type": String, "nullable": False, "default": "draft", "index": True},  # draft|published
+    "config": {"type": JSONB, "nullable": False},
+    "notes": {"type": Text, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+}
+
+ENTITY_REFS_TABLE_SCHEMA = {
+    "parent_entity_id": {"type": String, "nullable": False},
+    "parent_version": {"type": Integer, "nullable": False},
+    "ref_kind": {"type": String, "nullable": False, "index": True},
+    "ref_key": {"type": String, "nullable": False},
+    "child_entity_id": {"type": String, "nullable": False, "foreign_key": "entities.entity_id"},
+    "child_version": {"type": Integer, "nullable": True},
+    "position": {"type": Integer, "nullable": False},
+    "meta": {"type": JSONB, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": True, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "__primary_key__": ["parent_entity_id", "parent_version", "ref_kind", "ref_key"],
+    "__foreign_keys__": [
+        {
+            "columns": ["parent_entity_id", "parent_version"],
+            "ref_table": "configs",
+            "ref_columns": ["entity_id", "version"],
+        }
+    ],
 }
 
 
@@ -193,7 +224,9 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "versions": VERSIONS_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
         "spans": SPAN_TABLE_SCHEMA,
-        "configs": CONFIG_TABLE,
+        "configs": CONFIGS_TABLE_SCHEMA,
+        "entity_refs": ENTITY_REFS_TABLE_SCHEMA,
+        "entities": ENTITIES_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

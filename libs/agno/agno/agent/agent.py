@@ -7312,7 +7312,6 @@ class Agent:
             Agent: Reconstructed agent instance
         """
         from agno.models.utils import get_model
-        from agno.tools.function import Function
 
         # Create a copy to avoid modifying the original
         config = data.copy()
@@ -7426,57 +7425,146 @@ class Agent:
         # Create and return the agent
         return cls(**config)
 
-    # Condfig Database Functions
-    def save(self, upsert: bool = True, db: Optional[BaseDb] = None, version: Optional[str] = None) -> None:
-        """
-        Save an Agent to the database.
-
-        Args:
-            agent (Agent): The Agent to save to the database.
-        """
-        if not self.db and not db:
+    # Config Database Functions
+    def save(
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        stage: str = "published",
+        label: Optional[str] = None,
+        notes: Optional[str] = None,
+        set_current: bool = True,
+        publish: bool = False,
+        upsert_version: bool = False,
+    ) -> int:
+        db_ = db or self.db
+        if not db_:
             raise ValueError("Db not initialized or provided")
-        if not self.version and not version:
-            raise ValueError("You must set a version for the Agent to be able to save it to the database")
 
         try:
-            self.db.upsert_config(
-                config_id=self.id,
-                version=self.version,
-                config_type=ConfigType.AGENT,
-                config=self.to_dict(),
-                upsert=upsert,
+            # Ensure entity exists
+            db_.upsert_entity(
+                entity_id=self.id,
+                entity_type=ConfigType.AGENT,
+                name=getattr(self, "name", self.id),
+                description=getattr(self, "description", None),
+                metadata=getattr(self, "metadata", None),
             )
+
+            # Determine version to update (if overwriting)
+            version_to_update = None
+            if upsert_version:
+                entity = db_.get_entity(self.id)
+                if entity and entity.get("current_version"):
+                    version_to_update = entity["current_version"]
+
+            # Create or update config
+            config = db_.upsert_config(
+                entity_id=self.id,
+                version=version_to_update,
+                config=self.to_dict(),
+                version_label=label,
+                stage="published" if publish else stage,
+                notes=notes,
+                set_current=set_current,
+                refs=None,
+            )
+
+            return config["version"]
+
         except Exception as e:
             log_error(f"Error saving Agent to database: {e}")
-            raise e
+            raise
 
-    def load(self, version: Optional[str] = None, db: Optional[BaseDb] = None) -> Optional[Agent]:
+    @classmethod
+    def load(
+        cls,
+        agent_id: str,
+        *,
+        db: "BaseDb",
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+    ) -> Optional["Agent"]:
         """
-        Loads the current version of the Agent from the database or a specific version if provided.
+        Load an agent by id.
 
-        Args:
-            version (Optional[str]): The version of the Agent to load from storage.
-        Returns:
-            Optional[Agent]: The Agent from the database or None if not found.
+        - If version is provided: loads that version.
+        - Else if label is provided: loads that labeled version.
+        - Else loads the entity's current version.
         """
-        if not self.db and not db:
+        if not db:
             raise ValueError("Db not initialized or provided")
 
-        return db.get_config(config_id=self.id, version=version, config_type=ConfigType.AGENT)
+        data = db.get_config(entity_id=agent_id, version=version if version is not None else None, label=label)
+        if data is None:
+            return None
 
-    def delete(self, version: Optional[str] = None, all_versions: bool = False) -> None:
+        agent = cls.from_dict(data["config"] if "config" in data else data)
+        # If your get_config returns the entire configs row, set version:
+        if isinstance(data, dict) and "version" in data:
+            agent.version = int(data["version"])
+        agent.db = db
+        return agent
+
+    def delete(
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        hard_delete: bool = False,
+    ) -> bool:
         """
-        Delete an Agent from the database.
-
-        Args:
-            version (Optional[str]): The version of the Agent to delete from storage.
-            all_versions (bool): Whether to delete all versions of the Agent.
+        Delete the agent entity. For soft delete, marks entity deleted and clears current_version.
+        For hard delete, deletes entity + configs + refs.
         """
-        if not self.db:
-            raise ValueError("Db not initialized")
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
 
-        self.db.delete_config(config_id=self.id, version=version, all_versions=all_versions)
+        return db_.delete_entity(entity_id=self.id, hard_delete=hard_delete)
+
+    def delete_version(
+        self,
+        *,
+        version: int,
+        db: Optional["BaseDb"] = None,
+    ) -> bool:
+        """
+        Delete (or mark deleted) a specific config version.
+        Only works if your db layer supports deleting versions (stage='deleted' or deleted_at).
+        """
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+
+        # If you implement `delete_config_version`, call it here.
+        if hasattr(db_, "delete_config_version"):
+            return db_.delete_config_version(entity_id=self.id, version=version)
+
+        raise NotImplementedError("Db does not support deleting a specific version yet")
+
+    def publish(
+        self,
+        *,
+        version: Optional[int] = None,
+        db: Optional["BaseDb"] = None,
+        set_current: bool = True,
+        pin_refs: bool = True,
+    ) -> bool:
+        """
+        Publish a draft version.
+        """
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+
+        v = version if version is not None else self.version
+        if v is None:
+            raise ValueError("No version provided and Agent.version is not set")
+
+        ok = db_.publish_config(entity_id=self.id, version=int(v), pin_refs=pin_refs)
+        if ok and set_current:
+            db_.set_current_version(entity_id=self.id, version=int(v))
+        return ok
 
     # -*- Public Convenience Functions
     def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
@@ -11790,16 +11878,53 @@ class Agent:
 
 # TODO: Look into where this function should exist
 def get_agent_by_id(
-    db: BaseDb, id: str, version: Optional[str] = None, registry: Optional[Registry] = None
-) -> Optional[Agent]:
+    db: "BaseDb",
+    id: str,
+    version: Optional[int] = None,
+    label: Optional[str] = None,
+    registry: Optional["Registry"] = None,
+) -> Optional["Agent"]:
     """
-    Get an agent by id from the database.
+    Get an Agent by id from the database (new entities/configs schema).
+
+    Resolution order:
+    - if version is provided: load that version
+    - elif label is provided: load that labeled version
+    - else: load entity.current_version
+
+    Args:
+        db: Database handle.
+        id: Agent entity_id.
+        version: Optional integer config version.
+        label: Optional version_label.
+        registry: Optional Registry for reconstructing unserializable components.
+
+    Returns:
+        Agent instance or None.
     """
-    agent_config = db.get_config(config_id=id, version=version, config_type=ConfigType.AGENT)
-    if agent_config is None or agent_config.get("config") is None:
-        return None
     try:
-        return Agent.from_dict(agent_config.get("config"), registry=registry)
+        row = db.get_config(entity_id=id, version=version, label=label)
+        if row is None:
+            return None
+
+        cfg = row.get("config") if isinstance(row, dict) else None
+        if cfg is None:
+            raise ValueError(f"Invalid config found for agent {id}")
+
+        agent = Agent.from_dict(cfg, registry=registry)
+
+        try:
+            agent.version = int(row["version"])  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+        try:
+            agent.db = db  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+        return agent
+
     except Exception as e:
-        log_error(f"Error reconstructing Agent from dictionary: {e}")
+        log_error(f"Error loading Agent {id} from database: {e}")
         return None

@@ -221,6 +221,7 @@ async def get_db(
 
     # If db_id is provided, first find the database with that ID
     if db_id:
+        print(f"dbs: {dbs}")
         target_db_list = dbs.get(db_id)
         if not target_db_list:
             raise HTTPException(status_code=404, detail=f"No database found with id '{db_id}'")

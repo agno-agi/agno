@@ -36,6 +36,7 @@ from agno.os.config import (
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
+from agno.os.routers.config import get_entities_router
 from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
@@ -308,6 +309,7 @@ class AgentOS:
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
+            get_entities_router(dbs=self.dbs),
         ]
 
         # Clear all previously existing routes
@@ -604,6 +606,7 @@ class AgentOS:
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
+            get_entities_router(dbs=self.dbs),
         ]
 
         for router in routers:
