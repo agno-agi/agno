@@ -108,6 +108,61 @@ def _validate_compatibility(compatibility: str) -> List[str]:
     return errors
 
 
+def _validate_license(license_val: str) -> List[str]:
+    """Validate license field.
+
+    Args:
+        license_val: The license string to validate.
+
+    Returns:
+        List of validation error messages. Empty list means valid.
+    """
+    errors = []
+
+    if not isinstance(license_val, str):
+        errors.append("Field 'license' must be a string")
+
+    return errors
+
+
+def _validate_allowed_tools(allowed_tools) -> List[str]:
+    """Validate allowed-tools field.
+
+    Args:
+        allowed_tools: The allowed-tools value to validate.
+
+    Returns:
+        List of validation error messages. Empty list means valid.
+    """
+    errors = []
+
+    if not isinstance(allowed_tools, list):
+        errors.append("Field 'allowed-tools' must be a list")
+        return errors
+
+    if not all(isinstance(tool, str) for tool in allowed_tools):
+        errors.append("Field 'allowed-tools' must be a list of strings")
+
+    return errors
+
+
+def _validate_metadata_value(metadata_val) -> List[str]:
+    """Validate metadata field value.
+
+    Args:
+        metadata_val: The metadata value to validate.
+
+    Returns:
+        List of validation error messages. Empty list means valid.
+    """
+    errors = []
+
+    if not isinstance(metadata_val, dict):
+        errors.append("Field 'metadata' must be a dictionary")
+
+    return errors
+
+
 def _validate_metadata_fields(metadata: Dict) -> List[str]:
     """Validate that only allowed fields are present in frontmatter.
 
@@ -156,6 +211,15 @@ def validate_metadata(metadata: Dict, skill_dir: Optional[Path] = None) -> List[
 
     if "compatibility" in metadata:
         errors.extend(_validate_compatibility(metadata["compatibility"]))
+
+    if "license" in metadata:
+        errors.extend(_validate_license(metadata["license"]))
+
+    if "allowed-tools" in metadata:
+        errors.extend(_validate_allowed_tools(metadata["allowed-tools"]))
+
+    if "metadata" in metadata:
+        errors.extend(_validate_metadata_value(metadata["metadata"]))
 
     return errors
 

@@ -9,9 +9,12 @@ from agno.skills.validator import (
     MAX_COMPATIBILITY_LENGTH,
     MAX_DESCRIPTION_LENGTH,
     MAX_SKILL_NAME_LENGTH,
+    _validate_allowed_tools,
     _validate_compatibility,
     _validate_description,
+    _validate_license,
     _validate_metadata_fields,
+    _validate_metadata_value,
     _validate_name,
     validate_metadata,
     validate_skill_directory,
@@ -415,3 +418,160 @@ def test_allowed_fields() -> None:
     """Test ALLOWED_FIELDS contains expected fields."""
     expected = {"name", "description", "license", "allowed-tools", "metadata", "compatibility"}
     assert ALLOWED_FIELDS == expected
+
+
+# --- License Validation Tests ---
+
+
+def test_validate_license_valid() -> None:
+    """Test that valid licenses pass validation."""
+    errors = _validate_license("MIT")
+    assert len(errors) == 0
+
+
+def test_validate_license_apache() -> None:
+    """Test that Apache-2.0 license is valid."""
+    errors = _validate_license("Apache-2.0")
+    assert len(errors) == 0
+
+
+def test_validate_license_any_string() -> None:
+    """Test that any string license is valid."""
+    errors = _validate_license("CustomLicense")
+    assert len(errors) == 0
+
+
+def test_validate_license_wrong_type() -> None:
+    """Test that non-string license is rejected."""
+    errors = _validate_license(123)  # type: ignore
+    assert len(errors) > 0
+    assert "must be a string" in errors[0].lower()
+
+
+# --- Allowed-Tools Validation Tests ---
+
+
+def test_validate_allowed_tools_valid() -> None:
+    """Test that valid allowed-tools list passes validation."""
+    errors = _validate_allowed_tools(["tool1", "tool2"])
+    assert len(errors) == 0
+
+
+def test_validate_allowed_tools_empty_list() -> None:
+    """Test that empty list is valid."""
+    errors = _validate_allowed_tools([])
+    assert len(errors) == 0
+
+
+def test_validate_allowed_tools_not_list() -> None:
+    """Test that non-list is rejected."""
+    errors = _validate_allowed_tools("tool1")
+    assert len(errors) > 0
+    assert "must be a list" in errors[0].lower()
+
+
+def test_validate_allowed_tools_not_strings() -> None:
+    """Test that list with non-strings is rejected."""
+    errors = _validate_allowed_tools(["tool1", 123])
+    assert len(errors) > 0
+    assert "list of strings" in errors[0].lower()
+
+
+# --- Metadata Value Validation Tests ---
+
+
+def test_validate_metadata_value_valid() -> None:
+    """Test that valid dict passes validation."""
+    errors = _validate_metadata_value({"key": "value"})
+    assert len(errors) == 0
+
+
+def test_validate_metadata_value_empty_dict() -> None:
+    """Test that empty dict is valid."""
+    errors = _validate_metadata_value({})
+    assert len(errors) == 0
+
+
+def test_validate_metadata_value_not_dict() -> None:
+    """Test that non-dict is rejected."""
+    errors = _validate_metadata_value("not a dict")
+    assert len(errors) > 0
+    assert "must be a dictionary" in errors[0].lower()
+
+
+def test_validate_metadata_value_list() -> None:
+    """Test that list is rejected."""
+    errors = _validate_metadata_value(["item1", "item2"])
+    assert len(errors) > 0
+    assert "must be a dictionary" in errors[0].lower()
+
+
+# --- Integration Tests for New Validators ---
+
+
+def test_validate_metadata_with_valid_license() -> None:
+    """Test validate_metadata with valid license field."""
+    metadata = {
+        "name": "test-skill",
+        "description": "Valid description",
+        "license": "MIT",
+    }
+    errors = validate_metadata(metadata)
+    assert len(errors) == 0
+
+
+def test_validate_metadata_with_custom_license() -> None:
+    """Test validate_metadata with custom license string."""
+    metadata = {
+        "name": "test-skill",
+        "description": "Valid description",
+        "license": "CustomLicense",
+    }
+    errors = validate_metadata(metadata)
+    assert len(errors) == 0
+
+
+def test_validate_metadata_with_valid_allowed_tools() -> None:
+    """Test validate_metadata with valid allowed-tools field."""
+    metadata = {
+        "name": "test-skill",
+        "description": "Valid description",
+        "allowed-tools": ["bash", "python"],
+    }
+    errors = validate_metadata(metadata)
+    assert len(errors) == 0
+
+
+def test_validate_metadata_with_invalid_allowed_tools() -> None:
+    """Test validate_metadata with invalid allowed-tools field."""
+    metadata = {
+        "name": "test-skill",
+        "description": "Valid description",
+        "allowed-tools": "not-a-list",
+    }
+    errors = validate_metadata(metadata)
+    assert len(errors) > 0
+    assert any("must be a list" in e.lower() for e in errors)
+
+
+def test_validate_metadata_with_valid_metadata_field() -> None:
+    """Test validate_metadata with valid metadata field."""
+    metadata = {
+        "name": "test-skill",
+        "description": "Valid description",
+        "metadata": {"version": "1.0.0", "author": "test"},
+    }
+    errors = validate_metadata(metadata)
+    assert len(errors) == 0
+
+
+def test_validate_metadata_with_invalid_metadata_field() -> None:
+    """Test validate_metadata with invalid metadata field."""
+    metadata = {
+        "name": "test-skill",
+        "description": "Valid description",
+        "metadata": "not-a-dict",
+    }
+    errors = validate_metadata(metadata)
+    assert len(errors) > 0
+    assert any("must be a dictionary" in e.lower() for e in errors)
