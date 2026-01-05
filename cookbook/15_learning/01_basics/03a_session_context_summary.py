@@ -37,7 +37,7 @@ agent = Agent(
 # =============================================================================
 # Helper: Show session context
 # =============================================================================
-def show_context(user_id: str, session_id: str) -> None:
+def show_context(session_id: str) -> None:
     """Display the stored session context."""
     from rich.pretty import pprint
 
@@ -65,7 +65,7 @@ if __name__ == "__main__":
         stream=True,
     )
     print("\n--- Session Context ---")
-    show_context(user_id, session_id)
+    show_context(session_id)
 
     # Turn 2: Follow-up
     print("\n" + "=" * 60)
@@ -78,7 +78,7 @@ if __name__ == "__main__":
         stream=True,
     )
     print("\n--- Session Context ---")
-    show_context(user_id, session_id)
+    show_context(session_id)
 
     # Turn 3: Test recall
     print("\n" + "=" * 60)
@@ -91,4 +91,4 @@ if __name__ == "__main__":
         stream=True,
     )
     print("\n--- Final Context ---")
-    show_context(user_id, session_id)
+    show_context(session_id)

@@ -33,7 +33,6 @@ agent = Agent(
         entity_memory=EntityMemoryConfig(
             mode=LearningMode.AGENTIC,
             namespace="global",
-            enable_agent_tools=True,
         ),
     ),
     markdown=True,

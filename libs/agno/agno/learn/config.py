@@ -150,6 +150,12 @@ class UserProfileConfig:
     additional_instructions: Optional[str] = None
     system_message: Optional[str] = None
 
+    def __post_init__(self):
+        """Auto-configure based on mode."""
+        # AGENTIC mode requires agent tools to be enabled
+        if self.mode == LearningMode.AGENTIC and not self.enable_agent_tools:
+            self.enable_agent_tools = True
+
     def __repr__(self) -> str:
         return f"UserProfileConfig(mode={self.mode.value}, enable_agent_tools={self.enable_agent_tools})"
 
@@ -359,6 +365,12 @@ class EntityMemoryConfig:
     additional_instructions: Optional[str] = None
     system_message: Optional[str] = None
 
+    def __post_init__(self):
+        """Auto-configure based on mode."""
+        # AGENTIC mode requires agent tools to be enabled
+        if self.mode == LearningMode.AGENTIC and not self.enable_agent_tools:
+            self.enable_agent_tools = True
+
     def __repr__(self) -> str:
         return f"EntityMemoryConfig(mode={self.mode.value}, namespace={self.namespace}, enable_agent_tools={self.enable_agent_tools})"
 
@@ -375,7 +387,7 @@ class DecisionLogConfig:
     Decision Logs record decisions made by the agent with reasoning
     and context. Useful for auditing and learning from past decisions.
 
-    Scope: AGENT (fixed) — Stored and retrieved by agent_id.
+    Scope: AGENT (fixed) - Stored and retrieved by agent_id.
 
     Note: Deferred to Phase 2.
     """
@@ -410,7 +422,7 @@ class FeedbackConfig:
     Behavioral Feedback captures signals about what worked and what
     didn't: thumbs up/down, corrections, regeneration requests.
 
-    Scope: AGENT (fixed) — Stored and retrieved by agent_id.
+    Scope: AGENT (fixed) - Stored and retrieved by agent_id.
 
     Note: Deferred to Phase 2.
     """
@@ -438,7 +450,7 @@ class SelfImprovementConfig:
     Self-Improvement proposes updates to agent instructions based
     on feedback patterns and successful interactions.
 
-    Scope: AGENT (fixed) — Stored and retrieved by agent_id.
+    Scope: AGENT (fixed) - Stored and retrieved by agent_id.
 
     Note: Deferred to Phase 3.
     """
