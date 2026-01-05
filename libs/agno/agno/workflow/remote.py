@@ -191,7 +191,7 @@ class RemoteWorkflow(BaseRemote):
 
         # A2A protocol path
         if self.protocol == "a2a":
-            return self._arun_a2a(
+            return self._arun_a2a(  # type: ignore[return-value]
                 message=serialized_input,
                 stream=stream or False,
                 user_id=user_id,
@@ -272,7 +272,7 @@ class RemoteWorkflow(BaseRemote):
             return map_stream_events_to_workflow_run_events(event_stream, workflow_id=self.workflow_id)
         else:
             # Return coroutine for non-streaming
-            return self._arun_a2a_send(
+            return self._arun_a2a_send(  # type: ignore[return-value]
                 message=message,
                 user_id=user_id,
                 context_id=context_id,
