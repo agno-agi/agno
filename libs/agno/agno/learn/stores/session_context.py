@@ -873,54 +873,55 @@ class SessionContextStore(LearningStore):
         """Get sync extraction tools for the model."""
         enable_planning = self.config.enable_planning
 
-        def save_session_context(
-            summary: str,
-            goal: Optional[str] = None,
-            plan: Optional[List[str]] = None,
-            progress: Optional[List[str]] = None,
-        ) -> str:
-            """Save the updated session context.
+        if enable_planning:
+            # Full planning mode: include goal, plan, progress parameters
+            def save_session_context(
+                summary: str,
+                goal: Optional[str] = None,
+                plan: Optional[List[str]] = None,
+                progress: Optional[List[str]] = None,
+            ) -> str:
+                """Save the updated session context.
 
-            The summary should capture the current state of the conversation in a way that
-            enables seamless continuation. Think: "What would someone need to know to pick
-            up exactly where we left off?"
+                The summary should capture the current state of the conversation in a way that
+                enables seamless continuation. Think: "What would someone need to know to pick
+                up exactly where we left off?"
 
-            Args:
-                summary: A comprehensive summary that integrates previous context with new
-                        developments. Should be standalone - readable without seeing the
-                        actual messages. Capture:
-                        - What's being worked on and why
-                        - Key decisions made and their rationale
-                        - Current state of any work in progress
-                        - Open questions or pending items
+                Args:
+                    summary: A comprehensive summary that integrates previous context with new
+                            developments. Should be standalone - readable without seeing the
+                            actual messages. Capture:
+                            - What's being worked on and why
+                            - Key decisions made and their rationale
+                            - Current state of any work in progress
+                            - Open questions or pending items
 
-                        Good: "Debugging a React performance issue in the user's dashboard.
-                        Identified unnecessary re-renders in the DataTable component caused by
-                        inline object creation in props. Implemented useMemo for the column
-                        definitions. Testing shows 60% render reduction. Next: profile the
-                        filtering logic which may have similar issues."
+                            Good: "Debugging a React performance issue in the user's dashboard.
+                            Identified unnecessary re-renders in the DataTable component caused by
+                            inline object creation in props. Implemented useMemo for the column
+                            definitions. Testing shows 60% render reduction. Next: profile the
+                            filtering logic which may have similar issues."
 
-                        Bad: "Looked at React code. Found some performance issues. Made changes."
+                            Bad: "Looked at React code. Found some performance issues. Made changes."
 
-                goal: The user's primary objective for this session (if one is apparent).
-                      Update if the goal has evolved or been clarified.
+                    goal: The user's primary objective for this session (if one is apparent).
+                          Update if the goal has evolved or been clarified.
 
-                plan: Current plan of action as a list of steps (if a structured approach
-                      has emerged). Update as the plan evolves.
+                    plan: Current plan of action as a list of steps (if a structured approach
+                          has emerged). Update as the plan evolves.
 
-                progress: Steps from the plan that have been completed. Add items as work
-                         is finished to track advancement through the plan.
+                    progress: Steps from the plan that have been completed. Add items as work
+                             is finished to track advancement through the plan.
 
-            Returns:
-                Confirmation message.
-            """
-            try:
-                context_data = {
-                    "session_id": session_id,
-                    "summary": summary,
-                }
+                Returns:
+                    Confirmation message.
+                """
+                try:
+                    context_data = {
+                        "session_id": session_id,
+                        "summary": summary,
+                    }
 
-                if enable_planning:
                     # Preserve previous values if not updated
                     if goal is not None:
                         context_data["goal"] = goal
@@ -937,19 +938,68 @@ class SessionContextStore(LearningStore):
                     elif existing_context and hasattr(existing_context, "progress"):
                         context_data["progress"] = existing_context.progress or []
 
-                context = from_dict_safe(self.schema, context_data)
-                self.save(
-                    session_id=session_id,
-                    context=context,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                )
-                log_debug(f"Session context saved: {summary[:50]}...")
-                return "Session context saved"
-            except Exception as e:
-                log_warning(f"Error saving session context: {e}")
-                return f"Error: {e}"
+                    context = from_dict_safe(self.schema, context_data)
+                    self.save(
+                        session_id=session_id,
+                        context=context,
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        team_id=team_id,
+                    )
+                    log_debug(f"Session context saved: {summary[:50]}...")
+                    return "Session context saved"
+                except Exception as e:
+                    log_warning(f"Error saving session context: {e}")
+                    return f"Error: {e}"
+
+        else:
+            # Summary-only mode: only summary parameter
+            def save_session_context(summary: str) -> str:
+                """Save the updated session summary.
+
+                The summary should capture the current state of the conversation in a way that
+                enables seamless continuation. Think: "What would someone need to know to pick
+                up exactly where we left off?"
+
+                Args:
+                    summary: A comprehensive summary that integrates previous context with new
+                            developments. Should be standalone - readable without seeing the
+                            actual messages. Capture:
+                            - What's being worked on and why
+                            - Key decisions made and their rationale
+                            - Current state of any work in progress
+                            - Open questions or pending items
+
+                            Good: "Helping user debug a memory leak in their Node.js application.
+                            Identified that the issue occurs in the WebSocket handler - connections
+                            aren't being cleaned up on disconnect. Reviewed the connection management
+                            code and found missing event listener removal. User is implementing the
+                            fix with a connection registry pattern. Next step: test under load."
+
+                            Bad: "User had a bug. We looked at code. Found some issues. Working on fixing it."
+
+                Returns:
+                    Confirmation message.
+                """
+                try:
+                    context_data = {
+                        "session_id": session_id,
+                        "summary": summary,
+                    }
+
+                    context = from_dict_safe(self.schema, context_data)
+                    self.save(
+                        session_id=session_id,
+                        context=context,
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        team_id=team_id,
+                    )
+                    log_debug(f"Session context saved: {summary[:50]}...")
+                    return "Session context saved"
+                except Exception as e:
+                    log_warning(f"Error saving session context: {e}")
+                    return f"Error: {e}"
 
         return [save_session_context]
 
@@ -964,54 +1014,55 @@ class SessionContextStore(LearningStore):
         """Get async extraction tools for the model."""
         enable_planning = self.config.enable_planning
 
-        async def save_session_context(
-            summary: str,
-            goal: Optional[str] = None,
-            plan: Optional[List[str]] = None,
-            progress: Optional[List[str]] = None,
-        ) -> str:
-            """Save the updated session context.
+        if enable_planning:
+            # Full planning mode: include goal, plan, progress parameters
+            async def save_session_context(
+                summary: str,
+                goal: Optional[str] = None,
+                plan: Optional[List[str]] = None,
+                progress: Optional[List[str]] = None,
+            ) -> str:
+                """Save the updated session context.
 
-            The summary should capture the current state of the conversation in a way that
-            enables seamless continuation. Think: "What would someone need to know to pick
-            up exactly where we left off?"
+                The summary should capture the current state of the conversation in a way that
+                enables seamless continuation. Think: "What would someone need to know to pick
+                up exactly where we left off?"
 
-            Args:
-                summary: A comprehensive summary that integrates previous context with new
-                        developments. Should be standalone - readable without seeing the
-                        actual messages. Capture:
-                        - What's being worked on and why
-                        - Key decisions made and their rationale
-                        - Current state of any work in progress
-                        - Open questions or pending items
+                Args:
+                    summary: A comprehensive summary that integrates previous context with new
+                            developments. Should be standalone - readable without seeing the
+                            actual messages. Capture:
+                            - What's being worked on and why
+                            - Key decisions made and their rationale
+                            - Current state of any work in progress
+                            - Open questions or pending items
 
-                        Good: "Debugging a React performance issue in the user's dashboard.
-                        Identified unnecessary re-renders in the DataTable component caused by
-                        inline object creation in props. Implemented useMemo for the column
-                        definitions. Testing shows 60% render reduction. Next: profile the
-                        filtering logic which may have similar issues."
+                            Good: "Debugging a React performance issue in the user's dashboard.
+                            Identified unnecessary re-renders in the DataTable component caused by
+                            inline object creation in props. Implemented useMemo for the column
+                            definitions. Testing shows 60% render reduction. Next: profile the
+                            filtering logic which may have similar issues."
 
-                        Bad: "Looked at React code. Found some performance issues. Made changes."
+                            Bad: "Looked at React code. Found some performance issues. Made changes."
 
-                goal: The user's primary objective for this session (if one is apparent).
-                      Update if the goal has evolved or been clarified.
+                    goal: The user's primary objective for this session (if one is apparent).
+                          Update if the goal has evolved or been clarified.
 
-                plan: Current plan of action as a list of steps (if a structured approach
-                      has emerged). Update as the plan evolves.
+                    plan: Current plan of action as a list of steps (if a structured approach
+                          has emerged). Update as the plan evolves.
 
-                progress: Steps from the plan that have been completed. Add items as work
-                         is finished to track advancement through the plan.
+                    progress: Steps from the plan that have been completed. Add items as work
+                             is finished to track advancement through the plan.
 
-            Returns:
-                Confirmation message.
-            """
-            try:
-                context_data = {
-                    "session_id": session_id,
-                    "summary": summary,
-                }
+                Returns:
+                    Confirmation message.
+                """
+                try:
+                    context_data = {
+                        "session_id": session_id,
+                        "summary": summary,
+                    }
 
-                if enable_planning:
                     # Preserve previous values if not updated
                     if goal is not None:
                         context_data["goal"] = goal
@@ -1028,19 +1079,68 @@ class SessionContextStore(LearningStore):
                     elif existing_context and hasattr(existing_context, "progress"):
                         context_data["progress"] = existing_context.progress or []
 
-                context = from_dict_safe(self.schema, context_data)
-                await self.asave(
-                    session_id=session_id,
-                    context=context,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                )
-                log_debug(f"Session context saved: {summary[:50]}...")
-                return "Session context saved"
-            except Exception as e:
-                log_warning(f"Error saving session context: {e}")
-                return f"Error: {e}"
+                    context = from_dict_safe(self.schema, context_data)
+                    await self.asave(
+                        session_id=session_id,
+                        context=context,
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        team_id=team_id,
+                    )
+                    log_debug(f"Session context saved: {summary[:50]}...")
+                    return "Session context saved"
+                except Exception as e:
+                    log_warning(f"Error saving session context: {e}")
+                    return f"Error: {e}"
+
+        else:
+            # Summary-only mode: only summary parameter
+            async def save_session_context(summary: str) -> str:
+                """Save the updated session summary.
+
+                The summary should capture the current state of the conversation in a way that
+                enables seamless continuation. Think: "What would someone need to know to pick
+                up exactly where we left off?"
+
+                Args:
+                    summary: A comprehensive summary that integrates previous context with new
+                            developments. Should be standalone - readable without seeing the
+                            actual messages. Capture:
+                            - What's being worked on and why
+                            - Key decisions made and their rationale
+                            - Current state of any work in progress
+                            - Open questions or pending items
+
+                            Good: "Helping user debug a memory leak in their Node.js application.
+                            Identified that the issue occurs in the WebSocket handler - connections
+                            aren't being cleaned up on disconnect. Reviewed the connection management
+                            code and found missing event listener removal. User is implementing the
+                            fix with a connection registry pattern. Next step: test under load."
+
+                            Bad: "User had a bug. We looked at code. Found some issues. Working on fixing it."
+
+                Returns:
+                    Confirmation message.
+                """
+                try:
+                    context_data = {
+                        "session_id": session_id,
+                        "summary": summary,
+                    }
+
+                    context = from_dict_safe(self.schema, context_data)
+                    await self.asave(
+                        session_id=session_id,
+                        context=context,
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        team_id=team_id,
+                    )
+                    log_debug(f"Session context saved: {summary[:50]}...")
+                    return "Session context saved"
+                except Exception as e:
+                    log_warning(f"Error saving session context: {e}")
+                    return f"Error: {e}"
 
         return [save_session_context]
 
