@@ -53,6 +53,7 @@ from agno.utils.log import (
 
 try:
     from agno.db.base import AsyncBaseDb, BaseDb
+    from agno.models.message import Message
 except ImportError:
     pass
 
@@ -2683,8 +2684,6 @@ class EntityMemoryStore(LearningStore):
             return
 
         try:
-            from agno.models.message import Message
-
             conversation_text = self._messages_to_text(messages=messages)
 
             tools = self._aget_extraction_tools(

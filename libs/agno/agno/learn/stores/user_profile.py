@@ -198,14 +198,16 @@ class UserProfileStore(LearningStore):
         Returns:
             Context string to inject into the agent's system prompt.
         """
+        # Build tool documentation based on what's enabled
+        tool_docs = self._build_tool_documentation()
+
         if not data:
             if self._should_expose_tools:
-                return dedent("""\
+                return dedent(f"""\
                     <user_memory>
                     No information saved about this user yet.
 
-                    Use `update_user_memory` when you learn something worth remembering - information
-                    that would help personalize future conversations or avoid asking the same questions.
+                    {tool_docs}
                     </user_memory>""")
             return ""
 
@@ -226,12 +228,11 @@ class UserProfileStore(LearningStore):
 
         if not profile_parts and not memories_text:
             if self._should_expose_tools:
-                return dedent("""\
+                return dedent(f"""\
                     <user_memory>
                     No information saved about this user yet.
 
-                    Use `update_user_memory` when you learn something worth remembering - information
-                    that would help personalize future conversations or avoid asking the same questions.
+                    {tool_docs}
                     </user_memory>""")
             return ""
 
@@ -258,19 +259,41 @@ class UserProfileStore(LearningStore):
             </memory_application_guidelines>""")
 
         if self._should_expose_tools:
-            context += dedent("""
+            context += dedent(f"""
 
             <memory_updates>
-            Use `update_user_memory` to save new information or update existing memories when you learn
-            something that would improve future interactions. Focus on information that helps you:
-            - Personalize responses to their context and preferences
-            - Avoid asking questions you should already know the answer to
-            - Provide continuity across conversations
+            {tool_docs}
             </memory_updates>""")
 
         context += "\n</user_memory>"
 
         return context
+
+    def _build_tool_documentation(self) -> str:
+        """Build documentation for available memory tools.
+
+        Returns:
+            String documenting which tools are available and when to use them.
+        """
+        docs = []
+
+        if self.config.agent_can_update_memories:
+            docs.append(
+                "Use `update_user_memory` to save observations, preferences, and context about this user "
+                "that would help personalize future conversations or avoid asking the same questions."
+            )
+
+        if self.config.agent_can_update_profile:
+            # Get the actual field names to document
+            updateable_fields = self._get_updateable_fields()
+            if updateable_fields:
+                field_names = ", ".join(updateable_fields.keys())
+                docs.append(
+                    f"Use `update_profile` to set structured profile fields ({field_names}) "
+                    "when the user explicitly shares this information."
+                )
+
+        return "\n\n".join(docs) if docs else ""
 
     def get_tools(
         self,
