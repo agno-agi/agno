@@ -827,11 +827,9 @@ class SessionContextStore(LearningStore):
                 - Standalone comprehensibility
                 - Enough detail to continue seamlessly
                 - Focus on state over story
-
             """)
                 + custom_instructions
                 + dedent("""
-
                 Save your updated summary using the save_session_context tool.\
             """)
             )

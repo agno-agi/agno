@@ -1,8 +1,6 @@
 """
 User Profile Quick Start
 ========================
-Implementing User memory in 30 lines.
-
 User Profile captures long-term information about users:
 - Name and preferences
 - Work context
