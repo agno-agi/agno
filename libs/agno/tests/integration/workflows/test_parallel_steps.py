@@ -6,7 +6,6 @@ from secrets import token_hex
 import pytest
 
 from agno.run.workflow import (
-    ParallelExecutionCompletedEvent,
     StepCompletedEvent,
     StepStartedEvent,
     WorkflowCompletedEvent,
