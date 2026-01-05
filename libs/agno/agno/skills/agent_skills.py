@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -109,7 +110,7 @@ class Skills:
             "1. **Browse**: Review the skill summaries below to understand what's available",
             "2. **Load**: When a task matches a skill, use `get_skill_instructions` to load full guidance",
             "3. **Reference**: Use `get_skill_reference` to access specific documentation as needed",
-            "4. **Scripts**: Use `get_skill_script` to load executable code templates from a skill",
+            "4. **Scripts**: Use `get_skill_script` to read or execute scripts from a skill",
             "",
             "This approach ensures you only load detailed instructions when actually needed.",
             "",
@@ -163,7 +164,7 @@ class Skills:
         tools.append(
             Function(
                 name="get_skill_script",
-                description="Load a script from a skill's scripts. Use this to access executable code templates.",
+                description="Read or execute a script from a skill. Set execute=True to run the script and get output, or execute=False (default) to read the script content.",
                 entrypoint=self._get_skill_script,
             )
         )
@@ -279,15 +280,25 @@ class Skills:
                 }
             )
 
-    def _get_skill_script(self, skill_name: str, script_path: str) -> str:
-        """Load a script from a skill.
+    def _get_skill_script(
+        self,
+        skill_name: str,
+        script_path: str,
+        execute: bool = False,
+        args: Optional[List[str]] = None,
+        timeout: int = 30,
+    ) -> str:
+        """Read or execute a script from a skill.
 
         Args:
             skill_name: The name of the skill.
             script_path: The filename of the script.
+            execute: If True, execute the script. If False (default), return content.
+            args: Optional list of arguments to pass to the script (only used if execute=True).
+            timeout: Maximum execution time in seconds (default: 30, only used if execute=True).
 
         Returns:
-            A JSON string with the script content.
+            A JSON string with either the script content or execution results.
         """
         skill = self.get_skill(skill_name)
         if skill is None:
@@ -317,21 +328,68 @@ class Skills:
                 }
             )
 
-        # Load the script file
         script_file = scripts_dir / script_path
+
+        if not execute:
+            # Read mode: return script content
+            try:
+                content = script_file.read_text(encoding="utf-8")
+                return json.dumps(
+                    {
+                        "skill_name": skill_name,
+                        "script_path": script_path,
+                        "content": content,
+                    }
+                )
+            except Exception as e:
+                return json.dumps(
+                    {
+                        "error": f"Error reading script file: {e}",
+                        "skill_name": skill_name,
+                        "script_path": script_path,
+                    }
+                )
+
+        # Execute mode: run the script directly (relies on shebang or executable bit)
+        cmd = [str(script_file), *(args or [])]
+
         try:
-            content = script_file.read_text(encoding="utf-8")
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=skill.source_path,
+            )
             return json.dumps(
                 {
                     "skill_name": skill_name,
                     "script_path": script_path,
-                    "content": content,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "returncode": result.returncode,
+                }
+            )
+        except subprocess.TimeoutExpired:
+            return json.dumps(
+                {
+                    "error": f"Script execution timed out after {timeout} seconds",
+                    "skill_name": skill_name,
+                    "script_path": script_path,
+                }
+            )
+        except FileNotFoundError as e:
+            return json.dumps(
+                {
+                    "error": f"Interpreter or script not found: {e}",
+                    "skill_name": skill_name,
+                    "script_path": script_path,
                 }
             )
         except Exception as e:
             return json.dumps(
                 {
-                    "error": f"Error reading script file: {e}",
+                    "error": f"Error executing script: {e}",
                     "skill_name": skill_name,
                     "script_path": script_path,
                 }

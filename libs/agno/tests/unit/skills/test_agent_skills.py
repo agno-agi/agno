@@ -324,8 +324,8 @@ def test_get_skill_reference_with_real_file(temp_skill_dir: Path) -> None:
 # --- Skill Script Tool Tests ---
 
 
-def test_get_skill_script_skill_not_found(mock_loader: MockSkillLoader) -> None:
-    """Test script retrieval for non-existent skill."""
+def test_skill_script_read_skill_not_found(mock_loader: MockSkillLoader) -> None:
+    """Test script read for non-existent skill."""
     skills = Skills(loaders=[mock_loader])
     result_json = skills._get_skill_script("nonexistent", "script.py")
     result = json.loads(result_json)
@@ -334,8 +334,8 @@ def test_get_skill_script_skill_not_found(mock_loader: MockSkillLoader) -> None:
     assert "not found" in result["error"].lower()
 
 
-def test_get_skill_script_script_not_found(mock_loader: MockSkillLoader) -> None:
-    """Test script retrieval for non-existent script."""
+def test_skill_script_read_script_not_found(mock_loader: MockSkillLoader) -> None:
+    """Test script read for non-existent script."""
     skills = Skills(loaders=[mock_loader])
     result_json = skills._get_skill_script("test-skill", "nonexistent.py")
     result = json.loads(result_json)
@@ -345,8 +345,8 @@ def test_get_skill_script_script_not_found(mock_loader: MockSkillLoader) -> None
     assert "available_scripts" in result
 
 
-def test_get_skill_script_with_real_file(temp_skill_dir: Path) -> None:
-    """Test script retrieval with actual file."""
+def test_skill_script_read_with_real_file(temp_skill_dir: Path) -> None:
+    """Test script read with actual file."""
     loader = LocalSkills(str(temp_skill_dir))
     skills = Skills(loaders=[loader])
 
@@ -409,7 +409,7 @@ def test_get_skill_reference_path_traversal_blocked(mock_loader: MockSkillLoader
     assert "not found" in result["error"].lower()
 
 
-def test_get_skill_script_path_traversal_blocked(mock_loader: MockSkillLoader) -> None:
+def test_skill_script_path_traversal_blocked(mock_loader: MockSkillLoader) -> None:
     """Test that path traversal attempts are blocked for scripts."""
     skills = Skills(loaders=[mock_loader])
     result_json = skills._get_skill_script("test-skill", "../../../etc/passwd")
@@ -438,3 +438,115 @@ def test_is_safe_path_blocks_traversal(mock_loader: MockSkillLoader) -> None:
     assert skills._is_safe_path(base_dir, "../../file.txt") is False
     assert skills._is_safe_path(base_dir, "../../../etc/passwd") is False
     assert skills._is_safe_path(base_dir, "subdir/../../file.txt") is False
+
+
+def test_skill_script_execute_skill_not_found(mock_loader: MockSkillLoader) -> None:
+    """Test script execution for non-existent skill."""
+    skills = Skills(loaders=[mock_loader])
+    result_json = skills._get_skill_script("nonexistent", "script.py", execute=True)
+    result = json.loads(result_json)
+
+    assert "error" in result
+    assert "not found" in result["error"].lower()
+    assert "available_skills" in result
+
+
+def test_skill_script_execute_script_not_found(mock_loader: MockSkillLoader) -> None:
+    """Test script execution for non-existent script."""
+    skills = Skills(loaders=[mock_loader])
+    result_json = skills._get_skill_script("test-skill", "nonexistent.py", execute=True)
+    result = json.loads(result_json)
+
+    assert "error" in result
+    assert "not found" in result["error"].lower()
+    assert "available_scripts" in result
+
+
+def test_skill_script_execute_success(temp_skill_dir: Path) -> None:
+    """Test successful script execution."""
+    import os
+
+    # Create a simple test script with shebang
+    scripts_dir = temp_skill_dir / "scripts"
+    test_script = scripts_dir / "test_runner.py"
+    test_script.write_text('#!/usr/bin/env python3\nprint("Hello from script")')
+    os.chmod(test_script, 0o755)
+
+    loader = LocalSkills(str(temp_skill_dir))
+    skills = Skills(loaders=[loader])
+
+    result_json = skills._get_skill_script("test-skill", "test_runner.py", execute=True)
+    result = json.loads(result_json)
+
+    assert "error" not in result
+    assert result["skill_name"] == "test-skill"
+    assert result["script_path"] == "test_runner.py"
+    assert "Hello from script" in result["stdout"]
+    assert result["returncode"] == 0
+
+
+def test_skill_script_execute_with_args(temp_skill_dir: Path) -> None:
+    """Test script execution with arguments."""
+    import os
+
+    scripts_dir = temp_skill_dir / "scripts"
+    test_script = scripts_dir / "echo_args.py"
+    test_script.write_text('#!/usr/bin/env python3\nimport sys; print(" ".join(sys.argv[1:]))')
+    os.chmod(test_script, 0o755)
+
+    loader = LocalSkills(str(temp_skill_dir))
+    skills = Skills(loaders=[loader])
+
+    result_json = skills._get_skill_script("test-skill", "echo_args.py", execute=True, args=["arg1", "arg2"])
+    result = json.loads(result_json)
+
+    assert "error" not in result
+    assert "arg1 arg2" in result["stdout"]
+
+
+def test_skill_script_execute_captures_stderr(temp_skill_dir: Path) -> None:
+    """Test that stderr is captured."""
+    import os
+
+    scripts_dir = temp_skill_dir / "scripts"
+    test_script = scripts_dir / "stderr_test.py"
+    test_script.write_text('#!/usr/bin/env python3\nimport sys; print("error message", file=sys.stderr)')
+    os.chmod(test_script, 0o755)
+
+    loader = LocalSkills(str(temp_skill_dir))
+    skills = Skills(loaders=[loader])
+
+    result_json = skills._get_skill_script("test-skill", "stderr_test.py", execute=True)
+    result = json.loads(result_json)
+
+    assert "error" not in result
+    assert "error message" in result["stderr"]
+
+
+def test_skill_script_execute_nonzero_exit(temp_skill_dir: Path) -> None:
+    """Test script with non-zero exit code."""
+    import os
+
+    scripts_dir = temp_skill_dir / "scripts"
+    test_script = scripts_dir / "exit_code.py"
+    test_script.write_text("#!/usr/bin/env python3\nimport sys; sys.exit(42)")
+    os.chmod(test_script, 0o755)
+
+    loader = LocalSkills(str(temp_skill_dir))
+    skills = Skills(loaders=[loader])
+
+    result_json = skills._get_skill_script("test-skill", "exit_code.py", execute=True)
+    result = json.loads(result_json)
+
+    assert "error" not in result
+    assert result["returncode"] == 42
+
+
+def test_skill_script_execute_path_traversal_blocked(mock_loader: MockSkillLoader) -> None:
+    """Test that path traversal attempts are blocked for script execution."""
+    skills = Skills(loaders=[mock_loader])
+    result_json = skills._get_skill_script("test-skill", "../../../etc/passwd", execute=True)
+    result = json.loads(result_json)
+
+    assert "error" in result
+    assert "not found" in result["error"].lower()
