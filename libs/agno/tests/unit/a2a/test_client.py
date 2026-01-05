@@ -3,13 +3,13 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from httpx import HTTPStatusError, Request, Response
+
 from agno.client.a2a import (
     A2AClient,
     StreamEvent,
     TaskResult,
 )
-from httpx import HTTPStatusError, Request, Response
-
 from agno.exceptions import RemoteServerUnavailableError
 
 
