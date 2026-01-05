@@ -25,7 +25,7 @@ from agno.models.openai import OpenAIResponses
 from agno.vectordb.pgvector import PgVector, SearchType
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db=PostgresDb(db_url=db_url)
+db = PostgresDb(db_url=db_url)
 
 # ============================================================================
 # Create Agent
