@@ -880,9 +880,9 @@ class LearnedKnowledgeStore(LearningStore):
                 and hasattr(self.knowledge, "search")
                 and "filters" in self.knowledge.search.__code__.co_varnames
             ):
-                results = self.knowledge.search(query=query, num_documents=limit, filters=filters)
+                results = self.knowledge.search(query=query, max_results=limit, filters=filters)
             else:
-                results = self.knowledge.search(query=query, num_documents=limit)
+                results = self.knowledge.search(query=query, max_results=limit)
 
             learnings = []
             for result in results or []:
@@ -918,18 +918,18 @@ class LearnedKnowledgeStore(LearningStore):
             # Search with filters if supported
             if hasattr(self.knowledge, "asearch"):
                 if filters and "filters" in self.knowledge.asearch.__code__.co_varnames:
-                    results = await self.knowledge.asearch(query=query, num_documents=limit, filters=filters)
+                    results = await self.knowledge.asearch(query=query, max_results=limit, filters=filters)
                 else:
-                    results = await self.knowledge.asearch(query=query, num_documents=limit)
+                    results = await self.knowledge.asearch(query=query, max_results=limit)
             else:
                 if (
                     filters
                     and hasattr(self.knowledge, "search")
                     and "filters" in self.knowledge.search.__code__.co_varnames
                 ):
-                    results = self.knowledge.search(query=query, num_documents=limit, filters=filters)
+                    results = self.knowledge.search(query=query, max_results=limit, filters=filters)
                 else:
-                    results = self.knowledge.search(query=query, num_documents=limit)
+                    results = self.knowledge.search(query=query, max_results=limit)
 
             learnings = []
             for result in results or []:
