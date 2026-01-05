@@ -7,7 +7,7 @@ Prerequisites:
     export OPENAI_API_KEY=your_key
 
 Usage:
-    python cookbook/clients/a2a/servers/agno_server.py
+    python cookbook/06_agent_os/client_a2a/servers/agno_server.py
 
 The server will start at http://localhost:7003
 """

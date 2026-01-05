@@ -9,7 +9,7 @@ Prerequisites:
    python cookbook/agent_os/interfaces/a2a/basic.py
 
 2. Run this script:
-   python cookbook/clients/a2a/01_basic_messaging.py
+   python cookbook/06_agent_os/client_a2a/01_basic_messaging.py
 """
 
 import asyncio

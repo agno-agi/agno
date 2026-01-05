@@ -4,11 +4,11 @@ This server uses Google's Agent Development Kit (ADK) to create an A2A-compatibl
 agent that can be tested with Agno's A2AClient.
 
 Prerequisites:
-    pip install google-adk uvicorn
+    pip install google-adk a2a-sdk uvicorn
     export GOOGLE_API_KEY=your_key
 
 Usage:
-    python cookbook/agent_os/a2a_client/servers/google_adk_server.py
+    python cookbook/06_agent_os/client_a2a/servers/google_adk_server.py
 
 The server will start at http://localhost:8001
 """

@@ -6,10 +6,10 @@ using the A2A protocol.
 
 Prerequisites:
 1. Start an AgentOS server with A2A interface:
-   python cookbook/clients/a2a/servers/agno_server.py
+   python cookbook/06_agent_os/client_a2a/servers/agno_server.py
 
 2. Run this script:
-   python cookbook/clients/a2a/02_streaming.py
+   python cookbook/06_agent_os/client_a2a/02_streaming.py
 """
 
 import asyncio

@@ -11,10 +11,10 @@ Prerequisites:
        export GOOGLE_API_KEY=your_key
 
     3. Start Google ADK server:
-       python cookbook/agent_os/a2a_client/servers/google_adk_server.py
+       python cookbook/06_agent_os/client_a2a/servers/google_adk_server.py
 
     4. Run this script:
-       python cookbook/agent_os/a2a_client/05_connect_to_google_adk.py
+       python cookbook/06_agent_os/client_a2a/05_connect_to_google_adk.py
 """
 
 import asyncio

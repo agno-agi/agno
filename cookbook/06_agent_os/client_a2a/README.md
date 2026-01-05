@@ -15,12 +15,12 @@ pip install agno httpx
 
 ### Running AgentOS Server
 ```bash
-pip install "agno[server]"
+pip install "agno[os]"
 ```
 
 ### Running Google ADK Server
 ```bash
-pip install google-adk uvicorn
+pip install google-adk a2a-sdk uvicorn
 export GOOGLE_API_KEY=your_api_key_here
 ```
 
@@ -41,19 +41,17 @@ export GOOGLE_API_KEY=your_api_key_here
 | File | Description |
 |------|-------------|
 | `05_connect_to_google_adk.py` | Connect to Google ADK A2A server |
-| `06_streaming_with_google_adk.py` | Streaming with Google ADK |
-| `07_multi_turn_with_google_adk.py` | Multi-turn conversations with ADK |
-| `08_remote_agent_a2a.py` | **RemoteAgent with A2A protocol** |
+| `06_multi_turn_with_google_adk.py` | Multi-turn conversations with ADK |
+| `07_remote_agent_a2a.py` | **RemoteAgent with A2A protocol** |
 | `servers/google_adk_server.py` | Google ADK A2A server |
 
 ## Quick Start
 
 ```python
-from agno.a2a import A2AClient
+from agno.client.a2a import A2AClient
 
-client = A2AClient("http://localhost:7003")
+client = A2AClient("http://localhost:7003/a2a/agents/basic-agent")
 result = await client.send_message(
-    agent_id="basic-agent",
     message="Hello!"
 )
 print(result.content)
@@ -74,16 +72,16 @@ print(result.content)
 
 ```python
 A2AClient(
-    base_url: str,           # Server URL
-    timeout: float = 300.0,  # Request timeout
-    a2a_prefix: str = "/a2a" # A2A endpoint prefix
+    base_url: str,                              # Server URL (include agent path)
+    timeout: int = 30,                          # Request timeout in seconds
+    protocol: Literal["rest", "json-rpc"] = "rest"  # Protocol mode
 )
 ```
 
 ### Methods
 
-- `send_message(agent_id, message, ...)` - Send message and wait for response
-- `stream_message(agent_id, message, ...)` - Stream message with real-time events
+- `send_message(message, ...)` - Send message and wait for response
+- `stream_message(message, ...)` - Stream message with real-time events
 - `get_agent_card()` - Get agent capability card (if supported)
 
 ### Response Types
@@ -97,12 +95,12 @@ A2AClient(
 
 ```bash
 # Start the Agno A2A server first
-python cookbook/clients/a2a/servers/agno_server.py
+python cookbook/06_agent_os/client_a2a/servers/agno_server.py
 
 # In another terminal, run examples
-python cookbook/clients/a2a/01_basic_messaging.py
-python cookbook/clients/a2a/02_streaming.py
-python cookbook/clients/a2a/03_multi_turn.py
+python cookbook/06_agent_os/client_a2a/01_basic_messaging.py
+python cookbook/06_agent_os/client_a2a/02_streaming.py
+python cookbook/06_agent_os/client_a2a/03_multi_turn.py
 ```
 
 ### With Google ADK Server
@@ -111,20 +109,19 @@ This demonstrates cross-framework A2A communication (Agno client -> Google ADK s
 
 ```bash
 # Start the Google ADK server
-python cookbook/clients/a2a/servers/google_adk_server.py
+python cookbook/06_agent_os/client_a2a/servers/google_adk_server.py
 
 # In another terminal, run examples
-python cookbook/clients/a2a/05_connect_to_google_adk.py
-python cookbook/clients/a2a/07_multi_turn_with_google_adk.py
+python cookbook/06_agent_os/client_a2a/05_connect_to_google_adk.py
+python cookbook/06_agent_os/client_a2a/07_multi_turn_with_google_adk.py
 ```
 
-**Key Difference:** Google ADK uses pure JSON-RPC at root "/", so use `json_rpc_endpoint="/"`:
+**Key Difference:** Google ADK uses pure JSON-RPC at root "/", so use `protocol="json-rpc"`:
 
 ```python
 # Google ADK uses pure JSON-RPC mode (all calls POST to root "/")
-client = A2AClient("http://localhost:8001", json_rpc_endpoint="/")
+client = A2AClient("http://localhost:8001/", protocol="json-rpc")
 result = await client.send_message(
-    agent_id="facts_agent",
     message="Hello!"
 )
 ```
@@ -141,7 +138,7 @@ agent = RemoteAgent(
     base_url="http://localhost:8001",
     agent_id="facts_agent",
     protocol="a2a",
-    json_rpc_endpoint="/",  # Required for Google ADK
+    a2a_protocol="json-rpc",  # Required for Google ADK
 )
 
 # Use the same interface as local agents
