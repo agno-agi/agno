@@ -65,7 +65,7 @@ except ImportError:
 class UserProfileStore(LearningStore):
     """Storage backend for User Profile learning type.
 
-    Profiles are retrieved by user_id only — all agents sharing the same DB
+    Profiles are retrieved by user_id only - all agents sharing the same DB
     will see the same profile for a given user. agent_id and team_id are
     stored for audit purposes (both at DB column level and on individual memories).
 
@@ -199,7 +199,7 @@ class UserProfileStore(LearningStore):
             Context string to inject into the agent's system prompt.
         """
         if not data:
-            if self.config.enable_agent_tools:
+            if self._should_expose_tools:
                 return dedent("""\
                     <user_memory>
                     No information saved about this user yet.
@@ -225,7 +225,7 @@ class UserProfileStore(LearningStore):
             memories_text = "\n".join(f"- {m.get('content', str(m))}" for m in data.memories)
 
         if not profile_parts and not memories_text:
-            if self.config.enable_agent_tools:
+            if self._should_expose_tools:
                 return dedent("""\
                     <user_memory>
                     No information saved about this user yet.
@@ -257,7 +257,7 @@ class UserProfileStore(LearningStore):
             - Use memories to calibrate tone, depth, and examples without announcing it
             </memory_application_guidelines>""")
 
-        if self.config.enable_agent_tools:
+        if self._should_expose_tools:
             context += dedent("""
 
             <memory_updates>
@@ -290,7 +290,7 @@ class UserProfileStore(LearningStore):
         Returns:
             List containing update_user_memory tool if enabled.
         """
-        if not user_id or not self.config.enable_agent_tools:
+        if not user_id or not self._should_expose_tools:
             return []
         return self.get_agent_tools(
             user_id=user_id,
@@ -306,7 +306,7 @@ class UserProfileStore(LearningStore):
         **kwargs,
     ) -> List[Callable]:
         """Async version of get_tools."""
-        if not user_id or not self.config.enable_agent_tools:
+        if not user_id or not self._should_expose_tools:
             return []
         return await self.aget_agent_tools(
             user_id=user_id,
@@ -318,6 +318,16 @@ class UserProfileStore(LearningStore):
     def was_updated(self) -> bool:
         """Check if profile was updated in last operation."""
         return self.profile_updated
+
+    @property
+    def _should_expose_tools(self) -> bool:
+        """Check if tools should be exposed to the agent.
+
+        Returns True if either:
+        - mode is AGENTIC (tools are the primary way to update memory), OR
+        - enable_agent_tools is explicitly True
+        """
+        return self.config.mode == LearningMode.AGENTIC or self.config.enable_agent_tools
 
     # =========================================================================
     # Properties

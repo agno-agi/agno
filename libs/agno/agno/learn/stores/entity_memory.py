@@ -234,7 +234,7 @@ class EntityMemoryStore(LearningStore):
             Context string to inject into the agent's system prompt.
         """
         if not data:
-            if self.config.enable_agent_tools:
+            if self._should_expose_tools:
                 return dedent("""\
                     <entity_memory_system>
                     You have access to entity memory - a knowledge base about people, companies,
@@ -289,7 +289,7 @@ class EntityMemoryStore(LearningStore):
             </entity_memory_guidelines>
         """)
 
-        if self.config.enable_agent_tools:
+        if self._should_expose_tools:
             context += dedent("""
             Entity memory tools are available to search, create, or update entities.
             </entity_memory>""")
@@ -318,7 +318,7 @@ class EntityMemoryStore(LearningStore):
         Returns:
             List of callable tools (empty if enable_agent_tools=False).
         """
-        if not self.config.enable_agent_tools:
+        if not self._should_expose_tools:
             return []
         return self.get_agent_tools(
             user_id=user_id,
@@ -336,7 +336,7 @@ class EntityMemoryStore(LearningStore):
         **kwargs,
     ) -> List[Callable]:
         """Async version of get_tools."""
-        if not self.config.enable_agent_tools:
+        if not self._should_expose_tools:
             return []
         return await self.aget_agent_tools(
             user_id=user_id,
@@ -349,6 +349,16 @@ class EntityMemoryStore(LearningStore):
     def was_updated(self) -> bool:
         """Check if entity was updated in last operation."""
         return self.entity_updated
+
+    @property
+    def _should_expose_tools(self) -> bool:
+        """Check if tools should be exposed to the agent.
+
+        Returns True if either:
+        - mode is AGENTIC (tools are the primary way to manage entities), OR
+        - enable_agent_tools is explicitly True
+        """
+        return self.config.mode == LearningMode.AGENTIC or self.config.enable_agent_tools
 
     # =========================================================================
     # Properties
