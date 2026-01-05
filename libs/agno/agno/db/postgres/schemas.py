@@ -164,6 +164,7 @@ LEARNINGS_TABLE_SCHEMA = {
     "user_id": {"type": String, "nullable": True, "index": True},
     "agent_id": {"type": String, "nullable": True, "index": True},
     "team_id": {"type": String, "nullable": True, "index": True},
+    "workflow_id": {"type": String, "nullable": True, "index": True},
     "session_id": {"type": String, "nullable": True, "index": True},
     "entity_id": {"type": String, "nullable": True, "index": True},
     "entity_type": {"type": String, "nullable": True, "index": True},

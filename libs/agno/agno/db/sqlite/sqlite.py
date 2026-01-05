@@ -80,7 +80,7 @@ class SqliteDb(BaseDb):
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
-            learnings_table (Optional[str]): Name of the table to store learnings.
+            learnings_table (Optional[str]): Name of the table to store learning records.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -2936,6 +2936,7 @@ class SqliteDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
         session_id: Optional[str] = None,
         namespace: Optional[str] = None,
         entity_id: Optional[str] = None,
@@ -2948,6 +2949,7 @@ class SqliteDb(BaseDb):
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
             session_id: Filter by session ID.
             namespace: Filter by namespace ('user', 'global', or custom).
             entity_id: Filter by entity ID (for entity-specific learnings).
@@ -2970,6 +2972,8 @@ class SqliteDb(BaseDb):
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
                     stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if session_id is not None:
                     stmt = stmt.where(table.c.session_id == session_id)
                 if namespace is not None:
@@ -2998,6 +3002,7 @@ class SqliteDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
         session_id: Optional[str] = None,
         namespace: Optional[str] = None,
         entity_id: Optional[str] = None,
@@ -3013,6 +3018,7 @@ class SqliteDb(BaseDb):
             user_id: Associated user ID.
             agent_id: Associated agent ID.
             team_id: Associated team ID.
+            workflow_id: Associated workflow ID.
             session_id: Associated session ID.
             namespace: Namespace for scoping ('user', 'global', or custom).
             entity_id: Associated entity ID (for entity-specific learnings).
@@ -3034,6 +3040,7 @@ class SqliteDb(BaseDb):
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
+                    workflow_id=workflow_id,
                     session_id=session_id,
                     entity_id=entity_id,
                     entity_type=entity_type,
@@ -3086,6 +3093,7 @@ class SqliteDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
         session_id: Optional[str] = None,
         namespace: Optional[str] = None,
         entity_id: Optional[str] = None,
@@ -3099,6 +3107,7 @@ class SqliteDb(BaseDb):
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
             session_id: Filter by session ID.
             namespace: Filter by namespace ('user', 'global', or custom).
             entity_id: Filter by entity ID (for entity-specific learnings).
@@ -3124,6 +3133,8 @@ class SqliteDb(BaseDb):
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
                     stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if session_id is not None:
                     stmt = stmt.where(table.c.session_id == session_id)
                 if namespace is not None:
@@ -3138,8 +3149,8 @@ class SqliteDb(BaseDb):
                 if limit is not None:
                     stmt = stmt.limit(limit)
 
-                result = sess.execute(stmt).fetchall()
-                return [dict(row._mapping) for row in result]
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results]
 
         except Exception as e:
             log_debug(f"Error getting learnings: {e}")
