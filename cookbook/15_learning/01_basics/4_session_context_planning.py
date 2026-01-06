@@ -9,7 +9,7 @@ Session Context tracks the current conversation's state:
 Planning mode (enable_planning=True) adds structured goal tracking -
 summary plus goal, plan steps, and progress markers.
 
-Compare with: 4_session_context_summary.py for lightweight tracking.
+Compare with: 3_session_context_summary.py for lightweight tracking.
 """
 
 from agno.agent import Agent
@@ -28,7 +28,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=db,
-    instructions="Help users accomplish their goals. Track progress and next steps.",
+    instructions="Be very concise. Give brief, actionable answers.",
     learning=LearningMachine(
         session_context=SessionContextConfig(
             enable_planning=True,
@@ -43,41 +43,41 @@ agent = Agent(
 
 if __name__ == "__main__":
     user_id = "planner@example.com"
-    session_id = "migration_project"
+    session_id = "deploy_app"
 
-    # Turn 1: Define a goal
+    # Turn 1: Set a goal with clear steps
     print("\n" + "=" * 60)
-    print("TURN 1: Define goal")
+    print("TURN 1: Set goal")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "I need to migrate our app from MySQL to PostgreSQL. What are the main steps?",
+        "Help me deploy a Python app to production. Give me 3 steps.",
         user_id=user_id,
         session_id=session_id,
         stream=True,
     )
     agent.learning.session_context_store.print(session_id=session_id)
 
-    # Turn 2: Work on first step
+    # Turn 2: Complete first step
     print("\n" + "=" * 60)
-    print("TURN 2: First step detail")
+    print("TURN 2: Complete step 1")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Let's start with schema analysis. What should I look for?",
+        "Done with step 1. What's the command for step 2?",
         user_id=user_id,
         session_id=session_id,
         stream=True,
     )
     agent.learning.session_context_store.print(session_id=session_id)
 
-    # Turn 3: Progress update
+    # Turn 3: Complete second step
     print("\n" + "=" * 60)
-    print("TURN 3: Mark progress")
+    print("TURN 3: Complete step 2")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Done analyzing the schema. What's next?",
+        "Step 2 done. What's left?",
         user_id=user_id,
         session_id=session_id,
         stream=True,

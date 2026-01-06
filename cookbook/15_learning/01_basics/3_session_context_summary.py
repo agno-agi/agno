@@ -8,12 +8,12 @@ Session Context tracks the current conversation's state:
 
 Summary mode provides lightweight tracking - a running summary without goal/plan structure.
 
-Compare with: 3_session_context_planning.py for goal-oriented tracking.
+Compare with: 4_session_context_planning.py for goal-oriented tracking.
 """
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.learn import LearningMachine, SessionContextConfig
+from agno.learn import LearningMachine
 from agno.models.openai import OpenAIResponses
 
 # ============================================================================
