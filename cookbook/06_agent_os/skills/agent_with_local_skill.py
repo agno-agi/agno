@@ -13,7 +13,9 @@ from agno.os import AgentOS
 from agno.skills import LocalSkills, Skills
 
 # Get the skills directory (from the 03_agents/skills cookbook)
-skills_dir = Path(__file__).parent.parent.parent / "03_agents" / "skills" / "sample_skills"
+skills_dir = (
+    Path(__file__).parent.parent.parent / "03_agents" / "skills" / "sample_skills"
+)
 
 # Create an agent with skills
 agent = Agent(
