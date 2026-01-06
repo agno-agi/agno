@@ -39,7 +39,7 @@ class MCPTools(Toolkit):
         *,
         url: Optional[str] = None,
         env: Optional[dict[str, str]] = None,
-        transport: Literal["stdio", "sse", "streamable-http"] = "stdio",
+        transport: Optional[Literal["stdio", "sse", "streamable-http"]] = None,
         server_params: Optional[Union[StdioServerParameters, SSEClientParams, StreamableHTTPClientParams]] = None,
         session: Optional[ClientSession] = None,
         timeout_seconds: int = 10,
@@ -64,13 +64,23 @@ class MCPTools(Toolkit):
             timeout_seconds: Read timeout in seconds for the MCP client
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
-            transport: The transport protocol to use, either "stdio" or "sse" or "streamable-http"
+            transport: The transport protocol to use, either "stdio" or "sse" or "streamable-http".
+                       Defaults to "streamable-http" when url is provided, otherwise defaults to "stdio".
             refresh_connection: If True, the connection and tools will be refreshed on each run
             header_provider: Optional function that takes RunContext and returns dict of HTTP headers.
                 Only works with HTTP transports (sse, streamable-http).
                 Creates a new session per agent run with dynamic headers merged into connection config.
         """
         super().__init__(name="MCPTools", **kwargs)
+
+        if url is not None:
+            if transport is None:
+                transport = "streamable-http"
+            elif transport == "stdio":
+                log_warning(
+                    "Transport cannot be 'stdio' when url is provided. Setting transport to 'streamable-http' instead."
+                )
+                transport = "streamable-http"
 
         if transport == "sse":
             log_info("SSE as a standalone transport is deprecated. Please use Streamable HTTP instead.")
