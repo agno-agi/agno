@@ -1,7 +1,7 @@
 import time
 import warnings
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -1295,7 +1295,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             content_dict = serialize_cultural_knowledge(cultural_knowledge)
             # Sanitize content_dict to remove null bytes from nested strings
             if content_dict:
-                content_dict = sanitize_postgres_strings(content_dict)
+                content_dict = cast(Dict[str, Any], sanitize_postgres_strings(content_dict))
 
             # Sanitize string fields to remove null bytes (PostgreSQL doesn't allow them)
             sanitized_name = sanitize_postgres_string(cultural_knowledge.name)
@@ -2263,7 +2263,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             if trace_dict.get("status"):
                 trace_dict["status"] = sanitize_postgres_string(trace_dict["status"])
             # Sanitize any nested dict/JSON fields
-            trace_dict = sanitize_postgres_strings(trace_dict)
+            trace_dict = cast(Dict[str, Any], sanitize_postgres_strings(trace_dict))
 
             async with self.async_session_factory() as sess, sess.begin():
                 # Use upsert to handle concurrent inserts atomically
@@ -2589,7 +2589,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 if span_dict.get("status_code"):
                     span_dict["status_code"] = sanitize_postgres_string(span_dict["status_code"])
                 # Sanitize any nested dict/JSON fields
-                span_dict = sanitize_postgres_strings(span_dict)
+                span_dict = cast(Dict[str, Any], sanitize_postgres_strings(span_dict))
                 stmt = postgresql.insert(table).values(span_dict)
                 await sess.execute(stmt)
 
