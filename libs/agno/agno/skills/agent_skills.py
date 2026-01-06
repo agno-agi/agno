@@ -1,6 +1,4 @@
 import json
-import os
-import stat
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -8,6 +6,7 @@ from typing import Dict, List, Optional
 from agno.skills.errors import SkillValidationError
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.skill import Skill
+from agno.skills.utils import is_safe_path, read_file_safe, run_script
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
 
@@ -200,28 +199,6 @@ class Skills:
             }
         )
 
-    def _is_safe_path(self, base_dir: Path, requested_path: str) -> bool:
-        """Check if the requested path stays within the base directory.
-
-        This prevents path traversal attacks where a malicious path like
-        '../../../etc/passwd' could be used to access files outside the
-        intended directory.
-
-        Args:
-            base_dir: The base directory that the path must stay within.
-            requested_path: The user-provided path to validate.
-
-        Returns:
-            True if the path is safe (stays within base_dir), False otherwise.
-        """
-        try:
-            # Resolve the full path and check it's under base_dir
-            full_path = (base_dir / requested_path).resolve()
-            base_resolved = base_dir.resolve()
-            return full_path.is_relative_to(base_resolved)
-        except (ValueError, OSError):
-            return False
-
     def _get_skill_reference(self, skill_name: str, reference_path: str) -> str:
         """Load a reference document from a skill.
 
@@ -252,7 +229,7 @@ class Skills:
 
         # Validate path to prevent path traversal attacks
         refs_dir = Path(skill.source_path) / "references"
-        if not self._is_safe_path(refs_dir, reference_path):
+        if not is_safe_path(refs_dir, reference_path):
             return json.dumps(
                 {
                     "error": f"Invalid reference path: '{reference_path}'",
@@ -263,7 +240,7 @@ class Skills:
         # Load the reference file
         ref_file = refs_dir / reference_path
         try:
-            content = ref_file.read_text(encoding="utf-8")
+            content = read_file_safe(ref_file)
             return json.dumps(
                 {
                     "skill_name": skill_name,
@@ -320,7 +297,7 @@ class Skills:
 
         # Validate path to prevent path traversal attacks
         scripts_dir = Path(skill.source_path) / "scripts"
-        if not self._is_safe_path(scripts_dir, script_path):
+        if not is_safe_path(scripts_dir, script_path):
             return json.dumps(
                 {
                     "error": f"Invalid script path: '{script_path}'",
@@ -333,7 +310,7 @@ class Skills:
         if not execute:
             # Read mode: return script content
             try:
-                content = script_file.read_text(encoding="utf-8")
+                content = read_file_safe(script_file)
                 return json.dumps(
                     {
                         "skill_name": skill_name,
@@ -350,21 +327,13 @@ class Skills:
                     }
                 )
 
-        # Execute mode: run the script directly (relies on shebang)
-        # Ensure script is executable
-        current_mode = script_file.stat().st_mode
-        if not (current_mode & stat.S_IXUSR):
-            os.chmod(script_file, current_mode | stat.S_IXUSR)
-
-        cmd = [str(script_file), *(args or [])]
-
+        # Execute mode: run the script
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
+            result = run_script(
+                script_path=script_file,
+                args=args,
                 timeout=timeout,
-                cwd=skill.source_path,
+                cwd=Path(skill.source_path),
             )
             return json.dumps(
                 {

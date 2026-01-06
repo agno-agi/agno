@@ -425,24 +425,31 @@ def test_skill_script_path_traversal_blocked(mock_loader: MockSkillLoader) -> No
     assert "not found" in result["error"].lower()
 
 
-def test_is_safe_path_allows_valid_paths(mock_loader: MockSkillLoader) -> None:
-    """Test that _is_safe_path allows valid paths."""
-    skills = Skills(loaders=[mock_loader])
-    base_dir = Path("/some/base/dir")
+def test_is_safe_path_allows_valid_paths(tmp_path: Path) -> None:
+    """Test that is_safe_path allows valid paths."""
+    from agno.skills.utils import is_safe_path
 
-    assert skills._is_safe_path(base_dir, "file.txt") is True
-    assert skills._is_safe_path(base_dir, "subdir/file.txt") is True
+    # Create real directories for testing
+    base_dir = tmp_path / "base"
+    base_dir.mkdir()
+    subdir = base_dir / "subdir"
+    subdir.mkdir()
+
+    assert is_safe_path(base_dir, "file.txt") is True
+    assert is_safe_path(base_dir, "subdir/file.txt") is True
 
 
-def test_is_safe_path_blocks_traversal(mock_loader: MockSkillLoader) -> None:
-    """Test that _is_safe_path blocks path traversal attempts."""
-    skills = Skills(loaders=[mock_loader])
-    base_dir = Path("/some/base/dir")
+def test_is_safe_path_blocks_traversal(tmp_path: Path) -> None:
+    """Test that is_safe_path blocks path traversal attempts."""
+    from agno.skills.utils import is_safe_path
 
-    assert skills._is_safe_path(base_dir, "../file.txt") is False
-    assert skills._is_safe_path(base_dir, "../../file.txt") is False
-    assert skills._is_safe_path(base_dir, "../../../etc/passwd") is False
-    assert skills._is_safe_path(base_dir, "subdir/../../file.txt") is False
+    base_dir = tmp_path / "base"
+    base_dir.mkdir()
+
+    assert is_safe_path(base_dir, "../file.txt") is False
+    assert is_safe_path(base_dir, "../../file.txt") is False
+    assert is_safe_path(base_dir, "../../../etc/passwd") is False
+    assert is_safe_path(base_dir, "subdir/../../file.txt") is False
 
 
 def test_skill_script_execute_skill_not_found(mock_loader: MockSkillLoader) -> None:
