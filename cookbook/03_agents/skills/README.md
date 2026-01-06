@@ -2,6 +2,8 @@
 
 **Skills** provide agents with structured domain expertise through instructions, scripts, and reference documentation.
 
+> Skills are based on [Anthropic's Agent Skills](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview) concept.
+
 ## What is a Skill?
 
 A skill is a package containing:
