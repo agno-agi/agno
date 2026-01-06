@@ -28,17 +28,14 @@ class Skills:
     def __init__(self, loaders: List[SkillLoader]):
         self.loaders = loaders
         self._skills: Dict[str, Skill] = {}
-        self._loaded = False
+        self._load_skills()
 
-    def _ensure_loaded(self) -> None:
-        """Ensure skills are loaded from all loaders.
+    def _load_skills(self) -> None:
+        """Load skills from all loaders.
 
         Raises:
             SkillValidationError: If any skill fails validation.
         """
-        if self._loaded:
-            return
-
         for loader in self.loaders:
             try:
                 skills = loader.load()
@@ -51,8 +48,16 @@ class Skills:
             except Exception as e:
                 log_warning(f"Error loading skills from {loader}: {e}")
 
-        self._loaded = True
         log_debug(f"Loaded {len(self._skills)} total skills")
+
+    def reload(self) -> None:
+        """Reload skills from all loaders, clearing existing skills.
+
+        Raises:
+            SkillValidationError: If any skill fails validation.
+        """
+        self._skills.clear()
+        self._load_skills()
 
     def get_skill(self, name: str) -> Optional[Skill]:
         """Get a skill by name.
@@ -63,7 +68,6 @@ class Skills:
         Returns:
             The Skill object if found, None otherwise.
         """
-        self._ensure_loaded()
         return self._skills.get(name)
 
     def get_all_skills(self) -> List[Skill]:
@@ -72,7 +76,6 @@ class Skills:
         Returns:
             A list of all loaded Skill objects.
         """
-        self._ensure_loaded()
         return list(self._skills.values())
 
     def get_skill_names(self) -> List[str]:
@@ -81,7 +84,6 @@ class Skills:
         Returns:
             A list of skill names.
         """
-        self._ensure_loaded()
         return list(self._skills.keys())
 
     def get_system_prompt_snippet(self) -> str:
@@ -93,8 +95,6 @@ class Skills:
         Returns:
             An XML-formatted string with skills metadata.
         """
-        self._ensure_loaded()
-
         if not self._skills:
             return ""
 
@@ -140,8 +140,6 @@ class Skills:
         Returns:
             A list of Function objects that agents can use to access skills.
         """
-        self._ensure_loaded()
-
         tools: List[Function] = []
 
         # Tool: get_skill_instructions

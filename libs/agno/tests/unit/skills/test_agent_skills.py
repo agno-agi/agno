@@ -36,36 +36,41 @@ def test_skills_empty_loaders() -> None:
     assert len(skills.loaders) == 0
 
 
-# --- Lazy Loading Tests ---
+# --- Eager Loading Tests ---
 
 
-def test_skills_not_loaded_on_init(mock_loader: MockSkillLoader) -> None:
-    """Test that skills are not loaded on initialization."""
+def test_skills_loaded_on_init(mock_loader: MockSkillLoader) -> None:
+    """Test that skills are loaded immediately on initialization."""
     skills = Skills(loaders=[mock_loader])
-    assert skills._loaded is False
-    assert len(skills._skills) == 0
-
-
-def test_skills_loaded_on_first_access(mock_loader: MockSkillLoader) -> None:
-    """Test that skills are loaded on first access."""
-    skills = Skills(loaders=[mock_loader])
-    # Access triggers loading
-    _ = skills.get_all_skills()
-    assert skills._loaded is True
+    # Skills should be loaded immediately
     assert len(skills._skills) > 0
+    assert "test-skill" in skills._skills
 
 
-def test_skills_loaded_only_once(mock_loader: MockSkillLoader) -> None:
-    """Test that skills are loaded only once."""
-    skills = Skills(loaders=[mock_loader])
+def test_reload_clears_and_reloads(sample_skill: Skill) -> None:
+    """Test that reload() clears existing skills and reloads."""
+    from .conftest import MockSkillLoader
 
-    # First access loads skills
-    skills.get_all_skills()
-    first_loaded = skills._loaded
+    loader = MockSkillLoader([sample_skill])
+    skills = Skills(loaders=[loader])
 
-    # Second access should not reload
-    skills.get_all_skills()
-    assert skills._loaded == first_loaded
+    # Initial load happens in __init__
+    assert len(skills._skills) == 1
+    assert "test-skill" in skills._skills
+
+    # Update the loader with a different skill
+    new_skill = Skill(
+        name="new-skill",
+        description="A new skill",
+        instructions="New instructions",
+        source_path="/new/path",
+    )
+    loader._skills = [new_skill]
+
+    # Reload should clear and reload
+    skills.reload()
+    assert "new-skill" in skills._skills
+    assert "test-skill" not in skills._skills
 
 
 # --- Retrieval Tests ---
@@ -363,12 +368,12 @@ def test_skill_script_read_with_real_file(temp_skill_dir: Path) -> None:
 
 
 def test_validation_error_propagates(invalid_skill_dir: Path) -> None:
-    """Test that validation errors propagate from loaders."""
+    """Test that validation errors propagate from loaders during initialization."""
     loader = LocalSkills(str(invalid_skill_dir), validate=True)
-    skills = Skills(loaders=[loader])
 
+    # With eager loading, validation error happens in __init__
     with pytest.raises(SkillValidationError):
-        skills.get_all_skills()
+        Skills(loaders=[loader])
 
 
 def test_loader_error_logged_but_continues() -> None:
