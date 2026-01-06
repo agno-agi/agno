@@ -103,20 +103,33 @@ remote_workflow = RemoteWorkflow(base_url=REMOTE_SERVER_URL, workflow_id="qa-wor
 # ADK Remote agent (A2A protocol)
 adk_facts_agent = RemoteAgent(
     base_url=ADK_SERVER_URL,
-    agent_id="facts-agent",
+    agent_id="facts_agent",
     protocol="a2a",
     a2a_protocol="json-rpc",  # Needed for Google ADK servers
 )
 
 remote_a2a_assistant = RemoteAgent(
-    base_url=REMOTE_A2A_SERVER_URL + "/a2a/agent/assistant-agent-2",
+    base_url=REMOTE_A2A_SERVER_URL + "/a2a/agents/assistant-agent-2",  # Agno's format for a2a endpoints
     agent_id="assistant-agent-2",
     protocol="a2a",
 )
 
 remote_a2a_researcher = RemoteAgent(
-    base_url=REMOTE_A2A_SERVER_URL + "/a2a/agent/researcher-agent-2",
+    base_url=REMOTE_A2A_SERVER_URL + "/a2a/agents/researcher-agent-2",  # Agno's format for a2a endpoints
     agent_id="researcher-agent-2",
+    protocol="a2a",
+)
+
+# A2A Remote team and workflow
+remote_a2a_team = RemoteTeam(
+    base_url=REMOTE_A2A_SERVER_URL + "/a2a/teams/research-team-2",
+    team_id="research-team-2",
+    protocol="a2a",
+)
+
+remote_a2a_workflow = RemoteWorkflow(
+    base_url=REMOTE_A2A_SERVER_URL + "/a2a/workflows/qa-workflow-2",
+    workflow_id="qa-workflow-2",
     protocol="a2a",
 )
 
@@ -162,10 +175,12 @@ agent_os = AgentOS(
     ],
     teams=[
         remote_team,
+        remote_a2a_team,
     ],
     workflows=[
         local_workflow,
         remote_workflow,
+        remote_a2a_workflow,
     ],
     interfaces=[
         agui_local,
@@ -184,7 +199,6 @@ agent_os = AgentOS(
     authorization_config=AuthorizationConfig(
         verification_keys=[JWT_SECRET_KEY],
         algorithm="HS256",
-        verify_audience=False,
     )
     if ENABLE_AUTHORIZATION
     else None,

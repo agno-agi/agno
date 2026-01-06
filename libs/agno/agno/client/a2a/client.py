@@ -66,9 +66,10 @@ class A2AClient:
         if self.protocol == "json-rpc":
             return self.base_url if self.base_url.endswith("/") else f"{self.base_url}/"
 
-        from urllib.parse import urljoin
-
-        return urljoin(self.base_url + "/", path.lstrip("/"))
+        # Manually construct URL to ensure proper path joining
+        base = self.base_url.rstrip("/")
+        path_clean = path.lstrip("/")
+        return f"{base}/{path_clean}" if path_clean else base
 
     def _build_message_request(
         self,
@@ -248,7 +249,6 @@ class A2AClient:
 
         # Use the 'kind' field to determine event type (A2A protocol standard)
         kind = result.get("kind", "")
-
         if kind == "task":
             # Final task result
             event_type = "task"
@@ -274,12 +274,18 @@ class A2AClient:
             # Content message event
             event_type = "content"
 
-            # Check if this is reasoning content
             if metadata and metadata.get("agno_content_category") == "reasoning":
                 event_type = "reasoning"
 
             # Extract text content from parts
             for part in result.get("parts", []):
+                if part.get("kind") == "text" or "text" in part:
+                    content = part.get("text", "")
+                    break
+        elif kind == "artifact-update":
+            event_type = "content"
+            artifact = result.get("artifact", {})
+            for part in artifact.get("parts", []):
                 if part.get("kind") == "text" or "text" in part:
                     content = part.get("text", "")
                     break
@@ -325,6 +331,7 @@ class A2AClient:
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> TaskResult:
         """Send a message to an A2A agent and wait for the response.
 
@@ -337,7 +344,7 @@ class A2AClient:
             videos: List of Video objects to include (optional)
             files: List of File objects to include (optional)
             metadata: Additional metadata (optional)
-
+            headers: HTTP headers to include in the request (optional)
         Returns:
             TaskResult containing the agent's response
 
@@ -358,12 +365,12 @@ class A2AClient:
             metadata=metadata,
             stream=False,
         )
-
         try:
             response = await client.post(
-                self._get_endpoint("/v1/message:send"),
+                self._get_endpoint(path="/v1/message:send"),
                 json=request_body,
                 timeout=self.timeout,
+                headers=headers,
             )
             response.raise_for_status()
             response_data = response.json()
@@ -394,6 +401,7 @@ class A2AClient:
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> AsyncIterator[StreamEvent]:
         """Stream a message to an A2A agent with real-time events.
 
@@ -406,7 +414,7 @@ class A2AClient:
             videos: List of Video objects to include (optional)
             files: List of File objects to include (optional)
             metadata: Additional metadata (optional)
-
+            headers: HTTP headers to include in the request (optional)
         Yields:
             StreamEvent objects for each event in the stream
 
@@ -438,11 +446,19 @@ class A2AClient:
         )
 
         try:
+            if headers is None:
+                headers = {}
+            if "Accept" not in headers:
+                headers["Accept"] = "text/event-stream"
+            if "Cache-Control" not in headers:
+                headers["Cache-Control"] = "no-store"
+
             async with http_client.stream(
                 "POST",
                 self._get_endpoint("/v1/message:stream"),
                 json=request_body,
                 timeout=self.timeout,
+                headers=headers,
             ) as response:
                 response.raise_for_status()
 
@@ -483,7 +499,7 @@ class A2AClient:
                 original_error=e,
             ) from e
 
-    def get_agent_card(self) -> Optional[AgentCard]:
+    def get_agent_card(self, headers: Optional[Dict[str, str]] = None) -> Optional[AgentCard]:
         """Get agent card for capability discovery.
 
         Note: Not all A2A servers support agent cards. This method returns
@@ -495,8 +511,8 @@ class A2AClient:
         client = get_default_sync_client()
 
         agent_card_path = "/.well-known/agent-card.json"
-
-        response = client.get(f"{self.base_url}{agent_card_path}", timeout=self.timeout)
+        url = self._get_endpoint(path=agent_card_path)
+        response = client.get(url, timeout=self.timeout, headers=headers)
         if response.status_code != 200:
             return None
 
@@ -510,7 +526,7 @@ class A2AClient:
             metadata=data.get("metadata"),
         )
 
-    async def aget_agent_card(self) -> Optional[AgentCard]:
+    async def aget_agent_card(self, headers: Optional[Dict[str, str]] = None) -> Optional[AgentCard]:
         """Get agent card for capability discovery.
 
         Note: Not all A2A servers support agent cards. This method returns
@@ -522,8 +538,8 @@ class A2AClient:
         client = get_default_async_client()
 
         agent_card_path = "/.well-known/agent-card.json"
-
-        response = await client.get(f"{self.base_url}{agent_card_path}", timeout=self.timeout)
+        url = self._get_endpoint(path=agent_card_path)
+        response = await client.get(url, timeout=self.timeout, headers=headers)
         if response.status_code != 200:
             return None
 

@@ -354,7 +354,7 @@ class BaseRemote:
         base_url: str,
         timeout: float = 60.0,
         protocol: Literal["agentos", "a2a"] = "agentos",
-        a2a_protocol: Literal["json-rpc", "rest"] = "json-rpc",
+        a2a_protocol: Literal["json-rpc", "rest"] = "rest",
         config_ttl: float = 300.0,
     ):
         """Initialize BaseRemote for remote execution.
@@ -383,7 +383,7 @@ class BaseRemote:
 
         self.agentos_client = None
         self.a2a_client = None
-        
+
         if protocol == "agentos":
             self.agentos_client = self.get_os_client()
         elif protocol == "a2a":
@@ -424,11 +424,13 @@ class BaseRemote:
             protocol=self.a2a_protocol,
         )
 
-
     @property
-    def _config(self) -> "ConfigResponse":
+    def _config(self) -> Optional["ConfigResponse"]:
         """Get the OS config from remote, cached with TTL."""
         from agno.os.schema import ConfigResponse
+
+        if self.protocol == "a2a":
+            return None
 
         current_time = time.time()
 
@@ -447,7 +449,7 @@ class BaseRemote:
         """Force refresh the cached OS config."""
         from agno.os.schema import ConfigResponse
 
-        config: ConfigResponse = await self.agentos_client.aget_config()
+        config: ConfigResponse = await self.agentos_client.aget_config()  # type: ignore
         self._cached_config = (config, time.time())
         return config
 
@@ -498,13 +500,13 @@ class BaseRemote:
                 return agent_card
 
         try:
-            agent_card = self.a2a_client.get_agent_card()
+            agent_card = self.a2a_client.get_agent_card()  # type: ignore
             self._cached_agent_card = (agent_card, current_time)
             return agent_card
         except Exception:
             self._cached_agent_card = (None, current_time)
             return None
-        
+
     async def aget_agent_card(self) -> Optional["AgentCard"]:
         """Get agent card for A2A protocol agents, cached with TTL.
 
@@ -525,13 +527,13 @@ class BaseRemote:
                 return agent_card
 
         try:
-            agent_card = await self.a2a_client.aget_agent_card()
+            agent_card = await self.a2a_client.aget_agent_card()  # type: ignore
             self._cached_agent_card = (agent_card, current_time)
             return agent_card
         except Exception:
             self._cached_agent_card = (None, current_time)
             return None
-        
+
     @abstractmethod
     def arun(  # type: ignore
         self,

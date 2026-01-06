@@ -25,7 +25,7 @@ class RemoteWorkflow(BaseRemote):
         workflow_id: str,
         timeout: float = 300.0,
         protocol: Literal["agentos", "a2a"] = "agentos",
-        a2a_protocol: Literal["json-rpc", "rest"] = "json-rpc",
+        a2a_protocol: Literal["json-rpc", "rest"] = "rest",
         config_ttl: float = 300.0,
     ):
         """Initialize RemoteWorkflow for remote execution.
@@ -53,28 +53,36 @@ class RemoteWorkflow(BaseRemote):
 
     async def get_workflow_config(self) -> "WorkflowResponse":
         """Get the workflow config from remote (always fetches fresh)."""
-        # TODO: Implement A2A _agent_card to get the workflow config
+        from agno.os.routers.workflows.schema import WorkflowResponse
+
         if self.protocol == "a2a":
+            from agno.client.a2a.schemas import AgentCard
+
+            agent_card: Optional[AgentCard] = await self.a2a_client.aget_agent_card()  # type: ignore
+
             return WorkflowResponse(
                 id=self.workflow_id,
-                name=self.workflow_id,
-                description="A2A workflow: {}".format(self.workflow_id),
+                name=agent_card.name if agent_card else self.workflow_id,
+                description=agent_card.description if agent_card else f"A2A workflow: {self.workflow_id}",
             )
 
         # AgentOS protocol: fetch fresh config from remote
-        return await self.agentos_client.aget_workflow(self.workflow_id)
+        return await self.agentos_client.aget_workflow(self.workflow_id)  # type: ignore
 
     @property
     def _workflow_config(self) -> "WorkflowResponse":
         """Get the workflow config from remote, cached with TTL."""
         from agno.os.routers.workflows.schema import WorkflowResponse
 
-        # TODO: Implement A2A _agent_card to get the workflow config
         if self.protocol == "a2a":
+            from agno.client.a2a.schemas import AgentCard
+
+            agent_card: Optional[AgentCard] = self.a2a_client.get_agent_card()  # type: ignore
+
             return WorkflowResponse(
                 id=self.workflow_id,
-                name=self.workflow_id,
-                description="A2A workflow: {}".format(self.workflow_id),
+                name=agent_card.name if agent_card else self.workflow_id,
+                description=agent_card.description if agent_card else f"A2A workflow: {self.workflow_id}",
             )
 
         current_time = time.time()
@@ -94,7 +102,7 @@ class RemoteWorkflow(BaseRemote):
         """Force refresh the cached workflow config."""
         from agno.os.routers.workflows.schema import WorkflowResponse
 
-        config: WorkflowResponse = await self.agentos_client.aget_workflow(self.workflow_id)
+        config: WorkflowResponse = await self.agentos_client.aget_workflow(self.workflow_id)  # type: ignore
         self._cached_workflow_config = (config, time.time())
         return config
 
@@ -112,7 +120,12 @@ class RemoteWorkflow(BaseRemote):
 
     @property
     def db(self) -> Optional[RemoteDb]:
-        if self._workflow_config is not None and self._workflow_config.db_id is not None:
+        if (
+            self.agentos_client
+            and self._config
+            and self._workflow_config is not None
+            and self._workflow_config.db_id is not None
+        ):
             return RemoteDb.from_config(
                 db_id=self._workflow_config.db_id,
                 client=self.agentos_client,
@@ -190,51 +203,57 @@ class RemoteWorkflow(BaseRemote):
         headers = self._get_auth_headers(auth_token)
 
         # A2A protocol path
-        if self.protocol == "a2a":
+        if self.a2a_client:
             return self._arun_a2a(  # type: ignore[return-value]
                 message=serialized_input,
                 stream=stream or False,
                 user_id=user_id,
                 context_id=session_id,  # Map session_id → context_id for A2A
                 images=images,
+                videos=videos,
+                audio=audio,
                 files=files,
+                headers=headers,
             )
 
         # AgentOS protocol path (default)
-        if stream:
-            # Handle streaming response
-            return self.get_os_client().run_workflow_stream(
-                workflow_id=self.workflow_id,
-                message=serialized_input,
-                additional_data=additional_data,
-                run_id=run_id,
-                session_id=session_id,
-                user_id=user_id,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
-                session_state=session_state,
-                stream_events=stream_events,
-                headers=headers,
-                **kwargs,
-            )
+        if self.agentos_client:
+            if stream:
+                # Handle streaming response
+                return self.agentos_client.run_workflow_stream(
+                    workflow_id=self.workflow_id,
+                    message=serialized_input,
+                    additional_data=additional_data,
+                    run_id=run_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    session_state=session_state,
+                    stream_events=stream_events,
+                    headers=headers,
+                    **kwargs,
+                )
+            else:
+                return self.agentos_client.run_workflow(  # type: ignore
+                    workflow_id=self.workflow_id,
+                    message=serialized_input,
+                    additional_data=additional_data,
+                    run_id=run_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    session_state=session_state,
+                    headers=headers,
+                    **kwargs,
+                )
         else:
-            return self.get_client().run_workflow(  # type: ignore
-                workflow_id=self.workflow_id,
-                message=serialized_input,
-                additional_data=additional_data,
-                run_id=run_id,
-                session_id=session_id,
-                user_id=user_id,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
-                session_state=session_state,
-                headers=headers,
-                **kwargs,
-            )
+            raise ValueError("No client available")
 
     def _arun_a2a(
         self,
@@ -243,7 +262,10 @@ class RemoteWorkflow(BaseRemote):
         user_id: Optional[str],
         context_id: Optional[str],
         images: Optional[List[Image]],
+        videos: Optional[List[Video]],
+        audio: Optional[List[Audio]],
         files: Optional[List[File]],
+        headers: Optional[Dict[str, str]],
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute via A2A protocol.
 
@@ -253,11 +275,15 @@ class RemoteWorkflow(BaseRemote):
             user_id: User identifier
             context_id: Session/context ID (maps to session_id)
             images: Images to include
+            videos: Videos to include
+            audio: Audio files to include
             files: Files to include
-
+            headers: HTTP headers to include in the request (optional)
         Returns:
             WorkflowRunOutput for non-streaming, AsyncIterator[WorkflowRunOutputEvent] for streaming
         """
+        if not self.a2a_client:
+            raise ValueError("A2A client not available")
         from agno.client.a2a.utils import map_stream_events_to_workflow_run_events
 
         if stream:
@@ -267,9 +293,12 @@ class RemoteWorkflow(BaseRemote):
                 context_id=context_id,
                 user_id=user_id,
                 images=list(images) if images else None,
+                audio=list(audio) if audio else None,
+                videos=list(videos) if videos else None,
                 files=list(files) if files else None,
+                headers=headers,
             )
-            return map_stream_events_to_workflow_run_events(event_stream, workflow_id=self.workflow_id)
+            return map_stream_events_to_workflow_run_events(event_stream, workflow_id=self.workflow_id)  # type: ignore
         else:
             # Return coroutine for non-streaming
             return self._arun_a2a_send(  # type: ignore[return-value]
@@ -277,7 +306,10 @@ class RemoteWorkflow(BaseRemote):
                 user_id=user_id,
                 context_id=context_id,
                 images=images,
+                audio=audio,
+                videos=videos,
                 files=files,
+                headers=headers,
             )
 
     async def _arun_a2a_send(
@@ -286,9 +318,14 @@ class RemoteWorkflow(BaseRemote):
         user_id: Optional[str],
         context_id: Optional[str],
         images: Optional[List[Image]],
+        videos: Optional[List[Video]],
+        audio: Optional[List[Audio]],
         files: Optional[List[File]],
+        headers: Optional[Dict[str, str]],
     ) -> WorkflowRunOutput:
         """Send a non-streaming A2A message and convert response to WorkflowRunOutput."""
+        if not self.a2a_client:
+            raise ValueError("A2A client not available")
         from agno.client.a2a.utils import map_task_result_to_workflow_run_output
 
         task_result = await self.a2a_client.send_message(
@@ -296,9 +333,12 @@ class RemoteWorkflow(BaseRemote):
             context_id=context_id,
             user_id=user_id,
             images=list(images) if images else None,
+            audio=list(audio) if audio else None,
+            videos=list(videos) if videos else None,
             files=list(files) if files else None,
+            headers=headers,
         )
-        return map_task_result_to_workflow_run_output(task_result, workflow_id=self.workflow_id)
+        return map_task_result_to_workflow_run_output(task_result, workflow_id=self.workflow_id, user_id=user_id)
 
     async def cancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
         """Cancel a running workflow execution.

@@ -5,7 +5,7 @@ This module provides bidirectional mapping between:
 - A2A StreamEvent ↔ Agno RunOutputEvent / TeamRunOutputEvent / WorkflowRunOutputEvent
 """
 
-from typing import AsyncIterator, List, Optional
+from typing import AsyncIterator, List, Optional, Union
 
 from agno.client.a2a.schemas import Artifact, StreamEvent, TaskResult
 from agno.media import Audio, File, Image, Video
@@ -39,7 +39,8 @@ from agno.run.workflow import (
 
 def map_task_result_to_run_output(
     task_result: TaskResult,
-    agent_id: Optional[str] = None,
+    agent_id: str,
+    user_id: Optional[str] = None,
 ) -> RunOutput:
     """Convert A2A TaskResult to Agno RunOutput.
 
@@ -48,7 +49,8 @@ def map_task_result_to_run_output(
 
     Args:
         task_result: A2A TaskResult from send_message()
-        agent_id: Optional agent identifier to include in output
+        agent_id: Agent identifier to include in output
+        user_id: Optional user identifier to include in output
 
     Returns:
         RunOutput: Agno-compatible run output
@@ -67,6 +69,7 @@ def map_task_result_to_run_output(
         run_id=task_result.task_id,
         session_id=task_result.context_id,
         agent_id=agent_id,
+        user_id=user_id,
         images=images if images else None,
         videos=videos if videos else None,
         audio=audio if audio else None,
@@ -109,7 +112,7 @@ def _classify_artifact(
 
 async def map_stream_events_to_run_events(
     stream: AsyncIterator[StreamEvent],
-    agent_id: Optional[str] = None,
+    agent_id: str,
 ) -> AsyncIterator[RunOutputEvent]:
     """Convert A2A stream events to Agno run events.
 
@@ -119,6 +122,7 @@ async def map_stream_events_to_run_events(
     Args:
         stream: AsyncIterator of A2A StreamEvents
         agent_id: Optional agent identifier to include in events
+        user_id: Optional user identifier to include in events
 
     Yields:
         RunOutputEvent: Agno-compatible run output events
@@ -139,7 +143,7 @@ async def map_stream_events_to_run_events(
             yield RunStartedEvent(
                 run_id=run_id,
                 session_id=session_id,
-                agent_id=agent_id or "",
+                agent_id=agent_id,
             )
 
         elif event.is_content and event.content:
@@ -148,7 +152,7 @@ async def map_stream_events_to_run_events(
                 content=event.content,
                 run_id=run_id,
                 session_id=session_id,
-                agent_id=agent_id or "",
+                agent_id=agent_id,
             )
 
         elif event.is_final:
@@ -158,7 +162,7 @@ async def map_stream_events_to_run_events(
                 content=final_content,
                 run_id=run_id,
                 session_id=session_id,
-                agent_id=agent_id or "",
+                agent_id=agent_id,
             )
             break  # Stream complete
 
@@ -170,7 +174,8 @@ async def map_stream_events_to_run_events(
 
 def map_task_result_to_team_run_output(
     task_result: TaskResult,
-    team_id: Optional[str] = None,
+    team_id: str,
+    user_id: Optional[str] = None,
 ) -> TeamRunOutput:
     """Convert A2A TaskResult to Agno TeamRunOutput.
 
@@ -180,7 +185,7 @@ def map_task_result_to_team_run_output(
     Args:
         task_result: A2A TaskResult from send_message()
         team_id: Optional team identifier to include in output
-
+        user_id: Optional user identifier to include in output
     Returns:
         TeamRunOutput: Agno-compatible team run output
     """
@@ -198,6 +203,7 @@ def map_task_result_to_team_run_output(
         run_id=task_result.task_id,
         session_id=task_result.context_id,
         team_id=team_id,
+        user_id=user_id,
         images=images if images else None,
         videos=videos if videos else None,
         audio=audio if audio else None,
@@ -208,7 +214,7 @@ def map_task_result_to_team_run_output(
 
 async def map_stream_events_to_team_run_events(
     stream: AsyncIterator[StreamEvent],
-    team_id: Optional[str] = None,
+    team_id: str,
 ) -> AsyncIterator[TeamRunOutputEvent]:
     """Convert A2A stream events to Agno team run events.
 
@@ -218,7 +224,7 @@ async def map_stream_events_to_team_run_events(
     Args:
         stream: AsyncIterator of A2A StreamEvents
         team_id: Optional team identifier to include in events
-
+        user_id: Optional user identifier to include in events
     Yields:
         TeamRunOutputEvent: Agno-compatible team run output events
     """
@@ -238,7 +244,7 @@ async def map_stream_events_to_team_run_events(
             yield TeamRunStartedEvent(
                 run_id=run_id,
                 session_id=session_id,
-                team_id=team_id or "",
+                team_id=team_id,
             )
 
         elif event.is_content and event.content:
@@ -247,7 +253,7 @@ async def map_stream_events_to_team_run_events(
                 content=event.content,
                 run_id=run_id,
                 session_id=session_id,
-                team_id=team_id or "",
+                team_id=team_id,
             )
 
         elif event.is_final:
@@ -257,7 +263,7 @@ async def map_stream_events_to_team_run_events(
                 content=final_content,
                 run_id=run_id,
                 session_id=session_id,
-                team_id=team_id or "",
+                team_id=team_id,
             )
             break  # Stream complete
 
@@ -269,7 +275,8 @@ async def map_stream_events_to_team_run_events(
 
 def map_task_result_to_workflow_run_output(
     task_result: TaskResult,
-    workflow_id: Optional[str] = None,
+    workflow_id: str,
+    user_id: Optional[str] = None,
 ) -> WorkflowRunOutput:
     """Convert A2A TaskResult to Agno WorkflowRunOutput.
 
@@ -279,7 +286,7 @@ def map_task_result_to_workflow_run_output(
     Args:
         task_result: A2A TaskResult from send_message()
         workflow_id: Optional workflow identifier to include in output
-
+        user_id: Optional user identifier to include in output
     Returns:
         WorkflowRunOutput: Agno-compatible workflow run output
     """
@@ -297,6 +304,7 @@ def map_task_result_to_workflow_run_output(
         run_id=task_result.task_id,
         session_id=task_result.context_id,
         workflow_id=workflow_id,
+        user_id=user_id,
         images=images if images else None,
         videos=videos if videos else None,
         audio=audio if audio else None,
@@ -306,8 +314,8 @@ def map_task_result_to_workflow_run_output(
 
 async def map_stream_events_to_workflow_run_events(
     stream: AsyncIterator[StreamEvent],
-    workflow_id: Optional[str] = None,
-) -> AsyncIterator[WorkflowRunOutputEvent]:
+    workflow_id: str,
+) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent]]:
     """Convert A2A stream events to Agno workflow run events.
 
     Transforms the A2A streaming protocol events into Agno's workflow event system,
@@ -316,7 +324,7 @@ async def map_stream_events_to_workflow_run_events(
     Args:
         stream: AsyncIterator of A2A StreamEvents
         workflow_id: Optional workflow identifier to include in events
-
+        user_id: Optional user identifier to include in events
     Yields:
         WorkflowRunOutputEvent: Agno-compatible workflow run output events
     """
@@ -336,7 +344,17 @@ async def map_stream_events_to_workflow_run_events(
             yield WorkflowStartedEvent(
                 run_id=run_id,
                 session_id=session_id,
-                workflow_id=workflow_id or "",
+                workflow_id=workflow_id,
+            )
+
+        elif event.is_content and event.content:
+            accumulated_content += event.content
+            # TODO: We don't have workflow content events and we don't know which agent or team created the content, so we're using the workflow_id as the agent_id.
+            yield RunContentEvent(
+                content=event.content,
+                run_id=run_id,
+                session_id=session_id,
+                agent_id=workflow_id,
             )
 
         elif event.is_final:
@@ -346,6 +364,6 @@ async def map_stream_events_to_workflow_run_events(
                 content=final_content,
                 run_id=run_id,
                 session_id=session_id,
-                workflow_id=workflow_id or "",
+                workflow_id=workflow_id,
             )
             break  # Stream complete
