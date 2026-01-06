@@ -117,7 +117,7 @@ def _validate_license(license_val: str) -> List[str]:
     Returns:
         List of validation error messages. Empty list means valid.
     """
-    errors = []
+    errors: List[str] = []
 
     if not isinstance(license_val, str):
         errors.append("Field 'license' must be a string")
