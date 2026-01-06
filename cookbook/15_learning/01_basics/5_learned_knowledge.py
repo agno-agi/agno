@@ -42,8 +42,7 @@ knowledge = Knowledge(
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=db,
-    instructions="Learn from conversations and apply prior knowledge. "
-    "Save valuable insights for future use.",
+    instructions="Be concise. Save valuable insights using your learning tools.",
     learning=LearningMachine(
         knowledge=knowledge,
         learned_knowledge=LearnedKnowledgeConfig(
@@ -66,24 +65,21 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "I just learned something important: when comparing cloud providers, "
-        "always check egress costs first - they vary by 10x and often "
-        "dominate total costs for data-intensive workloads.",
+        "Save this: Always check cloud egress costs first - they vary 10x between providers.",
         user_id=user_id,
         session_id="session_1",
         stream=True,
     )
     agent.learning.learned_knowledge_store.print(query="cloud")
 
-    # Session 2: Apply the learning
+    # Session 2: Apply the learning (new user, new session)
     print("\n" + "=" * 60)
-    print("SESSION 2: Apply learning to new question")
+    print("SESSION 2: New user asks related question")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "I'm choosing between AWS and GCP for a data pipeline that "
-        "processes 10TB daily. What should I consider?",
-        user_id=user_id,
+        "I'm picking a cloud provider for a 10TB daily data pipeline. Key considerations?",
+        user_id="different_user@example.com",
         session_id="session_2",
         stream=True,
     )
