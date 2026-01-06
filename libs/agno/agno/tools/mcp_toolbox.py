@@ -50,9 +50,9 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
 
         """
         if append_mcp_to_url and not url.endswith("/mcp"):
-            url = url + "/mcp"
+            mcp_url = url + "/mcp"
 
-        super().__init__(url=url, transport=transport, **kwargs)
+        super().__init__(url=mcp_url, transport=transport, **kwargs)
 
         self.name = "toolbox_client"
         self.toolbox_url = url
