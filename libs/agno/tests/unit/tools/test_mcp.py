@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from agno.tools.mcp import MCPTools, MultiMCPTools
+from agno.tools.mcp.params import StreamableHTTPClientParams
 
 
 @pytest.mark.asyncio
@@ -52,6 +53,24 @@ def test_multimcp_empty_command_string():
         with patch("shlex.split", return_value=[]):
             MultiMCPTools(commands=[""])
 
+
+def test_url_defaults_to_streamable_http_transport():
+    """Test that transport defaults to streamable-http when url is provided."""
+    tools = MCPTools(url="http://localhost:8080/mcp")
+    assert tools.transport == "streamable-http"
+
+
+def test_stdio_transport_with_url_overrides_to_streamable_http():
+    """Test that stdio transport gets overridden to streamable-http when url is present."""
+    tools = MCPTools(url="http://localhost:8080/mcp", transport="stdio")
+    assert tools.transport == "streamable-http"
+
+
+def test_multimcp_urls_default_to_streamable_http():
+    """Test that MultiMCPTools defaults to streamable-http when urls are provided without urls_transports."""
+    tools = MultiMCPTools(urls=["http://localhost:8080/mcp", "http://localhost:8081/mcp"])
+    assert len(tools.server_params_list) == 2
+    assert all(isinstance(params, StreamableHTTPClientParams) for params in tools.server_params_list)
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
