@@ -295,7 +295,6 @@ class WorkflowTools(Toolkit):
 
             # Execute the workflow with streaming
             final_content = ""
-            workflow_result: Optional[WorkflowRunOutput] = None
 
             async for event in self.workflow.arun(
                 input=input.input_data,
