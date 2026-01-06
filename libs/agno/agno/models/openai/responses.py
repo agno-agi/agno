@@ -531,7 +531,7 @@ class OpenAIResponses(Model):
     def count_tokens(
         self,
         messages: List[Message],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
         output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
@@ -552,7 +552,7 @@ class OpenAIResponses(Model):
     async def acount_tokens(
         self,
         messages: List[Message],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
         output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         """Async version of count_tokens using the async client."""
