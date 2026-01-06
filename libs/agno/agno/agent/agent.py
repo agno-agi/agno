@@ -77,6 +77,7 @@ from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
+from agno.skills import Skills
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
@@ -263,6 +264,10 @@ class Agent:
     #     ...
     knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None
     references_format: Literal["json", "yaml"] = "json"
+
+    # --- Skills ---
+    # Skills provide structured instructions, reference docs, and scripts for agents
+    skills: Optional[Skills] = None
 
     # --- Agent Tools ---
     # A list of tools provided to the Model.
@@ -487,6 +492,7 @@ class Agent:
         add_knowledge_to_context: bool = False,
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
+        skills: Optional[Skills] = None,
         metadata: Optional[Dict[str, Any]] = None,
         tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
@@ -609,6 +615,8 @@ class Agent:
         self.add_knowledge_to_context = add_knowledge_to_context
         self.knowledge_retriever = knowledge_retriever
         self.references_format = references_format
+
+        self.skills = skills
 
         self.metadata = metadata
 
@@ -6396,6 +6404,10 @@ class Agent:
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
+        # Add tools for accessing skills
+        if self.skills is not None:
+            agent_tools.extend(self.skills.get_tools())
+
         return agent_tools
 
     async def aget_tools(
@@ -6488,6 +6500,10 @@ class Agent:
 
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
+
+        # Add tools for accessing skills
+        if self.skills is not None:
+            agent_tools.extend(self.skills.get_tools())
 
         return agent_tools
 
@@ -7937,6 +7953,11 @@ class Agent:
         # 3.3.8 Then add additional context
         if self.additional_context is not None:
             system_message_content += f"{self.additional_context}\n"
+        # 3.3.8.1 Then add skills to the system prompt
+        if self.skills is not None:
+            skills_snippet = self.skills.get_system_prompt_snippet()
+            if skills_snippet:
+                system_message_content += f"\n{skills_snippet}\n"
         # 3.3.9 Then add memories to the system prompt
         if self.add_memories_to_context:
             _memory_manager_not_set = False
@@ -8281,6 +8302,11 @@ class Agent:
         # 3.3.8 Then add additional context
         if self.additional_context is not None:
             system_message_content += f"{self.additional_context}\n"
+        # 3.3.8.1 Then add skills to the system prompt
+        if self.skills is not None:
+            skills_snippet = self.skills.get_system_prompt_snippet()
+            if skills_snippet:
+                system_message_content += f"\n{skills_snippet}\n"
         # 3.3.9 Then add memories to the system prompt
         if self.add_memories_to_context:
             _memory_manager_not_set = False
