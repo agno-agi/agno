@@ -87,6 +87,8 @@ local_workflow = Workflow(
 # =============================================================================
 
 REMOTE_SERVER_URL = os.getenv("REMOTE_SERVER_URL", "http://remote-server:7002")
+ADK_SERVER_URL = os.getenv("ADK_SERVER_URL", "http://adk-server:7003")
+REMOTE_A2A_SERVER_URL = os.getenv("REMOTE_A2A_SERVER_URL", "http://agno-a2a-server:7004")
 
 # Remote agent for interface testing
 remote_assistant = RemoteAgent(base_url=REMOTE_SERVER_URL, agent_id="assistant-agent")
@@ -97,6 +99,39 @@ remote_team = RemoteTeam(base_url=REMOTE_SERVER_URL, team_id="research-team")
 
 # Remote workflow for interface testing
 remote_workflow = RemoteWorkflow(base_url=REMOTE_SERVER_URL, workflow_id="qa-workflow")
+
+# ADK Remote agent (A2A protocol)
+adk_facts_agent = RemoteAgent(
+    base_url=ADK_SERVER_URL,
+    agent_id="facts_agent",
+    protocol="a2a",
+    a2a_protocol="json-rpc",  # Needed for Google ADK servers
+)
+
+remote_a2a_assistant = RemoteAgent(
+    base_url=REMOTE_A2A_SERVER_URL + "/a2a/agents/assistant-agent-2",  # Agno's format for a2a endpoints
+    agent_id="assistant-agent-2",
+    protocol="a2a",
+)
+
+remote_a2a_researcher = RemoteAgent(
+    base_url=REMOTE_A2A_SERVER_URL + "/a2a/agents/researcher-agent-2",  # Agno's format for a2a endpoints
+    agent_id="researcher-agent-2",
+    protocol="a2a",
+)
+
+# A2A Remote team and workflow
+remote_a2a_team = RemoteTeam(
+    base_url=REMOTE_A2A_SERVER_URL + "/a2a/teams/research-team-2",
+    team_id="research-team-2",
+    protocol="a2a",
+)
+
+remote_a2a_workflow = RemoteWorkflow(
+    base_url=REMOTE_A2A_SERVER_URL + "/a2a/workflows/qa-workflow-2",
+    workflow_id="qa-workflow-2",
+    protocol="a2a",
+)
 
 # =============================================================================
 # Interface Configuration
@@ -126,6 +161,7 @@ a2a_interface = A2A(
 # AgentOS Configuration
 # =============================================================================
 
+
 agent_os = AgentOS(
     id="gateway-os",
     description="Gateway AgentOS for system testing - consumes remote agents, teams, and workflows",
@@ -133,13 +169,18 @@ agent_os = AgentOS(
         local_agent,
         remote_assistant,
         remote_researcher,
+        adk_facts_agent,
+        remote_a2a_assistant,
+        remote_a2a_researcher,
     ],
     teams=[
         remote_team,
+        remote_a2a_team,
     ],
     workflows=[
         local_workflow,
         remote_workflow,
+        remote_a2a_workflow,
     ],
     interfaces=[
         agui_local,
@@ -158,7 +199,6 @@ agent_os = AgentOS(
     authorization_config=AuthorizationConfig(
         verification_keys=[JWT_SECRET_KEY],
         algorithm="HS256",
-        verify_audience=False,
     )
     if ENABLE_AUTHORIZATION
     else None,
