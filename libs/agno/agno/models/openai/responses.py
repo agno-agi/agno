@@ -365,7 +365,7 @@ class OpenAIResponses(Model):
         return vector_store.id
 
     def _format_tool_params(
-        self, messages: List[Message], tools: Optional[Union[List[Dict[str, Any]], List[Function]]] = None
+        self, messages: List[Message], tools: Optional[List[Union[Function, Dict[str, Any]]]] = None
     ) -> List[Dict[str, Any]]:
         """Format the tool parameters for the OpenAI Responses API."""
         formatted_tools = []
