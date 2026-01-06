@@ -28,7 +28,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=db,
-    instructions="Be concise.",
+    instructions="You're a sales assistant. Acknowledge notes briefly.",
     learning=LearningMachine(
         entity_memory=EntityMemoryConfig(
             mode=LearningMode.BACKGROUND,
@@ -52,24 +52,25 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Just met with Acme Corp - fintech startup in SF. "
-        "CTO is Jane Smith, they use Python and Postgres.",
+        "Just met with Acme Corp. They're a fintech startup in SF, "
+        "50 employees. CTO is Jane Smith. They use Python and Postgres.",
         user_id=user_id,
         session_id="session_1",
         stream=True,
     )
 
     print("\n--- Extracted Entities ---")
-    entities = agent.learning.entity_memory_store.search(query="", limit=10)
+    entities = agent.learning.entity_memory_store.search(query="acme", limit=10)
     pprint(entities)
 
-    # Session 2: Add more info
+    # Session 2: Add more info about same entity
     print("\n" + "=" * 60)
-    print("SESSION 2: Add more entity info")
+    print("SESSION 2: Update same entity")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Acme just raised $50M Series B from Sequoia.",
+        "Update on Acme Corp: they just raised $50M Series B from Sequoia. "
+        "Jane Smith mentioned they're hiring 20 engineers.",
         user_id=user_id,
         session_id="session_2",
         stream=True,

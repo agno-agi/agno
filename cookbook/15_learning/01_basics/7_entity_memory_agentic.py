@@ -31,7 +31,10 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=db,
-    instructions="Be concise. Track entities using your memory tools.",
+    instructions=(
+        "You're a sales assistant tracking companies and contacts. "
+        "Be concise. Always search for existing entities before creating new ones."
+    ),
     learning=LearningMachine(
         entity_memory=EntityMemoryConfig(
             mode=LearningMode.AGENTIC,
@@ -55,29 +58,29 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Track NorthStar Analytics - data startup, Series A, 50 employees, "
-        "uses Python and Snowflake.",
+        "Track Acme Corp - fintech startup in SF, 50 employees, "
+        "uses Python and Postgres. CTO is Jane Smith.",
         user_id=user_id,
         session_id="session_1",
         stream=True,
     )
 
     print("\n--- Created Entities ---")
-    entities = agent.learning.entity_memory_store.search(query="northstar", limit=10)
+    entities = agent.learning.entity_memory_store.search(query="acme", limit=10)
     pprint(entities)
 
-    # Session 2: Add relationship
+    # Session 2: Update same entity
     print("\n" + "=" * 60)
-    print("SESSION 2: Add relationship")
+    print("SESSION 2: Update existing entity")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Sarah Chen is VP Engineering at NorthStar, previously at Databricks.",
+        "Acme Corp just raised $50M Series B from Sequoia.",
         user_id=user_id,
         session_id="session_2",
         stream=True,
     )
 
     print("\n--- Updated Entities ---")
-    entities = agent.learning.entity_memory_store.search(query="", limit=10)
+    entities = agent.learning.entity_memory_store.search(query="acme", limit=10)
     pprint(entities)
