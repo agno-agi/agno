@@ -1,19 +1,16 @@
 """
 Learned Knowledge: Agentic Mode
 ===============================
-Learned Knowledge stores patterns and insights that apply
-across users and sessions - collective intelligence:
+Learned Knowledge stores reusable insights that apply across users:
 - Best practices discovered through use
-- Domain-specific insights
-- Reusable solutions to common problems
+- Domain-specific patterns
+- Solutions to common problems
 
 AGENTIC mode gives the agent explicit tools:
-- save_learning: Store a new insight
 - search_learnings: Find relevant past knowledge
+- save_learning: Store a new insight
 
 The agent decides when to save and apply learnings.
-
-Compare with: 05a_learned_knowledge_background.py for automatic extraction.
 """
 
 from agno.agent import Agent
@@ -24,25 +21,24 @@ from agno.learn import LearnedKnowledgeConfig, LearningMachine, LearningMode
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.pgvector import PgVector, SearchType
 
+# ============================================================================
+# Setup
+# ============================================================================
+
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
-# ============================================================================
-# Create Agent
-# ============================================================================
 # Learned knowledge requires a vector DB for semantic search.
-# AGENTIC mode gives the agent save/search tools.
 knowledge = Knowledge(
     vector_db=PgVector(
-        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-        table_name="learned_knowledge_ag",
+        db_url=db_url,
+        table_name="learned_knowledge_demo",
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
-    max_results=5,
-    contents_db=db,
 )
 
+# AGENTIC mode: Agent gets save/search tools and decides when to use them.
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=db,
@@ -52,50 +48,38 @@ agent = Agent(
         knowledge=knowledge,
         learned_knowledge=LearnedKnowledgeConfig(
             mode=LearningMode.AGENTIC,
-            enable_agent_tools=True,
         ),
     ),
     markdown=True,
 )
 
-
-# =============================================================================
-# Helper: Show learnings
-# =============================================================================
-def show_learnings() -> None:
-    """Display stored learnings."""
-    from rich.pretty import pprint
-
-    store = agent.learning.learned_knowledge_store
-    learnings = store.search(query="", limit=10) if store else []
-    pprint(learnings) if learnings else print("\nNo learnings stored yet.")
-
-
 # ============================================================================
-# Demo: Explicit Knowledge Management
+# Demo
 # ============================================================================
+
 if __name__ == "__main__":
-    user_id = "learner_ag@example.com"
+    user_id = "learner@example.com"
 
-    # Session 1: Explicitly save a learning
+    # Session 1: Save a learning
     print("\n" + "=" * 60)
     print("SESSION 1: Save a learning (watch for tool calls)")
     print("=" * 60 + "\n")
+
     agent.print_response(
-        "When comparing cloud providers, always "
-        "check egress costs first - they can vary by 10x and often "
+        "I just learned something important: when comparing cloud providers, "
+        "always check egress costs first - they vary by 10x and often "
         "dominate total costs for data-intensive workloads.",
         user_id=user_id,
         session_id="session_1",
         stream=True,
     )
-    print("\n--- Stored Learnings ---")
-    show_learnings()
+    agent.learning.learned_knowledge_store.print(query="cloud")
 
     # Session 2: Apply the learning
     print("\n" + "=" * 60)
     print("SESSION 2: Apply learning to new question")
     print("=" * 60 + "\n")
+
     agent.print_response(
         "I'm choosing between AWS and GCP for a data pipeline that "
         "processes 10TB daily. What should I consider?",
@@ -103,5 +87,3 @@ if __name__ == "__main__":
         session_id="session_2",
         stream=True,
     )
-    print("\n--- Learnings ---")
-    show_learnings()
