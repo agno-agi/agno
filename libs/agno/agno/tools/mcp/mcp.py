@@ -1,8 +1,9 @@
 import inspect
+import time
 import weakref
 from dataclasses import asdict
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Tuple, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -160,8 +161,10 @@ class MCPTools(Toolkit):
         self._session_context = None
 
         # Session management for per-agent-run sessions with dynamic headers
-        self._run_sessions: dict[str, ClientSession] = {}  # Maps run_id to session
+        # Maps run_id to (session, timestamp) for TTL-based cleanup
+        self._run_sessions: dict[str, Tuple[ClientSession, float]] = {}
         self._run_session_contexts: dict[str, Any] = {}  # Maps run_id to session context managers
+        self._session_ttl_seconds: float = 300.0  # 5 minutes TTL for MCP sessions
 
         def cleanup():
             """Cancel active connections"""
@@ -258,6 +261,22 @@ class MCPTools(Toolkit):
             log_warning(f"Error calling header_provider: {e}")
             return {}
 
+    async def _cleanup_stale_sessions(self) -> None:
+        """Clean up sessions older than TTL to prevent memory leaks."""
+        if not self._run_sessions:
+            return
+
+        now = time.time()
+        stale_run_ids = [
+            run_id
+            for run_id, (_, created_at) in self._run_sessions.items()
+            if now - created_at > self._session_ttl_seconds
+        ]
+
+        for run_id in stale_run_ids:
+            log_debug(f"Cleaning up stale MCP sessions for run_id={run_id}")
+            await self.cleanup_run_session(run_id)
+
     async def get_session_for_run(
         self,
         run_context: Optional["RunContext"] = None,
@@ -284,10 +303,14 @@ class MCPTools(Toolkit):
                 raise ValueError("Session is not initialized")
             return self.session
 
+        # Lazy cleanup of stale sessions
+        await self._cleanup_stale_sessions()
+
         # Check if we already have a session for this run
         run_id = run_context.run_id
         if run_id in self._run_sessions:
-            return self._run_sessions[run_id]
+            session, _ = self._run_sessions[run_id]
+            return session
 
         # Create a new session with dynamic headers for this run
         log_debug(f"Creating new session for run_id={run_id} with dynamic headers")
@@ -339,8 +362,8 @@ class MCPTools(Toolkit):
         # Initialize the session
         await session.initialize()
 
-        # Store the session and context for cleanup
-        self._run_sessions[run_id] = session
+        # Store the session with timestamp and context for cleanup
+        self._run_sessions[run_id] = (session, time.time())
         self._run_session_contexts[run_id] = (context, session_context)
 
         return session

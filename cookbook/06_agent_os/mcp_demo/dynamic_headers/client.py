@@ -61,14 +61,14 @@ mcp_tools = MCPTools(
 greeting_agent = Agent(
     name="greeting-agent",
     role="Greet users in a friendly, casual manner",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5"),
     tools=[mcp_tools],
 )
 
 # Team containing multiple agents with MCP tools
 greeting_team = Team(
     id="greeting-team",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5"),
     members=[greeting_agent],
     instructions="Choose the appropriate greeter based on context. Use the greet tool.",
     db=db,

@@ -24,7 +24,7 @@ async def greet(name: str, ctx: Context) -> str:
 
     print("=" * 60)
     print(
-        f"User: {user_id} | Session: {session_id} | Agent: {agent_name} | Team: {team_name}"
+        f"Headers -> User: {user_id} | Session: {session_id} | Agent: {agent_name} | Team: {team_name}"
     )
     print("=" * 60)
 

@@ -1,10 +1,11 @@
 import inspect
+import time
 import weakref
 from contextlib import AsyncExitStack
 from dataclasses import asdict
 from datetime import timedelta
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -152,8 +153,10 @@ class MultiMCPTools(Toolkit):
 
         # Session management for per-agent-run sessions with dynamic headers
         # For MultiMCP, we track sessions per (run_id, server_idx) since we have multiple servers
-        self._run_sessions: Dict[tuple[str, int], ClientSession] = {}  # Maps (run_id, server_idx) to session
-        self._run_session_contexts: Dict[tuple[str, int], Any] = {}  # Maps (run_id, server_idx) to context managers
+        # Maps (run_id, server_idx) to (session, timestamp) for TTL-based cleanup
+        self._run_sessions: Dict[Tuple[str, int], Tuple[ClientSession, float]] = {}
+        self._run_session_contexts: Dict[Tuple[str, int], Any] = {}  # Maps (run_id, server_idx) to context managers
+        self._session_ttl_seconds: float = 300.0  # 5 minutes default TTL
 
         self.allow_partial_failure = allow_partial_failure
 
@@ -237,6 +240,22 @@ class MultiMCPTools(Toolkit):
             log_warning(f"Error calling header_provider: {e}")
             return {}
 
+    async def _cleanup_stale_sessions(self) -> None:
+        """Clean up sessions older than TTL to prevent memory leaks."""
+        if not self._run_sessions:
+            return
+
+        now = time.time()
+        stale_keys = [
+            cache_key
+            for cache_key, (_, created_at) in self._run_sessions.items()
+            if now - created_at > self._session_ttl_seconds
+        ]
+
+        for run_id, server_idx in stale_keys:
+            log_debug(f"Cleaning up stale session for run_id={run_id}, server_idx={server_idx}")
+            await self.cleanup_run_session(run_id, server_idx)
+
     async def get_session_for_run(
         self,
         run_context: Optional["RunContext"] = None,
@@ -266,11 +285,15 @@ class MultiMCPTools(Toolkit):
                 return self._sessions[server_idx]
             raise ValueError(f"Server index {server_idx} out of range")
 
+        # Lazy cleanup of stale sessions
+        await self._cleanup_stale_sessions()
+
         # Check if we already have a session for this (run_id, server_idx)
         run_id = run_context.run_id
         cache_key = (run_id, server_idx)
         if cache_key in self._run_sessions:
-            return self._run_sessions[cache_key]
+            session, _ = self._run_sessions[cache_key]
+            return session
 
         # Create a new session with dynamic headers for this run and server
         log_debug(f"Creating new session for run_id={run_id}, server_idx={server_idx} with dynamic headers")
@@ -322,8 +345,8 @@ class MultiMCPTools(Toolkit):
         # Initialize the session
         await session.initialize()
 
-        # Store the session and context for cleanup
-        self._run_sessions[cache_key] = session
+        # Store the session with timestamp and context for cleanup
+        self._run_sessions[cache_key] = (session, time.time())
         self._run_session_contexts[cache_key] = (context, session_context)
 
         return session
