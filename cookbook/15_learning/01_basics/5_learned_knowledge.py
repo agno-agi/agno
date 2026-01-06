@@ -42,7 +42,7 @@ knowledge = Knowledge(
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=db,
-    instructions="Be concise. Save valuable insights using your learning tools.",
+    instructions="Be concise. Search for relevant learnings before answering questions.",
     learning=LearningMachine(
         knowledge=knowledge,
         learned_knowledge=LearnedKnowledgeConfig(
