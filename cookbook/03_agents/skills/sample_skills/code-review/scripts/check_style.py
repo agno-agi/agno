@@ -18,7 +18,9 @@ def check_style(code: str) -> dict:
     for i, line in enumerate(lines, 1):
         # Check line length
         if len(line) > 100:
-            issues.append({"line": i, "issue": f"Line exceeds 100 characters ({len(line)})"})
+            issues.append(
+                {"line": i, "issue": f"Line exceeds 100 characters ({len(line)})"}
+            )
 
         # Check trailing whitespace
         if line.endswith(" ") or line.endswith("\t"):
@@ -27,14 +29,28 @@ def check_style(code: str) -> dict:
         # Check for camelCase variables (simple heuristic)
         if "=" in line and not line.strip().startswith("#"):
             var = line.split("=")[0].strip()
-            if any(c.isupper() for c in var) and "_" not in var and not var[0].isupper():
-                issues.append({"line": i, "issue": f"Possible camelCase: '{var}' - use snake_case"})
+            if (
+                any(c.isupper() for c in var)
+                and "_" not in var
+                and not var[0].isupper()
+            ):
+                issues.append(
+                    {
+                        "line": i,
+                        "issue": f"Possible camelCase: '{var}' - use snake_case",
+                    }
+                )
 
         # Check for single-letter variables
         if "=" in line:
             var = line.split("=")[0].strip()
             if len(var) == 1 and var not in "ijkxyz_":
-                issues.append({"line": i, "issue": f"Single-letter variable '{var}' - use descriptive name"})
+                issues.append(
+                    {
+                        "line": i,
+                        "issue": f"Single-letter variable '{var}' - use descriptive name",
+                    }
+                )
 
     return {
         "total_issues": len(issues),

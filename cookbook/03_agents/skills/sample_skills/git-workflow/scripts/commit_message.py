@@ -44,7 +44,9 @@ def validate(message: str) -> dict:
         desc = desc.strip()
 
         if type_part not in COMMIT_TYPES:
-            errors.append(f"Unknown type '{type_part}'. Valid: {', '.join(COMMIT_TYPES.keys())}")
+            errors.append(
+                f"Unknown type '{type_part}'. Valid: {', '.join(COMMIT_TYPES.keys())}"
+            )
 
         if not desc:
             errors.append("Description required after ':'")
@@ -58,7 +60,9 @@ def validate(message: str) -> dict:
 def generate(commit_type: str, description: str, scope: str = None) -> dict:
     """Generate a commit message."""
     if commit_type not in COMMIT_TYPES:
-        return {"error": f"Unknown type '{commit_type}'. Valid: {', '.join(COMMIT_TYPES.keys())}"}
+        return {
+            "error": f"Unknown type '{commit_type}'. Valid: {', '.join(COMMIT_TYPES.keys())}"
+        }
 
     if scope:
         message = f"{commit_type}({scope}): {description}"
@@ -76,7 +80,13 @@ def list_types() -> dict:
 if __name__ == "__main__":
     try:
         if len(sys.argv) < 2:
-            print(json.dumps({"error": "Usage: commit_message.py <validate|generate|types> [args]"}))
+            print(
+                json.dumps(
+                    {
+                        "error": "Usage: commit_message.py <validate|generate|types> [args]"
+                    }
+                )
+            )
             sys.exit(1)
 
         command = sys.argv[1]
@@ -86,7 +96,9 @@ if __name__ == "__main__":
             result = validate(msg)
         elif command == "generate":
             if len(sys.argv) < 4:
-                result = {"error": "Usage: commit_message.py generate <type> <description> [scope]"}
+                result = {
+                    "error": "Usage: commit_message.py generate <type> <description> [scope]"
+                }
             else:
                 commit_type = sys.argv[2]
                 description = sys.argv[3]
@@ -95,7 +107,9 @@ if __name__ == "__main__":
         elif command == "types":
             result = list_types()
         else:
-            result = {"error": f"Unknown command '{command}'. Use: validate, generate, types"}
+            result = {
+                "error": f"Unknown command '{command}'. Use: validate, generate, types"
+            }
 
         print(json.dumps(result, indent=2))
     except Exception as e:
