@@ -1,9 +1,7 @@
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
-if TYPE_CHECKING:
-    from agno.eval.base import BaseEval
-
+from agno.eval.base import BaseEval
 from agno.guardrails.base import BaseGuardrail
 from agno.hooks.decorator import HOOK_RUN_IN_BACKGROUND_ATTR
 from agno.utils.log import log_warning
@@ -57,7 +55,7 @@ def should_run_hook_in_background(hook: Callable[..., Any]) -> bool:
 
 
 def normalize_pre_hooks(
-    hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, "BaseEval"]]],
+    hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]],
     async_mode: bool = False,
 ) -> Optional[List[Callable[..., Any]]]:
     """Normalize pre-hooks to a list format.
@@ -66,8 +64,6 @@ def normalize_pre_hooks(
         hooks: List of hook functions, guardrails, or eval instances
         async_mode: Whether to use async versions of methods
     """
-    from agno.eval.base import BaseEval
-
     result_hooks: List[Callable[..., Any]] = []
 
     if hooks is not None:
@@ -102,7 +98,7 @@ def normalize_pre_hooks(
 
 
 def normalize_post_hooks(
-    hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, "BaseEval"]]],
+    hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]],
     async_mode: bool = False,
 ) -> Optional[List[Callable[..., Any]]]:
     """Normalize post-hooks to a list format.
@@ -111,8 +107,6 @@ def normalize_post_hooks(
         hooks: List of hook functions, guardrails, or eval instances
         async_mode: Whether to use async versions of methods
     """
-    from agno.eval.base import BaseEval
-
     result_hooks: List[Callable[..., Any]] = []
 
     if hooks is not None:

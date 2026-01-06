@@ -58,6 +58,14 @@ class BaseDb(ABC):
         """Create all tables for this database."""
         pass
 
+    def close(self) -> None:
+        """Close database connections and release resources.
+
+        Override in subclasses to properly dispose of connection pools.
+        Should be called during application shutdown.
+        """
+        pass
+
     # --- Schema Version ---
     @abstractmethod
     def get_latest_schema_version(self, table_name: str):
@@ -308,8 +316,8 @@ class BaseDb(ABC):
 
     # --- Traces ---
     @abstractmethod
-    def create_trace(self, trace: "Trace") -> None:
-        """Create a single trace record in the database.
+    def upsert_trace(self, trace: "Trace") -> None:
+        """Create or update a single trace record in the database.
 
         Args:
             trace: The Trace object to store (one per trace_id).
@@ -516,6 +524,18 @@ class AsyncBaseDb(ABC):
         self.span_table_name = spans_table or "agno_spans"
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
+
+    async def _create_all_tables(self) -> None:
+        """Create all tables for this database. Override in subclasses."""
+        pass
+
+    async def close(self) -> None:
+        """Close database connections and release resources.
+
+        Override in subclasses to properly dispose of connection pools.
+        Should be called during application shutdown.
+        """
+        pass
 
     @abstractmethod
     async def table_exists(self, table_name: str) -> bool:
@@ -759,11 +779,11 @@ class AsyncBaseDb(ABC):
 
     # --- Traces ---
     @abstractmethod
-    async def create_trace(self, trace) -> None:
-        """Create a single trace record in the database.
+    async def upsert_trace(self, trace) -> None:
+        """Create or update a single trace record in the database.
 
         Args:
-            trace: The Trace object to store (one per trace_id).
+            trace: The Trace object to update (one per trace_id).
         """
         raise NotImplementedError
 
