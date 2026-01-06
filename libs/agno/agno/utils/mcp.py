@@ -17,7 +17,9 @@ from agno.media import Image
 from agno.tools.function import ToolResult
 
 if TYPE_CHECKING:
+    from agno.agent import Agent
     from agno.run import RunContext
+    from agno.team.team import Team
     from agno.tools.mcp.mcp import MCPTools
     from agno.tools.mcp.multi_mcp import MultiMCPTools
 
@@ -44,22 +46,30 @@ def get_entrypoint_for_tool(
     """
 
     async def call_tool(
-        tool_name: str, run_context: Optional["RunContext"] = None, **kwargs
+        tool_name: str,
+        run_context: Optional["RunContext"] = None,
+        agent: Optional["Agent"] = None,
+        team: Optional["Team"] = None,
+        **kwargs,
     ) -> ToolResult:
         # Execute the MCP tool call
         try:
             # Get the appropriate session for this run
             # If mcp_tools_instance has header_provider and run_context is provided,
             # this will create/reuse a session with dynamic headers
-            if mcp_tools_instance and hasattr(mcp_tools_instance, 'get_session_for_run'):
+            if mcp_tools_instance and hasattr(mcp_tools_instance, "get_session_for_run"):
                 # Import here to avoid circular imports
                 from agno.tools.mcp.multi_mcp import MultiMCPTools
 
                 # For MultiMCPTools, pass server_idx; for MCPTools, only pass run_context
                 if isinstance(mcp_tools_instance, MultiMCPTools):
-                    active_session = await mcp_tools_instance.get_session_for_run(run_context, server_idx)
+                    active_session = await mcp_tools_instance.get_session_for_run(
+                        run_context=run_context, server_idx=server_idx, agent=agent, team=team
+                    )
                 else:
-                    active_session = await mcp_tools_instance.get_session_for_run(run_context)
+                    active_session = await mcp_tools_instance.get_session_for_run(
+                        run_context=run_context, agent=agent, team=team
+                    )
             else:
                 active_session = session
 

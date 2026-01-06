@@ -13,7 +13,9 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.mcp import get_entrypoint_for_tool, prepare_command
 
 if TYPE_CHECKING:
+    from agno.agent import Agent
     from agno.run import RunContext
+    from agno.team.team import Team
 
 try:
     from mcp import ClientSession, StdioServerParameters
@@ -175,11 +177,18 @@ class MultiMCPTools(Toolkit):
         except (RuntimeError, BaseException):
             return False
 
-    def _call_header_provider(self, run_context: Optional["RunContext"] = None) -> dict[str, Any]:
-        """Call the header_provider with or without run_context based on its signature.
+    def _call_header_provider(
+        self,
+        run_context: Optional["RunContext"] = None,
+        agent: Optional["Agent"] = None,
+        team: Optional["Team"] = None,
+    ) -> dict[str, Any]:
+        """Call the header_provider with run_context, agent, and/or team based on its signature.
 
         Args:
             run_context: The RunContext for the current agent run
+            agent: The Agent instance (if running within an agent)
+            team: The Team instance (if running within a team)
 
         Returns:
             dict[str, Any]: The headers returned by the header_provider
@@ -190,30 +199,50 @@ class MultiMCPTools(Toolkit):
 
         try:
             sig = inspect.signature(header_provider)
-            params = list(sig.parameters.values())
+            param_names = set(sig.parameters.keys())
+
+            # Build kwargs based on what the function accepts
+            call_kwargs: dict[str, Any] = {}
+
+            if "run_context" in param_names:
+                call_kwargs["run_context"] = run_context
+            if "agent" in param_names:
+                call_kwargs["agent"] = agent
+            if "team" in param_names:
+                call_kwargs["team"] = team
 
             # Check if function accepts **kwargs (VAR_KEYWORD)
-            has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
+            has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
 
-            # Check if function has at least one positional parameter
-            positional_params = [
-                p
-                for p in params
-                if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-            ]
-
-            # Call with run_context if the function accepts it
-            if has_var_keyword or len(positional_params) > 0:
-                return header_provider(run_context)
+            if has_var_keyword:
+                # Pass all available context to **kwargs
+                call_kwargs = {"run_context": run_context, "agent": agent, "team": team}
+                return header_provider(**call_kwargs)
+            elif call_kwargs:
+                return header_provider(**call_kwargs)
             else:
-                # Function takes no parameters
-                return header_provider()
+                # Function takes no recognized parameters - check for positional
+                positional_params = [
+                    p
+                    for p in sig.parameters.values()
+                    if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+                ]
+                if positional_params:
+                    # Legacy support: pass run_context as first positional arg
+                    return header_provider(run_context)
+                else:
+                    # Function takes no parameters
+                    return header_provider()
         except Exception as e:
             log_warning(f"Error calling header_provider: {e}")
             return {}
 
     async def get_session_for_run(
-        self, run_context: Optional["RunContext"] = None, server_idx: int = 0
+        self,
+        run_context: Optional["RunContext"] = None,
+        server_idx: int = 0,
+        agent: Optional["Agent"] = None,
+        team: Optional["Team"] = None,
     ) -> ClientSession:
         """
         Get or create a session for the given run_context and server index.
@@ -224,6 +253,8 @@ class MultiMCPTools(Toolkit):
         Args:
             run_context: The RunContext containing user_id, metadata, etc.
             server_idx: Index of the server in self._sessions list
+            agent: The Agent instance (if running within an agent)
+            team: The Team instance (if running within a team)
 
         Returns:
             ClientSession: Either the default session or a per-run session with dynamic headers
@@ -245,7 +276,7 @@ class MultiMCPTools(Toolkit):
         log_debug(f"Creating new session for run_id={run_id}, server_idx={server_idx} with dynamic headers")
 
         # Generate dynamic headers from the provider
-        dynamic_headers = self._call_header_provider(run_context)
+        dynamic_headers = self._call_header_provider(run_context=run_context, agent=agent, team=team)
 
         # Get the server params for this server index
         if server_idx >= len(self.server_params_list):

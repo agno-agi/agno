@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -72,6 +72,7 @@ def test_multimcp_urls_default_to_streamable_http():
     assert len(tools.server_params_list) == 2
     assert all(isinstance(params, StreamableHTTPClientParams) for params in tools.server_params_list)
 
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "kwargs",
@@ -94,3 +95,68 @@ async def test_mcp_include_exclude_tools_bad_values(kwargs):
     with pytest.raises(ValueError, match="not present in the toolkit"):
         tools.session = session_mock
         await tools.build_tools()
+
+
+# =============================================================================
+# header_provider tests
+# =============================================================================
+
+
+def test_is_valid_header_provider_with_http_transport():
+    """Test that header_provider is valid for HTTP transports."""
+    tools = MCPTools(url="http://localhost:8080/mcp", header_provider=lambda: {})
+    assert hasattr(tools, "header_provider")
+
+
+def test_is_valid_header_provider_ignored_for_stdio():
+    """Test that header_provider is ignored for stdio transport."""
+    tools = MCPTools(command="npx foo", header_provider=lambda: {})
+    assert not hasattr(tools, "header_provider")
+
+
+def test_call_header_provider_no_params():
+    """Test header_provider with no parameters."""
+    tools = MCPTools(url="http://localhost:8080/mcp", header_provider=lambda: {"X-Static": "value"})
+    result = tools._call_header_provider()
+    assert result == {"X-Static": "value"}
+
+
+def test_call_header_provider_with_run_context():
+    """Test header_provider with run_context parameter."""
+    run_context = MagicMock()
+    run_context.user_id = "test-user"
+
+    def provider(run_context):
+        return {"X-User-ID": run_context.user_id}
+
+    tools = MCPTools(url="http://localhost:8080/mcp", header_provider=provider)
+    result = tools._call_header_provider(run_context=run_context)
+    assert result == {"X-User-ID": "test-user"}
+
+
+def test_call_header_provider_with_agent():
+    """Test header_provider with agent parameter."""
+    run_context = MagicMock()
+    agent = MagicMock()
+    agent.name = "test-agent"
+
+    def provider(run_context, agent):
+        return {"X-Agent": agent.name}
+
+    tools = MCPTools(url="http://localhost:8080/mcp", header_provider=provider)
+    result = tools._call_header_provider(run_context=run_context, agent=agent)
+    assert result == {"X-Agent": "test-agent"}
+
+
+def test_call_header_provider_with_kwargs():
+    """Test header_provider with **kwargs."""
+
+    def provider(**kwargs):
+        return {
+            "X-Has-Agent": str(kwargs.get("agent") is not None),
+            "X-Has-Team": str(kwargs.get("team") is not None),
+        }
+
+    tools = MCPTools(url="http://localhost:8080/mcp", header_provider=provider)
+    result = tools._call_header_provider(run_context=MagicMock(), agent=MagicMock(), team=None)
+    assert result == {"X-Has-Agent": "True", "X-Has-Team": "False"}

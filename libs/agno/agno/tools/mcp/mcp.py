@@ -11,7 +11,9 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.mcp import get_entrypoint_for_tool, prepare_command
 
 if TYPE_CHECKING:
+    from agno.agent import Agent
     from agno.run import RunContext
+    from agno.team.team import Team
 
 try:
     from mcp import ClientSession, StdioServerParameters
@@ -67,8 +69,8 @@ class MCPTools(Toolkit):
             transport: The transport protocol to use, either "stdio" or "sse" or "streamable-http".
                        Defaults to "streamable-http" when url is provided, otherwise defaults to "stdio".
             refresh_connection: If True, the connection and tools will be refreshed on each run
-            header_provider: Optional function that takes RunContext and returns dict of HTTP headers.
-                Only works with HTTP transports (sse, streamable-http).
+            header_provider: Optional function to generate dynamic HTTP headers.
+                Only relevant with HTTP transports (Streamable HTTP or SSE).
                 Creates a new session per agent run with dynamic headers merged into connection config.
         """
         super().__init__(name="MCPTools", **kwargs)
@@ -196,11 +198,18 @@ class MCPTools(Toolkit):
         log_debug("Dynamic header support enabled for MCP tools")
         return True
 
-    def _call_header_provider(self, run_context: Optional["RunContext"] = None) -> dict[str, Any]:
-        """Call the header_provider with or without run_context based on its signature.
+    def _call_header_provider(
+        self,
+        run_context: Optional["RunContext"] = None,
+        agent: Optional["Agent"] = None,
+        team: Optional["Team"] = None,
+    ) -> dict[str, Any]:
+        """Call the header_provider with run_context, agent, and/or team based on its signature.
 
         Args:
             run_context: The RunContext for the current agent run
+            agent: The Agent instance (if running within an agent)
+            team: The Team instance (if running within a team)
 
         Returns:
             dict[str, Any]: The headers returned by the header_provider
@@ -211,29 +220,50 @@ class MCPTools(Toolkit):
 
         try:
             sig = inspect.signature(header_provider)
-            params = list(sig.parameters.values())
+            param_names = set(sig.parameters.keys())
+
+            # Build kwargs based on what the function accepts
+            call_kwargs: dict[str, Any] = {}
+
+            if "run_context" in param_names:
+                call_kwargs["run_context"] = run_context
+            if "agent" in param_names:
+                call_kwargs["agent"] = agent
+            if "team" in param_names:
+                call_kwargs["team"] = team
 
             # Check if function accepts **kwargs (VAR_KEYWORD)
-            has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
+            has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
 
-            # Check if function has at least one positional parameter
-            positional_params = [
-                p
-                for p in params
-                if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-            ]
-
-            # Call with run_context if the function accepts it
-            if has_var_keyword or len(positional_params) > 0:
-                return header_provider(run_context)
+            if has_var_keyword:
+                # Pass all available context to **kwargs
+                call_kwargs = {"run_context": run_context, "agent": agent, "team": team}
+                return header_provider(**call_kwargs)
+            elif call_kwargs:
+                return header_provider(**call_kwargs)
             else:
-                # Function takes no parameters
-                return header_provider()
+                # Function takes no recognized parameters - check for positional
+                positional_params = [
+                    p
+                    for p in sig.parameters.values()
+                    if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+                ]
+                if positional_params:
+                    # Legacy support: pass run_context as first positional arg
+                    return header_provider(run_context)
+                else:
+                    # Function takes no parameters
+                    return header_provider()
         except Exception as e:
             log_warning(f"Error calling header_provider: {e}")
             return {}
 
-    async def get_session_for_run(self, run_context: Optional["RunContext"] = None) -> ClientSession:
+    async def get_session_for_run(
+        self,
+        run_context: Optional["RunContext"] = None,
+        agent: Optional["Agent"] = None,
+        team: Optional["Team"] = None,
+    ) -> ClientSession:
         """
         Get or create a session for the given run context.
 
@@ -242,6 +272,8 @@ class MCPTools(Toolkit):
 
         Args:
             run_context: The RunContext for the current agent run
+            agent: The Agent instance (if running within an agent)
+            team: The Team instance (if running within a team)
 
         Returns:
             ClientSession for the run
@@ -261,7 +293,7 @@ class MCPTools(Toolkit):
         log_debug(f"Creating new session for run_id={run_id} with dynamic headers")
 
         # Generate dynamic headers from the provider
-        dynamic_headers = self._call_header_provider(run_context)
+        dynamic_headers = self._call_header_provider(run_context=run_context, agent=agent, team=team)
 
         # Create new session with merged headers based on transport type
         if self.transport == "sse":
