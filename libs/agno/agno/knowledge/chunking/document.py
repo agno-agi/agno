@@ -16,8 +16,9 @@ class DocumentChunking(ChunkingStrategy):
         if len(document.content) <= self.chunk_size:
             return [document]
 
-        # Split on double newlines first (paragraphs)
-        paragraphs = self.clean_text(document.content).split("\n\n")
+        # Split on double newlines first (paragraphs), then clean each paragraph
+        raw_paragraphs = document.content.split("\n\n")
+        paragraphs = [self.clean_text(para) for para in raw_paragraphs]
         chunks: List[Document] = []
         current_chunk = []
         current_size = 0

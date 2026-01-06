@@ -11,7 +11,7 @@
 <div align="center">
   <a href="https://docs.agno.com">Documentation</a>
   <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-  <a href="https://docs.agno.com/examples/use-cases/agents/overview">Examples</a>
+  <a href="https://github.com/agno-agi/agno/tree/main/cookbook">Cookbook</a>
   <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
   <a href="https://www.agno.com/?utm_source=github&utm_medium=readme&utm_campaign=agno-github">Website</a>
   <br />
@@ -19,25 +19,26 @@
 
 ## What is Agno?
 
-Agno is an incredibly fast multi-agent framework, runtime and control plane.
+Agno is a multi-agent framework, runtime, and control plane. Use it to build private and secure AI products that run in your cloud.
 
-Companies want to build AI products, run them as a secure containerized service in their cloud, and monitor, test, and manage their agentic system with a beautiful UI. Doing this takes far more than calling an LLM API in a loop, it requires a thoughtfully designed agentic platform.
+- **Build** agents, teams, and workflows with memory, knowledge, guardrails and 100+ integrations.
+- **Run** in production with a stateless FastAPI runtime. Horizontally scalable.
+- **Manage** with a control plane that connects directly to your runtime — no data leaves your environment.
 
-Agno provides the unified stack for building, running and managing multi-agent systems:
+## Why Agno?
 
-- **Framework**: Build agents, multi-agent teams and workflows with memory, knowledge, state, guardrails, HITL, context compression, MCP, A2A and 100+ toolkits.
-- **AgentOS Runtime**: Run your multi-agent system in production with a secure, stateless runtime and ready to use integration endpoints.
-- **AgentOS Control Plane**: Test, monitor and manage AgentOS deployments across environments with full operational visibility.
+- **Your cloud, your data:** Runs entirely in your infrastructure. Nothing leaves your environment.
+- **Ready for production on day one:** Pre-built FastAPI runtime with SSE endpoints, ready to deploy.
+- **Incredibly fast:** 529× faster than LangGraph, 24× lower memory.
 
-Checkout the full list of features [here](#features).
+## Getting Started
 
-## Getting started
+Start with the [getting started guide](https://github.com/agno-agi/agno/tree/main/cookbook/00_getting_started), then:
 
-If you're new to Agno, follow our [quickstart](https://docs.agno.com/get-started/quickstart) to build your first Agent and chat with it using the AgentOS UI.
+- Browse the [cookbooks](https://github.com/agno-agi/agno/tree/main/cookbook) for real-world examples
+- Read the [docs](https://docs.agno.com) to learn more
 
-After that, checkout the [examples gallery](https://docs.agno.com/examples/use-cases/agents/overview) and build real-world applications with Agno.
-
-## Documentation, Community & More Examples
+## Resources
 
 - Docs: <a href="https://docs.agno.com" target="_blank" rel="noopener noreferrer">docs.agno.com</a>
 - Cookbook: <a href="https://github.com/agno-agi/agno/tree/main/cookbook" target="_blank" rel="noopener noreferrer">Cookbook</a>
@@ -93,144 +94,72 @@ When you run the example script shared above, you get a FastAPI app that you can
 
 https://github.com/user-attachments/assets/feb23db8-15cc-4e88-be7c-01a21a03ebf6
 
-## The Complete Agentic Solution
+## Private by Design
 
-Agno provides the complete solution for companies building agentic systems:
+This is the part we care most about.
 
-- The fastest framework for building agents, multi-agent teams and agentic workflows.
-- A ready-to-use FastAPI app that gets you building AI products on day one.
-- A control plane for testing, monitoring and managing your system.
+AgentOS runs in **your** cloud. The control plane UI connects directly to your runtime from your browser. Your data never touches our servers. No retention costs, no vendor lock-in, no compliance headaches.
 
-Agno brings a novel architecture that no other framework provides, your AgentOS runs securely in your cloud, and the control plane connects directly to it from your browser. You don't need to send data to any external services or pay retention costs, you get complete privacy and control.
+This isn't a privacy mode or enterprise add-on. It's how Agno works.
 
 ## Features
 
-Agno is an incredibly feature-rich framework purpose-built for Agent Engineering. Here are some key features:
+### Core:
+- Model agnostic — works with OpenAI, Anthropic, Google, local models, whatever
+- Type-safe I/O with `input_schema` and `output_schema`
+- Async-first, built for long-running tasks
+- Natively multimodal (text, images, audio, video, files)
 
-| **Category**                           | **Feature**                     | **Description**                                                                                                           |
-| -------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| **Foundational Principles**            | **Model Agnostic**              | Supports all model providers so you can choose the best model for your use case |
-|                                        | **Type Safe**                   | Enforces structured I/O through input_schema and output_schema for predictable and composable agent behavior. |
-|                                        | **Dynamic Context**             | Inject variables, state, and retrieved data at runtime into context. Compress, summarize and filter context to keep your Agents focused and efficient. |
-|                                        | **Designed for Scale**          | Designed around async execution and long-running tasks for high throughput agent workloads. |
-| **Memory, Knowledge, and Persistence** | **Persistent Storage**          | Give your Agents, Teams, and Workflows a database to persist session history, state, and messages. |
-|                                        | **User Memory**                 | Built in memory layer that helps agents recall user specific context across sessions. |
-|                                        | **Agentic RAG**                 | Connect to 20+ vector stores (called **Knowledge**) with hybrid search, reranking, and chunking out of the box. |
-|                                        | **Culture** | Shared long term collective memory that compounds across agents and time. |
-|                                        | **Ephemeral Context** | In memory scratchpad for short lived reasoning without polluting long term state. |
-| **Execution & Control**                | **Human-in-the-Loop**           | Native support for confirmations, approvals, manual overrides, and external actions. |
-|                                        | **Guardrails**                  | Built-in safeguards for validation, security, and prompt protection.                                                      |
-|                                        | **Agent Lifecycle Hooks**       | Pre and post hooks to validate, enrich, or transform inputs and outputs. |
-|                                        | **MCP Integration**             | First-class support for the Model Context Protocol (MCP) to connect Agents with external systems. |
-|                                        | **A2A Integration**             | First-class support for the Agent to Agent communication protocol (A2A). |
-|                                        | **Toolkits**                    | 100+ built in toolkits with thousands of tools covering data, code, web, and enterprise APIs. |
-| **Runtime & Evaluation**               | **Runtime**                     | Prebuilt FastAPI runtime with SSE compatible endpoints. Production ready from day one. |
-|                                        | **Control Plane (UI)**          | Integrated interface to test, observe, and debug your agents, teams, and workflows in real time. |
-|                                        | **Natively Multimodal**         | Agents can process and generate text, images, audio, video, and files. |
-|                                        | **Evals**                       | Measure Accuracy, Performance, Latency, and Reliability across agents and workflows. |
-|                                        | **Durable Execution**           | Built in support for long running, resumable workflows. |
-| **Security & Privacy**                 | **Private by Design**           | Runs entirely in your cloud. The UI connects directly to your AgentOS from your browser, no data is ever sent externally. |
-|                                        | **Data Governance**             | Your data lives securely in your Agent database, no external data sharing or vendor lock-in.                              |
-|                                        | **Access Control**              | Role-based access (RBAC) and per-agent permissions to protect sensitive contexts and tools.                               |
+### Memory & Knowledge:
+- Persistent storage for session history and state
+- User memory that persists across sessions
+- Agentic RAG with 20+ vector stores, hybrid search, reranking
+- Culture — shared long-term memory across agents
 
-Every part of Agno is built for real-world deployment — where developer experience meets production performance.
+### Execution:
+- Human-in-the-loop (confirmations, approvals, overrides)
+- Guardrails for validation and security
+- Pre/post hooks for the agent lifecycle
+- First-class MCP and A2A support
+- 100+ built-in toolkits
 
-## Setup Your Coding Agent to Use Agno
-
-For LLMs and AI assistants to understand and navigate Agno's documentation, we provide an [llms.txt](https://docs.agno.com/llms.txt) or [llms-full.txt](https://docs.agno.com/llms-full.txt) file. This file is built for AI systems to efficiently parse and reference our documentation.
-
-### IDE Integration
-
-When building Agno agents, using Agno documentation as a source in your IDE is a great way to speed up your development. Here's how to integrate with Cursor:
-
-1. In Cursor, go to the "Cursor Settings" menu.
-2. Find the "Indexing & Docs" section.
-3. Add `https://docs.agno.com/llms-full.txt` to the list of documentation URLs.
-4. Save the changes.
-
-Now, Cursor will have access to the Agno documentation. You can do the same with other IDEs like VSCode, Windsurf etc.
+### Production:
+- Ready-to-use FastAPI runtime
+- Integrated control plane UI
+- Evals for accuracy, performance, latency
+- Durable execution for resumable workflows
+- RBAC and per-agent permissions
 
 ## Performance
 
-If you're building with Agno, you're guaranteed best-in-class performance by default. Our obsession with performance is necessary because even simple AI workflows can spawn hundreds of Agents and because many tasks are long-running -- stateless, horizontal scalability is key for success.
+We're obsessive about performance because agent workloads spawn hundreds of instances and run long tasks. Stateless, horizontal scalability isn't optional.
 
-At Agno, we optimize performance across 3 dimensions:
+**Benchmarks** (Apple M4 MacBook Pro, Oct 2025):
 
-1. **Agent performance:** We optimize static operations (instantiation, memory footprint) and runtime operations (tool calls, memory updates, history management).
-2. **System performance:** The AgentOS API is async by default and has a minimal memory footprint. The system is stateless and horizontally scalable, with a focus on preventing memory leaks. It handles parallel and batch embedding generation during knowledge ingestion, metrics collection in background tasks, and other system-level optimizations.
-3. **Agent reliability and accuracy:** Monitored through evals, which we'll explore later.
+| Metric | Agno | LangGraph | PydanticAI | CrewAI |
+|--------|------|-----------|------------|--------|
+| Instantiation | **3μs** | 1,587μs (529× slower) | 170μs (57× slower) | 210μs (70× slower) |
+| Memory | **6.6 KiB** | 161 KiB (24× higher) | 29 KiB (4× higher) | 66 KiB (10× higher) |
 
-### Agent Performance
-
-Let's measure the time it takes to instantiate an Agent and the memory footprint of an Agent. Here are the numbers (last measured in Oct 2025, on an Apple M4 MacBook Pro):
-
-- **Agent instantiation:** ~3μs on average
-- **Memory footprint:** ~6.6Kib on average
-
-We'll show below that Agno Agents instantiate **529× faster than Langgraph**, **57× faster than PydanticAI**, and **70× faster than CrewAI**. Agno Agents also use **24× lower memory than Langgraph**, **4× lower than PydanticAI**, and **10× lower than CrewAI**.
-
-> [!NOTE]
-> Run time performance is bottlenecked by inference and hard to benchmark accurately, so we focus on minimizing overhead, reducing memory usage, and parallelizing tool calls.
-
-### Instantiation Time
-
-Let's measure instantiation time for an Agent with 1 tool. We'll run the evaluation 1000 times to get a baseline measurement. We'll compare Agno to LangGraph, CrewAI and Pydantic AI.
-
-> [!NOTE]
-> The code for this benchmark is available [here](https://github.com/agno-agi/agno/tree/main/cookbook/evals/performance). You should run the evaluation yourself on your own machine, please, do not take these results at face value.
-
-```shell
-# Setup virtual environment
-./scripts/perf_setup.sh
-source .venvs/perfenv/bin/activate
-
-# Agno
-python cookbook/evals/performance/instantiate_agent_with_tool.py
-
-# LangGraph
-python cookbook/evals/performance/comparison/langgraph_instantiation.py
-# CrewAI
-python cookbook/evals/performance/comparison/crewai_instantiation.py
-# Pydantic AI
-python cookbook/evals/performance/comparison/pydantic_ai_instantiation.py
-```
-
-LangGraph is on the right, **let's start it first and give it a head start**. Then CrewAI and Pydantic AI follow, and finally Agno. Agno obviously finishes first, but let's see by how much.
+Run the benchmarks yourself: [`cookbook/12_evals/performance`](https://github.com/agno-agi/agno/tree/main/cookbook/12_evals/performance)
 
 https://github.com/user-attachments/assets/54b98576-1859-4880-9f2d-15e1a426719d
 
-### Memory Usage
+## IDE Integration
 
-To measure memory usage, we use the `tracemalloc` library. We first calculate a baseline memory usage by running an empty function, then run the Agent 1000x times and calculate the difference. This gives a (reasonably) isolated measurement of the memory usage of the Agent.
+For AI-assisted development, add our docs to your IDE:
 
-We recommend running the evaluation yourself on your own machine, and digging into the code to see how it works. If we've made a mistake, please let us know.
+**Cursor:** Settings → Indexing & Docs → Add `https://docs.agno.com/llms-full.txt`
 
-### Results
+Works with VSCode, Windsurf, and other AI-enabled editors too.
 
-Taking Agno as the baseline, we can see that:
+## Contributing
 
-| Metric             | Agno | Langgraph   | PydanticAI | CrewAI     |
-| ------------------ | ---- | ----------- | ---------- | ---------- |
-| **Time (seconds)** | 1×   | 529× slower | 57× slower | 70× slower |
-| **Memory (MiB)**   | 1×   | 24× higher  | 4× higher  | 10× higher |
-
-Exact numbers from the benchmark:
-
-| Metric             | Agno     | Langgraph | PydanticAI | CrewAI   |
-| ------------------ | -------- | --------- | ---------- | -------- |
-| **Time (seconds)** | 0.000003 | 0.001587  | 0.000170   | 0.000210 |
-| **Memory (MiB)**   | 0.006642 | 0.161435  | 0.028712   | 0.065652 |
-
-> [!NOTE]
-> Agno agents are designed for performance and while we share benchmarks against other frameworks, we should be mindful that accuracy and reliability are more important than speed.
-
-## Contributions
-
-We welcome contributions, read our [contributing guide](https://github.com/agno-agi/agno/blob/v2.0/CONTRIBUTING.md) to get started.
+We welcome contributions. See the [contributing guide](https://github.com/agno-agi/agno/blob/v2.0/CONTRIBUTING.md).
 
 ## Telemetry
 
-Agno logs which model an agent used so we can prioritize updates to the most popular providers. You can disable this by setting `AGNO_TELEMETRY=false` in your environment.
+Agno logs which model providers are used so we can prioritize updates. Disable with `AGNO_TELEMETRY=false`.
 
 <p align="left">
   <a href="#top">⬆️ Back to Top</a>
