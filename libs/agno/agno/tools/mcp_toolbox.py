@@ -49,6 +49,7 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
             append_mcp_to_url (bool, optional): Whether to append "/mcp" to the URL if it doesn't end with it. Defaults to True.
 
         """
+        mcp_url = url
         if append_mcp_to_url and not url.endswith("/mcp"):
             mcp_url = url + "/mcp"
 
