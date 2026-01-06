@@ -304,12 +304,19 @@ class Function(BaseModel):
 
         entrypoint = cls._wrap_callable(c)
 
-        return cls(
+        func = cls(
             name=function_name,
             description=get_entrypoint_docstring(entrypoint=c),
             parameters=parameters,
             entrypoint=entrypoint,
+            strict=strict if strict else None,
         )
+
+        # Process schema for strict mode if enabled
+        if strict:
+            func.process_schema_for_strict()
+
+        return func
 
     def process_entrypoint(self, strict: bool = False):
         """Process the entrypoint and make it ready for use by an agent."""
@@ -494,7 +501,7 @@ class Function(BaseModel):
         """Process the schema to make it strict mode compliant."""
 
         def make_nested_strict(schema):
-            """Recursively ensure all object schemas have additionalProperties: false"""
+            """Recursively ensure all object schemas have additionalProperties: false and required fields"""
             if not isinstance(schema, dict):
                 return schema
 
@@ -504,12 +511,16 @@ class Function(BaseModel):
             # If this is an object schema, ensure additionalProperties: false
             if result.get("type") == "object" or "properties" in result:
                 result["additionalProperties"] = False
+                # For strict mode, ALL properties must be in required array
+                if "properties" in result:
+                    result["required"] = list(result["properties"].keys())
 
             # If schema has no type but has other schema properties, give it a type
             if "type" not in result:
                 if "properties" in result:
                     result["type"] = "object"
                     result["additionalProperties"] = False
+                    result["required"] = list(result["properties"].keys())
                 elif result.get("title") and not any(
                     key in result for key in ["properties", "items", "anyOf", "oneOf", "allOf", "enum"]
                 ):

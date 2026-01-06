@@ -41,7 +41,7 @@ def jwt_test_agent():
     return Agent(
         name="jwt-test-agent",
         db=InMemoryDb(),
-        instructions="You are a test agent that can access JWT information and user profiles.",
+        instructions="You are a test agent that can access JWT information and user memory profiles.",
     )
 
 
