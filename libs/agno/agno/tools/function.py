@@ -54,9 +54,17 @@ class UserInputField:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "UserInputField":
+        type_mapping = {"str": str, "int": int, "float": float, "bool": bool, "list": list, "dict": dict}
+        field_type_raw = data["field_type"]
+        if isinstance(field_type_raw, str):
+            field_type = type_mapping.get(field_type_raw, str)
+        elif isinstance(field_type_raw, type):
+            field_type = field_type_raw
+        else:
+            field_type = str
         return cls(
             name=data["name"],
-            field_type=eval(data["field_type"]),  # Convert string type name to actual type
+            field_type=field_type,
             description=data["description"],
             value=data["value"],
         )
