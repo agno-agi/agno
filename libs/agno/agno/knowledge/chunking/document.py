@@ -20,7 +20,7 @@ class DocumentChunking(ChunkingStrategy):
         raw_paragraphs = document.content.split("\n\n")
         paragraphs = [self.clean_text(para) for para in raw_paragraphs]
         chunks: List[Document] = []
-        current_chunk = []
+        current_chunk: List[str] = []
         current_size = 0
         chunk_meta_data = document.meta_data
         chunk_number = 1
