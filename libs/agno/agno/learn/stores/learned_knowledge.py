@@ -999,28 +999,13 @@ class LearnedKnowledgeStore(LearningStore):
         team_id: Optional[str] = None,
         namespace: Optional[str] = None,
     ) -> bool:
-        """Save a learning to the knowledge base.
-
-        Args:
-            title: Short descriptive title.
-            learning: The actual insight.
-            context: When/why this applies.
-            tags: Tags for categorization.
-            user_id: User ID (required for "user" namespace).
-            agent_id: Agent that created this (stored as metadata for audit).
-            team_id: Team context (stored as metadata for audit).
-            namespace: Namespace for scoping (default: "global").
-
-        Returns:
-            True if saved successfully, False otherwise.
-        """
+        """Save a learning to the knowledge base."""
         if not self.knowledge:
             log_warning("LearnedKnowledgeStore.save: no knowledge base configured")
             return False
 
         effective_namespace = namespace or "global"
 
-        # Validate "user" namespace has user_id
         if effective_namespace == "user" and not user_id:
             log_warning("LearnedKnowledgeStore.save: 'user' namespace requires user_id")
             return False
@@ -1043,11 +1028,19 @@ class LearnedKnowledgeStore(LearningStore):
             learning_obj = self.schema(**learning_data)
             text_content = self._to_text_content(learning=learning_obj)
 
+            # Build metadata for filtering
+            filter_metadata = {
+                "namespace": effective_namespace,
+            }
+            if effective_namespace == "user" and user_id:
+                filter_metadata["user_id"] = user_id
+
             self.knowledge.add_content(
                 name=learning_data["title"],
                 text_content=text_content,
                 reader=TextReader(),
                 skip_if_exists=True,
+                metadata=filter_metadata,
             )
 
             log_debug(f"LearnedKnowledgeStore.save: saved learning '{title}' (namespace: {effective_namespace})")
@@ -1075,7 +1068,6 @@ class LearnedKnowledgeStore(LearningStore):
 
         effective_namespace = namespace or "global"
 
-        # Validate "user" namespace has user_id
         if effective_namespace == "user" and not user_id:
             log_warning("LearnedKnowledgeStore.asave: 'user' namespace requires user_id")
             return False
@@ -1098,12 +1090,20 @@ class LearnedKnowledgeStore(LearningStore):
             learning_obj = self.schema(**learning_data)
             text_content = self._to_text_content(learning=learning_obj)
 
+            # Build metadata for filtering - this is the key fix!
+            filter_metadata = {
+                "namespace": effective_namespace,
+            }
+            if effective_namespace == "user" and user_id:
+                filter_metadata["user_id"] = user_id
+
             if hasattr(self.knowledge, "aadd_content"):
                 await self.knowledge.aadd_content(
                     name=learning_data["title"],
                     text_content=text_content,
                     reader=TextReader(),
                     skip_if_exists=True,
+                    metadata=filter_metadata,
                 )
             else:
                 self.knowledge.add_content(
@@ -1111,6 +1111,7 @@ class LearnedKnowledgeStore(LearningStore):
                     text_content=text_content,
                     reader=TextReader(),
                     skip_if_exists=True,
+                    metadata=filter_metadata,
                 )
 
             log_debug(f"LearnedKnowledgeStore.asave: saved learning '{title}' (namespace: {effective_namespace})")
