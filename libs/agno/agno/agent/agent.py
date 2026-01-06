@@ -1180,6 +1180,7 @@ class Agent:
                         wait_for_open_threads(
                             memory_future=memory_future,  # type: ignore
                             cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
+                            learning_future=learning_future,  # type: ignore
                         )
 
                         return self._handle_agent_run_paused(
@@ -1214,6 +1215,7 @@ class Agent:
                     wait_for_open_threads(
                         memory_future=memory_future,  # type: ignore
                         cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
+                        learning_future=learning_future,  # type: ignore
                     )
 
                     # 12. Create session summary
@@ -1301,6 +1303,8 @@ class Agent:
                 memory_future.cancel()
             if cultural_knowledge_future is not None and not cultural_knowledge_future.done():
                 cultural_knowledge_future.cancel()
+            if learning_future is not None and not learning_future.done():
+                learning_future.cancel()
 
             # Always disconnect connectable tools
             self._disconnect_connectable_tools()
@@ -1552,6 +1556,7 @@ class Agent:
                     yield from wait_for_thread_tasks_stream(
                         memory_future=memory_future,  # type: ignore
                         cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
+                        learning_future=learning_future,  # type: ignore
                         stream_events=stream_events,
                         run_response=run_response,
                     )
@@ -1702,6 +1707,8 @@ class Agent:
                 memory_future.cancel()
             if cultural_knowledge_future is not None and not cultural_knowledge_future.done():
                 cultural_knowledge_future.cancel()
+            if learning_future is not None and not learning_future.done():
+                learning_future.cancel()
 
             # Always disconnect connectable tools
             self._disconnect_connectable_tools()
@@ -2181,7 +2188,9 @@ class Agent:
                     # We should break out of the run function
                     if any(tool_call.is_paused for tool_call in run_response.tools or []):
                         await await_for_open_threads(
-                            memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task
+                            memory_task=memory_task,
+                            cultural_knowledge_task=cultural_knowledge_task,
+                            learning_future=learning_task,
                         )
                         return await self._ahandle_agent_run_paused(
                             run_response=run_response, session=agent_session, user_id=user_id
@@ -2213,7 +2222,9 @@ class Agent:
 
                     # 14. Wait for background memory creation
                     await await_for_open_threads(
-                        memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task
+                        memory_task=memory_task,
+                        cultural_knowledge_task=cultural_knowledge_task,
+                        learning_future=learning_task,
                     )
 
                     # 15. Create session summary
@@ -2329,6 +2340,12 @@ class Agent:
                     await cultural_knowledge_task
                 except asyncio.CancelledError:
                     pass
+            if learning_task is not None and not learning_task.done():
+                learning_task.cancel()
+                try:
+                    await learning_task
+                except asyncio.CancelledError:
+                    pass
 
             # Always clean up the run tracking
             await acleanup_run(run_response.run_id)  # type: ignore
@@ -2373,6 +2390,7 @@ class Agent:
 
         memory_task = None
         cultural_knowledge_task = None
+        learning_task = None
 
         # 1. Read or create session. Reads from the database if provided.
         agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
@@ -2577,6 +2595,7 @@ class Agent:
                         async for item in await_for_thread_tasks_stream(
                             memory_task=memory_task,
                             cultural_knowledge_task=cultural_knowledge_task,
+                            learning_task=learning_task,
                             stream_events=stream_events,
                             run_response=run_response,
                         ):
@@ -2607,6 +2626,7 @@ class Agent:
                     async for item in await_for_thread_tasks_stream(
                         memory_task=memory_task,
                         cultural_knowledge_task=cultural_knowledge_task,
+                        learning_task=learning_task,
                         stream_events=stream_events,
                         run_response=run_response,
                         events_to_skip=self.events_to_skip,
@@ -2799,6 +2819,13 @@ class Agent:
                 cultural_knowledge_task.cancel()
                 try:
                     await cultural_knowledge_task
+                except asyncio.CancelledError:
+                    pass
+
+            if learning_task is not None and not learning_task.done():
+                learning_task.cancel()
+                try:
+                    await learning_task
                 except asyncio.CancelledError:
                     pass
 

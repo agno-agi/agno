@@ -16,7 +16,7 @@ Compare with: 2_user_profile_agentic.py for explicit tool-based updates.
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, LearningMode, UserProfileConfig
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 
 # ============================================================================
 # Setup
@@ -27,10 +27,9 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 # BACKGROUND mode: Extraction happens automatically after each response.
 # The agent doesn't see or call any memory tools - it's invisible.
 agent = Agent(
-    model=OpenAIChat(id="gpt-4.1"),
+    model=OpenAIResponses(id="gpt-5.2"),
     db=db,
     learning=LearningMachine(
-        db=db,
         user_profile=UserProfileConfig(
             mode=LearningMode.BACKGROUND,
         ),
@@ -57,7 +56,6 @@ if __name__ == "__main__":
         session_id="session_1",
         stream=True,
     )
-
     agent.learning.user_profile_store.print(user_id=user_id)
 
     # Session 2: New session - profile is recalled automatically
@@ -71,3 +69,4 @@ if __name__ == "__main__":
         session_id="session_2",
         stream=True,
     )
+    agent.learning.user_profile_store.print(user_id=user_id)
