@@ -1,168 +1,116 @@
-"""Commit message generator and validator.
+#!/usr/bin/env python3
+"""Validate or generate conventional commit messages.
 
-This script provides utilities for generating and validating
-conventional commit messages.
+Usage:
+    ./commit_message.py validate "feat: add new feature"
+    ./commit_message.py generate feat "add user authentication"
+    ./commit_message.py types
 """
 
+import json
+import sys
+
 COMMIT_TYPES = {
-    "feat": "A new feature for the user",
-    "fix": "A bug fix for the user",
-    "docs": "Documentation only changes",
-    "style": "Formatting, missing semicolons, etc.",
-    "refactor": "Code change that neither fixes a bug nor adds a feature",
+    "feat": "A new feature",
+    "fix": "A bug fix",
+    "docs": "Documentation changes",
+    "style": "Formatting, no code change",
+    "refactor": "Code restructuring",
     "perf": "Performance improvement",
-    "test": "Adding or updating tests",
+    "test": "Adding/updating tests",
     "chore": "Maintenance tasks",
-    "build": "Build system or external dependencies",
-    "ci": "CI/CD configuration",
-    "revert": "Reverting a previous commit",
+    "build": "Build system changes",
+    "ci": "CI/CD changes",
 }
 
 
-def validate_commit_message(message: str) -> dict:
-    """Validate a commit message against conventional commit format.
-
-    Args:
-        message: The commit message to validate.
-
-    Returns:
-        A dictionary with validation results.
-    """
-    lines = message.strip().split("\n")
-    if not lines:
-        return {"valid": False, "errors": ["Commit message is empty"]}
-
+def validate(message: str) -> dict:
+    """Validate a commit message."""
     errors = []
     warnings = []
+
+    lines = message.strip().split("\n")
+    if not lines or not lines[0]:
+        return {"valid": False, "errors": ["Empty commit message"]}
+
     subject = lines[0]
 
-    # Check subject line format: type(scope): description
+    # Check format: type: description
     if ":" not in subject:
-        errors.append("Subject line must contain ':' separator")
+        errors.append("Missing ':' separator (expected 'type: description')")
     else:
-        prefix, description = subject.split(":", 1)
-        prefix = prefix.strip()
-        description = description.strip()
+        type_part, desc = subject.split(":", 1)
+        type_part = type_part.strip().rstrip("!").split("(")[0]
+        desc = desc.strip()
 
-        # Extract type and optional scope
-        if "(" in prefix and ")" in prefix:
-            commit_type = prefix.split("(")[0].rstrip("!")
-            _ = prefix.split("(")[1].split(")")[0]  # scope (for future use)
-        else:
-            commit_type = prefix.rstrip("!")
-
-        # Validate type
-        if commit_type not in COMMIT_TYPES:
+        if type_part not in COMMIT_TYPES:
             errors.append(
-                f"Invalid commit type '{commit_type}'. Valid types: {', '.join(COMMIT_TYPES.keys())}"
+                f"Unknown type '{type_part}'. Valid: {', '.join(COMMIT_TYPES.keys())}"
             )
 
-        # Check description
-        if not description:
-            errors.append("Description is required after ':'")
-        elif description[0].isupper():
-            warnings.append("Description should start with lowercase letter")
-        elif description.endswith("."):
-            warnings.append("Description should not end with a period")
+        if not desc:
+            errors.append("Description required after ':'")
 
-        # Check subject length
         if len(subject) > 72:
-            warnings.append(
-                f"Subject line is {len(subject)} chars (recommended max: 72)"
-            )
+            warnings.append(f"Subject is {len(subject)} chars (recommended: ≤72)")
 
-    # Check for body separation
-    if len(lines) > 1 and lines[1].strip():
-        warnings.append("Second line should be blank (separates subject from body)")
-
-    return {
-        "valid": len(errors) == 0,
-        "errors": errors,
-        "warnings": warnings,
-    }
+    return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
 
 
-def generate_commit_message(
-    commit_type: str,
-    scope: str | None,
-    description: str,
-    body: str | None = None,
-    breaking: bool = False,
-    issue_refs: list[str] | None = None,
-) -> str:
-    """Generate a conventional commit message.
+def generate(commit_type: str, description: str, scope: str = None) -> dict:
+    """Generate a commit message."""
+    if commit_type not in COMMIT_TYPES:
+        return {
+            "error": f"Unknown type '{commit_type}'. Valid: {', '.join(COMMIT_TYPES.keys())}"
+        }
 
-    Args:
-        commit_type: The type of commit (feat, fix, etc.).
-        scope: Optional scope of the change.
-        description: Short description of the change.
-        body: Optional detailed description.
-        breaking: Whether this is a breaking change.
-        issue_refs: Optional list of issue references (e.g., ["#123", "#456"]).
-
-    Returns:
-        A formatted commit message string.
-    """
-    # Build subject line
-    subject = commit_type
     if scope:
-        subject += f"({scope})"
-    if breaking:
-        subject += "!"
-    subject += f": {description}"
-
-    parts = [subject]
-
-    # Add body if provided
-    if body:
-        parts.append("")  # Blank line
-        parts.append(body)
-
-    # Add footer with issue references
-    if issue_refs:
-        parts.append("")  # Blank line
-        for ref in issue_refs:
-            if ref.startswith("#"):
-                parts.append(f"Closes {ref}")
-            else:
-                parts.append(ref)
-
-    # Add breaking change notice if applicable
-    if breaking and body:
-        parts.append("")
-        parts.append("BREAKING CHANGE: See description for migration steps.")
-
-    return "\n".join(parts)
-
-
-def suggest_commit_type(changed_files: list[str]) -> str:
-    """Suggest a commit type based on changed files.
-
-    Args:
-        changed_files: List of file paths that were changed.
-
-    Returns:
-        Suggested commit type.
-    """
-    test_files = [
-        f for f in changed_files if "test" in f.lower() or "spec" in f.lower()
-    ]
-    doc_files = [
-        f
-        for f in changed_files
-        if f.endswith((".md", ".rst", ".txt")) or "doc" in f.lower()
-    ]
-    config_files = [
-        f
-        for f in changed_files
-        if f.endswith((".yml", ".yaml", ".json", ".toml", ".ini"))
-    ]
-
-    if all(f in test_files for f in changed_files):
-        return "test"
-    elif all(f in doc_files for f in changed_files):
-        return "docs"
-    elif all(f in config_files for f in changed_files):
-        return "chore"
+        message = f"{commit_type}({scope}): {description}"
     else:
-        return "feat"  # Default suggestion
+        message = f"{commit_type}: {description}"
+
+    return {"message": message, "type": commit_type, "description": description}
+
+
+def list_types() -> dict:
+    """List all valid commit types."""
+    return {"types": COMMIT_TYPES}
+
+
+if __name__ == "__main__":
+    try:
+        if len(sys.argv) < 2:
+            print(
+                json.dumps(
+                    {
+                        "error": "Usage: commit_message.py <validate|generate|types> [args]"
+                    }
+                )
+            )
+            sys.exit(1)
+
+        command = sys.argv[1]
+
+        if command == "validate":
+            msg = sys.argv[2] if len(sys.argv) > 2 else sys.stdin.read()
+            result = validate(msg)
+        elif command == "generate":
+            if len(sys.argv) < 4:
+                result = {
+                    "error": "Usage: commit_message.py generate <type> <description> [scope]"
+                }
+            else:
+                commit_type = sys.argv[2]
+                description = sys.argv[3]
+                scope = sys.argv[4] if len(sys.argv) > 4 else None
+                result = generate(commit_type, description, scope)
+        elif command == "types":
+            result = list_types()
+        else:
+            result = {
+                "error": f"Unknown command '{command}'. Use: validate, generate, types"
+            }
+
+        print(json.dumps(result, indent=2))
+    except Exception as e:
+        print(json.dumps({"error": str(e)}))
