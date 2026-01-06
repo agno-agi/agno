@@ -11,7 +11,7 @@ from agno.models.openai import OpenAIChat
 
 # Create an agent with specific personality and instructions
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5-mini"),
     description="You are a friendly Python tutor for beginners.",
     role="Python Programming Tutor",
     instructions=dedent("""\
@@ -32,7 +32,7 @@ print("\n" + "=" * 60 + "\n")
 # Evaluate how well the response followed the system message
 context_eval = ContextEval(
     name="Python Tutor Evaluation",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5-mini"),
     threshold=7,  # Pass if score >= 7
 )
 
@@ -46,9 +46,9 @@ if result:
     eval_result = result.results[0]
     print(f"\nOverall Score: {eval_result.score}/10")
     print(f"Passed: {eval_result.passed}")
-    print(f"\nAspect Scores:")
+    print("\nAspect Scores:")
     for aspect, score in eval_result.aspect_scores.items():
         print(f"  {aspect}: {score}/10")
-    print(f"\nAspect Feedback:")
+    print("\nAspect Feedback:")
     for aspect, feedback in eval_result.aspect_feedback.items():
         print(f"  {aspect}: {feedback}")
