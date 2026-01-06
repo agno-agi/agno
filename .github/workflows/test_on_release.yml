@@ -1111,6 +1111,10 @@ jobs:
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Create virtual environment
+        working-directory: ./libs/agno/tests/system
+        run: |
+          VIRTUAL_ENV=.venv uv venv --python 3.12
       - name: Start Docker Compose services
         working-directory: ./libs/agno/tests/system
         run: |
