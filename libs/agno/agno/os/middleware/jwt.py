@@ -193,12 +193,9 @@ class JWTValidator:
         }
 
         # Configure audience verification
-        # If expected_audience is provided, we'll decode without audience verification first
-        # then manually verify the audience to provide better error messages
-        if expected_audience:
-            decode_options["verify_aud"] = False  # We'll verify manually
-        else:
-            decode_options["verify_aud"] = False
+        # We'll decode without audience verification and if we need to verify the audience,
+        # we'll manually verify the audience to provide better error messages
+        decode_options["verify_aud"] = False
 
         # If validation is disabled, decode without signature verification
         if not self.validate:
