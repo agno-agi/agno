@@ -7,11 +7,11 @@ from typing import Any, Dict, List, Optional, Union, cast
 from sqlalchemy import text
 
 from agno.db.base import BaseDb
-from agno.db.migrations.utils import quote_identifier
+from agno.db.migrations.utils import quote_db_identifier
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.utils.log import log_error, log_info, log_warning
-from agno.utils.string import sanitize_string, sanitize_strings_in_dict
+from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
 
 
 def convert_v1_metrics_to_v2(metrics_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -69,14 +69,14 @@ def convert_any_metrics_in_data(data: Any) -> Any:
                 converted_dict[key] = convert_any_metrics_in_data(value)
 
         # Sanitize all strings in the converted dict to remove null bytes
-        return sanitize_strings_in_dict(converted_dict)
+        return sanitize_postgres_strings(converted_dict)
 
     elif isinstance(data, list):
         return [convert_any_metrics_in_data(item) for item in data]
 
     elif isinstance(data, str):
         # Sanitize string values to remove null bytes
-        return sanitize_string(data)
+        return sanitize_postgres_string(data)
 
     else:
         # Not a dict, list, or string, return as-is
@@ -497,8 +497,10 @@ def get_table_content_in_batches(db: BaseDb, db_schema: str, table_name: str, ba
                 raise ValueError(f"Invalid database type: {type(db).__name__}")
 
             db_type = type(db).__name__
-            quoted_schema = quote_identifier(db_type, db_schema) if db_schema and db_schema.strip() else None
-            quoted_table = quote_identifier(db_type, table_name)
+            quoted_schema = (
+                quote_db_identifier(db_type=db_type, identifier=db_schema) if db_schema and db_schema.strip() else None
+            )
+            quoted_table = quote_db_identifier(db_type=db_type, identifier=table_name)
 
             offset = 0
             while True:
@@ -554,7 +556,7 @@ def parse_agent_sessions(v1_content: List[Dict[str, Any]]) -> List[AgentSession]
     for item in v1_content:
         session = {
             "agent_id": item.get("agent_id"),
-            "agent_data": sanitize_strings_in_dict(item.get("agent_data")) if item.get("agent_data") else None,
+            "agent_data": sanitize_postgres_strings(item.get("agent_data")) if item.get("agent_data") else None,
             "session_id": item.get("session_id"),
             "user_id": item.get("user_id"),
             "session_data": convert_session_data_comprehensively(item.get("session_data")),
@@ -587,7 +589,7 @@ def parse_team_sessions(v1_content: List[Dict[str, Any]]) -> List[TeamSession]:
     for item in v1_content:
         session = {
             "team_id": item.get("team_id"),
-            "team_data": sanitize_strings_in_dict(item.get("team_data")) if item.get("team_data") else None,
+            "team_data": sanitize_postgres_strings(item.get("team_data")) if item.get("team_data") else None,
             "session_id": item.get("session_id"),
             "user_id": item.get("user_id"),
             "session_data": convert_session_data_comprehensively(item.get("session_data")),
@@ -620,7 +622,9 @@ def parse_workflow_sessions(v1_content: List[Dict[str, Any]]) -> List[WorkflowSe
     for item in v1_content:
         session = {
             "workflow_id": item.get("workflow_id"),
-            "workflow_data": sanitize_strings_in_dict(item.get("workflow_data")) if item.get("workflow_data") else None,
+            "workflow_data": sanitize_postgres_strings(item.get("workflow_data"))
+            if item.get("workflow_data")
+            else None,
             "session_id": item.get("session_id"),
             "user_id": item.get("user_id"),
             "session_data": convert_session_data_comprehensively(item.get("session_data")),
@@ -628,7 +632,7 @@ def parse_workflow_sessions(v1_content: List[Dict[str, Any]]) -> List[WorkflowSe
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
             # Workflow v2 specific fields
-            "workflow_name": sanitize_string(item.get("workflow_name")) if item.get("workflow_name") else None,
+            "workflow_name": sanitize_postgres_string(item.get("workflow_name")) if item.get("workflow_name") else None,
             "runs": convert_any_metrics_in_data(item.get("runs")),
         }
         # Summary field sanitization is handled in convert_session_data_comprehensively
@@ -655,14 +659,14 @@ def parse_memories(v1_content: List[Dict[str, Any]]) -> List[UserMemory]:
     for item in v1_content:
         memory = {
             "memory_id": item.get("memory_id"),
-            "memory": sanitize_strings_in_dict(item.get("memory")) if item.get("memory") else None,
-            "input": sanitize_string(item.get("input")) if item.get("input") else None,
+            "memory": sanitize_postgres_strings(item.get("memory")) if item.get("memory") else None,
+            "input": sanitize_postgres_string(item.get("input")) if item.get("input") else None,
             "updated_at": item.get("updated_at"),
             "agent_id": item.get("agent_id"),
             "team_id": item.get("team_id"),
             "user_id": item.get("user_id"),
-            "topics": sanitize_strings_in_dict(item.get("topics")) if item.get("topics") else None,
-            "feedback": sanitize_string(item.get("feedback")) if item.get("feedback") else None,
+            "topics": sanitize_postgres_strings(item.get("topics")) if item.get("topics") else None,
+            "feedback": sanitize_postgres_string(item.get("feedback")) if item.get("feedback") else None,
         }
         memories_v2.append(UserMemory.from_dict(memory))
 

@@ -27,7 +27,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.string import generate_id, sanitize_string, sanitize_strings_in_dict
+from agno.utils.string import generate_id, sanitize_postgres_string, sanitize_postgres_strings
 
 try:
     from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, and_, case, func, or_, select, update
@@ -671,7 +671,7 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 # Sanitize session_name to remove null bytes
-                sanitized_session_name = sanitize_string(session_name)
+                sanitized_session_name = sanitize_postgres_string(session_name)
                 stmt = (
                     update(table)
                     .where(table.c.session_id == session_id)
@@ -739,19 +739,19 @@ class PostgresDb(BaseDb):
             session_dict = session.to_dict()
             # Sanitize JSON/dict fields to remove null bytes from nested strings
             if session_dict.get("agent_data"):
-                session_dict["agent_data"] = sanitize_strings_in_dict(session_dict["agent_data"])
+                session_dict["agent_data"] = sanitize_postgres_strings(session_dict["agent_data"])
             if session_dict.get("team_data"):
-                session_dict["team_data"] = sanitize_strings_in_dict(session_dict["team_data"])
+                session_dict["team_data"] = sanitize_postgres_strings(session_dict["team_data"])
             if session_dict.get("workflow_data"):
-                session_dict["workflow_data"] = sanitize_strings_in_dict(session_dict["workflow_data"])
+                session_dict["workflow_data"] = sanitize_postgres_strings(session_dict["workflow_data"])
             if session_dict.get("session_data"):
-                session_dict["session_data"] = sanitize_strings_in_dict(session_dict["session_data"])
+                session_dict["session_data"] = sanitize_postgres_strings(session_dict["session_data"])
             if session_dict.get("summary"):
-                session_dict["summary"] = sanitize_string(session_dict["summary"])
+                session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
             if session_dict.get("metadata"):
-                session_dict["metadata"] = sanitize_strings_in_dict(session_dict["metadata"])
+                session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
             if session_dict.get("runs"):
-                session_dict["runs"] = sanitize_strings_in_dict(session_dict["runs"])
+                session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
 
             if isinstance(session, AgentSession):
                 with self.Session() as sess, sess.begin():
@@ -907,15 +907,15 @@ class PostgresDb(BaseDb):
                     session_dict = agent_session.to_dict()
                     # Sanitize JSON/dict fields to remove null bytes from nested strings
                     if session_dict.get("agent_data"):
-                        session_dict["agent_data"] = sanitize_strings_in_dict(session_dict["agent_data"])
+                        session_dict["agent_data"] = sanitize_postgres_strings(session_dict["agent_data"])
                     if session_dict.get("session_data"):
-                        session_dict["session_data"] = sanitize_strings_in_dict(session_dict["session_data"])
+                        session_dict["session_data"] = sanitize_postgres_strings(session_dict["session_data"])
                     if session_dict.get("summary"):
-                        session_dict["summary"] = sanitize_string(session_dict["summary"])
+                        session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
                     if session_dict.get("metadata"):
-                        session_dict["metadata"] = sanitize_strings_in_dict(session_dict["metadata"])
+                        session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
                     if session_dict.get("runs"):
-                        session_dict["runs"] = sanitize_strings_in_dict(session_dict["runs"])
+                        session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
 
                     # Use preserved updated_at if flag is set (even if None), otherwise use current time
                     updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
@@ -964,15 +964,15 @@ class PostgresDb(BaseDb):
                     session_dict = team_session.to_dict()
                     # Sanitize JSON/dict fields to remove null bytes from nested strings
                     if session_dict.get("team_data"):
-                        session_dict["team_data"] = sanitize_strings_in_dict(session_dict["team_data"])
+                        session_dict["team_data"] = sanitize_postgres_strings(session_dict["team_data"])
                     if session_dict.get("session_data"):
-                        session_dict["session_data"] = sanitize_strings_in_dict(session_dict["session_data"])
+                        session_dict["session_data"] = sanitize_postgres_strings(session_dict["session_data"])
                     if session_dict.get("summary"):
-                        session_dict["summary"] = sanitize_string(session_dict["summary"])
+                        session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
                     if session_dict.get("metadata"):
-                        session_dict["metadata"] = sanitize_strings_in_dict(session_dict["metadata"])
+                        session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
                     if session_dict.get("runs"):
-                        session_dict["runs"] = sanitize_strings_in_dict(session_dict["runs"])
+                        session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
 
                     # Use preserved updated_at if flag is set (even if None), otherwise use current time
                     updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
@@ -1021,15 +1021,15 @@ class PostgresDb(BaseDb):
                     session_dict = workflow_session.to_dict()
                     # Sanitize JSON/dict fields to remove null bytes from nested strings
                     if session_dict.get("workflow_data"):
-                        session_dict["workflow_data"] = sanitize_strings_in_dict(session_dict["workflow_data"])
+                        session_dict["workflow_data"] = sanitize_postgres_strings(session_dict["workflow_data"])
                     if session_dict.get("session_data"):
-                        session_dict["session_data"] = sanitize_strings_in_dict(session_dict["session_data"])
+                        session_dict["session_data"] = sanitize_postgres_strings(session_dict["session_data"])
                     if session_dict.get("summary"):
-                        session_dict["summary"] = sanitize_string(session_dict["summary"])
+                        session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
                     if session_dict.get("metadata"):
-                        session_dict["metadata"] = sanitize_strings_in_dict(session_dict["metadata"])
+                        session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
                     if session_dict.get("runs"):
-                        session_dict["runs"] = sanitize_strings_in_dict(session_dict["runs"])
+                        session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
 
                     # Use preserved updated_at if flag is set (even if None), otherwise use current time
                     updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
@@ -1409,8 +1409,8 @@ class PostgresDb(BaseDb):
                 return None
 
             # Sanitize string fields to remove null bytes (PostgreSQL doesn't allow them)
-            sanitized_input = sanitize_string(memory.input)
-            sanitized_feedback = sanitize_string(memory.feedback)
+            sanitized_input = sanitize_postgres_string(memory.input)
+            sanitized_feedback = sanitize_postgres_string(memory.feedback)
 
             with self.Session() as sess, sess.begin():
                 if memory.memory_id is None:
@@ -1499,8 +1499,8 @@ class PostgresDb(BaseDb):
                 updated_at = memory.updated_at if preserve_updated_at else current_time
 
                 # Sanitize string fields to remove null bytes (PostgreSQL doesn't allow them)
-                sanitized_input = sanitize_string(memory.input)
-                sanitized_feedback = sanitize_string(memory.feedback)
+                sanitized_input = sanitize_postgres_string(memory.input)
+                sanitized_feedback = sanitize_postgres_string(memory.feedback)
 
                 memory_records.append(
                     {
@@ -1885,10 +1885,10 @@ class PostgresDb(BaseDb):
                         if value is not None:
                             # Sanitize string fields to remove null bytes
                             if table_column in string_fields and isinstance(value, str):
-                                value = sanitize_string(value)
+                                value = sanitize_postgres_string(value)
                             # Sanitize metadata dict if present
                             elif table_column == "metadata" and isinstance(value, dict):
-                                value = sanitize_strings_in_dict(value)
+                                value = sanitize_postgres_strings(value)
                             insert_data[table_column] = value
                             # Don't include ID in update_fields since it's the primary key
                             if table_column != "id":
@@ -1946,14 +1946,16 @@ class PostgresDb(BaseDb):
                 eval_data = eval_run.model_dump()
                 # Sanitize string fields in eval_run
                 if eval_data.get("name"):
-                    eval_data["name"] = sanitize_string(eval_data["name"])
+                    eval_data["name"] = sanitize_postgres_string(eval_data["name"])
                 if eval_data.get("evaluated_component_name"):
-                    eval_data["evaluated_component_name"] = sanitize_string(eval_data["evaluated_component_name"])
+                    eval_data["evaluated_component_name"] = sanitize_postgres_string(
+                        eval_data["evaluated_component_name"]
+                    )
                 # Sanitize nested dicts/JSON fields
                 if eval_data.get("eval_data"):
-                    eval_data["eval_data"] = sanitize_strings_in_dict(eval_data["eval_data"])
+                    eval_data["eval_data"] = sanitize_postgres_strings(eval_data["eval_data"])
                 if eval_data.get("eval_input"):
-                    eval_data["eval_input"] = sanitize_strings_in_dict(eval_data["eval_input"])
+                    eval_data["eval_input"] = sanitize_postgres_strings(eval_data["eval_input"])
 
                 stmt = postgresql.insert(table).values(
                     {"created_at": current_time, "updated_at": current_time, **eval_data}
@@ -2171,7 +2173,7 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 # Sanitize string field to remove null bytes
-                sanitized_name = sanitize_string(name)
+                sanitized_name = sanitize_postgres_string(name)
                 stmt = (
                     table.update()
                     .where(table.c.run_id == eval_run_id)
@@ -2374,12 +2376,12 @@ class PostgresDb(BaseDb):
             content_dict = serialize_cultural_knowledge(cultural_knowledge)
             # Sanitize content_dict to remove null bytes from nested strings
             if content_dict:
-                content_dict = sanitize_strings_in_dict(content_dict)
+                content_dict = sanitize_postgres_strings(content_dict)
 
             # Sanitize string fields to remove null bytes (PostgreSQL doesn't allow them)
-            sanitized_name = sanitize_string(cultural_knowledge.name)
-            sanitized_summary = sanitize_string(cultural_knowledge.summary)
-            sanitized_input = sanitize_string(cultural_knowledge.input)
+            sanitized_name = sanitize_postgres_string(cultural_knowledge.name)
+            sanitized_summary = sanitize_postgres_string(cultural_knowledge.summary)
+            sanitized_input = sanitize_postgres_string(cultural_knowledge.input)
 
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(
@@ -2387,7 +2389,7 @@ class PostgresDb(BaseDb):
                     name=sanitized_name,
                     summary=sanitized_summary,
                     content=content_dict if content_dict else None,
-                    metadata=sanitize_strings_in_dict(cultural_knowledge.metadata)
+                    metadata=sanitize_postgres_strings(cultural_knowledge.metadata)
                     if cultural_knowledge.metadata
                     else None,
                     input=sanitized_input,
@@ -2402,7 +2404,7 @@ class PostgresDb(BaseDb):
                         name=sanitized_name,
                         summary=sanitized_summary,
                         content=content_dict if content_dict else None,
-                        metadata=sanitize_strings_in_dict(cultural_knowledge.metadata)
+                        metadata=sanitize_postgres_strings(cultural_knowledge.metadata)
                         if cultural_knowledge.metadata
                         else None,
                         input=sanitized_input,
@@ -2566,11 +2568,11 @@ class PostgresDb(BaseDb):
             trace_dict.pop("error_count", None)
             # Sanitize string fields and nested JSON structures
             if trace_dict.get("name"):
-                trace_dict["name"] = sanitize_string(trace_dict["name"])
+                trace_dict["name"] = sanitize_postgres_string(trace_dict["name"])
             if trace_dict.get("status"):
-                trace_dict["status"] = sanitize_string(trace_dict["status"])
+                trace_dict["status"] = sanitize_postgres_string(trace_dict["status"])
             # Sanitize any nested dict/JSON fields
-            trace_dict = sanitize_strings_in_dict(trace_dict)
+            trace_dict = sanitize_postgres_strings(trace_dict)
 
             with self.Session() as sess, sess.begin():
                 # Use upsert to handle concurrent inserts atomically
@@ -2897,11 +2899,11 @@ class PostgresDb(BaseDb):
                 span_dict = span.to_dict()
                 # Sanitize string fields and nested JSON structures
                 if span_dict.get("name"):
-                    span_dict["name"] = sanitize_string(span_dict["name"])
+                    span_dict["name"] = sanitize_postgres_string(span_dict["name"])
                 if span_dict.get("status_code"):
-                    span_dict["status_code"] = sanitize_string(span_dict["status_code"])
+                    span_dict["status_code"] = sanitize_postgres_string(span_dict["status_code"])
                 # Sanitize any nested dict/JSON fields
-                span_dict = sanitize_strings_in_dict(span_dict)
+                span_dict = sanitize_postgres_strings(span_dict)
                 stmt = postgresql.insert(table).values(span_dict)
                 sess.execute(stmt)
 
@@ -2927,11 +2929,11 @@ class PostgresDb(BaseDb):
                     span_dict = span.to_dict()
                     # Sanitize string fields and nested JSON structures
                     if span_dict.get("name"):
-                        span_dict["name"] = sanitize_string(span_dict["name"])
+                        span_dict["name"] = sanitize_postgres_string(span_dict["name"])
                     if span_dict.get("status_code"):
-                        span_dict["status_code"] = sanitize_string(span_dict["status_code"])
+                        span_dict["status_code"] = sanitize_postgres_string(span_dict["status_code"])
                     # Sanitize any nested dict/JSON fields
-                    span_dict = sanitize_strings_in_dict(span_dict)
+                    span_dict = sanitize_postgres_strings(span_dict)
                     stmt = postgresql.insert(table).values(span_dict)
                     sess.execute(stmt)
 

@@ -1,12 +1,12 @@
-def quote_identifier(db_type: str, identifier: str) -> str:
-    """Quote an identifier (table name, schema name) based on database type.
+def quote_db_identifier(db_type: str, identifier: str) -> str:
+    """Add the right quotes to the given identifier string (table name, schema name) based on db type.
 
     Args:
         db_type: The database type name (e.g., "PostgresDb", "MySQLDb", "SqliteDb")
-        identifier: The identifier to quote
+        identifier: The identifier string to add quotes to
 
     Returns:
-        The quoted identifier
+        The properly quoted identifier string
     """
     if db_type in ("PostgresDb", "AsyncPostgresDb"):
         return f'"{identifier}"'

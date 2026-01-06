@@ -28,7 +28,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.string import sanitize_string, sanitize_strings_in_dict
+from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
 
 try:
     from sqlalchemy import Index, String, Table, UniqueConstraint, and_, case, func, or_, update
@@ -688,7 +688,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 # Sanitize session_name to remove null bytes
-                sanitized_session_name = sanitize_string(session_name)
+                sanitized_session_name = sanitize_postgres_string(session_name)
                 stmt = (
                     update(table)
                     .where(table.c.session_id == session_id)
@@ -753,20 +753,19 @@ class AsyncPostgresDb(AsyncBaseDb):
             session_dict = session.to_dict()
             # Sanitize JSON/dict fields to remove null bytes from nested strings
             if session_dict.get("agent_data"):
-                session_dict["agent_data"] = sanitize_strings_in_dict(session_dict["agent_data"])
+                session_dict["agent_data"] = sanitize_postgres_strings(session_dict["agent_data"])
             if session_dict.get("team_data"):
-                session_dict["team_data"] = sanitize_strings_in_dict(session_dict["team_data"])
+                session_dict["team_data"] = sanitize_postgres_strings(session_dict["team_data"])
             if session_dict.get("workflow_data"):
-                session_dict["workflow_data"] = sanitize_strings_in_dict(session_dict["workflow_data"])
+                session_dict["workflow_data"] = sanitize_postgres_strings(session_dict["workflow_data"])
             if session_dict.get("session_data"):
-                session_dict["session_data"] = sanitize_strings_in_dict(session_dict["session_data"])
+                session_dict["session_data"] = sanitize_postgres_strings(session_dict["session_data"])
             if session_dict.get("summary"):
-                # Summary is a dict from SessionSummary.to_dict(), sanitize nested strings
-                session_dict["summary"] = sanitize_strings_in_dict(session_dict["summary"])
+                session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
             if session_dict.get("metadata"):
-                session_dict["metadata"] = sanitize_strings_in_dict(session_dict["metadata"])
+                session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
             if session_dict.get("runs"):
-                session_dict["runs"] = sanitize_strings_in_dict(session_dict["runs"])
+                session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
 
             if isinstance(session, AgentSession):
                 async with self.async_session_factory() as sess, sess.begin():
@@ -1296,12 +1295,12 @@ class AsyncPostgresDb(AsyncBaseDb):
             content_dict = serialize_cultural_knowledge(cultural_knowledge)
             # Sanitize content_dict to remove null bytes from nested strings
             if content_dict:
-                content_dict = sanitize_strings_in_dict(content_dict)
+                content_dict = sanitize_postgres_strings(content_dict)
 
             # Sanitize string fields to remove null bytes (PostgreSQL doesn't allow them)
-            sanitized_name = sanitize_string(cultural_knowledge.name)
-            sanitized_summary = sanitize_string(cultural_knowledge.summary)
-            sanitized_input = sanitize_string(cultural_knowledge.input)
+            sanitized_name = sanitize_postgres_string(cultural_knowledge.name)
+            sanitized_summary = sanitize_postgres_string(cultural_knowledge.summary)
+            sanitized_input = sanitize_postgres_string(cultural_knowledge.input)
 
             async with self.async_session_factory() as sess, sess.begin():
                 # Use PostgreSQL-specific insert with on_conflict_do_update
@@ -1310,7 +1309,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     name=sanitized_name,
                     summary=sanitized_summary,
                     content=content_dict if content_dict else None,
-                    metadata=sanitize_strings_in_dict(cultural_knowledge.metadata)
+                    metadata=sanitize_postgres_strings(cultural_knowledge.metadata)
                     if cultural_knowledge.metadata
                     else None,
                     input=sanitized_input,
@@ -1325,7 +1324,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     "name": sanitized_name,
                     "summary": sanitized_summary,
                     "content": content_dict if content_dict else None,
-                    "metadata": sanitize_strings_in_dict(cultural_knowledge.metadata)
+                    "metadata": sanitize_postgres_strings(cultural_knowledge.metadata)
                     if cultural_knowledge.metadata
                     else None,
                     "input": sanitized_input,
@@ -1447,11 +1446,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             current_time = int(time.time())
 
             # Sanitize string fields to remove null bytes (PostgreSQL doesn't allow them)
-            sanitized_input = sanitize_string(memory.input)
-            sanitized_feedback = sanitize_string(memory.feedback)
+            sanitized_input = sanitize_postgres_string(memory.input)
+            sanitized_feedback = sanitize_postgres_string(memory.feedback)
             # Sanitize JSONB fields to remove null bytes from nested strings
-            sanitized_memory = sanitize_strings_in_dict(memory.memory) if memory.memory else None
-            sanitized_topics = sanitize_strings_in_dict(memory.topics) if memory.topics else None
+            sanitized_memory = sanitize_postgres_strings(memory.memory) if memory.memory else None
+            sanitized_topics = sanitize_postgres_strings(memory.topics) if memory.topics else None
 
             async with self.async_session_factory() as sess:
                 async with sess.begin():
@@ -1830,10 +1829,10 @@ class AsyncPostgresDb(AsyncBaseDb):
                         if value is not None:
                             # Sanitize string fields to remove null bytes
                             if table_column in string_fields and isinstance(value, str):
-                                value = sanitize_string(value)
+                                value = sanitize_postgres_string(value)
                             # Sanitize metadata dict if present
                             elif table_column == "metadata" and isinstance(value, dict):
-                                value = sanitize_strings_in_dict(value)
+                                value = sanitize_postgres_strings(value)
                             insert_data[table_column] = value
                             # Don't include ID in update_fields since it's the primary key
                             if table_column != "id":
@@ -1891,14 +1890,16 @@ class AsyncPostgresDb(AsyncBaseDb):
                 eval_data = eval_run.model_dump()
                 # Sanitize string fields in eval_run
                 if eval_data.get("name"):
-                    eval_data["name"] = sanitize_string(eval_data["name"])
+                    eval_data["name"] = sanitize_postgres_string(eval_data["name"])
                 if eval_data.get("evaluated_component_name"):
-                    eval_data["evaluated_component_name"] = sanitize_string(eval_data["evaluated_component_name"])
+                    eval_data["evaluated_component_name"] = sanitize_postgres_string(
+                        eval_data["evaluated_component_name"]
+                    )
                 # Sanitize nested dicts/JSON fields
                 if eval_data.get("eval_data"):
-                    eval_data["eval_data"] = sanitize_strings_in_dict(eval_data["eval_data"])
+                    eval_data["eval_data"] = sanitize_postgres_strings(eval_data["eval_data"])
                 if eval_data.get("eval_input"):
-                    eval_data["eval_input"] = sanitize_strings_in_dict(eval_data["eval_input"])
+                    eval_data["eval_input"] = sanitize_postgres_strings(eval_data["eval_input"])
 
                 stmt = postgresql.insert(table).values(
                     {"created_at": current_time, "updated_at": current_time, **eval_data}
@@ -2104,7 +2105,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="evals")
             async with self.async_session_factory() as sess, sess.begin():
                 # Sanitize string field to remove null bytes
-                sanitized_name = sanitize_string(name)
+                sanitized_name = sanitize_postgres_string(name)
                 stmt = (
                     table.update()
                     .where(table.c.run_id == eval_run_id)
@@ -2258,11 +2259,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             trace_dict.pop("error_count", None)
             # Sanitize string fields and nested JSON structures
             if trace_dict.get("name"):
-                trace_dict["name"] = sanitize_string(trace_dict["name"])
+                trace_dict["name"] = sanitize_postgres_string(trace_dict["name"])
             if trace_dict.get("status"):
-                trace_dict["status"] = sanitize_string(trace_dict["status"])
+                trace_dict["status"] = sanitize_postgres_string(trace_dict["status"])
             # Sanitize any nested dict/JSON fields
-            trace_dict = sanitize_strings_in_dict(trace_dict)
+            trace_dict = sanitize_postgres_strings(trace_dict)
 
             async with self.async_session_factory() as sess, sess.begin():
                 # Use upsert to handle concurrent inserts atomically
@@ -2584,11 +2585,11 @@ class AsyncPostgresDb(AsyncBaseDb):
                 span_dict = span.to_dict()
                 # Sanitize string fields and nested JSON structures
                 if span_dict.get("name"):
-                    span_dict["name"] = sanitize_string(span_dict["name"])
+                    span_dict["name"] = sanitize_postgres_string(span_dict["name"])
                 if span_dict.get("status_code"):
-                    span_dict["status_code"] = sanitize_string(span_dict["status_code"])
+                    span_dict["status_code"] = sanitize_postgres_string(span_dict["status_code"])
                 # Sanitize any nested dict/JSON fields
-                span_dict = sanitize_strings_in_dict(span_dict)
+                span_dict = sanitize_postgres_strings(span_dict)
                 stmt = postgresql.insert(table).values(span_dict)
                 await sess.execute(stmt)
 
@@ -2612,11 +2613,11 @@ class AsyncPostgresDb(AsyncBaseDb):
                     span_dict = span.to_dict()
                     # Sanitize string fields and nested JSON structures
                     if span_dict.get("name"):
-                        span_dict["name"] = sanitize_string(span_dict["name"])
+                        span_dict["name"] = sanitize_postgres_string(span_dict["name"])
                     if span_dict.get("status_code"):
-                        span_dict["status_code"] = sanitize_string(span_dict["status_code"])
+                        span_dict["status_code"] = sanitize_postgres_string(span_dict["status_code"])
                     # Sanitize any nested dict/JSON fields
-                    span_dict = sanitize_strings_in_dict(span_dict)
+                    span_dict = sanitize_postgres_strings(span_dict)
                     stmt = postgresql.insert(table).values(span_dict)
                     await sess.execute(stmt)
 
