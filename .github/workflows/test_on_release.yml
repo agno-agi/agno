@@ -1153,7 +1153,7 @@ jobs:
           GATEWAY_URL: http://localhost:7001
           AGNO_TELEMETRY: false
         run: |
-          pytest test_agentos_routes.py -v --tb=short
+          pytest ./tests -v --tb=short
       - name: Show container logs on failure
         if: failure()
         working-directory: ./libs/agno/tests/system
