@@ -85,10 +85,13 @@ class RemoteAgent(BaseRemote):
 
         # TODO: Implement A2A Agent Card
         if self.protocol == "a2a":
+            from agno.client.a2a.schemas import AgentCard
+            agent_card: Optional[AgentCard] = self.a2a_client.get_agent_card()
+            
             return AgentResponse(
                 id=self.agent_id,
-                name=self.agent_id,
-                description=f"A2A agent: {self.agent_id}",
+                name=agent_card.name if agent_card else self.agent_id,
+                description=agent_card.description if agent_card else f"A2A agent: {self.agent_id}",
             )
 
         current_time = time.time()
@@ -104,7 +107,7 @@ class RemoteAgent(BaseRemote):
         self._cached_agent_config = (config, current_time)
         return config
 
-    def refresh_config(self) -> Optional["AgentResponse"]:
+    async def refresh_config(self) -> Optional["AgentResponse"]:
         """
         Force refresh the cached agent config.
         Returns None for A2A protocol.
@@ -117,7 +120,7 @@ class RemoteAgent(BaseRemote):
             self._cached_agent_config = None
             return None
 
-        config: AgentResponse = self.agentos_client.get_agent(self.agent_id)
+        config: AgentResponse = await self.agentos_client.aget_agent(self.agent_id)
         self._cached_agent_config = (config, time.time())
         return config
 

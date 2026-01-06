@@ -103,7 +103,7 @@ remote_workflow = RemoteWorkflow(base_url=REMOTE_SERVER_URL, workflow_id="qa-wor
 # ADK Remote agent (A2A protocol)
 adk_facts_agent = RemoteAgent(
     base_url=ADK_SERVER_URL,
-    agent_id="facts_agent",
+    agent_id="facts-agent",
     protocol="a2a",
     a2a_protocol="json-rpc",  # Needed for Google ADK servers
 )

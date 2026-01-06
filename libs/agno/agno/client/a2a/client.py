@@ -12,7 +12,7 @@ from uuid import uuid4
 from agno.client.a2a.schemas import AgentCard, Artifact, StreamEvent, TaskResult
 from agno.exceptions import RemoteServerUnavailableError
 from agno.media import Audio, File, Image, Video
-from agno.utils.http import get_default_async_client
+from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_warning
 
 try:
@@ -483,7 +483,34 @@ class A2AClient:
                 original_error=e,
             ) from e
 
-    async def get_agent_card(self) -> Optional[AgentCard]:
+    def get_agent_card(self) -> Optional[AgentCard]:
+        """Get agent card for capability discovery.
+
+        Note: Not all A2A servers support agent cards. This method returns
+        None if the server doesn't provide an agent card.
+
+        Returns:
+            AgentCard if available, None otherwise
+        """
+        client = get_default_sync_client()
+
+        agent_card_path = "/.well-known/agent-card.json"
+
+        response = client.get(f"{self.base_url}{agent_card_path}", timeout=self.timeout)
+        if response.status_code != 200:
+            return None
+
+        data = response.json()
+        return AgentCard(
+            name=data.get("name", "Unknown"),
+            url=data.get("url", self.base_url),
+            description=data.get("description"),
+            version=data.get("version"),
+            capabilities=data.get("capabilities", []),
+            metadata=data.get("metadata"),
+        )
+
+    async def aget_agent_card(self) -> Optional[AgentCard]:
         """Get agent card for capability discovery.
 
         Note: Not all A2A servers support agent cards. This method returns

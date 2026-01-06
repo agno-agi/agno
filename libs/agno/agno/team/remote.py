@@ -109,7 +109,7 @@ class RemoteTeam(BaseRemote):
         self._cached_team_config = (config, current_time)
         return config
 
-    def refresh_config(self) -> Optional["TeamResponse"]:
+    async def refresh_config(self) -> Optional["TeamResponse"]:
         """
         Force refresh the cached team config from remote.
         """
@@ -120,7 +120,7 @@ class RemoteTeam(BaseRemote):
         if self.protocol == "a2a":
             return None
 
-        config: TeamResponse = self.agentos_client.get_team(self.team_id)
+        config: TeamResponse = await self.agentos_client.aget_team(self.team_id)
         self._cached_team_config = (config, time.time())
         return config
 

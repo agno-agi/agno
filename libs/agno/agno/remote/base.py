@@ -381,8 +381,15 @@ class BaseRemote:
         self._cached_config = None
         self._cached_agent_card = None
 
-        self.agentos_client = self.get_os_client()
-        self.a2a_client = self.get_a2a_client()
+        self.agentos_client = None
+        self.a2a_client = None
+        
+        if protocol == "agentos":
+            self.agentos_client = self.get_os_client()
+        elif protocol == "a2a":
+            self.a2a_client = self.get_a2a_client()
+        else:
+            raise ValueError(f"Invalid protocol: {protocol}")
 
     def get_os_client(self) -> "AgentOSClient":
         """Get an AgentOSClient for fetching remote configuration.
@@ -417,36 +424,6 @@ class BaseRemote:
             protocol=self.a2a_protocol,
         )
 
-    @property
-    def _agent_card(self) -> Optional["AgentCard"]:
-        """Get agent card for A2A protocol agents, cached with TTL.
-
-        Fetches the agent card from the standard /.well-known/agent.json endpoint
-        to populate agent metadata (name, description, etc.) for A2A agents.
-
-        Returns None for non-A2A protocols or if the server doesn't support agent cards.
-        """
-        if self.protocol != "a2a":
-            return None
-
-        current_time = time.time()
-
-        # Check if cache is valid
-        if self._cached_agent_card is not None:
-            agent_card, cached_at = self._cached_agent_card
-            if current_time - cached_at < self.config_ttl:
-                return agent_card
-
-        import asyncio
-
-        try:
-            loop = asyncio.get_event_loop()
-            agent_card = loop.run_until_complete(self.get_a2a_client().get_agent_card())
-            self._cached_agent_card = (agent_card, current_time)
-            return agent_card
-        except Exception:
-            self._cached_agent_card = (None, current_time)
-            return None
 
     @property
     def _config(self) -> "ConfigResponse":
@@ -466,11 +443,11 @@ class BaseRemote:
         self._cached_config = (config, current_time)
         return config
 
-    def refresh_os_config(self) -> "ConfigResponse":
+    async def refresh_os_config(self) -> "ConfigResponse":
         """Force refresh the cached OS config."""
         from agno.os.schema import ConfigResponse
 
-        config: ConfigResponse = self.agentos_client.get_config()
+        config: ConfigResponse = await self.agentos_client.aget_config()
         self._cached_config = (config, time.time())
         return config
 
@@ -501,6 +478,60 @@ class BaseRemote:
             return {"Authorization": f"Bearer {auth_token}"}
         return None
 
+    def get_agent_card(self) -> Optional["AgentCard"]:
+        """Get agent card for A2A protocol agents, cached with TTL.
+
+        Fetches the agent card from the standard /.well-known/agent.json endpoint
+        to populate agent metadata (name, description, etc.) for A2A agents.
+
+        Returns None for non-A2A protocols or if the server doesn't support agent cards.
+        """
+        if self.protocol != "a2a":
+            return None
+
+        current_time = time.time()
+
+        # Check if cache is valid
+        if self._cached_agent_card is not None:
+            agent_card, cached_at = self._cached_agent_card
+            if current_time - cached_at < self.config_ttl:
+                return agent_card
+
+        try:
+            agent_card = self.a2a_client.get_agent_card()
+            self._cached_agent_card = (agent_card, current_time)
+            return agent_card
+        except Exception:
+            self._cached_agent_card = (None, current_time)
+            return None
+        
+    async def aget_agent_card(self) -> Optional["AgentCard"]:
+        """Get agent card for A2A protocol agents, cached with TTL.
+
+        Fetches the agent card from the standard /.well-known/agent.json endpoint
+        to populate agent metadata (name, description, etc.) for A2A agents.
+
+        Returns None for non-A2A protocols or if the server doesn't support agent cards.
+        """
+        if self.protocol != "a2a":
+            return None
+
+        current_time = time.time()
+
+        # Check if cache is valid
+        if self._cached_agent_card is not None:
+            agent_card, cached_at = self._cached_agent_card
+            if current_time - cached_at < self.config_ttl:
+                return agent_card
+
+        try:
+            agent_card = await self.a2a_client.aget_agent_card()
+            self._cached_agent_card = (agent_card, current_time)
+            return agent_card
+        except Exception:
+            self._cached_agent_card = (None, current_time)
+            return None
+        
     @abstractmethod
     def arun(  # type: ignore
         self,

@@ -90,11 +90,11 @@ class RemoteWorkflow(BaseRemote):
         self._cached_workflow_config = (config, current_time)
         return config
 
-    def refresh_config(self) -> "WorkflowResponse":
+    async def refresh_config(self) -> "WorkflowResponse":
         """Force refresh the cached workflow config."""
         from agno.os.routers.workflows.schema import WorkflowResponse
 
-        config: WorkflowResponse = self.agentos_client.get_workflow(self.workflow_id)
+        config: WorkflowResponse = await self.agentos_client.aget_workflow(self.workflow_id)
         self._cached_workflow_config = (config, time.time())
         return config
 

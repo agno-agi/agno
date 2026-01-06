@@ -109,7 +109,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://ai:ai@postgres:5432/ai
       REMOTE_SERVER_URL: http://remote-server:7002
-      ADK_SERVER_URL: http://adk-server:8001
+      ADK_SERVER_URL: http://adk-server:7003
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       RELOAD: "true"
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-test-secret-key-for-system-tests-do-not-use-in-production}
