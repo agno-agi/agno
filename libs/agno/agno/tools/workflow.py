@@ -1,9 +1,10 @@
 import json
 from textwrap import dedent
-from typing import Any, Dict, Optional
+from typing import Any, AsyncIterator, Dict, Iterator, Optional, Union
 
 from pydantic import BaseModel, Field
 
+from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutputEvent
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
 from agno.workflow.workflow import Workflow, WorkflowRunOutput
@@ -27,6 +28,7 @@ class WorkflowTools(Toolkit):
         add_few_shot: bool = False,
         few_shot_examples: Optional[str] = None,
         async_mode: bool = False,
+        stream: bool = False,
         **kwargs,
     ):
         # Add instructions for using this toolkit
@@ -40,6 +42,9 @@ class WorkflowTools(Toolkit):
 
         # The workflow to execute
         self.workflow: Workflow = workflow
+
+        # Whether to stream workflow events
+        self.stream: bool = stream
 
         super().__init__(
             name="workflow_tools",
@@ -56,9 +61,15 @@ class WorkflowTools(Toolkit):
                 self.register(self.think, name="think")
         if enable_run_workflow or all:
             if async_mode:
-                self.register(self.async_run_workflow, name="run_workflow")
+                if stream:
+                    self.register(self.async_run_workflow_stream, name="run_workflow")
+                else:
+                    self.register(self.async_run_workflow, name="run_workflow")
             else:
-                self.register(self.run_workflow, name="run_workflow")
+                if stream:
+                    self.register(self.run_workflow_stream, name="run_workflow")
+                else:
+                    self.register(self.run_workflow, name="run_workflow")
         if enable_analyze or all:
             if async_mode:
                 self.register(self.async_analyze, name="analyze")
@@ -163,6 +174,64 @@ class WorkflowTools(Toolkit):
             log_error(f"Error running workflow: {e}")
             return f"Error running workflow: {e}"
 
+    def run_workflow_stream(
+        self,
+        session_state: Dict[str, Any],
+        input: RunWorkflowInput,
+    ) -> Iterator[Union[WorkflowRunOutputEvent, str]]:
+        """Use this tool to execute the workflow with the specified inputs and parameters.
+        After thinking through the requirements, use this tool to run the workflow with appropriate inputs.
+        This version streams workflow events during execution.
+
+        Args:
+            input: The input data for the workflow.
+        """
+        if isinstance(input, dict):
+            input = RunWorkflowInput.model_validate(input)
+
+        try:
+            log_debug(f"Running workflow (streaming) with input: {input.input_data}")
+
+            user_id = session_state.get("current_user_id")
+            session_id = session_state.get("current_session_id")
+
+            # Execute the workflow with streaming
+            final_content = ""
+
+            for event in self.workflow.run(
+                input=input.input_data,
+                user_id=user_id,
+                session_id=session_id,
+                session_state=session_state,
+                additional_data=input.additional_data,
+                stream=True,
+                stream_events=True,
+            ):
+                # Yield workflow events for display
+                yield event
+
+                # Capture the final content from WorkflowCompletedEvent
+                if isinstance(event, WorkflowCompletedEvent):
+                    if event.content is not None:
+                        if isinstance(event.content, BaseModel):
+                            final_content = event.content.model_dump_json()
+                        else:
+                            final_content = str(event.content)
+
+            # Store result in session state (just the final content, not full workflow result)
+            if "workflow_results" not in session_state:
+                session_state["workflow_results"] = []
+
+            if final_content:
+                session_state["workflow_results"].append({"content": final_content})
+
+            # Yield final content as the tool result
+            yield final_content
+
+        except Exception as e:
+            log_error(f"Error running workflow: {e}")
+            yield f"Error running workflow: {e}"
+
     async def async_run_workflow(
         self,
         session_state: Dict[str, Any],
@@ -202,6 +271,65 @@ class WorkflowTools(Toolkit):
         except Exception as e:
             log_error(f"Error running workflow: {e}")
             return f"Error running workflow: {e}"
+
+    async def async_run_workflow_stream(
+        self,
+        session_state: Dict[str, Any],
+        input: RunWorkflowInput,
+    ) -> AsyncIterator[Union[WorkflowRunOutputEvent, str]]:
+        """Use this tool to execute the workflow with the specified inputs and parameters.
+        After thinking through the requirements, use this tool to run the workflow with appropriate inputs.
+        This version streams workflow events during execution.
+        Args:
+            input_data: The input data for the workflow (use a `str` for a simple input)
+            additional_data: The additional data for the workflow. This is a dictionary of key-value pairs that will be passed to the workflow. E.g. {"topic": "food", "style": "Humour"}
+        """
+        if isinstance(input, dict):
+            input = RunWorkflowInput.model_validate(input)
+
+        try:
+            log_debug(f"Running workflow (streaming) with input: {input.input_data}")
+
+            user_id = session_state.get("current_user_id")
+            session_id = session_state.get("current_session_id")
+
+            # Execute the workflow with streaming
+            final_content = ""
+            workflow_result: Optional[WorkflowRunOutput] = None
+
+            async for event in self.workflow.arun(
+                input=input.input_data,
+                user_id=user_id,
+                session_id=session_id,
+                session_state=session_state,
+                additional_data=input.additional_data,
+                stream=True,
+                stream_events=True,
+            ):
+                # Yield workflow events for display
+                yield event
+
+                # Capture the final content from WorkflowCompletedEvent
+                if isinstance(event, WorkflowCompletedEvent):
+                    if event.content is not None:
+                        if isinstance(event.content, BaseModel):
+                            final_content = event.content.model_dump_json()
+                        else:
+                            final_content = str(event.content)
+
+            # Store result in session state (just the final content, not full workflow result)
+            if "workflow_results" not in session_state:
+                session_state["workflow_results"] = []
+
+            if final_content:
+                session_state["workflow_results"].append({"content": final_content})
+
+            # Yield final content as the tool result
+            yield final_content
+
+        except Exception as e:
+            log_error(f"Error running workflow: {e}")
+            yield f"Error running workflow: {e}"
 
     def analyze(self, session_state: Dict[str, Any], analysis: str) -> str:
         """Use this tool to evaluate whether the workflow execution results are correct and sufficient.

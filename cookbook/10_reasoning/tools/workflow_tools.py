@@ -118,6 +118,7 @@ if __name__ == "__main__":
         enable_analyze=True,
         add_few_shot=True,
         few_shot_examples=FEW_SHOT_EXAMPLES,
+        stream=True,
     )
 
     agent = Agent(

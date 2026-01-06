@@ -125,6 +125,7 @@ workflow_tools = WorkflowTools(
     add_few_shot=True,
     few_shot_examples=FEW_SHOT_EXAMPLES,
     async_mode=True,
+    stream=True,
 )
 
 agent = Agent(
