@@ -1,15 +1,14 @@
 """
-Session Context: Planning Mode
-==============================
+Session Context: Summary Mode
+=============================
 Session Context tracks the current conversation's state:
 - What's been discussed
-- Current goals and their status
-- Active plans and progress
+- Key decisions made
+- Important context
 
-Planning mode (enable_planning=True) adds structured goal tracking -
-summary plus goal, plan steps, and progress markers.
+Summary mode provides lightweight tracking - a running summary without goal/plan structure.
 
-Compare with: 4_session_context_summary.py for lightweight tracking.
+Compare with: 3_session_context_planning.py for goal-oriented tracking.
 """
 
 from agno.agent import Agent
@@ -23,11 +22,12 @@ from agno.models.openai import OpenAIResponses
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
-# Planning mode: Tracks goals, plans, and progress in addition to summary.
-# Good for task-oriented conversations where you want structured progress.
+# Summary mode: Just tracks what's been discussed, no planning overhead.
+# Good for general conversations where you want continuity without structure.
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=db,
+    instructions="Be very concise. Give brief answers in 1-2 sentences.",
     learning=LearningMachine(session_context=True),
     markdown=True,
 )
@@ -37,42 +37,42 @@ agent = Agent(
 # ============================================================================
 
 if __name__ == "__main__":
-    user_id = "planner@example.com"
-    session_id = "migration_project"
+    user_id = "session@example.com"
+    session_id = "api_design"
 
-    # Turn 1: Define a goal
+    # Turn 1: Start discussion
     print("\n" + "=" * 60)
-    print("TURN 1: Define goal")
+    print("TURN 1: Start discussion")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "I need to migrate our app from MySQL to PostgreSQL. Give me quick main steps?",
+        "I'm designing a REST API for a todo app. PUT or PATCH for updates?",
         user_id=user_id,
         session_id=session_id,
         stream=True,
     )
     agent.learning.session_context_store.print(session_id=session_id)
 
-    # Turn 2: Work on first step
+    # Turn 2: Follow-up
     print("\n" + "=" * 60)
-    print("TURN 2: First step detail")
+    print("TURN 2: Follow-up question")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Let's start with schema analysis. Give me quick steps for that.",
+        "What URL structure for that endpoint?",
         user_id=user_id,
         session_id=session_id,
         stream=True,
     )
     agent.learning.session_context_store.print(session_id=session_id)
 
-    # Turn 3: Progress update
+    # Turn 3: Test recall
     print("\n" + "=" * 60)
-    print("TURN 3: Mark progress")
+    print("TURN 3: Test context recall")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Done analyzing the schema. Give me a quick next step.",
+        "What did we decide?",
         user_id=user_id,
         session_id=session_id,
         stream=True,
