@@ -28,10 +28,10 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=db,
+    instructions="Be concise.",
     learning=LearningMachine(
         entity_memory=EntityMemoryConfig(
             mode=LearningMode.BACKGROUND,
-            namespace="global",
         ),
     ),
     markdown=True,
@@ -44,17 +44,16 @@ agent = Agent(
 if __name__ == "__main__":
     from rich.pretty import pprint
 
-    user_id = "entity_bg@example.com"
+    user_id = "sales@example.com"
 
-    # Session 1: Discuss companies naturally
+    # Session 1: Mention entities naturally
     print("\n" + "=" * 60)
     print("SESSION 1: Discuss entities (extraction happens automatically)")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "I just had a meeting with Acme Corp. They're a fintech startup "
-        "in San Francisco using Python and PostgreSQL. Their CTO Jane Smith "
-        "seemed really interested in our analytics platform.",
+        "Just met with Acme Corp - fintech startup in SF. "
+        "CTO is Jane Smith, they use Python and Postgres.",
         user_id=user_id,
         session_id="session_1",
         stream=True,
@@ -64,14 +63,13 @@ if __name__ == "__main__":
     entities = agent.learning.entity_memory_store.search(query="", limit=10)
     pprint(entities)
 
-    # Session 2: Add more context
+    # Session 2: Add more info
     print("\n" + "=" * 60)
-    print("SESSION 2: More entity information")
+    print("SESSION 2: Add more entity info")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Acme Corp just closed their Series B - $50M led by Sequoia. "
-        "Jane mentioned they're hiring 20 more engineers.",
+        "Acme just raised $50M Series B from Sequoia.",
         user_id=user_id,
         session_id="session_2",
         stream=True,
