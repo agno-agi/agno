@@ -424,7 +424,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
                       or JWT_JWKS env var for inline JWKS JSON content.
             secret_key: (deprecated) Use verification_keys instead. If provided, will be added to verification_keys.
             algorithm: JWT algorithm (default: RS256). Common options: RS256 (asymmetric), HS256 (symmetric).
-            audience: Optional audience claim to validate against the token's 'aud' claim (default: None)
             validate: Whether to validate the JWT signature (default: True). If False, tokens are decoded
                      without signature verification and no verification key is required. Useful when
                      JWT verification is handled upstream (API Gateway, etc.).
@@ -436,7 +435,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
             user_id_claim: JWT claim name for user ID (default: "sub")
             session_id_claim: JWT claim name for session ID (default: "session_id")
             audience_claim: JWT claim name for audience/OS ID (default: "aud")
-            verify_audience: Whether to verify the audience claim matches AgentOS ID (default: False)
+            audience: Optional expected audience claim to validate against the token's audience claim (default: AgentOS ID)
+            verify_audience: Whether to verify the token's audience claim matches the expected audience claim (default: False)
             dependencies_claims: A list of claims to extract from the JWT token for dependencies
             session_state_claims: A list of claims to extract from the JWT token for session state
             scope_mappings: Optional dictionary mapping route patterns to required scopes.
