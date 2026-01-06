@@ -1159,3 +1159,60 @@ class SessionContextStore(LearningStore):
             f"model={has_model}, "
             f"enable_planning={self.config.enable_planning})"
         )
+
+    def print(self, session_id: str, *, raw: bool = False) -> None:
+        """Print formatted session context.
+
+        Args:
+            session_id: The session to print context for.
+            raw: If True, print raw dict using pprint instead of formatted panel.
+
+        Example:
+            >>> store.print(session_id="sess_123")
+            ╭─────────────── Session Context ───────────────╮
+            │ Summary: Debugging React performance issue... │
+            │ Goal: Fix DataTable re-renders                │
+            │ Plan:                                         │
+            │   1. Profile component renders                │
+            │   2. Identify unnecessary re-renders          │
+            │ Progress:                                     │
+            │   ✓ Profile component renders                 │
+            ╰──────────────── sess_123 ─────────────────────╯
+        """
+        from agno.learn.utils import print_panel
+
+        context = self.get(session_id=session_id)
+
+        lines = []
+
+        if context:
+            if hasattr(context, "summary") and context.summary:
+                lines.append(f"Summary: {context.summary}")
+
+            if hasattr(context, "goal") and context.goal:
+                if lines:
+                    lines.append("")
+                lines.append(f"Goal: {context.goal}")
+
+            if hasattr(context, "plan") and context.plan:
+                if lines:
+                    lines.append("")
+                lines.append("Plan:")
+                for i, step in enumerate(context.plan, 1):
+                    lines.append(f"  {i}. {step}")
+
+            if hasattr(context, "progress") and context.progress:
+                if lines:
+                    lines.append("")
+                lines.append("Progress:")
+                for step in context.progress:
+                    lines.append(f"  [green]✓[/green] {step}")
+
+        print_panel(
+            title="Session Context",
+            subtitle=session_id,
+            lines=lines,
+            empty_message="No session context",
+            raw_data=context,
+            raw=raw,
+        )

@@ -1592,3 +1592,90 @@ These insights are already in the knowledge base. Do not save variations of thes
             f"model={has_model}, "
             f"enable_agent_tools={self.config.enable_agent_tools})"
         )
+
+    def print(
+        self,
+        query: str,
+        *,
+        user_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        limit: int = 10,
+        raw: bool = False,
+    ) -> None:
+        """Print formatted learned knowledge search results.
+
+        Args:
+            query: Search query to find relevant learnings.
+            user_id: User ID for "user" namespace scoping.
+            namespace: Namespace to filter by.
+            limit: Maximum number of learnings to display.
+            raw: If True, print raw list using pprint instead of formatted panel.
+
+        Example:
+            >>> store.print(query="API design")
+            ╭───────────── Learned Knowledge ──────────────╮
+            │ 1. PostgreSQL JSONB indexing                 │
+            │    For frequently queried nested JSONB...    │
+            │    Context: When query performance degrades  │
+            │    Tags: postgresql, performance             │
+            │                                              │
+            │ 2. Handling rate limits in async clients     │
+            │    Implement exponential backoff with...     │
+            │    Context: When building API clients        │
+            │    Tags: api, async, rate-limiting           │
+            ╰──────────────── query: API ──────────────────╯
+        """
+        from agno.learn.utils import print_panel
+
+        learnings = self.search(
+            query=query,
+            user_id=user_id,
+            namespace=namespace,
+            limit=limit,
+        )
+
+        lines = []
+
+        for i, learning in enumerate(learnings, 1):
+            if i > 1:
+                lines.append("")  # Separator between learnings
+
+            # Title
+            title = getattr(learning, "title", None)
+            if title:
+                lines.append(f"[bold]{i}. {title}[/bold]")
+            else:
+                lines.append(f"[bold]{i}. (untitled)[/bold]")
+
+            # Learning content
+            content = getattr(learning, "learning", None)
+            if content:
+                # Truncate long content for display
+                if len(content) > 200:
+                    content = content[:200] + "..."
+                lines.append(f"   {content}")
+
+            # Context
+            context = getattr(learning, "context", None)
+            if context:
+                lines.append(f"   [dim]Context: {context}[/dim]")
+
+            # Tags
+            tags = getattr(learning, "tags", None)
+            if tags:
+                tags_str = ", ".join(tags)
+                lines.append(f"   [dim]Tags: {tags_str}[/dim]")
+
+            # Namespace (if not global)
+            ns = getattr(learning, "namespace", None)
+            if ns and ns != "global":
+                lines.append(f"   [dim]Namespace: {ns}[/dim]")
+
+        print_panel(
+            title="Learned Knowledge",
+            subtitle=f"query: {query[:30]}{'...' if len(query) > 30 else ''}",
+            lines=lines,
+            empty_message="No learnings found",
+            raw_data=learnings,
+            raw=raw,
+        )

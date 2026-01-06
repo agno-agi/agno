@@ -9,7 +9,7 @@ extraction errors from crashing the main agent.
 """
 
 from dataclasses import asdict, fields
-from typing import Any, Dict, Optional, Type, TypeVar
+from typing import Any, Dict, List, Optional, Type, TypeVar
 
 T = TypeVar("T")
 
@@ -93,6 +93,79 @@ def from_dict_safe(cls: Type[T], data: Any) -> Optional[T]:
         return cls(**kwargs)
     except Exception:
         return None
+
+
+def print_panel(
+    title: str,
+    subtitle: str,
+    lines: List[str],
+    *,
+    empty_message: str = "No data",
+    raw_data: Any = None,
+    raw: bool = False,
+) -> None:
+    """Print formatted panel output for learning stores.
+
+    Uses rich library for formatted output with a bordered panel.
+    Falls back to pprint when raw=True or rich is unavailable.
+
+    Args:
+        title: Panel title (e.g., "User Profile", "Session Context")
+        subtitle: Panel subtitle (e.g., user_id, session_id)
+        lines: Content lines to display inside the panel
+        empty_message: Message shown when lines is empty
+        raw_data: Object to pprint when raw=True
+        raw: If True, use pprint instead of formatted panel
+
+    Example:
+        >>> print_panel(
+        ...     title="User Profile",
+        ...     subtitle="alice@example.com",
+        ...     lines=["Name: Alice", "Memories:", "  [abc123] Loves Python"],
+        ...     raw_data=profile,
+        ... )
+        ╭──────────────── User Profile ─────────────────╮
+        │ Name: Alice                                   │
+        │ Memories:                                     │
+        │   [abc123] Loves Python                       │
+        ╰─────────────── alice@example.com ─────────────╯
+    """
+    if raw and raw_data is not None:
+        from pprint import pprint
+
+        pprint(to_dict_safe(raw_data) or raw_data)
+        return
+
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+
+        console = Console()
+
+        if not lines:
+            content = f"[dim]{empty_message}[/dim]"
+        else:
+            content = "\n".join(lines)
+
+        panel = Panel(
+            content,
+            title=f"[bold]{title}[/bold]",
+            subtitle=f"[dim]{subtitle}[/dim]",
+            border_style="blue",
+        )
+        console.print(panel)
+
+    except ImportError:
+        # Fallback if rich not installed
+        from pprint import pprint
+
+        print(f"=== {title} ({subtitle}) ===")
+        if not lines:
+            print(f"  {empty_message}")
+        else:
+            for line in lines:
+                print(f"  {line}")
+        print()
 
 
 def to_dict_safe(obj: Any) -> Optional[Dict[str, Any]]:

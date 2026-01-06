@@ -3144,3 +3144,132 @@ class EntityMemoryStore(LearningStore):
             f"model={has_model}, "
             f"enable_agent_tools={self.config.enable_agent_tools})"
         )
+
+    def print(
+        self,
+        entity_id: str,
+        entity_type: str,
+        *,
+        user_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        raw: bool = False,
+    ) -> None:
+        """Print formatted entity memory.
+
+        Args:
+            entity_id: The entity to print.
+            entity_type: Type of entity.
+            user_id: User ID for "user" namespace scoping.
+            namespace: Namespace to search in.
+            raw: If True, print raw dict using pprint instead of formatted panel.
+
+        Example:
+            >>> store.print(entity_id="acme_corp", entity_type="company")
+            ╭────────────────── Entity Memory ──────────────────╮
+            │ Acme Corporation (company)                        │
+            │ Enterprise software company                       │
+            │                                                   │
+            │ Properties:                                       │
+            │   industry: fintech                               │
+            │   size: startup                                   │
+            │                                                   │
+            │ Facts:                                            │
+            │   [dim][f1][/dim] Uses PostgreSQL for main DB     │
+            │   [dim][f2][/dim] API uses OAuth2 authentication  │
+            │                                                   │
+            │ Events:                                           │
+            │   [dim][e1][/dim] Launched v2.0 (2024-01-15)      │
+            │                                                   │
+            │ Relationships:                                    │
+            │   CEO → bob_smith                                 │
+            ╰────────────────── acme_corp ──────────────────────╯
+        """
+        from agno.learn.utils import print_panel
+
+        effective_namespace = namespace or self.config.namespace
+
+        entity = self.get(
+            entity_id=entity_id,
+            entity_type=entity_type,
+            user_id=user_id,
+            namespace=effective_namespace,
+        )
+
+        lines = []
+
+        if entity:
+            # Header: name and type
+            name = getattr(entity, "name", None)
+            etype = getattr(entity, "entity_type", entity_type)
+            if name:
+                lines.append(f"[bold]{name}[/bold] ({etype})")
+            else:
+                lines.append(f"[bold]{entity_id}[/bold] ({etype})")
+
+            # Description
+            description = getattr(entity, "description", None)
+            if description:
+                lines.append(description)
+
+            # Properties
+            properties = getattr(entity, "properties", {})
+            if properties:
+                lines.append("")
+                lines.append("Properties:")
+                for key, value in properties.items():
+                    lines.append(f"  {key}: {value}")
+
+            # Facts
+            facts = getattr(entity, "facts", [])
+            if facts:
+                lines.append("")
+                lines.append("Facts:")
+                for fact in facts:
+                    if isinstance(fact, dict):
+                        fact_id = fact.get("id", "?")
+                        content = fact.get("content", str(fact))
+                    else:
+                        fact_id = "?"
+                        content = str(fact)
+                    lines.append(f"  [dim]\\[{fact_id}][/dim] {content}")
+
+            # Events
+            events = getattr(entity, "events", [])
+            if events:
+                lines.append("")
+                lines.append("Events:")
+                for event in events:
+                    if isinstance(event, dict):
+                        event_id = event.get("id", "?")
+                        content = event.get("content", str(event))
+                        date = event.get("date")
+                        date_str = f" ({date})" if date else ""
+                    else:
+                        event_id = "?"
+                        content = str(event)
+                        date_str = ""
+                    lines.append(f"  [dim]\\[{event_id}][/dim] {content}{date_str}")
+
+            # Relationships
+            relationships = getattr(entity, "relationships", [])
+            if relationships:
+                lines.append("")
+                lines.append("Relationships:")
+                for rel in relationships:
+                    if isinstance(rel, dict):
+                        related_id = rel.get("entity_id", "?")
+                        relation = rel.get("relation", "related_to")
+                        direction = rel.get("direction", "outgoing")
+                        if direction == "outgoing":
+                            lines.append(f"  {relation} → {related_id}")
+                        else:
+                            lines.append(f"  {relation} ← {related_id}")
+
+        print_panel(
+            title="Entity Memory",
+            subtitle=f"{entity_type}/{entity_id}",
+            lines=lines,
+            empty_message="No entity found",
+            raw_data=entity,
+            raw=raw,
+        )

@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from dataclasses import fields as dc_fields
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Union, get_args, get_origin
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.learn.config import LearningMode, UserProfileConfig
 from agno.learn.schemas import UserProfile
@@ -1774,4 +1774,59 @@ class UserProfileStore(LearningStore):
             f"db={has_db}, "
             f"model={has_model}, "
             f"enable_agent_tools={self.config.enable_agent_tools})"
+        )
+
+    def print(self, user_id: str, *, raw: bool = False) -> None:
+        """Print formatted user profile.
+
+        Args:
+            user_id: The user to print profile for.
+            raw: If True, print raw dict using pprint instead of formatted panel.
+
+        Example:
+            >>> store.print(user_id="alice@example.com")
+            ╭──────────────── User Profile ─────────────────╮
+            │ Name: Alice                                   │
+            │ Preferred Name: Ali                           │
+            │ Memories:                                     │
+            │   [dim][a1b2c3d4][/dim] Loves Python          │
+            │   [dim][e5f6g7h8][/dim] Works at Anthropic    │
+            ╰─────────────── alice@example.com ─────────────╯
+        """
+        from agno.learn.utils import print_panel
+
+        profile = self.get(user_id=user_id)
+
+        lines = []
+
+        if profile:
+            # Add profile fields
+            updateable_fields = self._get_updateable_fields()
+            for field_name in updateable_fields:
+                value = getattr(profile, field_name, None)
+                if value:
+                    display_name = field_name.replace("_", " ").title()
+                    lines.append(f"{display_name}: {value}")
+
+            # Add memories
+            if hasattr(profile, "memories") and profile.memories:
+                if lines:
+                    lines.append("")  # Blank line before memories
+                lines.append("Memories:")
+                for mem in profile.memories:
+                    if isinstance(mem, dict):
+                        mem_id = mem.get("id", "?")
+                        content = mem.get("content", str(mem))
+                    else:
+                        mem_id = "?"
+                        content = str(mem)
+                    lines.append(f"  [dim]\\[{mem_id}][/dim] {content}")
+
+        print_panel(
+            title="User Profile",
+            subtitle=user_id,
+            lines=lines,
+            empty_message="No profile data",
+            raw_data=profile,
+            raw=raw,
         )
