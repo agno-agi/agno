@@ -11,7 +11,7 @@ from agno.models.openai import OpenAIChat
 from agno.skills import LocalSkills, Skills
 
 # Get the skills directory relative to this file
-skills_dir = Path(__file__).parent / "skills"
+skills_dir = Path(__file__).parent / "sample_skills"
 
 # Create an agent with skills loaded from the directory
 agent = Agent(
