@@ -1145,15 +1145,18 @@ jobs:
             exit 1
           fi
       - name: Install test dependencies
+        working-directory: ./libs/agno/tests/system
         run: |
-          pip install pytest pytest-asyncio httpx python-dotenv PyJWT
+          source .venv/bin/activate
+          VIRTUAL_ENV=.venv uv pip install -r requirements.txt
       - name: Run system tests
         working-directory: ./libs/agno/tests/system
         env:
           GATEWAY_URL: http://localhost:7001
           AGNO_TELEMETRY: false
         run: |
-          pytest ./tests -v --tb=short
+          source .venv/bin/activate
+          python -m pytest ./tests -v --tb=short
       - name: Show container logs on failure
         if: failure()
         working-directory: ./libs/agno/tests/system
