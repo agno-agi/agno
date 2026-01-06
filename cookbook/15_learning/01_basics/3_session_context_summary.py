@@ -28,12 +28,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=db,
-    instructions="Help users accomplish their goals. Track progress and next steps.",
-    learning=LearningMachine(
-        session_context=SessionContextConfig(
-            enable_planning=True,
-        ),
-    ),
+    learning=LearningMachine(session_context=True),
     markdown=True,
 )
 
@@ -51,7 +46,7 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "I need to migrate our app from MySQL to PostgreSQL. What are the main steps?",
+        "I need to migrate our app from MySQL to PostgreSQL. Give me quick main steps?",
         user_id=user_id,
         session_id=session_id,
         stream=True,
@@ -64,7 +59,7 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Let's start with schema analysis. What should I look for?",
+        "Let's start with schema analysis. Give me quick steps for that.",
         user_id=user_id,
         session_id=session_id,
         stream=True,
@@ -77,7 +72,7 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Done analyzing the schema. What's next?",
+        "Done analyzing the schema. Give me a quick next step.",
         user_id=user_id,
         session_id=session_id,
         stream=True,
