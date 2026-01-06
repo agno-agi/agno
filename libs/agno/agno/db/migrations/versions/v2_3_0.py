@@ -10,7 +10,7 @@ import time
 from typing import Any, List, Tuple
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.db.migrations.utils import quote_identifier
+from agno.db.migrations.utils import quote_db_identifier
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
@@ -141,8 +141,8 @@ def _migrate_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
 
     db_schema = db.db_schema or "public"  # type: ignore
     db_type = type(db).__name__
-    quoted_schema = quote_identifier(db_type, db_schema)
-    quoted_table = quote_identifier(db_type, table_name)
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -278,9 +278,9 @@ def _migrate_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
 def _convert_json_to_jsonb(
     sess: Any, db_schema: str, json_columns: List[Tuple[str, str]], db_type: str = "PostgresDb"
 ) -> None:
-    quoted_schema = quote_identifier(db_type, db_schema) if db_schema else None
+    quoted_schema = quote_db_identifier(db_type, db_schema) if db_schema else None
     for column_name, table_name in json_columns:
-        quoted_table = quote_identifier(db_type, table_name)
+        quoted_table = quote_db_identifier(db_type, table_name)
         table_full_name = f"{quoted_schema}.{quoted_table}" if quoted_schema else quoted_table
         # Check current type
         col_type = sess.execute(
@@ -314,8 +314,8 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_type: str, table_name: 
 
     db_schema = db.db_schema or "public"  # type: ignore
     db_type = type(db).__name__
-    quoted_schema = quote_identifier(db_type, db_schema)
-    quoted_table = quote_identifier(db_type, table_name)
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     async with db.async_session_factory() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -454,9 +454,9 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_type: str, table_name: 
 async def _async_convert_json_to_jsonb(
     sess: Any, db_schema: str, json_columns: List[Tuple[str, str]], db_type: str = "AsyncPostgresDb"
 ) -> None:
-    quoted_schema = quote_identifier(db_type, db_schema) if db_schema else None
+    quoted_schema = quote_db_identifier(db_type, db_schema) if db_schema else None
     for column_name, table_name in json_columns:
-        quoted_table = quote_identifier(db_type, table_name)
+        quoted_table = quote_db_identifier(db_type, table_name)
         table_full_name = f"{quoted_schema}.{quoted_table}" if quoted_schema else quoted_table
         # Check current type
         result = await sess.execute(
@@ -491,8 +491,8 @@ def _migrate_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
 
     db_schema = db.db_schema or "agno"  # type: ignore
     db_type = type(db).__name__
-    quoted_schema = quote_identifier(db_type, db_schema)
-    quoted_table = quote_identifier(db_type, table_name)
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -580,7 +580,7 @@ def _migrate_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
 def _migrate_sqlite(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Migrate SQLite database."""
     db_type = type(db).__name__
-    quoted_table = quote_identifier(db_type, table_name)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -642,7 +642,7 @@ def _migrate_sqlite(db: BaseDb, table_type: str, table_name: str) -> bool:
 async def _migrate_async_sqlite(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     """Migrate SQLite database."""
     db_type = type(db).__name__
-    quoted_table = quote_identifier(db_type, table_name)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     async with db.async_session_factory() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -708,8 +708,8 @@ def _migrate_singlestore(db: BaseDb, table_type: str, table_name: str) -> bool:
 
     db_schema = db.db_schema or "agno"  # type: ignore
     db_type = type(db).__name__
-    quoted_schema = quote_identifier(db_type, db_schema)
-    quoted_table = quote_identifier(db_type, table_name)
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -791,8 +791,8 @@ def _revert_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
 
     db_schema = db.db_schema or "agno"  # type: ignore
     db_type = type(db).__name__
-    quoted_schema = quote_identifier(db_type, db_schema)
-    quoted_table = quote_identifier(db_type, table_name)
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -827,8 +827,8 @@ async def _revert_async_postgres(db: AsyncBaseDb, table_type: str, table_name: s
 
     db_schema = db.db_schema or "agno"  # type: ignore
     db_type = type(db).__name__
-    quoted_schema = quote_identifier(db_type, db_schema)
-    quoted_table = quote_identifier(db_type, table_name)
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     async with db.async_session_factory() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -864,8 +864,8 @@ def _revert_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
 
     db_schema = db.db_schema or "agno"  # type: ignore
     db_type = type(db).__name__
-    quoted_schema = quote_identifier(db_type, db_schema)
-    quoted_table = quote_identifier(db_type, table_name)
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -946,8 +946,8 @@ def _revert_singlestore(db: BaseDb, table_type: str, table_name: str) -> bool:
 
     db_schema = db.db_schema or "agno"  # type: ignore
     db_type = type(db).__name__
-    quoted_schema = quote_identifier(db_type, db_schema)
-    quoted_table = quote_identifier(db_type, table_name)
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
