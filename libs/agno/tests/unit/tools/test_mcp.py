@@ -72,6 +72,7 @@ def test_multimcp_urls_default_to_streamable_http():
     assert len(tools.server_params_list) == 2
     assert all(isinstance(params, StreamableHTTPClientParams) for params in tools.server_params_list)
 
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "kwargs",

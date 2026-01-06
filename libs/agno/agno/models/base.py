@@ -2027,7 +2027,14 @@ class Model(ABC):
                 for input_field in fc.arguments.get("user_input_fields", []):
                     field_type = input_field.get("field_type")
                     if isinstance(field_type, str):
-                        type_mapping = {"str": str, "int": int, "float": float, "bool": bool, "list": list, "dict": dict}
+                        type_mapping = {
+                            "str": str,
+                            "int": int,
+                            "float": float,
+                            "bool": bool,
+                            "list": list,
+                            "dict": dict,
+                        }
                         python_type = type_mapping.get(field_type, str)
                     elif isinstance(field_type, type):
                         python_type = field_type
@@ -2185,7 +2192,14 @@ class Model(ABC):
                 for input_field in fc.arguments.get("user_input_fields", []):
                     field_type = input_field.get("field_type")
                     if isinstance(field_type, str):
-                        type_mapping = {"str": str, "int": int, "float": float, "bool": bool, "list": list, "dict": dict}
+                        type_mapping = {
+                            "str": str,
+                            "int": int,
+                            "float": float,
+                            "bool": bool,
+                            "list": list,
+                            "dict": dict,
+                        }
                         python_type = type_mapping.get(field_type, str)
                     elif isinstance(field_type, type):
                         python_type = field_type
