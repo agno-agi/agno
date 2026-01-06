@@ -1,7 +1,7 @@
 import time
 import warnings
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -28,6 +28,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
 
 try:
     from sqlalchemy import Index, String, Table, UniqueConstraint, and_, case, func, or_, update
@@ -67,6 +68,15 @@ class AsyncPostgresDb(AsyncBaseDb):
             1. Use the db_engine if provided
             2. Use the db_url
             3. Raise an error if neither is provided
+
+        Connection Pool Configuration:
+            When creating an engine from db_url, the following settings are applied:
+            - pool_pre_ping=True: Validates connections before use to handle terminated
+              connections (e.g., "terminating connection due to administrator command")
+            - pool_recycle=3600: Recycles connections after 1 hour to prevent stale connections
+
+            These settings help handle connection terminations gracefully. If you need
+            custom pool settings, provide a pre-configured db_engine instead.
 
         Args:
             id (Optional[str]): The ID of the database.
@@ -112,7 +122,11 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         _engine: Optional[AsyncEngine] = db_engine
         if _engine is None and db_url is not None:
-            _engine = create_async_engine(db_url)
+            _engine = create_async_engine(
+                db_url,
+                pool_pre_ping=True,
+                pool_recycle=3600,
+            )
         if _engine is None:
             raise ValueError("One of db_url or db_engine must be provided")
 
@@ -522,6 +536,11 @@ class AsyncPostgresDb(AsyncBaseDb):
 
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
+
+                # Filter by session_type to ensure we get the correct session type
+                session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
+                stmt = stmt.where(table.c.session_type == session_type_value)
+
                 result = await sess.execute(stmt)
                 row = result.fetchone()
                 if row is None:
@@ -604,9 +623,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     stmt = stmt.where(table.c.created_at <= end_timestamp)
                 if session_name is not None:
                     stmt = stmt.where(
-                        func.coalesce(func.json_extract_path_text(table.c.session_data, "session_name"), "").ilike(
-                            f"%{session_name}%"
-                        )
+                        func.coalesce(table.c.session_data["session_name"].astext, "").ilike(f"%{session_name}%")
                     )
                 if session_type is not None:
                     session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
@@ -670,6 +687,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="sessions")
 
             async with self.async_session_factory() as sess, sess.begin():
+                # Sanitize session_name to remove null bytes
+                sanitized_session_name = sanitize_postgres_string(session_name)
                 stmt = (
                     update(table)
                     .where(table.c.session_id == session_id)
@@ -679,7 +698,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                             func.jsonb_set(
                                 func.cast(table.c.session_data, postgresql.JSONB),
                                 text("'{session_name}'"),
-                                func.to_jsonb(session_name),
+                                func.to_jsonb(sanitized_session_name),
                             ),
                             postgresql.JSON,
                         )
@@ -732,6 +751,21 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
             session_dict = session.to_dict()
+            # Sanitize JSON/dict fields to remove null bytes from nested strings
+            if session_dict.get("agent_data"):
+                session_dict["agent_data"] = sanitize_postgres_strings(session_dict["agent_data"])
+            if session_dict.get("team_data"):
+                session_dict["team_data"] = sanitize_postgres_strings(session_dict["team_data"])
+            if session_dict.get("workflow_data"):
+                session_dict["workflow_data"] = sanitize_postgres_strings(session_dict["workflow_data"])
+            if session_dict.get("session_data"):
+                session_dict["session_data"] = sanitize_postgres_strings(session_dict["session_data"])
+            if session_dict.get("summary"):
+                session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
+            if session_dict.get("metadata"):
+                session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
+            if session_dict.get("runs"):
+                session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
 
             if isinstance(session, AgentSession):
                 async with self.async_session_factory() as sess, sess.begin():
@@ -1259,16 +1293,26 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             # Serialize content, categories, and notes into a JSON dict for DB storage
             content_dict = serialize_cultural_knowledge(cultural_knowledge)
+            # Sanitize content_dict to remove null bytes from nested strings
+            if content_dict:
+                content_dict = cast(Dict[str, Any], sanitize_postgres_strings(content_dict))
+
+            # Sanitize string fields to remove null bytes (PostgreSQL doesn't allow them)
+            sanitized_name = sanitize_postgres_string(cultural_knowledge.name)
+            sanitized_summary = sanitize_postgres_string(cultural_knowledge.summary)
+            sanitized_input = sanitize_postgres_string(cultural_knowledge.input)
 
             async with self.async_session_factory() as sess, sess.begin():
                 # Use PostgreSQL-specific insert with on_conflict_do_update
                 insert_stmt = postgresql.insert(table).values(
                     id=cultural_knowledge.id,
-                    name=cultural_knowledge.name,
-                    summary=cultural_knowledge.summary,
+                    name=sanitized_name,
+                    summary=sanitized_summary,
                     content=content_dict if content_dict else None,
-                    metadata=cultural_knowledge.metadata,
-                    input=cultural_knowledge.input,
+                    metadata=sanitize_postgres_strings(cultural_knowledge.metadata)
+                    if cultural_knowledge.metadata
+                    else None,
+                    input=sanitized_input,
                     created_at=cultural_knowledge.created_at,
                     updated_at=int(time.time()),
                     agent_id=cultural_knowledge.agent_id,
@@ -1277,11 +1321,13 @@ class AsyncPostgresDb(AsyncBaseDb):
 
                 # Update all fields except id on conflict
                 update_dict = {
-                    "name": cultural_knowledge.name,
-                    "summary": cultural_knowledge.summary,
+                    "name": sanitized_name,
+                    "summary": sanitized_summary,
                     "content": content_dict if content_dict else None,
-                    "metadata": cultural_knowledge.metadata,
-                    "input": cultural_knowledge.input,
+                    "metadata": sanitize_postgres_strings(cultural_knowledge.metadata)
+                    if cultural_knowledge.metadata
+                    else None,
+                    "input": sanitized_input,
                     "updated_at": int(time.time()),
                     "agent_id": cultural_knowledge.agent_id,
                     "team_id": cultural_knowledge.team_id,
@@ -1399,6 +1445,13 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             current_time = int(time.time())
 
+            # Sanitize string fields to remove null bytes (PostgreSQL doesn't allow them)
+            sanitized_input = sanitize_postgres_string(memory.input)
+            sanitized_feedback = sanitize_postgres_string(memory.feedback)
+            # Sanitize JSONB fields to remove null bytes from nested strings
+            sanitized_memory = sanitize_postgres_strings(memory.memory) if memory.memory else None
+            sanitized_topics = sanitize_postgres_strings(memory.topics) if memory.topics else None
+
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     if memory.memory_id is None:
@@ -1406,25 +1459,27 @@ class AsyncPostgresDb(AsyncBaseDb):
 
                     stmt = postgresql.insert(table).values(
                         memory_id=memory.memory_id,
-                        memory=memory.memory,
-                        input=memory.input,
+                        memory=sanitized_memory,
+                        input=sanitized_input,
                         user_id=memory.user_id,
                         agent_id=memory.agent_id,
                         team_id=memory.team_id,
-                        topics=memory.topics,
-                        feedback=memory.feedback,
+                        topics=sanitized_topics,
+                        feedback=sanitized_feedback,
                         created_at=memory.created_at,
-                        updated_at=memory.created_at,
+                        updated_at=memory.updated_at
+                        if memory.updated_at is not None
+                        else (memory.created_at if memory.created_at is not None else current_time),
                     )
                     stmt = stmt.on_conflict_do_update(  # type: ignore
                         index_elements=["memory_id"],
                         set_=dict(
-                            memory=memory.memory,
-                            topics=memory.topics,
-                            input=memory.input,
+                            memory=sanitized_memory,
+                            topics=sanitized_topics,
+                            input=sanitized_input,
                             agent_id=memory.agent_id,
                             team_id=memory.team_id,
-                            feedback=memory.feedback,
+                            feedback=sanitized_feedback,
                             updated_at=current_time,
                             # Preserve created_at on update - don't overwrite existing value
                             created_at=table.c.created_at,
@@ -1538,7 +1593,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         try:
-            table = await self._get_table(table_type="metrics")
+            table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
 
             starting_date = await self._get_metrics_calculation_starting_date(table)
 
@@ -1614,7 +1669,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = await self._get_table(table_type="metrics")
+            table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -1664,7 +1719,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
         """
-        table = await self._get_table(table_type="knowledge")
+        table = await self._get_table(table_type="knowledge", create_table_if_not_found=True)
 
         try:
             async with self.async_session_factory() as sess, sess.begin():
@@ -1708,8 +1763,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 stmt = select(table)
 
                 # Apply sorting
-                if sort_by is not None:
-                    stmt = stmt.order_by(getattr(table.c, sort_by) * (1 if sort_order == "asc" else -1))
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
 
                 # Get total count before applying limit and pagination
                 count_stmt = select(func.count()).select_from(stmt.alias())
@@ -1766,10 +1820,19 @@ class AsyncPostgresDb(AsyncBaseDb):
                 }
 
                 # Build insert and update data only for fields that exist in the table
+                # String fields that need sanitization
+                string_fields = {"name", "description", "type", "status", "status_message", "external_id", "linked_to"}
+
                 for model_field, table_column in field_mapping.items():
                     if table_column in table_columns:
                         value = getattr(knowledge_row, model_field, None)
                         if value is not None:
+                            # Sanitize string fields to remove null bytes
+                            if table_column in string_fields and isinstance(value, str):
+                                value = sanitize_postgres_string(value)
+                            # Sanitize metadata dict if present
+                            elif table_column == "metadata" and isinstance(value, dict):
+                                value = sanitize_postgres_strings(value)
                             insert_data[table_column] = value
                             # Don't include ID in update_fields since it's the primary key
                             if table_column != "id":
@@ -1820,12 +1883,26 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during creation.
         """
         try:
-            table = await self._get_table(table_type="evals")
+            table = await self._get_table(table_type="evals", create_table_if_not_found=True)
 
             async with self.async_session_factory() as sess, sess.begin():
                 current_time = int(time.time())
+                eval_data = eval_run.model_dump()
+                # Sanitize string fields in eval_run
+                if eval_data.get("name"):
+                    eval_data["name"] = sanitize_postgres_string(eval_data["name"])
+                if eval_data.get("evaluated_component_name"):
+                    eval_data["evaluated_component_name"] = sanitize_postgres_string(
+                        eval_data["evaluated_component_name"]
+                    )
+                # Sanitize nested dicts/JSON fields
+                if eval_data.get("eval_data"):
+                    eval_data["eval_data"] = sanitize_postgres_strings(eval_data["eval_data"])
+                if eval_data.get("eval_input"):
+                    eval_data["eval_input"] = sanitize_postgres_strings(eval_data["eval_input"])
+
                 stmt = postgresql.insert(table).values(
-                    {"created_at": current_time, "updated_at": current_time, **eval_run.model_dump()}
+                    {"created_at": current_time, "updated_at": current_time, **eval_data}
                 )
                 await sess.execute(stmt)
 
@@ -2027,8 +2104,12 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             table = await self._get_table(table_type="evals")
             async with self.async_session_factory() as sess, sess.begin():
+                # Sanitize string field to remove null bytes
+                sanitized_name = sanitize_postgres_string(name)
                 stmt = (
-                    table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))
+                    table.update()
+                    .where(table.c.run_id == eval_run_id)
+                    .values(name=sanitized_name, updated_at=int(time.time()))
                 )
                 await sess.execute(stmt)
 
@@ -2176,6 +2257,13 @@ class AsyncPostgresDb(AsyncBaseDb):
             trace_dict = trace.to_dict()
             trace_dict.pop("total_spans", None)
             trace_dict.pop("error_count", None)
+            # Sanitize string fields and nested JSON structures
+            if trace_dict.get("name"):
+                trace_dict["name"] = sanitize_postgres_string(trace_dict["name"])
+            if trace_dict.get("status"):
+                trace_dict["status"] = sanitize_postgres_string(trace_dict["status"])
+            # Sanitize any nested dict/JSON fields
+            trace_dict = cast(Dict[str, Any], sanitize_postgres_strings(trace_dict))
 
             async with self.async_session_factory() as sess, sess.begin():
                 # Use upsert to handle concurrent inserts atomically
@@ -2494,7 +2582,15 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="spans", create_table_if_not_found=True)
 
             async with self.async_session_factory() as sess, sess.begin():
-                stmt = postgresql.insert(table).values(span.to_dict())
+                span_dict = span.to_dict()
+                # Sanitize string fields and nested JSON structures
+                if span_dict.get("name"):
+                    span_dict["name"] = sanitize_postgres_string(span_dict["name"])
+                if span_dict.get("status_code"):
+                    span_dict["status_code"] = sanitize_postgres_string(span_dict["status_code"])
+                # Sanitize any nested dict/JSON fields
+                span_dict = cast(Dict[str, Any], sanitize_postgres_strings(span_dict))
+                stmt = postgresql.insert(table).values(span_dict)
                 await sess.execute(stmt)
 
         except Exception as e:
@@ -2514,7 +2610,15 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 for span in spans:
-                    stmt = postgresql.insert(table).values(span.to_dict())
+                    span_dict = span.to_dict()
+                    # Sanitize string fields and nested JSON structures
+                    if span_dict.get("name"):
+                        span_dict["name"] = sanitize_postgres_string(span_dict["name"])
+                    if span_dict.get("status_code"):
+                        span_dict["status_code"] = sanitize_postgres_string(span_dict["status_code"])
+                    # Sanitize any nested dict/JSON fields
+                    span_dict = sanitize_postgres_strings(span_dict)
+                    stmt = postgresql.insert(table).values(span_dict)
                     await sess.execute(stmt)
 
         except Exception as e:
