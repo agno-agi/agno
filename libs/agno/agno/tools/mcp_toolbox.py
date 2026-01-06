@@ -3,7 +3,7 @@ from warnings import warn
 
 from agno.tools.function import Function
 from agno.tools.mcp import MCPTools
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     from toolbox_core import ToolboxClient  # type: ignore
@@ -53,6 +53,7 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
         if append_mcp_to_url and not url.endswith("/mcp"):
             mcp_url = url + "/mcp"
 
+        log_debug(f"Initializing MCPToolbox with URL: {mcp_url}")
         super().__init__(url=mcp_url, transport=transport, **kwargs)
 
         self.name = "toolbox_client"
