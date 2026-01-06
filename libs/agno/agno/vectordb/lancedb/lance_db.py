@@ -420,6 +420,39 @@ class LanceDb(VectorDb):
         # Use sync upsert for reliability
         self.upsert(content_hash=content_hash, documents=documents, filters=filters)
 
+    def _filter_results_by_metadata(
+        self, documents: List[Document], filters: Dict[str, Any], limit: int
+    ) -> List[Document]:
+        """
+        Filter documents by metadata and return up to limit results.
+
+        Args:
+            documents: List of documents to filter
+            filters: Dictionary of key-value pairs to filter on
+            limit: Maximum number of results to return
+
+        Returns:
+            Filtered list of documents
+        """
+        filtered_results = []
+        for doc in documents:
+            if doc.meta_data is None:
+                continue
+
+            # Check if all filter criteria match
+            match = True
+            for key, value in filters.items():
+                if key not in doc.meta_data or doc.meta_data[key] != value:
+                    match = False
+                    break
+
+            if match:
+                filtered_results.append(doc)
+                if len(filtered_results) >= limit:
+                    break
+
+        return filtered_results
+
     def search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
@@ -443,12 +476,16 @@ class LanceDb(VectorDb):
             log_warning("Filter Expressions are not yet supported in LanceDB. No filters will be applied.")
             filters = None
 
+        # When filters are provided, fetch more results to ensure we have enough after filtering
+        # LanceDB doesn't support native JSON filtering on string columns, so we filter in Python
+        search_limit = limit * 20 if filters else limit
+
         if self.search_type == SearchType.vector:
-            results = self.vector_search(query, limit)
+            results = self.vector_search(query, search_limit)
         elif self.search_type == SearchType.keyword:
-            results = self.keyword_search(query, limit)
+            results = self.keyword_search(query, search_limit)
         elif self.search_type == SearchType.hybrid:
-            results = self.hybrid_search(query, limit)
+            results = self.hybrid_search(query, search_limit)
         else:
             logger.error(f"Invalid search type '{self.search_type}'.")
             return []
@@ -460,22 +497,10 @@ class LanceDb(VectorDb):
 
         # Filter results based on metadata if filters are provided
         if filters and search_results:
-            filtered_results = []
-            for doc in search_results:
-                if doc.meta_data is None:
-                    continue
-
-                # Check if all filter criteria match
-                match = True
-                for key, value in filters.items():
-                    if key not in doc.meta_data or doc.meta_data[key] != value:
-                        match = False
-                        break
-
-                if match:
-                    filtered_results.append(doc)
-
-            search_results = filtered_results
+            search_results = self._filter_results_by_metadata(search_results, filters, limit)
+        else:
+            # Limit results if no filters
+            search_results = search_results[:limit]
 
         if self.reranker and search_results:
             search_results = self.reranker.rerank(query=query, documents=search_results)
@@ -503,9 +528,7 @@ class LanceDb(VectorDb):
         # Wrap sync search method to avoid sync/async table synchronization issues
         return self.search(query=query, limit=limit, filters=filters)
 
-    def vector_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-    ) -> List[Document]:
+    def vector_search(self, query: str, limit: int = 5) -> List[Document]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
@@ -525,9 +548,7 @@ class LanceDb(VectorDb):
 
         return results.to_pandas()
 
-    def hybrid_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-    ) -> List[Document]:
+    def hybrid_search(self, query: str, limit: int = 5) -> List[Document]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
@@ -556,9 +577,7 @@ class LanceDb(VectorDb):
 
         return results.to_pandas()
 
-    def keyword_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-    ) -> List[Document]:
+    def keyword_search(self, query: str, limit: int = 5) -> List[Document]:
         if self.table is None:
             logger.error("Table not initialized. Please create the table first")
             return []

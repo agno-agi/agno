@@ -5,7 +5,8 @@ from agno.utils.media import (
     download_knowledge_filters_sample_data,
 )
 from agno.vectordb.lancedb import LanceDb
-
+from agno.db.postgres.postgres import PostgresDb
+from agno.vectordb.pgvector import PgVector
 # Download all sample sales documents and get their paths
 downloaded_csv_paths = download_knowledge_filters_sample_data(
     num_files=4, file_extension=SampleDataFileExtension.CSV
@@ -13,9 +14,17 @@ downloaded_csv_paths = download_knowledge_filters_sample_data(
 
 # Initialize LanceDB
 # By default, it stores data in /tmp/lancedb
-vector_db = LanceDb(
+# vector_db = LanceDb(
+#     table_name="recipes",
+#     uri="tmp/lancedb",  # You can change this path to store data elsewhere
+# )
+vector_db = PgVector(
     table_name="recipes",
-    uri="tmp/lancedb",  # You can change this path to store data elsewhere
+    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+)
+contents_db = PostgresDb(
+    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+    knowledge_table="knowledge_contents",
 )
 
 # Step 1: Initialize knowledge with documents and metadata
@@ -24,50 +33,51 @@ knowledge = Knowledge(
     name="CSV Knowledge Base",
     description="A knowledge base for CSV files",
     vector_db=vector_db,
+    # contents_db=contents_db,
 )
 
 # Load all documents into the vector database
-knowledge.add_contents(
-    [
-        {
-            "path": downloaded_csv_paths[0],
-            "metadata": {
-                "data_type": "sales",
-                "quarter": "Q1",
-                "year": 2024,
-                "region": "north_america",
-                "currency": "USD",
-            },
-        },
-        {
-            "path": downloaded_csv_paths[1],
-            "metadata": {
-                "data_type": "sales",
-                "year": 2024,
-                "region": "europe",
-                "currency": "EUR",
-            },
-        },
-        {
-            "path": downloaded_csv_paths[2],
-            "metadata": {
-                "data_type": "survey",
-                "survey_type": "customer_satisfaction",
-                "year": 2024,
-                "target_demographic": "mixed",
-            },
-        },
-        {
-            "path": downloaded_csv_paths[3],
-            "metadata": {
-                "data_type": "financial",
-                "sector": "technology",
-                "year": 2024,
-                "report_type": "quarterly_earnings",
-            },
-        },
-    ],
-)
+# knowledge.add_contents(
+#     [
+#         {
+#             "path": downloaded_csv_paths[0],
+#             "metadata": {
+#                 "data_type": "sales",
+#                 "quarter": "Q1",
+#                 "year": 2024,
+#                 "region": "north_america",
+#                 "currency": "USD",
+#             },
+#         },
+#         {
+#             "path": downloaded_csv_paths[1],
+#             "metadata": {
+#                 "data_type": "sales",
+#                 "year": 2024,
+#                 "region": "europe",
+#                 "currency": "EUR",
+#             },
+#         },
+#         {
+#             "path": downloaded_csv_paths[2],
+#             "metadata": {
+#                 "data_type": "survey",
+#                 "survey_type": "customer_satisfaction",
+#                 "year": 2024,
+#                 "target_demographic": "mixed",
+#             },
+#         },
+#         {
+#             "path": downloaded_csv_paths[3],
+#             "metadata": {
+#                 "data_type": "financial",
+#                 "sector": "technology",
+#                 "year": 2024,
+#                 "report_type": "quarterly_earnings",
+#             },
+#         },
+#     ],
+# )
 
 # Step 2: Query the knowledge base with different filter combinations
 # ------------------------------------------------------------------------------

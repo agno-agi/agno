@@ -1,8 +1,10 @@
 from agno.agent import Agent
 from agno.knowledge.chunking.markdown import MarkdownChunking
+from agno.knowledge.chunking.semantic import SemanticChunking
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.markdown_reader import MarkdownReader
 from agno.vectordb.pgvector import PgVector
+import asyncio
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -10,13 +12,15 @@ knowledge = Knowledge(
     vector_db=PgVector(table_name="recipes_md_chunking", db_url=db_url),
 )
 
-knowledge.add_content(
-    url="https://raw.githubusercontent.com/agno-agi/agno/main/README.md",
+
+asyncio.run(knowledge.add_content_async(
+    # url="https://raw.githubusercontent.com/agno-agi/agno/main/README.md",
+    path="cookbook/08_knowledge/testing_resources/test.md",
     reader=MarkdownReader(
         name="MD Chunking Reader",
-        chunking_strategy=MarkdownChunking(),
+        chunking_strategy=MarkdownChunking(split_on_headings=True),
     ),
-)
+))
 
 agent = Agent(
     knowledge=knowledge,
