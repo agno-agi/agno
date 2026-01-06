@@ -545,9 +545,6 @@ class MultiMCPTools(Toolkit):
 
     async def build_tools(self) -> None:
         for session_list_idx, session in enumerate(self._sessions):
-            # Get server index for this session
-            server_idx = self._session_to_server_idx.get(session_list_idx, 0)
-
             # Get the list of tools from the MCP server
             available_tools = await session.list_tools()
 
