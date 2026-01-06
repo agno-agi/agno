@@ -875,11 +875,7 @@ class LearnedKnowledgeStore(LearningStore):
             filters = self._build_search_filters(user_id=user_id, namespace=namespace)
 
             # Search with filters if supported
-            if (
-                filters
-                and hasattr(self.knowledge, "search")
-                and "filters" in self.knowledge.search.__code__.co_varnames
-            ):
+            if filters:
                 results = self.knowledge.search(query=query, max_results=limit, filters=filters)
             else:
                 results = self.knowledge.search(query=query, max_results=limit)
@@ -917,16 +913,12 @@ class LearnedKnowledgeStore(LearningStore):
 
             # Search with filters if supported
             if hasattr(self.knowledge, "asearch"):
-                if filters and "filters" in self.knowledge.asearch.__code__.co_varnames:
+                if filters:
                     results = await self.knowledge.asearch(query=query, max_results=limit, filters=filters)
                 else:
                     results = await self.knowledge.asearch(query=query, max_results=limit)
             else:
-                if (
-                    filters
-                    and hasattr(self.knowledge, "search")
-                    and "filters" in self.knowledge.search.__code__.co_varnames
-                ):
+                if filters:
                     results = self.knowledge.search(query=query, max_results=limit, filters=filters)
                 else:
                     results = self.knowledge.search(query=query, max_results=limit)
@@ -999,13 +991,28 @@ class LearnedKnowledgeStore(LearningStore):
         team_id: Optional[str] = None,
         namespace: Optional[str] = None,
     ) -> bool:
-        """Save a learning to the knowledge base."""
+        """Save a learning to the knowledge base.
+
+        Args:
+            title: Short descriptive title.
+            learning: The actual insight.
+            context: When/why this applies.
+            tags: Tags for categorization.
+            user_id: User ID (required for "user" namespace).
+            agent_id: Agent that created this (stored as metadata for audit).
+            team_id: Team context (stored as metadata for audit).
+            namespace: Namespace for scoping (default: "global").
+
+        Returns:
+            True if saved successfully, False otherwise.
+        """
         if not self.knowledge:
             log_warning("LearnedKnowledgeStore.save: no knowledge base configured")
             return False
 
         effective_namespace = namespace or "global"
 
+        # Validate "user" namespace has user_id
         if effective_namespace == "user" and not user_id:
             log_warning("LearnedKnowledgeStore.save: 'user' namespace requires user_id")
             return False
@@ -1029,18 +1036,25 @@ class LearnedKnowledgeStore(LearningStore):
             text_content = self._to_text_content(learning=learning_obj)
 
             # Build metadata for filtering
-            filter_metadata = {
+            # Metadata must be passed separately to add_content for filters to work
+            filter_metadata: dict[str, Any] = {
                 "namespace": effective_namespace,
             }
             if effective_namespace == "user" and user_id:
                 filter_metadata["user_id"] = user_id
+            if agent_id:
+                filter_metadata["agent_id"] = agent_id
+            if team_id:
+                filter_metadata["team_id"] = team_id
+            if tags:
+                filter_metadata["tags"] = tags
 
             self.knowledge.add_content(
                 name=learning_data["title"],
                 text_content=text_content,
                 reader=TextReader(),
                 skip_if_exists=True,
-                metadata=filter_metadata,
+                metadata=filter_metadata,  # Pass metadata for filtering
             )
 
             log_debug(f"LearnedKnowledgeStore.save: saved learning '{title}' (namespace: {effective_namespace})")
@@ -1068,6 +1082,7 @@ class LearnedKnowledgeStore(LearningStore):
 
         effective_namespace = namespace or "global"
 
+        # Validate "user" namespace has user_id
         if effective_namespace == "user" and not user_id:
             log_warning("LearnedKnowledgeStore.asave: 'user' namespace requires user_id")
             return False
@@ -1090,12 +1105,19 @@ class LearnedKnowledgeStore(LearningStore):
             learning_obj = self.schema(**learning_data)
             text_content = self._to_text_content(learning=learning_obj)
 
-            # Build metadata for filtering - this is the key fix!
-            filter_metadata = {
+            # Build metadata for filtering - THIS IS THE KEY FIX!
+            # Metadata must be passed separately to add_content for filters to work
+            filter_metadata: dict[str, Any] = {
                 "namespace": effective_namespace,
             }
             if effective_namespace == "user" and user_id:
                 filter_metadata["user_id"] = user_id
+            if agent_id:
+                filter_metadata["agent_id"] = agent_id
+            if team_id:
+                filter_metadata["team_id"] = team_id
+            if tags:
+                filter_metadata["tags"] = tags
 
             if hasattr(self.knowledge, "aadd_content"):
                 await self.knowledge.aadd_content(
@@ -1103,7 +1125,7 @@ class LearnedKnowledgeStore(LearningStore):
                     text_content=text_content,
                     reader=TextReader(),
                     skip_if_exists=True,
-                    metadata=filter_metadata,
+                    metadata=filter_metadata,  # Pass metadata for filtering
                 )
             else:
                 self.knowledge.add_content(
@@ -1111,7 +1133,7 @@ class LearnedKnowledgeStore(LearningStore):
                     text_content=text_content,
                     reader=TextReader(),
                     skip_if_exists=True,
-                    metadata=filter_metadata,
+                    metadata=filter_metadata,  # Pass metadata for filtering
                 )
 
             log_debug(f"LearnedKnowledgeStore.asave: saved learning '{title}' (namespace: {effective_namespace})")
