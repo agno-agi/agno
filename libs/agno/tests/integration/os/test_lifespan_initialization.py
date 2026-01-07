@@ -2,7 +2,6 @@
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
@@ -166,4 +165,3 @@ def test_tracing_setup_in_lifespan():
         with TestClient(app):
             # After lifespan, tracing should be set up
             mock_setup_tracing.assert_called_once()
-
