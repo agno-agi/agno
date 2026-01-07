@@ -18,12 +18,11 @@ from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency, require_resource_access
-from agno.os.routers.teams.schema import TeamResponse
+from agno.os.routers.teams.schema import TeamResponse, TeamSummaryResponse
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
-    TeamSummaryResponse,
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
@@ -38,8 +37,7 @@ from agno.os.utils import (
     process_video,
 )
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
-from agno.team.remote import RemoteTeam
-from agno.team.team import Team
+from agno.team import Team, RemoteTeam
 from agno.utils.log import log_warning, logger
 
 if TYPE_CHECKING:

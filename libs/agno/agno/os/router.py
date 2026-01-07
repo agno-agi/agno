@@ -12,6 +12,8 @@ from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.managers import websocket_manager
 from agno.os.routers.agents.schema import AgentSummaryResponse
+from agno.os.routers.teams.schema import TeamSummaryResponse
+from agno.os.routers.workflows.schema import WorkflowSummaryResponse
 from agno.os.routers.workflows.router import handle_workflow_subscription, handle_workflow_via_websocket
 from agno.os.schema import (
     BadRequestResponse,
@@ -20,10 +22,8 @@ from agno.os.schema import (
     InternalServerErrorResponse,
     Model,
     NotFoundResponse,
-    TeamSummaryResponse,
     UnauthenticatedResponse,
     ValidationErrorResponse,
-    WorkflowSummaryResponse,
 )
 from agno.os.settings import AgnoAPISettings
 from agno.utils.log import logger

@@ -70,36 +70,6 @@ class ManagerResponse(BaseModel):
     route: str = Field(..., description="API route path")
 
 
-
-class TeamSummaryResponse(BaseModel):
-    id: Optional[str] = Field(None, description="Unique identifier for the team")
-    name: Optional[str] = Field(None, description="Name of the team")
-    description: Optional[str] = Field(None, description="Description of the team")
-    db_id: Optional[str] = Field(None, description="Database identifier")
-
-    @classmethod
-    def from_team(cls, team: Union[Team, RemoteTeam]) -> "TeamSummaryResponse":
-        db_id = team.db.id if team.db else None
-        return cls(id=team.id, name=team.name, description=team.description, db_id=db_id)
-
-
-class WorkflowSummaryResponse(BaseModel):
-    id: Optional[str] = Field(None, description="Unique identifier for the workflow")
-    name: Optional[str] = Field(None, description="Name of the workflow")
-    description: Optional[str] = Field(None, description="Description of the workflow")
-    db_id: Optional[str] = Field(None, description="Database identifier")
-
-    @classmethod
-    def from_workflow(cls, workflow: Union[Workflow, RemoteWorkflow]) -> "WorkflowSummaryResponse":
-        db_id = workflow.db.id if workflow.db else None
-        return cls(
-            id=workflow.id,
-            name=workflow.name,
-            description=workflow.description,
-            db_id=db_id,
-        )
-
-
 class ConfigResponse(BaseModel):
     """Response schema for the general config endpoint"""
 

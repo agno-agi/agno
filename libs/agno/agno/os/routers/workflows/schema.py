@@ -3,12 +3,30 @@ from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field, model_serializer
 
-from agno.os.routers.agents.schema import AgentResponse
-from agno.os.routers.teams.schema import TeamResponse
+from agno.os.routers.agents.schema import AgentSummaryResponse
+from agno.os.routers.teams.schema import TeamSummaryResponse
 from agno.os.schema import DatabaseConfigResponse
 from agno.os.utils import get_workflow_input_schema_dict, remove_none_values
 from agno.workflow.agent import WorkflowAgent
-from agno.workflow.workflow import Workflow
+from agno.workflow import Workflow, RemoteWorkflow
+
+
+class WorkflowSummaryResponse(BaseModel):
+    id: Optional[str] = Field(None, description="Unique identifier for the workflow")
+    name: Optional[str] = Field(None, description="Name of the workflow")
+    description: Optional[str] = Field(None, description="Description of the workflow")
+    db_id: Optional[str] = Field(None, description="Database identifier")
+
+    @classmethod
+    def from_workflow(cls, workflow: Union[Workflow, RemoteWorkflow]) -> "WorkflowSummaryResponse":
+        db_id = workflow.db.id if workflow.db else None
+        return cls(
+            id=workflow.id,
+            name=workflow.name,
+            description=workflow.description,
+            db_id=db_id,
+        )
+
 
 
 class StepTypeResponse(str, Enum):
@@ -70,13 +88,13 @@ class WorkflowResponse(BaseModel):
         # Resolve agent if present
         agent_data: Optional[Dict[str, Any]] = None
         if step_dict.get("agent"):
-            agent_response = await AgentResponse.from_agent(step_dict["agent"])
+            agent_response = AgentSummaryResponse.from_agent(step_dict["agent"])
             agent_data = agent_response.model_dump(exclude_none=True)
         
         # Resolve team if present
         team_data: Optional[Dict[str, Any]] = None
         if step_dict.get("team"):
-            team_response = await TeamResponse.from_team(step_dict["team"])
+            team_response = TeamSummaryResponse.from_team(step_dict["team"])
             team_data = team_response.model_dump(exclude_none=True)
         
         # Recursively resolve nested steps

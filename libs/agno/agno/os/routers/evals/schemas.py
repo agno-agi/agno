@@ -2,7 +2,7 @@ from dataclasses import asdict
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 from agno.db.schemas.evals import EvalType
 from agno.eval import AccuracyResult, AgentAsJudgeResult, PerformanceResult, ReliabilityResult
@@ -10,7 +10,7 @@ from agno.eval.accuracy import AccuracyEval
 from agno.eval.agent_as_judge import AgentAsJudgeEval
 from agno.eval.performance import PerformanceEval
 from agno.eval.reliability import ReliabilityEval
-from agno.os.utils import to_utc_datetime
+from agno.os.utils import remove_none_values, to_utc_datetime
 
 
 class EvalRunInput(BaseModel):
@@ -60,6 +60,12 @@ class EvalSchema(BaseModel):
     eval_input: Optional[Dict[str, Any]] = Field(None, description="Input parameters used for the evaluation")
     created_at: Optional[datetime] = Field(None, description="Timestamp when evaluation was created")
     updated_at: Optional[datetime] = Field(None, description="Timestamp when evaluation was last updated")
+
+    @model_serializer(mode="wrap")
+    def serialize_model(self, handler) -> Dict[str, Any]:
+        """Custom serializer that recursively removes None values from nested structures."""
+        data = handler(self)
+        return remove_none_values(data)
 
     @classmethod
     def from_dict(cls, eval_run: Dict[str, Any]) -> "EvalSchema":

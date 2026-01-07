@@ -23,14 +23,13 @@ from agno.os.auth import (
     validate_websocket_token,
 )
 from agno.os.managers import event_buffer, websocket_manager
-from agno.os.routers.workflows.schema import WorkflowResponse
+from agno.os.routers.workflows.schema import WorkflowResponse, WorkflowSummaryResponse
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
     UnauthenticatedResponse,
     ValidationErrorResponse,
-    WorkflowSummaryResponse,
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
@@ -42,8 +41,7 @@ from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowErrorEvent
 from agno.utils.log import log_debug, log_warning, logger
 from agno.utils.serialize import json_serializer
-from agno.workflow.remote import RemoteWorkflow
-from agno.workflow.workflow import Workflow
+from agno.workflow import Workflow, RemoteWorkflow
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
