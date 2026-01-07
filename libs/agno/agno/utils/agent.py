@@ -1,5 +1,7 @@
 from asyncio import Future, Task
-from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Sequence, Type, Union
+
+from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
@@ -10,6 +12,7 @@ from agno.run.agent import RunEvent, RunInput, RunOutput, RunOutputEvent
 from agno.run.team import RunOutputEvent as TeamRunOutputEvent
 from agno.run.team import TeamRunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
+from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
     create_memory_update_completed_event,
     create_memory_update_started_event,
@@ -936,3 +939,57 @@ async def aexecute_system_message(
         return await system_message(**system_message_args)
     else:
         return system_message(**system_message_args)
+
+
+def validate_input(
+    input: Union[str, List, Dict, Message, BaseModel], input_schema: Optional[Type[BaseModel]] = None
+) -> Union[str, List, Dict, Message, BaseModel]:
+    """Parse and validate input against input_schema if provided, otherwise return input as-is"""
+    if input_schema is None:
+        return input  # Return input unchanged if no schema is set
+
+    if input is None:
+        raise ValueError("Input required when input_schema is set")
+
+    # Handle Message objects - extract content
+    if isinstance(input, Message):
+        input = input.content  # type: ignore
+
+    # If input is a string, convert it to a dict
+    if isinstance(input, str):
+        import json
+
+        try:
+            input = json.loads(input)
+        except Exception as e:
+            raise ValueError(f"Failed to parse input. Is it a valid JSON string?: {e}")
+
+    # Case 1: Message is already a BaseModel instance
+    if isinstance(input, BaseModel):
+        if isinstance(input, input_schema):
+            try:
+                return input
+            except Exception as e:
+                raise ValueError(f"BaseModel validation failed: {str(e)}")
+        else:
+            # Different BaseModel types
+            raise ValueError(f"Expected {input_schema.__name__} but got {type(input).__name__}")
+
+    # Case 2: Message is a dict
+    elif isinstance(input, dict):
+        try:
+            # Check if the schema is a TypedDict
+            if is_typed_dict(input_schema):
+                validated_dict = validate_typed_dict(input, input_schema)
+                return validated_dict
+            else:
+                validated_model = input_schema(**input)
+                return validated_model
+        except Exception as e:
+            raise ValueError(f"Failed to parse dict into {input_schema.__name__}: {str(e)}")
+
+    # Case 3: Other types not supported for structured input
+    else:
+        raise ValueError(
+            f"Cannot validate {type(input)} against input_schema. Expected dict or {input_schema.__name__} instance."
+        )

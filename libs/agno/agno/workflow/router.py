@@ -266,6 +266,7 @@ class Router:
             step_type=StepType.ROUTER,
             content=f"Router {self.name} completed with {len(all_results)} results",
             success=all(result.success for result in all_results) if all_results else True,
+            stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,
         )
 
@@ -427,6 +428,7 @@ class Router:
             step_type=StepType.ROUTER,
             content=f"Router {self.name} completed with {len(all_results)} results",
             success=all(result.success for result in all_results) if all_results else True,
+            stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,
         )
 
@@ -533,6 +535,7 @@ class Router:
             step_type=StepType.ROUTER,
             content=f"Router {self.name} completed with {len(all_results)} results",
             success=all(result.success for result in all_results) if all_results else True,
+            stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,
         )
 
@@ -697,6 +700,6 @@ class Router:
             content=f"Router {self.name} completed with {len(all_results)} results",
             success=all(result.success for result in all_results) if all_results else True,
             error=None,
-            stop=False,
+            stop=any(result.stop for result in all_results) if all_results else False,
             steps=all_results,
         )

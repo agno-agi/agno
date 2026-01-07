@@ -8,7 +8,12 @@ from agno.utils.log import logger
 
 
 def is_groq_reasoning_model(reasoning_model: Model) -> bool:
-    return reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id.lower()
+    return reasoning_model.__class__.__name__ == "Groq" and (
+        "deepseek" in reasoning_model.id.lower()
+        or "openai/gpt-oss-20b" in reasoning_model.id.lower()
+        or "openai/gpt-oss-120b" in reasoning_model.id.lower()
+        or "qwen/qwen3-32b" in reasoning_model.id.lower()
+    )
 
 
 def get_groq_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821

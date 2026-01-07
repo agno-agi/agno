@@ -1,7 +1,7 @@
 """Basic AgentAsJudgeEval usage with numeric scoring (1-10) and on_fail callback."""
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
+from agno.db.postgres.postgres import PostgresDb
 from agno.eval.agent_as_judge import AgentAsJudgeEval, AgentAsJudgeEvaluation
 from agno.models.openai import OpenAIChat
 
@@ -13,7 +13,8 @@ def on_evaluation_failure(evaluation: AgentAsJudgeEvaluation):
 
 
 # Setup database to persist eval results
-db = SqliteDb(db_file="tmp/agent_as_judge_basic.db")
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
@@ -38,9 +39,6 @@ result = evaluation.run(
     print_results=True,
     print_summary=True,
 )
-
-print(f"Score: {result.results[0].score}/10")
-print(f"Passed: {result.results[0].passed}")
 
 # Query database for stored results
 print("Database Results:")
