@@ -66,17 +66,17 @@ class BrandfetchTools(Toolkit):
         # sync tools: used by agent.run() and agent.print_response()
         # async tools: used by agent.arun() and agent.aprint_response()
         tools: List[Any] = []
-        async_tools: List[tuple] = []
+        async_tools_list: List[tuple] = []
 
         if all or enable_search_by_identifier:
             tools.append(self.search_by_identifier)
-            async_tools.append((self.asearch_by_identifier, "search_by_identifier"))
+            async_tools_list.append((self.asearch_by_identifier, "search_by_identifier"))
         if all or enable_search_by_brand:
             tools.append(self.search_by_brand)
-            async_tools.append((self.asearch_by_brand, "search_by_brand"))
+            async_tools_list.append((self.asearch_by_brand, "search_by_brand"))
 
         name = kwargs.pop("name", "brandfetch_tools")
-        super().__init__(name=name, tools=tools, async_tools=async_tools, **kwargs)
+        super().__init__(name=name, tools=tools, async_tools=async_tools_list, **kwargs)
 
     async def asearch_by_identifier(self, identifier: str) -> dict[str, Any]:
         """
