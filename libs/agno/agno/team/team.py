@@ -5135,7 +5135,17 @@ class Team:
 
             try:
                 sig = signature(value)
-                resolved_value = value(agent=self) if "agent" in sig.parameters else value()
+
+                # Build kwargs for the function
+                kwargs: Dict[str, Any] = {}
+                if "agent" in sig.parameters:
+                    kwargs["agent"] = self
+                if "team" in sig.parameters:
+                    kwargs["team"] = self
+                if "run_context" in sig.parameters:
+                    kwargs["run_context"] = run_context
+
+                resolved_value = value(**kwargs) if kwargs else value()
 
                 run_context.dependencies[key] = resolved_value
             except Exception as e:
@@ -5156,7 +5166,17 @@ class Team:
 
             try:
                 sig = signature(value)
-                resolved_value = value(team=self) if "team" in sig.parameters else value()
+
+                # Build kwargs for the function
+                kwargs: Dict[str, Any] = {}
+                if "agent" in sig.parameters:
+                    kwargs["agent"] = self
+                if "team" in sig.parameters:
+                    kwargs["team"] = self
+                if "run_context" in sig.parameters:
+                    kwargs["run_context"] = run_context
+
+                resolved_value = value(**kwargs) if kwargs else value()
 
                 if iscoroutine(resolved_value):
                     resolved_value = await resolved_value
