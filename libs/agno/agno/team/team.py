@@ -5384,7 +5384,8 @@ class Team:
 
             elif isinstance(tool, Toolkit):
                 # For each function in the toolkit and process entrypoint
-                for name, _func in tool.functions.items():
+                toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
+                for name, _func in toolkit_functions.items():
                     if name in _function_names:
                         continue
                     _function_names.append(name)
