@@ -476,6 +476,7 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
+            print("HERE", e)
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 

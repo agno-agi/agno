@@ -88,8 +88,6 @@ async def test_async_basic_stream():
 def test_exception_handling():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-made-up-id"),
-        exponential_backoff=True,
-        delay_between_retries=5,
         markdown=True,
         telemetry=False,
     )

@@ -2,6 +2,7 @@
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
+from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team import Team
@@ -14,6 +15,7 @@ db = PostgresDb(id="basic-db", db_url="postgresql+psycopg://ai:ai@localhost:5532
 # Setup basic agents, teams and workflows
 basic_agent = Agent(
     name="Basic Agent",
+    model=Gemini(id="gemini-2.0-flash-made-up-id"),
     db=db,
     enable_session_summaries=True,
     enable_user_memories=True,
