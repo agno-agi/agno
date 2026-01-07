@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 from agno.agent import Agent
 from agno.models.message import Message
@@ -9,12 +9,13 @@ from agno.os.schema import DatabaseConfigResponse, MessageResponse, ModelRespons
 from agno.os.utils import (
     format_tools,
     get_agent_input_schema_dict,
+    remove_none_values,
+    to_utc_datetime,
 )
 from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.session import AgentSession
 from agno.utils.agent import aexecute_instructions, aexecute_system_message
-from agno.os.utils import to_utc_datetime
 
 
 class AgentResponse(BaseModel):
@@ -29,8 +30,15 @@ class AgentResponse(BaseModel):
     input_schema: Optional[Dict[str, Any]] = Field(None, description="The name of the input schema of the agent")
     additional_input: Optional[List[MessageResponse]] = Field(None, description="The additional input of the agent")
     metadata: Optional[Dict[str, Any]] = Field(None, description="The metadata of the agent")
-    
-    def get_default_values(self) -> Dict[str, Any]:
+
+    @model_serializer(mode="wrap")
+    def serialize_model(self, handler) -> Dict[str, Any]:
+        """Custom serializer that recursively removes None values from nested structures."""
+        data = handler(self)
+        return remove_none_values(data)
+
+    @staticmethod
+    def get_default_values() -> Dict[str, Any]:
         return {
             # Sessions defaults
             "add_history_to_context": False,

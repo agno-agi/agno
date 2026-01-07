@@ -54,8 +54,6 @@ class BaseDb(ABC):
         config = {}
         if hasattr(self, "db_url") and self.db_url is not None:
             config["db_url"] = self.db_url
-        if hasattr(self, "db_engine") and self.db_engine is not None:
-            config["db_engine"] = self.db_engine
         if hasattr(self, "db_schema") and self.db_schema is not None:
             config["db_schema"] = self.db_schema
         if hasattr(self, "db_file") and self.db_file is not None:

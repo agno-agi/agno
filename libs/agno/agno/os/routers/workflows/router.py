@@ -493,109 +493,6 @@ def get_workflow_router(
         },
     )
 
-    @router.get(
-        "/workflows",
-        response_model=List[Union[WorkflowResponse, WorkflowSummaryResponse]],
-        response_model_exclude_none=True,
-        tags=["Workflows"],
-        operation_id="get_workflows",
-        summary="List All Workflows",
-        description=(
-            "Retrieve a comprehensive list of all workflows configured in this OS instance.\n\n"
-            "**Return Information:**\n"
-            "- Workflow metadata (ID, name, description)\n"
-            "- Input schema requirements\n"
-            "- Step sequence and execution flow\n"
-            "- Associated agents and teams\n\n"
-            "Use minimal=true for a lightweight response with basic workflow info only."
-        ),
-        responses={
-            200: {
-                "description": "List of workflows retrieved successfully",
-                "content": {
-                    "application/json": {
-                        "example": [
-                            {
-                                "id": "content-creation-workflow",
-                                "name": "Content Creation Workflow",
-                                "description": "Automated content creation from blog posts to social media",
-                                "db_id": "123",
-                            }
-                        ]
-                    }
-                },
-            }
-        },
-    )
-    async def get_workflows(
-        request: Request,
-        minimal: bool = Query(
-            default=False,
-            description="If true, return minimal workflow info (id, name, description, db_id). "
-            "If false, return full workflow details including steps, input_schema, and configurations.",
-        ),
-    ) -> List[Union[WorkflowResponse, WorkflowSummaryResponse]]:
-        if os.workflows is None:
-            return []
-
-        # Filter workflows based on user's scopes (only if authorization is enabled)
-        if getattr(request.state, "authorization_enabled", False):
-            from agno.os.auth import filter_resources_by_access, get_accessible_resources
-
-            # Check if user has any workflow scopes at all
-            accessible_ids = get_accessible_resources(request, "workflows")
-            if not accessible_ids:
-                raise HTTPException(status_code=403, detail="Insufficient permissions")
-
-            accessible_workflows = filter_resources_by_access(request, os.workflows, "workflows")
-        else:
-            accessible_workflows = os.workflows
-
-        workflows: List[Union[WorkflowResponse, WorkflowSummaryResponse]] = []
-        for workflow in accessible_workflows:
-            if minimal:
-                workflows.append(WorkflowSummaryResponse.from_workflow(workflow))
-            else:
-                workflow_response = await WorkflowResponse.from_workflow(workflow)
-                workflows.append(workflow_response)
-
-        return workflows
-
-    @router.get(
-        "/workflows/{workflow_id}",
-        response_model=WorkflowResponse,
-        response_model_exclude_none=True,
-        tags=["Workflows"],
-        operation_id="get_workflow",
-        summary="Get Workflow Details",
-        description=("Retrieve detailed configuration and step information for a specific workflow."),
-        responses={
-            200: {
-                "description": "Workflow details retrieved successfully",
-                "content": {
-                    "application/json": {
-                        "example": {
-                            "id": "content-creation-workflow",
-                            "name": "Content Creation Workflow",
-                            "description": "Automated content creation from blog posts to social media",
-                            "db_id": "123",
-                        }
-                    }
-                },
-            },
-            404: {"description": "Workflow not found", "model": NotFoundResponse},
-        },
-        dependencies=[Depends(require_resource_access("workflows", "read", "workflow_id"))],
-    )
-    async def get_workflow(workflow_id: str, request: Request) -> WorkflowResponse:
-        workflow = get_workflow_by_id(workflow_id, os.workflows)
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Workflow not found")
-        if isinstance(workflow, RemoteWorkflow):
-            return await workflow.get_workflow_config()
-        else:
-            return await WorkflowResponse.from_workflow(workflow=workflow)
-
     @router.post(
         "/workflows/{workflow_id}/runs",
         tags=["Workflows"],
@@ -743,5 +640,119 @@ def get_workflow_router(
             raise HTTPException(status_code=500, detail="Failed to cancel run - run not found or already completed")
 
         return JSONResponse(content={}, status_code=200)
+
+    @router.get(
+        "/workflows",
+        response_model=List[Union[WorkflowResponse, WorkflowSummaryResponse]],
+        response_model_exclude_unset=True,
+        tags=["Workflows"],
+        operation_id="get_workflows",
+        summary="List All Workflows",
+        description=(
+            "Retrieve a comprehensive list of all workflows configured in this OS instance.\n\n"
+            "**Return Information:**\n"
+            "- Workflow metadata (ID, name, description)\n"
+            "- Input schema requirements\n"
+            "- Step sequence and execution flow\n"
+            "- Associated agents and teams\n\n"
+            "Use minimal=true for a lightweight response with basic workflow info only."
+        ),
+        responses={
+            200: {
+                "description": "List of workflows retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": [
+                            {
+                                "id": "content-creation-workflow",
+                                "name": "Content Creation Workflow",
+                                "description": "Automated content creation from blog posts to social media",
+                                "db_id": "123",
+                            }
+                        ]
+                    }
+                },
+            }
+        },
+    )
+    async def get_workflows(
+        request: Request,
+        minimal: bool = Query(
+            default=False,
+            description="If true, return minimal workflow info (id, name, description, db_id). "
+            "If false, return full workflow details including steps, input_schema, and configurations.",
+        ),
+    ):
+        if os.workflows is None:
+            return []
+
+        # Filter workflows based on user's scopes (only if authorization is enabled)
+        if getattr(request.state, "authorization_enabled", False):
+            from agno.os.auth import filter_resources_by_access, get_accessible_resources
+
+            # Check if user has any workflow scopes at all
+            accessible_ids = get_accessible_resources(request, "workflows")
+            if not accessible_ids:
+                raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+            accessible_workflows = filter_resources_by_access(request, os.workflows, "workflows")
+        else:
+            accessible_workflows = os.workflows
+
+        workflows: List[dict] = []
+        for workflow in accessible_workflows:
+            if minimal:
+                if isinstance(workflow, RemoteWorkflow):
+                    # TODO: Implement minimal workflow config for remote workflows
+                    pass
+                else:
+                    workflow_summary = WorkflowSummaryResponse.from_workflow(workflow=workflow)
+                    workflows.append(workflow_summary.model_dump(exclude_none=True))
+            else:
+                if isinstance(workflow, RemoteWorkflow):
+                    workflow_config = await workflow.get_workflow_config()
+                    workflows.append(workflow_config.model_dump(exclude_none=True))
+                else:
+                    workflow_response = await WorkflowResponse.from_workflow(workflow=workflow)
+                    workflows.append(workflow_response.model_dump(exclude_none=True))
+
+        return workflows
+
+    @router.get(
+        "/workflows/{workflow_id}",
+        response_model=WorkflowResponse,
+        response_model_exclude_unset=True,
+        tags=["Workflows"],
+        operation_id="get_workflow",
+        summary="Get Workflow Details",
+        description=("Retrieve detailed configuration and step information for a specific workflow."),
+        responses={
+            200: {
+                "description": "Workflow details retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": "content-creation-workflow",
+                            "name": "Content Creation Workflow",
+                            "description": "Automated content creation from blog posts to social media",
+                            "db_id": "123",
+                        }
+                    }
+                },
+            },
+            404: {"description": "Workflow not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("workflows", "read", "workflow_id"))],
+    )
+    async def get_workflow(workflow_id: str, request: Request):
+        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        if isinstance(workflow, RemoteWorkflow):
+            workflow_config = await workflow.get_workflow_config()
+            return workflow_config.model_dump(exclude_none=True)
+        else:
+            workflow_response = await WorkflowResponse.from_workflow(workflow=workflow)
+            return workflow_response.model_dump(exclude_none=True)
 
     return router

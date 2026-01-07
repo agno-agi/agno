@@ -69,7 +69,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             "Sessions represent conversation histories and execution contexts. "
             "Use minimal=true for a lightweight response with basic session info only."
         ),
-        response_model_exclude_none=True,
         responses={
             200: {
                 "description": "Sessions retrieved successfully",
@@ -214,7 +213,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             "before running any agent/team/workflow interactions. "
             "The session can later be used by providing its session_id in run requests."
         ),
-        response_model_exclude_none=True,
         responses={
             201: {
                 "description": "Session created successfully",
@@ -358,7 +356,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             "Retrieve detailed information about a specific session including metadata, configuration, "
             "and run history. Response schema varies based on session type (agent, team, or workflow)."
         ),
-        response_model_exclude_none=True,
         responses={
             200: {
                 "description": "Session details retrieved successfully",
@@ -492,7 +489,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             "Runs represent individual interactions or executions within a session. "
             "Response schema varies based on session type."
         ),
-        response_model_exclude_none=True,
         responses={
             200: {
                 "description": "Session runs retrieved successfully",

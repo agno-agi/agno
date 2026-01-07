@@ -14,7 +14,6 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
-from agno.os.schema import ToolDefinitionResponse
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
@@ -23,6 +22,15 @@ from agno.team import RemoteTeam, Team
 from agno.tools import Function, Toolkit
 from agno.utils.log import log_warning, logger
 from agno.workflow import RemoteWorkflow, Workflow
+
+
+def remove_none_values(obj: Any) -> Any:
+    """Recursively remove None values from nested dicts and lists."""
+    if isinstance(obj, dict):
+        return {k: remove_none_values(v) for k, v in obj.items() if v is not None}
+    elif isinstance(obj, list):
+        return [remove_none_values(item) for item in obj if item is not None]
+    return obj
 
 
 def to_utc_datetime(value: Optional[Union[int, float, datetime]]) -> Optional[datetime]:
@@ -427,7 +435,8 @@ def extract_format(file: UploadFile) -> Optional[str]:
 
     return None
 
-def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]) -> List[ToolDefinitionResponse]:
+def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]) -> List["ToolDefinitionResponse"]:
+    from agno.os.schema import ToolDefinitionResponse
     formatted_tools: List[ToolDefinitionResponse] = []
     if agent_tools is not None:
         for tool in agent_tools:

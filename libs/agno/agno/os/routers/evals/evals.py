@@ -67,10 +67,9 @@ def attach_routes(
     agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
     teams: Optional[List[Union[Team, RemoteTeam]]] = None,
 ) -> APIRouter:
+    
     @router.get(
         "/eval-runs",
-        response_model=PaginatedResponse[EvalSchema],
-        response_model_exclude_none=True,
         status_code=200,
         operation_id="get_eval_runs",
         summary="List Evaluation Runs",

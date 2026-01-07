@@ -15,8 +15,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from agno.agent.agent import Agent
-from agno.agent.remote import RemoteAgent
+from agno.agent import Agent, RemoteAgent
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
@@ -538,7 +537,7 @@ def get_agent_router(
             "Use minimal=true for a lightweight response with basic agent info only."
         ),
         response_model=List[Union[AgentResponse, AgentSummaryResponse]],
-        response_model_exclude_unset=True,
+        response_model_exclude_none=True,
         responses={
             200: {
                 "description": "List of agents retrieved successfully",
@@ -587,7 +586,7 @@ def get_agent_router(
         else:
             accessible_agents = os.agents
 
-        agents: List[dict] = []
+        agents: List[Union[AgentResponse, AgentSummaryResponse]] = []
         for agent in accessible_agents:
             if minimal:
                 if isinstance(agent, RemoteAgent):
@@ -595,15 +594,14 @@ def get_agent_router(
                     pass
                 else:
                     agent_summary = AgentSummaryResponse.from_agent(agent=agent)
-                    agents.append(agent_summary.model_dump(exclude_none=True))
+                    agents.append(agent_summary)
             else:
                 if isinstance(agent, RemoteAgent):
                     agent_config = await agent.get_agent_config()
-                    agents.append(agent_config.model_dump(exclude_none=True))
+                    agents.append(agent_config)
                 else:
                     agent_response = await AgentResponse.from_agent(agent=agent)
-                    agents.append(agent_response.model_dump(exclude_none=True))
-
+                    agents.append(agent_response)
         return agents
 
     @router.get(

@@ -336,7 +336,7 @@ def get_team_router(
     @router.get(
         "/teams",
         response_model=List[Union[TeamResponse, TeamSummaryResponse]],
-        response_model_exclude_none=True,
+        response_model_exclude_unset=True,
         tags=["Teams"],
         operation_id="get_teams",
         summary="List All Teams",
@@ -422,7 +422,7 @@ def get_team_router(
             description="If true, return minimal team info (id, name, description, db_id). "
             "If false, return full team details including model, tools, members, and configurations.",
         ),
-    ) -> List[Union[TeamResponse, TeamSummaryResponse]]:
+    ):
         """Return the list of all Teams present in the contextual OS"""
         if os.teams is None:
             return []
@@ -440,27 +440,29 @@ def get_team_router(
         else:
             accessible_teams = os.teams
 
-        teams: List[Union[TeamResponse, TeamSummaryResponse]] = []
+        teams: List[dict] = []
         for team in accessible_teams:
             if minimal:
                 if isinstance(team, RemoteTeam):
                     # TODO: Implement minimal team config for remote teams
                     pass
                 else:
-                    teams.append(TeamSummaryResponse.from_team(team=team))
+                    team_summary = TeamSummaryResponse.from_team(team=team)
+                    teams.append(team_summary.model_dump(exclude_none=True))
             else:
                 if isinstance(team, RemoteTeam):
-                    teams.append(await team.get_team_config())
+                    team_config = await team.get_team_config()
+                    teams.append(team_config.model_dump(exclude_none=True))
                 else:
                     team_response = await TeamResponse.from_team(team=team)
-                    teams.append(team_response)
+                    teams.append(team_response.model_dump(exclude_none=True))
 
         return teams
 
     @router.get(
         "/teams/{team_id}",
         response_model=TeamResponse,
-        response_model_exclude_none=True,
+        response_model_exclude_unset=True,
         tags=["Teams"],
         operation_id="get_team",
         summary="Get Team Details",
@@ -542,14 +544,16 @@ def get_team_router(
         },
         dependencies=[Depends(require_resource_access("teams", "read", "team_id"))],
     )
-    async def get_team(team_id: str, request: Request) -> TeamResponse:
+    async def get_team(team_id: str, request: Request):
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
         if isinstance(team, RemoteTeam):
-            return await team.get_team_config()
+            team_config = await team.get_team_config()
+            return team_config.model_dump(exclude_none=True)
         else:
-            return await TeamResponse.from_team(team=team)
+            team_response = await TeamResponse.from_team(team=team)
+            return team_response.model_dump(exclude_none=True)
 
     return router
