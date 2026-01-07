@@ -2027,6 +2027,7 @@ class Knowledge:
                 self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
 
             return content_row.to_dict()
+        return None
 
     async def _aupdate_content(self, content: Content) -> Optional[Dict[str, Any]]:
         if self.contents_db:
@@ -2066,7 +2067,7 @@ class Knowledge:
                 self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
 
             return content_row.to_dict()
-
+        return None
 
     def _prepare_lightrag_path_data(self, content: Content) -> Optional[Tuple[bytes, str, str]]:
         """Prepare file data from a path for LightRAG upload.

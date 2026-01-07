@@ -6,7 +6,6 @@ from agno.utils.media import (
     download_knowledge_filters_sample_data,
 )
 from agno.vectordb.lancedb import LanceDb
-from agno.vectordb.pgvector import PgVector
 
 # Download all sample sales documents and get their paths
 downloaded_csv_paths = download_knowledge_filters_sample_data(
@@ -19,10 +18,7 @@ vector_db = LanceDb(
     table_name="recipes",
     uri="tmp/lancedb",  # You can change this path to store data elsewhere
 )
-# vector_db = PgVector(
-#     table_name="recipes",
-#     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-# )
+
 contents_db = PostgresDb(
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     knowledge_table="knowledge_contents",
