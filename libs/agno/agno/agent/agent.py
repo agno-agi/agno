@@ -7187,7 +7187,6 @@ class Agent:
         """
         if self._has_async_db():
             raise ValueError("Async database not supported for save_session")
-
         # If the agent is a member of a team, do not save the session to the database
         if (
             self.db is not None

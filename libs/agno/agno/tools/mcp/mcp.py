@@ -572,7 +572,6 @@ class MCPTools(Toolkit):
                         tool=tool,
                         session=self.session,  # type: ignore
                         mcp_tools_instance=self,
-                        server_name=self.name or "MCPTools",
                     )
                     # Create a Function for the tool
                     f = Function(

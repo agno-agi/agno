@@ -963,22 +963,40 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="memories")
 
             async with self.async_session_factory() as sess, sess.begin():
+                # Filter out NULL topics and ensure topics is an array before extracting elements
+                # jsonb_typeof returns 'array' for JSONB arrays
+                conditions = [
+                    table.c.topics.is_not(None),
+                    func.jsonb_typeof(table.c.topics) == "array",
+                ]
+                if user_id is not None:
+                    conditions.append(table.c.user_id == user_id)
+
                 try:
-                    stmt = select(func.jsonb_array_elements_text(table.c.topics))
-                    if user_id is not None:
-                        stmt = stmt.where(table.c.user_id == user_id)
+                    # jsonb_array_elements_text is a set-returning function that must be used with select_from
+                    stmt = select(func.jsonb_array_elements_text(table.c.topics).label("topic"))
+                    stmt = stmt.select_from(table)
+                    stmt = stmt.where(and_(*conditions))
                     result = await sess.execute(stmt)
                 except ProgrammingError:
                     # Retrying with json_array_elements_text. This works in older versions,
                     # where the topics column was of type JSON instead of JSONB
-                    stmt = select(func.json_array_elements_text(table.c.topics))
+                    # For JSON (not JSONB), we use json_typeof
+                    json_conditions = [
+                        table.c.topics.is_not(None),
+                        func.json_typeof(table.c.topics) == "array",
+                    ]
                     if user_id is not None:
-                        stmt = stmt.where(table.c.user_id == user_id)
+                        json_conditions.append(table.c.user_id == user_id)
+                    stmt = select(func.json_array_elements_text(table.c.topics).label("topic"))
+                    stmt = stmt.select_from(table)
+                    stmt = stmt.where(and_(*json_conditions))
                     result = await sess.execute(stmt)
 
                 records = result.fetchall()
-
-                return list(set([record[0] for record in records]))
+                # Extract topics from records - each record is a Row with a 'topic' attribute
+                topics = [record.topic for record in records if record.topic is not None]
+                return list(set(topics))
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
