@@ -47,10 +47,9 @@ class Toolkit:
         """
         self.name: str = name
         self.tools: Sequence[Union[Callable[..., Any], Function]] = tools
-        # Primary functions dict - contains sync functions (or async if no sync variant exists)
+        # Functions dict - used by agent.run() and agent.print_response()
         self.functions: Dict[str, Function] = OrderedDict()
-        # Async functions dict - contains async variants of tools when both sync and async exist
-        # When resolving tools in async context, async_functions takes precedence over functions
+        # Async functions dict - used by agent.arun() and agent.aprint_response()
         self.async_functions: Dict[str, Function] = OrderedDict()
         self.instructions: Optional[str] = instructions
         self.add_instructions: bool = add_instructions
