@@ -115,17 +115,17 @@ def register_agent_tools(mcp: FastMCP, os: "AgentOS") -> None:
             user_id = get_user_id_from_context(ctx)
 
         # Convert tools dict to ToolExecution objects if provided
-        updated_tools = None
-        if tools:
-            from agno.models.response import ToolExecution
+        from agno.models.response import ToolExecution
 
+        updated_tools: List[ToolExecution] = []
+        if tools:
             updated_tools = [ToolExecution.from_dict(tool) for tool in tools]
 
         run_response = await agent.acontinue_run(
             run_id=run_id,
             updated_tools=updated_tools,
-            session_id=session_id,
-            user_id=user_id,
             stream=False,
+            user_id=user_id,
+            session_id=session_id,
         )
         return run_response.to_dict()

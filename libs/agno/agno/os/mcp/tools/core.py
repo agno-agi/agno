@@ -6,6 +6,7 @@ from fastmcp import Context, FastMCP
 from packaging import version
 
 from agno.agent.agent import Agent
+from agno.agent.remote import RemoteAgent
 from agno.db.base import AsyncBaseDb
 from agno.db.migrations.manager import MigrationManager
 from agno.os.mcp.auth import get_user_id_from_context, require_resource_access
@@ -18,9 +19,11 @@ from agno.os.schema import (
     WorkflowSummaryResponse,
 )
 from agno.os.utils import get_agent_by_id, get_db, get_team_by_id, get_workflow_by_id
+from agno.remote.base import RemoteDb
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
+from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 
 if TYPE_CHECKING:
@@ -64,7 +67,7 @@ def register_core_tools(mcp: FastMCP, os: "AgentOS") -> None:
         tags={"core"},
     )  # type: ignore
     async def get_models() -> List[Model]:
-        all_components: List[Union[Agent, Team]] = []
+        all_components: List[Union[Agent, Team, RemoteAgent, RemoteTeam]] = []
         if os.agents:
             all_components.extend(os.agents)
         if os.teams:
@@ -72,8 +75,11 @@ def register_core_tools(mcp: FastMCP, os: "AgentOS") -> None:
 
         unique_models = {}
         for item in all_components:
+            # Skip remote agents/teams as they don't expose their model
+            if isinstance(item, (RemoteAgent, RemoteTeam)):
+                continue
             model = cast(Model, item.model)
-            if model.id is not None and model.provider is not None:
+            if model is not None and model.id is not None and model.provider is not None:
                 key = (model.id, model.provider)
                 if key not in unique_models:
                     unique_models[key] = Model(id=model.id, provider=model.provider)
@@ -90,11 +96,16 @@ def register_core_tools(mcp: FastMCP, os: "AgentOS") -> None:
         if not db:
             raise Exception(f"Database {db_id} not found")
 
+        # RemoteDb migrations are handled by the remote server
+        if isinstance(db, RemoteDb):
+            await db.migrate_database(target_version)
+            return {"message": f"Remote database migration requested to version {target_version or 'latest'}"}
+
         if target_version:
             if isinstance(db, AsyncBaseDb):
-                current_version = await db.get_latest_schema_version(db.session_table_name)
+                current_version = await db.get_latest_schema_version(db.session_table_name or "")
             else:
-                current_version = db.get_latest_schema_version(db.session_table_name)
+                current_version = db.get_latest_schema_version(db.session_table_name or "")
 
             if version.parse(target_version) > version.parse(current_version):  # type: ignore
                 MigrationManager(db).up(target_version)  # type: ignore

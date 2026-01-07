@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 from fastmcp import FastMCP
 
 from agno.os.utils import get_knowledge_instance_by_db_id
+from agno.remote.base import RemoteKnowledge
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -37,6 +38,22 @@ def register_knowledge_tools(mcp: FastMCP, os: "AgentOS") -> None:
         from agno.utils.string import generate_id
 
         knowledge = get_knowledge_instance_by_db_id(os.knowledge_instances, db_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            result = await knowledge.upload_content(
+                name=name,
+                description=description,
+                url=url,
+                text_content=text_content,
+                metadata=metadata,
+                reader_id=reader_id,
+                chunker=chunker,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                db_id=db_id,
+            )
+            return result.model_dump()
+
         log_info(f"Adding content: {name}, {description}, {url}")
 
         # Parse URL if it's a JSON array
@@ -139,6 +156,17 @@ def register_knowledge_tools(mcp: FastMCP, os: "AgentOS") -> None:
 
         knowledge = get_knowledge_instance_by_db_id(os.knowledge_instances, db_id)
 
+        if isinstance(knowledge, RemoteKnowledge):
+            result = await knowledge.update_content(
+                content_id=content_id,
+                name=name,
+                description=description,
+                metadata=metadata,
+                reader_id=reader_id,
+                db_id=db_id,
+            )
+            return result.model_dump()
+
         content = Content(
             id=content_id,
             name=name if name and name.strip() else None,
@@ -186,6 +214,22 @@ def register_knowledge_tools(mcp: FastMCP, os: "AgentOS") -> None:
         sort_order: str = "desc",
     ) -> dict:
         knowledge = get_knowledge_instance_by_db_id(os.knowledge_instances, db_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            result = await knowledge.get_content(
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                db_id=db_id,
+            )
+            return {
+                "data": [c.model_dump() for c in result.data],
+                "total_count": result.meta.total_count if result.meta else 0,
+                "page": page,
+                "limit": limit,
+            }
+
         contents, count = await knowledge.aget_content(limit=limit, page=page, sort_by=sort_by, sort_order=sort_order)
 
         return {
@@ -216,6 +260,10 @@ def register_knowledge_tools(mcp: FastMCP, os: "AgentOS") -> None:
     )  # type: ignore
     async def get_content_by_id(content_id: str, db_id: Optional[str] = None) -> dict:
         knowledge = get_knowledge_instance_by_db_id(os.knowledge_instances, db_id)
+        if isinstance(knowledge, RemoteKnowledge):
+            result = await knowledge.get_content_by_id(content_id=content_id, db_id=db_id)
+            return result.model_dump()
+
         content = await knowledge.aget_content_by_id(content_id=content_id)
         if not content:
             raise Exception(f"Content {content_id} not found")
@@ -239,6 +287,11 @@ def register_knowledge_tools(mcp: FastMCP, os: "AgentOS") -> None:
     )  # type: ignore
     async def get_content_status(content_id: str, db_id: Optional[str] = None) -> dict:
         knowledge = get_knowledge_instance_by_db_id(os.knowledge_instances, db_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            result = await knowledge.get_content_status(content_id=content_id, db_id=db_id)
+            return result.model_dump()
+
         status, status_message = await knowledge.aget_content_status(content_id=content_id)
 
         if status is None:
@@ -254,6 +307,12 @@ def register_knowledge_tools(mcp: FastMCP, os: "AgentOS") -> None:
     )  # type: ignore
     async def delete_content_by_id(content_id: str, db_id: Optional[str] = None) -> dict:
         knowledge = get_knowledge_instance_by_db_id(os.knowledge_instances, db_id)
+
+        # Handle RemoteKnowledge - use remote API
+        if isinstance(knowledge, RemoteKnowledge):
+            await knowledge.delete_content_by_id(content_id=content_id, db_id=db_id)
+            return {"message": f"Content {content_id} deleted successfully"}
+
         await knowledge.aremove_content_by_id(content_id=content_id)
         return {"message": f"Content {content_id} deleted successfully"}
 
@@ -264,6 +323,11 @@ def register_knowledge_tools(mcp: FastMCP, os: "AgentOS") -> None:
     )  # type: ignore
     async def delete_all_content(db_id: Optional[str] = None) -> dict:
         knowledge = get_knowledge_instance_by_db_id(os.knowledge_instances, db_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            await knowledge.delete_all_content(db_id=db_id)
+            return {"message": "All content deleted successfully"}
+
         knowledge.remove_all_content()
         return {"message": "All content deleted successfully"}
 
@@ -280,6 +344,20 @@ def register_knowledge_tools(mcp: FastMCP, os: "AgentOS") -> None:
         search_type: Optional[str] = None,
     ) -> dict:
         knowledge = get_knowledge_instance_by_db_id(os.knowledge_instances, db_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            result = await knowledge.search_knowledge(
+                query=query,
+                max_results=max_results,
+                filters=filters,
+                search_type=search_type,
+                db_id=db_id,
+            )
+            return {
+                "data": [r.model_dump() for r in result.data],
+                "total_count": result.meta.total_count if result.meta else len(result.data),
+            }
+
         results = knowledge.search(query=query, max_results=max_results, filters=filters, search_type=search_type)
 
         return {
@@ -308,6 +386,10 @@ def register_knowledge_tools(mcp: FastMCP, os: "AgentOS") -> None:
         )
 
         knowledge = get_knowledge_instance_by_db_id(os.knowledge_instances, db_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            result = await knowledge.get_config()
+            return result.model_dump()
 
         readers_info = get_all_readers_info(knowledge)
         readers = {

@@ -16,6 +16,7 @@ from agno.os.schema import (
     WorkflowSessionDetailSchema,
 )
 from agno.os.utils import get_db
+from agno.remote.base import RemoteDb
 from agno.session import AgentSession, TeamSession, WorkflowSession
 
 if TYPE_CHECKING:
@@ -43,6 +44,24 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
     ) -> dict:
         db = await get_db(os.dbs, db_id)
         st = SessionType(session_type)
+
+        if isinstance(db, RemoteDb):
+            result = await db.get_sessions(
+                session_type=st,
+                component_id=component_id,
+                user_id=user_id,
+                session_name=session_name,
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+            )
+            return {
+                "data": [s.model_dump() for s in result.data],
+                "total_count": result.meta.total_count if result.meta else 0,
+                "page": page,
+                "limit": limit,
+            }
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -102,6 +121,20 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
         # Generate session_id if not provided
         sid = session_id or str(uuid4())
 
+        if isinstance(db, RemoteDb):
+            created_session = await db.create_session(
+                session_id=sid,
+                session_name=session_name,
+                session_state=session_state,
+                metadata=metadata,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                workflow_id=workflow_id,
+                session_type=st,
+            )
+            return created_session.model_dump()
+
         # Prepare session_data
         session_data: Dict[str, Any] = {}
         if session_state is not None:
@@ -149,9 +182,9 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
         # Upsert the session
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            created_session = await db.upsert_session(session, deserialize=True)
+            created_session = await db.upsert_session(session, deserialize=True)  # type: ignore
         else:
-            created_session = db.upsert_session(session, deserialize=True)
+            created_session = db.upsert_session(session, deserialize=True)  # type: ignore
 
         if not created_session:
             raise Exception("Failed to create session")
@@ -178,21 +211,25 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
         db = await get_db(os.dbs, db_id)
         st = SessionType(session_type)
 
+        if isinstance(db, RemoteDb):
+            session = await db.get_session(session_id=session_id, session_type=st, user_id=user_id)
+            return session.model_dump()
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            session = await db.get_session(session_id=session_id, session_type=st, user_id=user_id)
+            local_session = await db.get_session(session_id=session_id, session_type=st, user_id=user_id)
         else:
-            session = db.get_session(session_id=session_id, session_type=st, user_id=user_id)
+            local_session = db.get_session(session_id=session_id, session_type=st, user_id=user_id)  # type: ignore
 
-        if not session:
+        if not local_session:
             raise Exception(f"Session with id '{session_id}' not found")
 
         if st == SessionType.AGENT:
-            return AgentSessionDetailSchema.from_session(session).model_dump()  # type: ignore
+            return AgentSessionDetailSchema.from_session(local_session).model_dump()  # type: ignore
         elif st == SessionType.TEAM:
-            return TeamSessionDetailSchema.from_session(session).model_dump()  # type: ignore
+            return TeamSessionDetailSchema.from_session(local_session).model_dump()  # type: ignore
         else:
-            return WorkflowSessionDetailSchema.from_session(session).model_dump()  # type: ignore
+            return WorkflowSessionDetailSchema.from_session(local_session).model_dump()  # type: ignore
 
     @mcp.tool(
         name="get_session_runs",
@@ -210,16 +247,28 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
         db = await get_db(os.dbs, db_id)
         st = SessionType(session_type)
 
+        if isinstance(db, RemoteDb):
+            remote_runs = await db.get_session_runs(
+                session_id=session_id,
+                session_type=st,
+                user_id=user_id,
+                created_after=created_after,
+                created_before=created_before,
+            )
+            return [r.model_dump() for r in remote_runs]
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            session = await db.get_session(session_id=session_id, session_type=st, user_id=user_id, deserialize=False)
+            local_session = await db.get_session(
+                session_id=session_id, session_type=st, user_id=user_id, deserialize=False
+            )
         else:
-            session = db.get_session(session_id=session_id, session_type=st, user_id=user_id, deserialize=False)
+            local_session = db.get_session(session_id=session_id, session_type=st, user_id=user_id, deserialize=False)  # type: ignore
 
-        if not session:
+        if not local_session:
             raise Exception(f"Session with ID {session_id} not found")
 
-        runs = session.get("runs")  # type: ignore
+        runs = local_session.get("runs")  # type: ignore
         if not runs:
             return []
 
@@ -273,6 +322,10 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
     ) -> dict:
         db = await get_db(os.dbs, db_id)
         st = SessionType(session_type)
+
+        if isinstance(db, RemoteDb):
+            run = await db.get_session_run(session_id=session_id, run_id=run_id, session_type=st, user_id=user_id)
+            return run.model_dump()
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -331,8 +384,20 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
     async def delete_sessions(
         session_ids: List[str],
         db_id: str,
+        session_types: Optional[List[str]] = None,
     ) -> dict:
         db = await get_db(os.dbs, db_id)
+
+        if isinstance(db, RemoteDb):
+            # Default to all session types if not specified
+            types = (
+                [SessionType(t) for t in session_types]
+                if session_types
+                else [SessionType.AGENT, SessionType.TEAM, SessionType.WORKFLOW]
+            )
+            await db.delete_sessions(session_ids=session_ids, session_types=types)
+            return {"message": f"Deleted {len(session_ids)} sessions"}
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_sessions(session_ids=session_ids)
@@ -355,21 +420,26 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
         db = await get_db(os.dbs, db_id)
         st = SessionType(session_type)
 
+        # Handle RemoteDb
+        if isinstance(db, RemoteDb):
+            remote_session = await db.rename_session(session_id=session_id, session_name=session_name, session_type=st)
+            return remote_session.model_dump()
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            session = await db.rename_session(session_id=session_id, session_type=st, session_name=session_name)
+            local_session = await db.rename_session(session_id=session_id, session_type=st, session_name=session_name)
         else:
-            session = db.rename_session(session_id=session_id, session_type=st, session_name=session_name)
+            local_session = db.rename_session(session_id=session_id, session_type=st, session_name=session_name)  # type: ignore
 
-        if not session:
+        if not local_session:
             raise Exception(f"Session with id '{session_id}' not found")
 
         if st == SessionType.AGENT:
-            return AgentSessionDetailSchema.from_session(session).model_dump()  # type: ignore
+            return AgentSessionDetailSchema.from_session(local_session).model_dump()  # type: ignore
         elif st == SessionType.TEAM:
-            return TeamSessionDetailSchema.from_session(session).model_dump()  # type: ignore
+            return TeamSessionDetailSchema.from_session(local_session).model_dump()  # type: ignore
         else:
-            return WorkflowSessionDetailSchema.from_session(session).model_dump()  # type: ignore
+            return WorkflowSessionDetailSchema.from_session(local_session).model_dump()  # type: ignore
 
     @mcp.tool(
         name="update_session",
@@ -389,14 +459,26 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
         db = await get_db(os.dbs, db_id)
         st = SessionType(session_type)
 
+        if isinstance(db, RemoteDb):
+            session = await db.update_session(
+                session_id=session_id,
+                session_type=st,
+                user_id=user_id,
+                session_name=session_name,
+                session_state=session_state,
+                metadata=metadata,
+                summary=summary,
+            )
+            return session.model_dump()
+
         # Get the existing session
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             existing_session = await db.get_session(
                 session_id=session_id, session_type=st, user_id=user_id, deserialize=True
-            )
+            )  # type: ignore
         else:
-            existing_session = db.get_session(session_id=session_id, session_type=st, user_id=user_id, deserialize=True)
+            existing_session = db.get_session(session_id=session_id, session_type=st, user_id=user_id, deserialize=True)  # type: ignore
 
         if not existing_session:
             raise Exception(f"Session with id '{session_id}' not found")
@@ -451,9 +533,20 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
         sort_order: str = "desc",
     ):
         db = await get_db(os.dbs, db_id)
+
+        if isinstance(db, RemoteDb):
+            result = await db.get_sessions(
+                session_type=SessionType.AGENT,
+                component_id=agent_id,
+                user_id=user_id,
+                sort_by=sort_by,
+                sort_order=sort_order,
+            )
+            return {"data": [s.model_dump() for s in result.data]}
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            sessions = await db.get_sessions(
+            sessions, _ = await db.get_sessions(
                 session_type=SessionType.AGENT,
                 component_id=agent_id,
                 user_id=user_id,
@@ -462,7 +555,7 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
                 deserialize=False,
             )
         else:
-            sessions = db.get_sessions(
+            sessions, _ = db.get_sessions(  # type: ignore
                 session_type=SessionType.AGENT,
                 component_id=agent_id,
                 user_id=user_id,
@@ -472,7 +565,7 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
             )
 
         return {
-            "data": [SessionSchema.from_dict(session) for session in sessions],  # type: ignore
+            "data": [SessionSchema.from_dict(session).model_dump() for session in sessions],  # type: ignore
         }
 
     @mcp.tool(
@@ -488,9 +581,20 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
         sort_order: str = "desc",
     ):
         db = await get_db(os.dbs, db_id)
+
+        if isinstance(db, RemoteDb):
+            result = await db.get_sessions(
+                session_type=SessionType.TEAM,
+                component_id=team_id,
+                user_id=user_id,
+                sort_by=sort_by,
+                sort_order=sort_order,
+            )
+            return {"data": [s.model_dump() for s in result.data]}
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            sessions = await db.get_sessions(
+            sessions, _ = await db.get_sessions(
                 session_type=SessionType.TEAM,
                 component_id=team_id,
                 user_id=user_id,
@@ -499,7 +603,7 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
                 deserialize=False,
             )
         else:
-            sessions = db.get_sessions(
+            sessions, _ = db.get_sessions(  # type: ignore
                 session_type=SessionType.TEAM,
                 component_id=team_id,
                 user_id=user_id,
@@ -509,7 +613,7 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
             )
 
         return {
-            "data": [SessionSchema.from_dict(session) for session in sessions],  # type: ignore
+            "data": [SessionSchema.from_dict(session).model_dump() for session in sessions],  # type: ignore
         }
 
     @mcp.tool(
@@ -525,9 +629,20 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
         sort_order: str = "desc",
     ):
         db = await get_db(os.dbs, db_id)
+
+        if isinstance(db, RemoteDb):
+            result = await db.get_sessions(
+                session_type=SessionType.WORKFLOW,
+                component_id=workflow_id,
+                user_id=user_id,
+                sort_by=sort_by,
+                sort_order=sort_order,
+            )
+            return {"data": [s.model_dump() for s in result.data]}
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            sessions = await db.get_sessions(
+            sessions, _ = await db.get_sessions(
                 session_type=SessionType.WORKFLOW,
                 component_id=workflow_id,
                 user_id=user_id,
@@ -536,7 +651,7 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
                 deserialize=False,
             )
         else:
-            sessions = db.get_sessions(
+            sessions, _ = db.get_sessions(  # type: ignore
                 session_type=SessionType.WORKFLOW,
                 component_id=workflow_id,
                 user_id=user_id,
@@ -546,5 +661,5 @@ def register_session_tools(mcp: FastMCP, os: "AgentOS") -> None:
             )
 
         return {
-            "data": [SessionSchema.from_dict(session) for session in sessions],  # type: ignore
+            "data": [SessionSchema.from_dict(session).model_dump() for session in sessions],  # type: ignore
         }

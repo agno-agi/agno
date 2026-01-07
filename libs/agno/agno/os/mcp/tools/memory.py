@@ -9,6 +9,7 @@ from agno.db.base import AsyncBaseDb
 from agno.db.schemas import UserMemory
 from agno.os.routers.memory.schemas import UserMemorySchema, UserStatsSchema
 from agno.os.utils import get_db
+from agno.remote.base import RemoteDb
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -29,15 +30,32 @@ def register_memory_tools(mcp: FastMCP, os: "AgentOS") -> None:
         topics: Optional[List[str]] = None,
     ) -> dict:
         db = await get_db(os.dbs, db_id)
-        user_memory = db.upsert_user_memory(
-            memory=UserMemory(
-                memory_id=str(uuid4()),
-                memory=memory,
-                topics=topics or [],
-                user_id=user_id,
-            ),
-            deserialize=False,
-        )
+
+        if isinstance(db, RemoteDb):
+            result = await db.create_memory(memory=memory, topics=topics or [], user_id=user_id)
+            return result.model_dump()
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            user_memory = await db.upsert_user_memory(
+                memory=UserMemory(
+                    memory_id=str(uuid4()),
+                    memory=memory,
+                    topics=topics or [],
+                    user_id=user_id,
+                ),
+                deserialize=False,
+            )
+        else:
+            user_memory = db.upsert_user_memory(
+                memory=UserMemory(
+                    memory_id=str(uuid4()),
+                    memory=memory,
+                    topics=topics or [],
+                    user_id=user_id,
+                ),
+                deserialize=False,
+            )
         if not user_memory:
             raise Exception("Failed to create memory")
 
@@ -61,6 +79,26 @@ def register_memory_tools(mcp: FastMCP, os: "AgentOS") -> None:
         sort_order: str = "desc",
     ) -> dict:
         db = await get_db(os.dbs, db_id)
+
+        if isinstance(db, RemoteDb):
+            result = await db.get_memories(
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                topics=topics,
+                search_content=search_content,
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+            )
+            return {
+                "data": [m.model_dump() for m in result.data],
+                "total_count": result.meta.total_count if result.meta else 0,
+                "page": page,
+                "limit": limit,
+            }
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             user_memories, total_count = await db.get_user_memories(
@@ -106,6 +144,11 @@ def register_memory_tools(mcp: FastMCP, os: "AgentOS") -> None:
         user_id: Optional[str] = None,
     ) -> dict:
         db = await get_db(os.dbs, db_id)
+
+        if isinstance(db, RemoteDb):
+            result = await db.get_memory(memory_id=memory_id, user_id=user_id)
+            return result.model_dump()
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             user_memory = await db.get_user_memory(memory_id=memory_id, user_id=user_id, deserialize=False)
@@ -130,6 +173,11 @@ def register_memory_tools(mcp: FastMCP, os: "AgentOS") -> None:
         topics: Optional[List[str]] = None,
     ) -> dict:
         db = await get_db(os.dbs, db_id)
+
+        if isinstance(db, RemoteDb):
+            result = await db.update_memory(memory_id=memory_id, memory=memory, topics=topics, user_id=user_id)
+            return result.model_dump()
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             user_memory = await db.upsert_user_memory(
@@ -167,6 +215,11 @@ def register_memory_tools(mcp: FastMCP, os: "AgentOS") -> None:
         user_id: Optional[str] = None,
     ) -> dict:
         db = await get_db(os.dbs, db_id)
+
+        if isinstance(db, RemoteDb):
+            await db.delete_memory(memory_id=memory_id, user_id=user_id)
+            return {"message": f"Memory {memory_id} deleted successfully"}
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_user_memory(memory_id=memory_id, user_id=user_id)
@@ -186,6 +239,11 @@ def register_memory_tools(mcp: FastMCP, os: "AgentOS") -> None:
         user_id: Optional[str] = None,
     ) -> dict:
         db = await get_db(os.dbs, db_id)
+
+        if isinstance(db, RemoteDb):
+            await db.delete_memories(memory_ids=memory_ids, user_id=user_id)
+            return {"message": f"Deleted {len(memory_ids)} memories"}
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_user_memories(memory_ids=memory_ids, user_id=user_id)
@@ -203,6 +261,10 @@ def register_memory_tools(mcp: FastMCP, os: "AgentOS") -> None:
         db_id: str,
     ) -> List[str]:
         db = await get_db(os.dbs, db_id)
+
+        if isinstance(db, RemoteDb):
+            return await db.get_memory_topics()
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             return await db.get_all_memory_topics()
@@ -220,6 +282,16 @@ def register_memory_tools(mcp: FastMCP, os: "AgentOS") -> None:
         page: int = 1,
     ) -> dict:
         db = await get_db(os.dbs, db_id)
+
+        if isinstance(db, RemoteDb):
+            result = await db.get_user_memory_stats(limit=limit, page=page)
+            return {
+                "data": [s.model_dump() for s in result.data],
+                "total_count": result.meta.total_count if result.meta else 0,
+                "page": page,
+                "limit": limit,
+            }
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             user_stats, total_count = await db.get_user_memory_stats(
@@ -256,12 +328,15 @@ def register_memory_tools(mcp: FastMCP, os: "AgentOS") -> None:
 
         db = await get_db(os.dbs, db_id)
 
-        # Create memory manager with optional model
+        if isinstance(db, RemoteDb):
+            result = await db.optimize_memories(user_id=user_id, model=model, apply=apply)
+            return result.model_dump()
+
         if model:
             model_instance = get_model(model)
-            memory_manager = MemoryManager(model=model_instance, db=db)
+            memory_manager = MemoryManager(model=model_instance, db=db)  # type: ignore
         else:
-            memory_manager = MemoryManager(db=db)
+            memory_manager = MemoryManager(db=db)  # type: ignore
 
         # Get current memories to count tokens before optimization
         if isinstance(db, AsyncBaseDb):

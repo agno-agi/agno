@@ -8,6 +8,7 @@ from fastmcp import FastMCP
 from agno.db.base import AsyncBaseDb
 from agno.os.routers.metrics.schemas import DayAggregatedMetrics
 from agno.os.utils import get_db
+from agno.remote.base import RemoteDb
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -32,15 +33,18 @@ def register_metrics_tools(mcp: FastMCP, os: "AgentOS") -> None:
         start_date = date.fromisoformat(starting_date) if starting_date else None
         end_date = date.fromisoformat(ending_date) if ending_date else None
 
+        if isinstance(db, RemoteDb):
+            metrics_response = await db.get_metrics(starting_date=start_date, ending_date=end_date)
+            return {
+                "metrics": [m.model_dump() for m in metrics_response.metrics],
+                "updated_at": metrics_response.updated_at.isoformat() if metrics_response.updated_at else None,
+            }
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            metrics_data, latest_updated_at = await db.get_metrics(
-                starting_date=start_date, ending_date=end_date
-            )
+            metrics_data, latest_updated_at = await db.get_metrics(starting_date=start_date, ending_date=end_date)
         else:
-            metrics_data, latest_updated_at = db.get_metrics(
-                starting_date=start_date, ending_date=end_date
-            )
+            metrics_data, latest_updated_at = db.get_metrics(starting_date=start_date, ending_date=end_date)
 
         return {
             "metrics": [DayAggregatedMetrics.from_dict(m).model_dump() for m in metrics_data],
@@ -57,17 +61,23 @@ def register_metrics_tools(mcp: FastMCP, os: "AgentOS") -> None:
     async def refresh_metrics(db_id: Optional[str] = None) -> dict:
         db = await get_db(os.dbs, db_id)
 
+        if isinstance(db, RemoteDb):
+            remote_result = await db.refresh_metrics()
+            return {
+                "metrics": [m.model_dump() for m in remote_result],
+                "message": "Metrics refreshed successfully",
+            }
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            result = await db.calculate_metrics()
+            local_result = await db.calculate_metrics()
         else:
-            result = db.calculate_metrics()
+            local_result = db.calculate_metrics()
 
-        if result is None:
+        if local_result is None:
             return {"metrics": [], "message": "No metrics to calculate"}
 
         return {
-            "metrics": [DayAggregatedMetrics.from_dict(m).model_dump() for m in result],
+            "metrics": [DayAggregatedMetrics.from_dict(m).model_dump() for m in local_result],  # type: ignore
             "message": "Metrics refreshed successfully",
         }
-

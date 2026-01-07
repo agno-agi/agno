@@ -122,6 +122,9 @@ class WorkflowResponse(BaseModel):
 
     @classmethod
     async def from_workflow(cls, workflow: Union[Workflow, RemoteWorkflow]) -> "WorkflowResponse":
+        if isinstance(workflow, RemoteWorkflow):
+            return await workflow.get_workflow_config()
+
         workflow_dict = workflow.to_dict()
         steps = workflow_dict.get("steps")
 

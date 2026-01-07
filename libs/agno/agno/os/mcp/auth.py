@@ -6,6 +6,7 @@ from fastmcp import Context
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
+    from agno.agent.remote import RemoteAgent
     from agno.team import RemoteTeam, Team
     from agno.workflow.remote import RemoteWorkflow
     from agno.workflow.workflow import Workflow
@@ -101,12 +102,14 @@ def get_accessible_resource_ids(ctx: Context, resource_type: str) -> Set[str]:
     return _get_accessible_resource_ids(user_scopes=user_scopes, resource_type=resource_type)
 
 
-def filter_agents_by_access(ctx: Context, agents: List["Agent"]) -> List["Agent"]:
+def filter_agents_by_access(
+    ctx: Context, agents: List[Union["Agent", "RemoteAgent"]]
+) -> List[Union["Agent", "RemoteAgent"]]:
     """Filter a list of agents based on user's access permissions.
 
     Args:
         ctx: The FastMCP Context object
-        agents: List of Agent objects
+        agents: List of Agent or RemoteAgent objects
 
     Returns:
         Filtered list of agents the user has access to
