@@ -11,7 +11,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.pdf_reader import PDFReader
 
 knowledge = Knowledge(vector_db=your_vector_db)
-knowledge.add_content(
+knowledge.insert(
     path="documents/",
     reader=PDFReader(),
     metadata={"source": "docs"}

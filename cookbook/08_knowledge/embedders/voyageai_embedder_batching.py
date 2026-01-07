@@ -25,8 +25,4 @@ knowledge = Knowledge(
 )
 
 
-asyncio.run(
-    knowledge.add_content_async(
-        path="cookbook/08_knowledge/testing_resources/cv_1.pdf",
-    )
-)
+asyncio.run(knowledge.ainsert(path="cookbook/08_knowledge/testing_resources/cv_1.pdf"))

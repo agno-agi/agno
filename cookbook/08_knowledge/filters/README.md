@@ -22,7 +22,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.lancedb import LanceDb
 
 knowledge = Knowledge(vector_db=LanceDb(table_name="docs", uri="tmp/lancedb"))
-knowledge.add_content(path="data.csv", metadata={"type": "sales", "quarter": "Q1"})
+knowledge.insert(path="data.csv", metadata={"type": "sales", "quarter": "Q1"})
 
 results = knowledge.search(
     query="revenue trends",

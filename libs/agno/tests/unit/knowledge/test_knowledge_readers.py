@@ -1,8 +1,12 @@
-"""Tests for Knowledge.get_readers() method, specifically testing list to dict conversion."""
+"""Tests for Knowledge.get_readers() method and ReaderFactory functionality."""
+
+import pytest
 
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.reader.reader_factory import ReaderFactory
 from agno.knowledge.reader.text_reader import TextReader
+from agno.knowledge.utils import get_all_readers_info, get_reader_info
 from agno.vectordb.base import VectorDb
 
 
@@ -252,3 +256,144 @@ def test_get_readers_preserves_existing_dict_on_multiple_calls():
     assert result1 is result2
     assert result1 is knowledge.readers
     assert len(result1) == 2
+
+
+# ==========================================
+# ReaderFactory Tests
+# ==========================================
+
+
+def test_reader_factory_metadata_exists():
+    """Test that READER_METADATA contains all expected readers."""
+    expected_readers = [
+        "pdf",
+        "csv",
+        "docx",
+        "pptx",
+        "json",
+        "markdown",
+        "text",
+        "website",
+        "firecrawl",
+        "tavily",
+        "youtube",
+        "arxiv",
+        "wikipedia",
+        "web_search",
+    ]
+
+    for reader_key in expected_readers:
+        assert reader_key in ReaderFactory.READER_METADATA
+        assert "name" in ReaderFactory.READER_METADATA[reader_key]
+        assert "description" in ReaderFactory.READER_METADATA[reader_key]
+
+
+def test_reader_factory_get_reader_class_returns_class():
+    """Test that get_reader_class returns a class, not an instance."""
+    reader_class = ReaderFactory.get_reader_class("text")
+
+    # Should be a class, not an instance
+    assert isinstance(reader_class, type)
+    assert reader_class.__name__ == "TextReader"
+
+
+def test_reader_factory_get_reader_class_unknown_raises():
+    """Test that get_reader_class raises ValueError for unknown reader."""
+    with pytest.raises(ValueError, match="Unknown reader"):
+        ReaderFactory.get_reader_class("nonexistent_reader")
+
+
+def test_reader_factory_get_reader_class_supports_class_methods():
+    """Test that reader class from factory supports class methods without instantiation."""
+    # Use text reader as it has no optional dependencies
+    reader_class = ReaderFactory.get_reader_class("text")
+
+    # Should be able to call class methods without creating an instance
+    strategies = reader_class.get_supported_chunking_strategies()
+    content_types = reader_class.get_supported_content_types()
+
+    assert isinstance(strategies, list)
+    assert len(strategies) > 0
+    assert isinstance(content_types, list)
+    assert len(content_types) > 0
+
+
+def test_reader_factory_get_all_reader_keys():
+    """Test that get_all_reader_keys returns all reader keys."""
+    keys = ReaderFactory.get_all_reader_keys()
+
+    assert isinstance(keys, list)
+    assert len(keys) > 0
+    assert "pdf" in keys
+    assert "text" in keys
+    assert "website" in keys
+
+
+# ==========================================
+# Reader Utils Tests
+# ==========================================
+
+
+def test_get_reader_info_returns_correct_structure():
+    """Test that get_reader_info returns expected structure without instantiation."""
+    info = get_reader_info("text")
+
+    assert isinstance(info, dict)
+    assert info["id"] == "text"
+    assert "name" in info
+    assert "description" in info
+    assert "chunking_strategies" in info
+    assert "content_types" in info
+    assert isinstance(info["chunking_strategies"], list)
+    assert isinstance(info["content_types"], list)
+
+
+def test_get_reader_info_unknown_raises():
+    """Test that get_reader_info raises ValueError for unknown reader."""
+    with pytest.raises(ValueError, match="Unknown reader"):
+        get_reader_info("nonexistent_reader")
+
+
+def test_get_all_readers_info_returns_list():
+    """Test that get_all_readers_info returns a list of reader info dicts."""
+    readers_info = get_all_readers_info()
+
+    assert isinstance(readers_info, list)
+    assert len(readers_info) > 0
+    # Each item should have expected keys
+    for info in readers_info:
+        assert "id" in info
+        assert "name" in info
+        assert "chunking_strategies" in info
+
+
+def test_get_all_readers_info_custom_readers_first():
+    """Test that custom readers appear before factory readers."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    custom_reader = CustomReader(name="My Custom Reader")
+    knowledge.readers = {"my_custom": custom_reader}
+
+    readers_info = get_all_readers_info(knowledge)
+
+    # Custom reader should be first
+    assert readers_info[0]["id"] == "my_custom"
+    assert readers_info[0]["name"] == "My Custom Reader"
+
+
+def test_get_all_readers_info_custom_reader_takes_precedence():
+    """Test that custom readers with same ID as factory readers take precedence."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    # Create a custom reader with same key as a factory reader
+    custom_pdf = CustomReader(name="My Custom PDF")
+    knowledge.readers = {"pdf": custom_pdf}
+
+    readers_info = get_all_readers_info(knowledge)
+
+    # Find the pdf entry
+    pdf_info = next((r for r in readers_info if r["id"] == "pdf"), None)
+    assert pdf_info is not None
+    # Should be our custom reader, not the factory one
+    assert pdf_info["name"] == "My Custom PDF"
+    # Should only have one pdf entry
+    pdf_count = sum(1 for r in readers_info if r["id"] == "pdf")
+    assert pdf_count == 1

@@ -1,3 +1,4 @@
+import asyncio
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -86,6 +87,12 @@ deep_knowledge_agent = Agent(
 )
 
 if __name__ == "__main__":
-    knowledge.add_content(
-        name="Agno docs for deep knowledge", url="https://docs.agno.com/llms-full.txt"
+    # Use async to speed up the loading process. It is recommended to use async when loading large amounts of data.
+    asyncio.run(
+        knowledge.ainsert(
+            name="Agno docs for deep knowledge",
+            url="https://docs.agno.com/llms-full.txt",
+        )
     )
+
+    deep_knowledge_agent.print_response("What is  AgentOS?", stream=True)

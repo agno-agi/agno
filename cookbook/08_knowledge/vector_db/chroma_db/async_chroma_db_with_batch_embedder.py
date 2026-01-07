@@ -26,9 +26,7 @@ agent = Agent(knowledge=knowledge)
 if __name__ == "__main__":
     # Comment out after first run
     asyncio.run(
-        knowledge.add_content_async(
-            path="cookbook/08_knowledge/testing_resources/cv_1.pdf"
-        )
+        knowledge.ainsert(path="cookbook/08_knowledge/testing_resources/cv_1.pdf")
     )
 
     # Create and use the agent

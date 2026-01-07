@@ -20,7 +20,6 @@ vector_db = PgVector(
 # Create Knowledge Instance
 knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
-    description="Agno 2.0 Knowledge Implementation",
     vector_db=vector_db,
     # contents_db=contents_db,
 )
@@ -31,12 +30,16 @@ knowledge.add_content(
     metadata={"user_tag": "Engineering Candidates"},
 )
 
+knowledge.insert(
+    name="CV",
+    path="cookbook/08_knowledge/testing_resources/cv_1.pdf",
+    metadata={"user_tag": "Engineering Candidates"},
+)
+
+
 agent = Agent(
     name="My Agent",
-    description="Agno 2.0 Agent Implementation",
     knowledge=knowledge,
-    search_knowledge=True,
-    debug_mode=True,
 )
 
 agent.print_response(

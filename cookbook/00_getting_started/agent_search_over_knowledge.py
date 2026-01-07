@@ -102,7 +102,7 @@ agent_with_knowledge = Agent(
 if __name__ == "__main__":
     # Load the introduction from the Agno documentation into the knowledge base
     # We're only loading 1 file to keep this example simple.
-    knowledge.add_content(
+    knowledge.insert(
         name="Agno Introduction", url="https://docs.agno.com/introduction.md"
     )
 
@@ -118,13 +118,13 @@ if __name__ == "__main__":
 Load your own knowledge:
 
 1. From a URL
-   knowledge.add_content(url="https://example.com/docs.pdf")
+   knowledge.insert(url="https://example.com/docs.pdf")
 
 2. From a local file
-   knowledge.add_content(path="path/to/document.pdf")
+   knowledge.insert(path="path/to/document.pdf")
 
 3. From text directly
-   knowledge.add_content(text_content="Your content here...")
+   knowledge.insert(text_content="Your content here...")
 
 Hybrid search combines:
 - Semantic search: Finds conceptually similar content

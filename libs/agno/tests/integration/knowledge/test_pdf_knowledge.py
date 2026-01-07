@@ -39,12 +39,12 @@ def prepare_knowledge(setup_vector_db, setup_contents_db):
     kb = Knowledge(vector_db=setup_vector_db, contents_db=setup_contents_db)
 
     # Load with different user IDs and metadata
-    kb.add_content(
+    kb.insert(
         path=get_filtered_data_dir() / "cv_1.pdf",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content(
+    kb.insert(
         path=get_filtered_data_dir() / "cv_2.pdf",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -58,12 +58,12 @@ async def aprepare_knowledge(setup_vector_db, setup_contents_db):
     kb = Knowledge(vector_db=setup_vector_db, contents_db=setup_contents_db)
 
     # Load documents with different user IDs and metadata
-    await kb.add_content_async(
+    await kb.ainsert(
         path=get_filtered_data_dir() / "cv_1.pdf",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    await kb.add_content_async(
+    await kb.ainsert(
         path=get_filtered_data_dir() / "cv_2.pdf",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -82,7 +82,7 @@ def test_pdf_knowledge():
         vector_db=vector_db,
     )
 
-    knowledge.add_content(path=str(Path(__file__).parent / "data/thai_recipes_short.pdf"))
+    knowledge.insert(path=str(Path(__file__).parent / "data/thai_recipes_short.pdf"))
 
     assert vector_db.exists()
 
@@ -115,7 +115,7 @@ async def test_pdf_knowledge_async():
         vector_db=vector_db,
     )
 
-    await knowledge.add_content_async(path=str(Path(__file__).parent / "data/thai_recipes_short.pdf"))
+    await knowledge.ainsert(path=str(Path(__file__).parent / "data/thai_recipes_short.pdf"))
 
     assert await vector_db.async_exists()
 
@@ -146,12 +146,12 @@ def test_text_knowledge_with_metadata_path(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "cv_1.pdf"),
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "cv_2.pdf"),
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -177,12 +177,12 @@ def test_knowledge_with_metadata_path_invalid_filter(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "cv_1.pdf"),
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "cv_2.pdf"),
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -302,7 +302,7 @@ async def test_pdf_url_knowledge_base_async():
         vector_db=vector_db,
     )
 
-    await knowledge.add_contents_async(
+    await knowledge.ainsert_many(
         urls=[
             "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
             "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
@@ -339,12 +339,12 @@ async def test_pdf_url_knowledge_base_with_metadata_path(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    await kb.add_content_async(
+    await kb.ainsert(
         url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
         metadata={"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"},
     )
 
-    await kb.add_content_async(
+    await kb.ainsert(
         url="https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
         metadata={"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"},
     )
@@ -369,12 +369,12 @@ def test_pdf_url_knowledge_base_with_metadata_path_invalid_filter(setup_vector_d
         contents_db=setup_contents_db,
     )
 
-    kb.add_content(
+    kb.insert(
         url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
         metadata={"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"},
     )
 
-    kb.add_content(
+    kb.insert(
         url="https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
         metadata={"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"},
     )
@@ -440,11 +440,11 @@ async def test_async_pdf_url_knowledge_base_with_metadata_path(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    await kb.add_content_async(
+    await kb.ainsert(
         url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
         metadata={"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"},
     )
-    await kb.add_content_async(
+    await kb.ainsert(
         url="https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
         metadata={"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"},
     )
@@ -469,11 +469,11 @@ async def test_async_pdf_url_knowledge_base_with_metadata_path_invalid_filter(se
         contents_db=setup_contents_db,
     )
 
-    await kb.add_content_async(
+    await kb.ainsert(
         url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
         metadata={"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"},
     )
-    await kb.add_content_async(
+    await kb.ainsert(
         url="https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
         metadata={"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"},
     )

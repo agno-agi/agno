@@ -15,7 +15,7 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content(
+knowledge.insert(
     url="https://docs.agno.com/introduction",
     reader=WebsiteReader(
         # Number of links to follow from the seed URLs

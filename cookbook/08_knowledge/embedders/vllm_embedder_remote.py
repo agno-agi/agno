@@ -48,13 +48,11 @@ def main():
     # Step 4: Load documents
     try:
         asyncio.run(
-            knowledge.add_content_async(
-                path="cookbook/08_knowledge/testing_resources/cv_1.pdf",
-            )
+            knowledge.ainsert(path="cookbook/08_knowledge/testing_resources/cv_1.pdf")
         )
-        print("   ✓ Documents loaded")
+        print("   Documents loaded")
     except Exception as e:
-        print(f"   ✗ Error loading documents: {e}")
+        print(f"   Error loading documents: {e}")
         return
 
     # Step 5: Search the knowledge base
@@ -66,7 +64,7 @@ def main():
         for i, result in enumerate(results, 1):
             print(f"   Result {i}: {result.content[:100]}...")
     except Exception as e:
-        print(f"   ✗ Error searching: {e}")
+        print(f"   Error searching: {e}")
         return
 
 

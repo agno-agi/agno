@@ -35,7 +35,7 @@ agent = Agent(
 
 async def main():
     # Load the knowledge
-    await knowledge.add_content_async(
+    await knowledge.ainsert(
         text_content=fun_facts,
     )
 
