@@ -105,13 +105,13 @@ async def test_mcp_include_exclude_tools_bad_values(kwargs):
 def test_is_valid_header_provider_with_http_transport():
     """Test that header_provider is valid for HTTP transports."""
     tools = MCPTools(url="http://localhost:8080/mcp", header_provider=lambda: {})
-    assert hasattr(tools, "header_provider")
+    assert tools.header_provider is not None
 
 
 def test_is_valid_header_provider_ignored_for_stdio():
     """Test that header_provider is ignored for stdio transport."""
     tools = MCPTools(command="npx foo", header_provider=lambda: {})
-    assert not hasattr(tools, "header_provider")
+    assert tools.header_provider is None
 
 
 def test_call_header_provider_no_params():
