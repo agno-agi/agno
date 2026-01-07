@@ -13,9 +13,13 @@ def is_gemini_reasoning_model(reasoning_model: Model) -> bool:
     if not is_gemini_class:
         return False
 
-    # Check if it's a Gemini 2.5+ model (supports thinking)
+    # Check if it's a Gemini model with thinking support
+    # - Gemini 2.5+ models support thinking
+    # - Gemini 3+ models support thinking (including DeepThink variants)
     model_id = reasoning_model.id.lower()
-    has_thinking_support = "2.5" in model_id
+    has_thinking_support = (
+        "2.5" in model_id or "3.0" in model_id or "3.5" in model_id or "deepthink" in model_id or "gemini-3" in model_id
+    )
 
     # Also check if thinking parameters are set
     # Note: thinking_budget=0 explicitly disables thinking mode per Google's API docs
@@ -74,7 +78,8 @@ async def aget_gemini_reasoning(reasoning_agent: "Agent", messages: List[Message
 
 
 def get_gemini_reasoning_stream(
-    reasoning_agent: "Agent", messages: List[Message]  # type: ignore  # noqa: F821
+    reasoning_agent: "Agent",  # type: ignore  # noqa: F821
+    messages: List[Message],
 ) -> Iterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from Gemini model.
@@ -113,7 +118,8 @@ def get_gemini_reasoning_stream(
 
 
 async def aget_gemini_reasoning_stream(
-    reasoning_agent: "Agent", messages: List[Message]  # type: ignore  # noqa: F821
+    reasoning_agent: "Agent",  # type: ignore  # noqa: F821
+    messages: List[Message],
 ) -> AsyncIterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from Gemini model asynchronously.

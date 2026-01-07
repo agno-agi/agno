@@ -8,9 +8,9 @@ from db import gemini_agents_db
 
 creative_studio_agent = Agent(
     name="Creative Studio Agent",
-    model=Gemini(id="gemini-3-pro-preview"),
+    model=Gemini(id="gemini-3-flash-preview"),
     tools=[NanoBananaTools(model="gemini-2.5-flash-image")],
-    system_message=dedent("""\
+    instructions=dedent("""\
     You are a creative image generation agent.
     Your task is to transform short user ideas into high-quality, visually coherent images using the image generation tool.
 
@@ -28,11 +28,9 @@ creative_studio_agent = Agent(
 
     After image generation:
     1. Provide a brief 1–2 sentence caption describing the image.
-    2. Do not explain the prompt engineering or internal steps unless explicitly asked.
+    2. Do not explain the prompt engineering or internal steps unless explicitly asked.\
     """),
     db=gemini_agents_db,
-    # Enable the agent to remember user information and preferences
-    enable_agentic_memory=True,
     # Add the current date and time to the context
     add_datetime_to_context=True,
     # Add the history of the agent's runs to the context

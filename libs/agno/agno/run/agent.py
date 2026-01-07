@@ -55,8 +55,11 @@ class RunInput:
             return self.input_content.model_dump_json(exclude_none=True)
         elif isinstance(self.input_content, Message):
             return json.dumps(self.input_content.to_dict())
-        elif isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], Message):
-            return json.dumps([m.to_dict() for m in self.input_content])
+        elif isinstance(self.input_content, list):
+            try:
+                return json.dumps(self.to_dict().get("input_content"))
+            except Exception:
+                return str(self.input_content)
         else:
             return str(self.input_content)
 
@@ -71,22 +74,15 @@ class RunInput:
                 result["input_content"] = self.input_content.model_dump(exclude_none=True)
             elif isinstance(self.input_content, Message):
                 result["input_content"] = self.input_content.to_dict()
-
-            # Handle input_content provided as a list of Message objects
-            elif (
-                isinstance(self.input_content, list)
-                and self.input_content
-                and isinstance(self.input_content[0], Message)
-            ):
-                result["input_content"] = [m.to_dict() for m in self.input_content]
-
-            # Handle input_content provided as a list of dicts
-            elif (
-                isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], dict)
-            ):
-                for content in self.input_content:
-                    # Handle media input
-                    if isinstance(content, dict):
+            elif isinstance(self.input_content, list):
+                serialized_items: List[Any] = []
+                for item in self.input_content:
+                    if isinstance(item, Message):
+                        serialized_items.append(item.to_dict())
+                    elif isinstance(item, BaseModel):
+                        serialized_items.append(item.model_dump(exclude_none=True))
+                    elif isinstance(item, dict):
+                        content = dict(item)
                         if content.get("images"):
                             content["images"] = [
                                 img.to_dict() if isinstance(img, Image) else img for img in content["images"]
@@ -103,7 +99,11 @@ class RunInput:
                             content["files"] = [
                                 file.to_dict() if isinstance(file, File) else file for file in content["files"]
                             ]
-                result["input_content"] = self.input_content
+                        serialized_items.append(content)
+                    else:
+                        serialized_items.append(item)
+
+                result["input_content"] = serialized_items
             else:
                 result["input_content"] = self.input_content
 
@@ -153,6 +153,7 @@ class RunEvent(str, Enum):
 
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
+    tool_call_error = "ToolCallError"
 
     reasoning_started = "ReasoningStarted"
     reasoning_step = "ReasoningStep"
@@ -406,6 +407,13 @@ class ToolCallCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class ToolCallErrorEvent(BaseAgentRunEvent):
+    event: str = RunEvent.tool_call_error.value
+    tool: Optional[ToolExecution] = None
+    error: Optional[str] = None
+
+
+@dataclass
 class ParserModelResponseStartedEvent(BaseAgentRunEvent):
     event: str = RunEvent.parser_model_response_started.value
 
@@ -459,6 +467,7 @@ RunOutputEvent = Union[
     SessionSummaryCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
+    ToolCallErrorEvent,
     ParserModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
@@ -492,6 +501,7 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.session_summary_completed.value: SessionSummaryCompletedEvent,
     RunEvent.tool_call_started.value: ToolCallStartedEvent,
     RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
+    RunEvent.tool_call_error.value: ToolCallErrorEvent,
     RunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
     RunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     RunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,

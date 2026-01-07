@@ -5,7 +5,12 @@ from secrets import token_hex
 
 import pytest
 
-from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutput
+from agno.run.workflow import (
+    StepCompletedEvent,
+    StepStartedEvent,
+    WorkflowCompletedEvent,
+    WorkflowRunOutput,
+)
 from agno.workflow import Workflow
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step
@@ -343,3 +348,205 @@ async def test_async_parallel_streaming(shared_db):
     parallel_output = final_response.step_results[0]
     assert parallel_output.step_type == "Parallel"
     assert len(parallel_output.steps) == 2
+
+
+# ============================================================================
+# EARLY TERMINATION / STOP PROPAGATION TESTS
+# ============================================================================
+
+
+def early_stop_step(step_input: StepInput) -> StepOutput:
+    """Step that requests early termination."""
+    return StepOutput(
+        content="Early stop requested",
+        success=True,
+        stop=True,
+    )
+
+
+def should_not_run_step(step_input: StepInput) -> StepOutput:
+    """Step that should not run after early stop."""
+    return StepOutput(
+        content="This step should not have run",
+        success=True,
+    )
+
+
+def normal_parallel_step(step_input: StepInput) -> StepOutput:
+    """Normal step for parallel testing."""
+    return StepOutput(
+        content="Normal parallel step output",
+        success=True,
+    )
+
+
+def test_parallel_propagates_stop_flag():
+    """Test that Parallel propagates stop flag from any inner step."""
+    parallel = Parallel(
+        normal_parallel_step,
+        early_stop_step,  # This step requests stop
+        name="Stop Parallel",
+    )
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is True, "Parallel should propagate stop=True from any inner step"
+
+
+def test_parallel_stop_propagation_in_workflow(shared_db):
+    """Test that workflow stops when Parallel's inner step returns stop=True."""
+    workflow = Workflow(
+        name="Parallel Stop Propagation Test",
+        db=shared_db,
+        steps=[
+            Parallel(
+                normal_parallel_step,
+                early_stop_step,
+                name="stop_parallel",
+            ),
+            should_not_run_step,  # This should NOT execute
+        ],
+    )
+
+    response = workflow.run(input="test")
+
+    assert isinstance(response, WorkflowRunOutput)
+    # Should only have 1 step result (the Parallel), not 2
+    assert len(response.step_results) == 1, "Workflow should stop after Parallel with stop=True"
+    assert response.step_results[0].stop is True
+
+
+def test_parallel_streaming_propagates_stop(shared_db):
+    """Test that streaming Parallel propagates stop flag and stops workflow."""
+    workflow = Workflow(
+        name="Streaming Parallel Stop Test",
+        db=shared_db,
+        steps=[
+            Parallel(
+                normal_parallel_step,
+                early_stop_step,
+                name="stop_parallel",
+            ),
+            should_not_run_step,
+        ],
+    )
+
+    events = list(workflow.run(input="test", stream=True, stream_events=True))
+
+    # Verify workflow completed
+    workflow_completed = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
+    assert len(workflow_completed) == 1
+
+    # Should only have 1 step result (the Parallel), not 2
+    assert len(workflow_completed[0].step_results) == 1, "Workflow should stop after Parallel with stop=True"
+
+    # Check that the parallel output has stop=True
+    parallel_output = workflow_completed[0].step_results[0]
+    assert parallel_output.stop is True
+
+    # Check that at least one inner step has stop=True in results
+    assert len(parallel_output.steps) == 2
+    assert any(r.stop for r in parallel_output.steps), "At least one step should have stop=True"
+
+    # Most importantly: verify should_not_run_step was NOT executed
+    step_events = [e for e in events if isinstance(e, (StepStartedEvent, StepCompletedEvent))]
+    step_names = [e.step_name for e in step_events]
+    assert "should_not_run_step" not in step_names, "Workflow should have stopped before should_not_run_step"
+
+
+@pytest.mark.asyncio
+async def test_async_parallel_propagates_stop():
+    """Test that async Parallel propagates stop flag."""
+    parallel = Parallel(
+        normal_parallel_step,
+        early_stop_step,
+        name="Async Stop Parallel",
+    )
+    step_input = StepInput(input="test")
+
+    result = await parallel.aexecute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is True, "Async Parallel should propagate stop=True from any inner step"
+
+
+@pytest.mark.asyncio
+async def test_async_parallel_streaming_propagates_stop(shared_db):
+    """Test that async streaming Parallel propagates stop flag and stops workflow."""
+    workflow = Workflow(
+        name="Async Streaming Parallel Stop Test",
+        db=shared_db,
+        steps=[
+            Parallel(
+                normal_parallel_step,
+                early_stop_step,
+                name="stop_parallel",
+            ),
+            should_not_run_step,
+        ],
+    )
+
+    events = []
+    async for event in workflow.arun(input="test", stream=True, stream_events=True):
+        events.append(event)
+
+    # Verify workflow completed
+    workflow_completed = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
+    assert len(workflow_completed) == 1
+
+    # Should only have 1 step result (the Parallel), not 2
+    assert len(workflow_completed[0].step_results) == 1, "Workflow should stop after Parallel with stop=True"
+
+    # Check that the parallel output has stop=True
+    parallel_output = workflow_completed[0].step_results[0]
+    assert parallel_output.stop is True
+
+    # Check that at least one inner step has stop=True in results
+    assert len(parallel_output.steps) == 2
+    assert any(r.stop for r in parallel_output.steps), "At least one step should have stop=True"
+
+    # Most importantly: verify should_not_run_step was NOT executed
+    step_events = [e for e in events if isinstance(e, (StepStartedEvent, StepCompletedEvent))]
+    step_names = [e.step_name for e in step_events]
+    assert "should_not_run_step" not in step_names, "Workflow should have stopped before should_not_run_step"
+
+
+def test_parallel_all_steps_stop():
+    """Test Parallel when all inner steps request stop."""
+
+    def stop_step_1(step_input: StepInput) -> StepOutput:
+        return StepOutput(content="Stop 1", success=True, stop=True)
+
+    def stop_step_2(step_input: StepInput) -> StepOutput:
+        return StepOutput(content="Stop 2", success=True, stop=True)
+
+    parallel = Parallel(
+        stop_step_1,
+        stop_step_2,
+        name="All Stop Parallel",
+    )
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is True
+    assert len(result.steps) == 2
+    assert all(step.stop for step in result.steps)
+
+
+def test_parallel_no_stop():
+    """Test Parallel when no inner steps request stop."""
+    parallel = Parallel(
+        normal_parallel_step,
+        step_b,  # Using existing step_b from the file
+        name="No Stop Parallel",
+    )
+    step_input = StepInput(input="test")
+
+    result = parallel.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is False, "Parallel should not set stop when no inner step requests it"

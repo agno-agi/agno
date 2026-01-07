@@ -21,6 +21,8 @@ def is_openai_reasoning_model(reasoning_model: Model) -> bool:
             or ("o1" in reasoning_model.id)
             or ("4.1" in reasoning_model.id)
             or ("4.5" in reasoning_model.id)
+            or ("5.1" in reasoning_model.id)
+            or ("5.2" in reasoning_model.id)
         )
     ) or (isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower())
 
@@ -87,7 +89,8 @@ async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message
 
 
 def get_openai_reasoning_stream(
-    reasoning_agent: "Agent", messages: List[Message]  # type: ignore  # noqa: F821
+    reasoning_agent: "Agent",  # type: ignore  # noqa: F821
+    messages: List[Message],
 ) -> Iterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from OpenAI model.
@@ -142,7 +145,8 @@ def get_openai_reasoning_stream(
 
 
 async def aget_openai_reasoning_stream(
-    reasoning_agent: "Agent", messages: List[Message]  # type: ignore  # noqa: F821
+    reasoning_agent: "Agent",  # type: ignore  # noqa: F821
+    messages: List[Message],
 ) -> AsyncIterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from OpenAI model asynchronously.

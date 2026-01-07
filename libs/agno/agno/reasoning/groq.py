@@ -8,7 +8,12 @@ from agno.utils.log import logger
 
 
 def is_groq_reasoning_model(reasoning_model: Model) -> bool:
-    return reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id.lower()
+    return reasoning_model.__class__.__name__ == "Groq" and (
+        "deepseek" in reasoning_model.id.lower()
+        or "openai/gpt-oss-20b" in reasoning_model.id.lower()
+        or "openai/gpt-oss-120b" in reasoning_model.id.lower()
+        or "qwen/qwen3-32b" in reasoning_model.id.lower()
+    )
 
 
 def get_groq_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
@@ -72,7 +77,8 @@ async def aget_groq_reasoning(reasoning_agent: "Agent", messages: List[Message])
 
 
 def get_groq_reasoning_stream(
-    reasoning_agent: "Agent", messages: List[Message]  # type: ignore  # noqa: F821
+    reasoning_agent: "Agent",  # type: ignore  # noqa: F821
+    messages: List[Message],
 ) -> Iterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from Groq model.
@@ -94,7 +100,7 @@ def get_groq_reasoning_stream(
     reasoning_content: str = ""
 
     try:
-        for event in reasoning_agent.run(input=messages, stream=True, stream_intermediate_steps=True):
+        for event in reasoning_agent.run(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
                     # Check for reasoning_content attribute first (native reasoning)
@@ -122,7 +128,8 @@ def get_groq_reasoning_stream(
 
 
 async def aget_groq_reasoning_stream(
-    reasoning_agent: "Agent", messages: List[Message]  # type: ignore  # noqa: F821
+    reasoning_agent: "Agent",  # type: ignore  # noqa: F821
+    messages: List[Message],
 ) -> AsyncIterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from Groq model asynchronously.
@@ -144,7 +151,7 @@ async def aget_groq_reasoning_stream(
     reasoning_content: str = ""
 
     try:
-        async for event in reasoning_agent.arun(input=messages, stream=True, stream_intermediate_steps=True):
+        async for event in reasoning_agent.arun(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
                     # Check for reasoning_content attribute first (native reasoning)

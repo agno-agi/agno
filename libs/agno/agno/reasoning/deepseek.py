@@ -8,7 +8,17 @@ from agno.utils.log import logger
 
 
 def is_deepseek_reasoning_model(reasoning_model: Model) -> bool:
-    return reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id.lower() == "deepseek-reasoner"
+    """Check if the model is a DeepSeek reasoning model.
+
+    Matches:
+    - deepseek-reasoner
+    - deepseek-r1 and variants (deepseek-r1-distill-*, etc.)
+    """
+    if reasoning_model.__class__.__name__ != "DeepSeek":
+        return False
+
+    model_id = reasoning_model.id.lower()
+    return "reasoner" in model_id or "r1" in model_id
 
 
 def get_deepseek_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
@@ -38,7 +48,8 @@ def get_deepseek_reasoning(reasoning_agent: "Agent", messages: List[Message]) ->
 
 
 def get_deepseek_reasoning_stream(
-    reasoning_agent: "Agent", messages: List[Message]  # type: ignore  # noqa: F821
+    reasoning_agent: "Agent",  # type: ignore  # noqa: F821
+    messages: List[Message],
 ) -> Iterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from DeepSeek model.
@@ -108,7 +119,8 @@ async def aget_deepseek_reasoning(reasoning_agent: "Agent", messages: List[Messa
 
 
 async def aget_deepseek_reasoning_stream(
-    reasoning_agent: "Agent", messages: List[Message]  # type: ignore  # noqa: F821
+    reasoning_agent: "Agent",  # type: ignore  # noqa: F821
+    messages: List[Message],
 ) -> AsyncIterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from DeepSeek model asynchronously.

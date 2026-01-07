@@ -82,9 +82,9 @@ def save_research_snapshot(
 
 
 # =============================================================================
-# System message
+# Instructions
 # =============================================================================
-system_message = """\
+instructions = """\
 You are a self-learning research agent with access to web search and a knowledge base
 containing prior research snapshots.
 
@@ -158,8 +158,8 @@ Rules:
 # =============================================================================
 self_learning_research_agent = Agent(
     name="Self Learning Research Agent",
-    model=Gemini(id="gemini-flash-latest"),
-    system_message=system_message,
+    model=Gemini(id="gemini-3-flash-preview"),
+    instructions=instructions,
     db=gemini_agents_db,
     knowledge=research_knowledge,
     tools=[ParallelTools(), save_research_snapshot],
