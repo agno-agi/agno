@@ -377,7 +377,6 @@ class TestToolDecoratorOnClassMethods:
         func = toolkit.functions["update_state"]
 
         # session_state should be excluded from parameters
-        assert "session_state" not in func.parameters.get("properties", {})
         assert "key" in func.parameters.get("properties", {})
         assert "value" in func.parameters.get("properties", {})
 

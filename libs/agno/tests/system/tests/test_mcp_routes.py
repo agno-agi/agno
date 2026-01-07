@@ -270,6 +270,126 @@ async def test_get_agentos_config(mcp_client: MCPTestClient):
     assert "qa-workflow" in workflow_ids, "Remote workflow 'qa-workflow' should be present"
 
 
+# =============================================================================
+# Agent/Team/Workflow Config Tests (Tests RemoteAgent/RemoteTeam/RemoteWorkflow handling)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_list_agents(mcp_client: MCPTestClient):
+    """Test listing all agents including remote agents via MCP."""
+    result = await mcp_client.call_tool("list_agents", {})
+
+    assert result is not None
+    assert isinstance(result, list)
+    assert len(result) >= 2, "Should have at least local and remote agents"
+
+    # Extract agent IDs
+    agent_ids = [agent["id"] for agent in result]
+
+    # Verify local agent is present
+    assert "gateway-agent" in agent_ids, "Local agent 'gateway-agent' should be present"
+
+    # Verify remote agents are present (tests RemoteAgent handling)
+    assert "assistant-agent" in agent_ids, "Remote agent 'assistant-agent' should be present"
+
+    # Verify each agent has expected fields
+    for agent in result:
+        assert "id" in agent
+        assert "name" in agent or "id" in agent  # At minimum should have identifier
+
+
+@pytest.mark.asyncio
+async def test_get_agent_local(mcp_client: MCPTestClient):
+    """Test getting a local agent config via MCP."""
+    result = await mcp_client.call_tool("get_agent", {"agent_id": "gateway-agent"})
+
+    assert result is not None
+    assert result.get("id") == "gateway-agent"
+    assert "name" in result
+
+
+@pytest.mark.asyncio
+async def test_get_agent_remote(mcp_client: MCPTestClient):
+    """Test getting a remote agent config via MCP (tests RemoteAgent.get_agent_config)."""
+    result = await mcp_client.call_tool("get_agent", {"agent_id": "assistant-agent"})
+
+    assert result is not None
+    assert result.get("id") == "assistant-agent"
+    # Remote agent should return its config from the remote server
+
+
+@pytest.mark.asyncio
+async def test_list_teams(mcp_client: MCPTestClient):
+    """Test listing all teams including remote teams via MCP."""
+    result = await mcp_client.call_tool("list_teams", {})
+
+    assert result is not None
+    assert isinstance(result, list)
+    assert len(result) >= 1, "Should have at least one team"
+
+    # Extract team IDs
+    team_ids = [team["id"] for team in result]
+
+    # Verify remote team is present (tests RemoteTeam handling)
+    assert "research-team" in team_ids, "Remote team 'research-team' should be present"
+
+    # Verify each team has expected fields
+    for team in result:
+        assert "id" in team
+
+
+@pytest.mark.asyncio
+async def test_get_team_remote(mcp_client: MCPTestClient):
+    """Test getting a remote team config via MCP (tests RemoteTeam.get_team_config)."""
+    result = await mcp_client.call_tool("get_team", {"team_id": "research-team"})
+
+    assert result is not None
+    assert result.get("id") == "research-team"
+
+
+@pytest.mark.asyncio
+async def test_list_workflows(mcp_client: MCPTestClient):
+    """Test listing all workflows including remote workflows via MCP."""
+    result = await mcp_client.call_tool("list_workflows", {})
+
+    assert result is not None
+    assert isinstance(result, list)
+    assert len(result) >= 2, "Should have at least local and remote workflows"
+
+    # Extract workflow IDs
+    workflow_ids = [workflow["id"] for workflow in result]
+
+    # Verify local workflow is present
+    assert "gateway-workflow" in workflow_ids, "Local workflow 'gateway-workflow' should be present"
+
+    # Verify remote workflow is present (tests RemoteWorkflow handling)
+    assert "qa-workflow" in workflow_ids, "Remote workflow 'qa-workflow' should be present"
+
+
+@pytest.mark.asyncio
+async def test_get_workflow_local(mcp_client: MCPTestClient):
+    """Test getting a local workflow config via MCP."""
+    result = await mcp_client.call_tool("get_workflow", {"workflow_id": "gateway-workflow"})
+
+    assert result is not None
+    assert result.get("id") == "gateway-workflow"
+
+
+@pytest.mark.asyncio
+async def test_get_workflow_remote(mcp_client: MCPTestClient):
+    """Test getting a remote workflow config via MCP (tests RemoteWorkflow.get_workflow_config)."""
+    result = await mcp_client.call_tool("get_workflow", {"workflow_id": "qa-workflow"})
+
+    assert result is not None
+    assert result.get("id") == "qa-workflow"
+
+
+# =============================================================================
+# Run Tests
+# =============================================================================
+
+
 @pytest.mark.asyncio
 async def test_get_models(mcp_client: MCPTestClient):
     """Test the get_models tool returns unique models used by agents and teams."""
