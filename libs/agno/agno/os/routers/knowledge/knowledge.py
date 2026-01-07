@@ -36,8 +36,9 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_knowledge_instance_by_db_id
 from agno.remote.base import RemoteKnowledge
-from agno.utils.log import log_debug, log_info
+from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
+from agno.db.base import AsyncBaseDb
 
 logger = logging.getLogger(__name__)
 
@@ -297,7 +298,17 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             else:
                 raise HTTPException(status_code=400, detail=f"Invalid reader_id: {update_data.reader_id}")
 
-        updated_content_dict = await knowledge.apatch_content(content)
+        # Use async patch method if contents_db is an AsyncBaseDb, otherwise use sync patch method
+        updated_content_dict = None
+        try:
+            if knowledge.contents_db is not None and isinstance(knowledge.contents_db, AsyncBaseDb):
+                updated_content_dict = await knowledge.apatch_content(content)
+            else:
+                updated_content_dict = knowledge.patch_content(content)
+        except Exception as e:
+            log_error(f"Error updating content: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error updating content: {str(e)}")
+
         if not updated_content_dict:
             raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
 
