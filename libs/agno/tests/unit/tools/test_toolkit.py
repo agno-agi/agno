@@ -360,24 +360,27 @@ class TestToolDecoratorOnClassMethods:
         result = func.entrypoint(x=3, y=2)
         assert result == 15  # 10 + 3 + 2
 
-    def test_tool_decorator_with_session_state(self):
-        """Test that session_state parameter is handled correctly."""
+    def test_tool_decorator_with_run_context(self):
+        """Test that run_context parameter is handled correctly."""
+        from agno.run import RunContext
 
         class MyToolkit(Toolkit):
             def __init__(self):
                 super().__init__(name="test_toolkit", tools=[self.update_state])
 
             @tool()
-            def update_state(self, key: str, value: str, session_state) -> str:
-                """Update session state."""
-                session_state[key] = value
+            def update_state(self, key: str, value: str, run_context: RunContext) -> str:
+                """Update session state via run_context."""
+                if run_context.session_state is None:
+                    run_context.session_state = {}
+                run_context.session_state[key] = value
                 return f"Set {key}={value}"
 
         toolkit = MyToolkit()
         func = toolkit.functions["update_state"]
 
-        # session_state should be excluded from parameters
-        assert "session_state" not in func.parameters.get("properties", {})
+        # run_context should be excluded from parameters
+        assert "run_context" not in func.parameters.get("properties", {})
         assert "key" in func.parameters.get("properties", {})
         assert "value" in func.parameters.get("properties", {})
 
