@@ -1358,3 +1358,120 @@ def test_validate_agui_state_with_invalid_to_dict():
     obj = TestClass()
     result = validate_agui_state(obj, "test_thread")
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_state_snapshot_event():
+    """Test that StateSnapshotEvent is emitted when session_state is present."""
+    from agno.os.interfaces.agui.utils import async_stream_agno_response_as_agui_events
+    from agno.run.agent import RunCompletedEvent, RunContentEvent, RunEvent
+
+    async def mock_agent_response():
+        """Mock agent response stream with session_state."""
+        yield RunContentEvent(
+            event=RunEvent.run_content.value,
+            content="Test response",
+        )
+        yield RunCompletedEvent(
+            event=RunEvent.run_completed.value,
+            content="Complete",
+            session_state={
+                "user_name": "Alice",
+                "counter": 42,
+            }
+        )
+
+    thread_id = "test-thread-123"
+    run_id = "test-run-456"
+
+    state_snapshot_found = False
+    state_snapshot_data = None
+
+    async for event in async_stream_agno_response_as_agui_events(
+        response_stream=mock_agent_response(),
+        thread_id=thread_id,
+        run_id=run_id,
+    ):
+        if event.type == EventType.STATE_SNAPSHOT:
+            state_snapshot_found = True
+            state_snapshot_data = event.snapshot
+
+    assert state_snapshot_found, "StateSnapshotEvent should be emitted"
+    assert state_snapshot_data == {"user_name": "Alice", "counter": 42}
+
+
+@pytest.mark.asyncio
+async def test_state_delta_event():
+    """Test that StateDeltaEvent is emitted when state changes between runs."""
+    from agno.os.interfaces.agui.utils import async_stream_agno_response_as_agui_events, EventBuffer, _create_completion_events
+    from agno.run.agent import RunCompletedEvent, RunEvent
+
+    # Create a shared event buffer to track state across runs
+    event_buffer = EventBuffer()
+
+    # First run - establish initial state
+    first_completion = RunCompletedEvent(
+        event=RunEvent.run_completed.value,
+        content="Complete",
+        session_state={"counter": 1, "user": "Alice"}
+    )
+
+    first_events = _create_completion_events(
+        first_completion, event_buffer, False, "", "test-thread", "test-run-1"
+    )
+
+    first_snapshots = [e for e in first_events if e.type == EventType.STATE_SNAPSHOT]
+    first_deltas = [e for e in first_events if e.type == EventType.STATE_DELTA]
+
+    assert len(first_snapshots) == 1, "First run should emit StateSnapshotEvent"
+    assert len(first_deltas) == 0, "First run should not emit StateDeltaEvent"
+
+    # Second run - state changes
+    second_completion = RunCompletedEvent(
+        event=RunEvent.run_completed.value,
+        content="Complete",
+        session_state={"counter": 2, "user": "Alice", "new_field": "added"}
+    )
+
+    second_events = _create_completion_events(
+        second_completion, event_buffer, False, "", "test-thread", "test-run-2"
+    )
+
+    second_snapshots = [e for e in second_events if e.type == EventType.STATE_SNAPSHOT]
+    second_deltas = [e for e in second_events if e.type == EventType.STATE_DELTA]
+
+    assert len(second_snapshots) == 1, "Second run should emit StateSnapshotEvent"
+    assert len(second_deltas) == 1, "Second run should emit StateDeltaEvent"
+
+    # Verify delta contains expected operations
+    delta = second_deltas[0].delta
+    ops = {op['op'] for op in delta}
+    paths = {op['path'] for op in delta}
+
+    assert 'replace' in ops or 'add' in ops, "Delta should contain replace or add operations"
+    assert '/counter' in paths or '/new_field' in paths, "Delta should reference changed fields"
+
+
+@pytest.mark.asyncio
+async def test_state_snapshot_without_delta():
+    """Test that StateSnapshotEvent is emitted even when jsonpatch is unavailable."""
+    from agno.os.interfaces.agui.utils import _create_completion_events, EventBuffer
+    from agno.run.agent import RunCompletedEvent, RunEvent
+
+    event_buffer = EventBuffer()
+
+    completion = RunCompletedEvent(
+        event=RunEvent.run_completed.value,
+        content="Complete",
+        session_state={"test": "data"}
+    )
+
+    events = _create_completion_events(
+        completion, event_buffer, False, "", "test-thread", "test-run"
+    )
+
+    snapshots = [e for e in events if e.type == EventType.STATE_SNAPSHOT]
+
+    assert len(snapshots) == 1, "StateSnapshotEvent should always be emitted"
+    assert snapshots[0].snapshot == {"test": "data"}
+
