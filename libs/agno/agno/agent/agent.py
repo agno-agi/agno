@@ -62,6 +62,9 @@ from agno.run.agent import (
     RunOutputEvent,
 )
 from agno.run.cancel import (
+    acancel_run as acancel_run_global,
+)
+from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
     aregister_run,
@@ -71,7 +74,6 @@ from agno.run.cancel import (
 )
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
-    acancel_run as acancel_run_global,
 )
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement

@@ -37,6 +37,9 @@ from agno.models.metrics import Metrics
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunContentEvent, RunEvent, RunOutput
 from agno.run.cancel import (
+    acancel_run as acancel_run_global,
+)
+from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
     aregister_run,
@@ -46,7 +49,6 @@ from agno.run.cancel import (
 )
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
-    acancel_run as acancel_run_global,
 )
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
@@ -3496,7 +3498,7 @@ class Workflow:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
         return cancel_run_global(run_id)
-    
+
     async def acancel_run(self, run_id: str) -> bool:
         """Cancel a running workflow execution (async version).
 
