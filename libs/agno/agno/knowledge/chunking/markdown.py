@@ -1,7 +1,7 @@
 import os
 import re
 import tempfile
-from typing import List
+from typing import List, Union
 
 try:
     from unstructured.chunking.title import chunk_by_title  # type: ignore
@@ -14,22 +14,48 @@ from agno.knowledge.document.base import Document
 
 
 class MarkdownChunking(ChunkingStrategy):
-    """A chunking strategy that splits markdown based on structure like headers, paragraphs and sections"""
+    """A chunking strategy that splits markdown based on structure like headers, paragraphs and sections
 
-    def __init__(self, chunk_size: int = 5000, overlap: int = 0, split_on_headings: bool = False):
+    Args:
+        chunk_size: Maximum size of each chunk in characters
+        overlap: Number of characters to overlap between chunks
+        split_on_headings: Controls heading-based splitting behavior:
+            - False: Use size-based chunking (default)
+            - True: Split on all headings (H1-H6)
+            - int: Split on headings at or above this level (1-6)
+                  e.g., 2 splits on H1 and H2, keeping H3-H6 content together
+    """
+
+    def __init__(self, chunk_size: int = 5000, overlap: int = 0, split_on_headings: Union[bool, int] = False):
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.split_on_headings = split_on_headings
+
+        # Validate split_on_headings parameter
+        # Note: In Python, isinstance(False, int) is True, so check for bool first
+        if isinstance(split_on_headings, int) and not isinstance(split_on_headings, bool):
+            if not (1 <= split_on_headings <= 6):
+                raise ValueError("split_on_headings must be between 1 and 6 when using integer value")
 
     def _split_by_headings(self, content: str) -> List[str]:
         """
         Split markdown content by headings, keeping each heading with its content.
         Returns a list of sections where each section starts with a heading.
+
+        When split_on_headings is an int, only splits on headings at or above that level.
+        For example, split_on_headings=2 splits on H1 and H2, keeping H3-H6 content together.
         """
-        # Pattern matches markdown headings (# to ######)
-        heading_pattern = r"^(#{1,6}\s+.+)$"
+        # Determine which heading levels to split on
+        if isinstance(self.split_on_headings, int) and not isinstance(self.split_on_headings, bool):
+            # Split on headings at or above this level (1 to split_on_headings)
+            max_heading_level = self.split_on_headings
+            heading_pattern = rf"^#{{{1},{max_heading_level}}}\s+.+$"
+        else:
+            # split_on_headings is True: split on all headings (# to ######)
+            heading_pattern = r"^#{1,6}\s+.+$"
 
         # Split content while keeping the delimiter (heading)
+        # Use non-capturing group for the pattern to avoid extra capture groups
         parts = re.split(f"({heading_pattern})", content, flags=re.MULTILINE)
 
         sections = []
@@ -61,7 +87,7 @@ class MarkdownChunking(ChunkingStrategy):
         Partition markdown content and return a list of text chunks.
         Falls back to paragraph splitting if the markdown chunking fails.
         """
-        # When split_on_headings is True, use regex-based splitting to preserve headings
+        # When split_on_headings is True or an int, use regex-based splitting to preserve headings
         if self.split_on_headings:
             return self._split_by_headings(content)
 
@@ -114,7 +140,13 @@ class MarkdownChunking(ChunkingStrategy):
 
     def chunk(self, document: Document) -> List[Document]:
         """Split markdown document into chunks based on markdown structure"""
-        if not document.content or len(document.content) <= self.chunk_size:
+        # If content is empty, return as-is
+        if not document.content:
+            return [document]
+
+        # When split_on_headings is enabled, always split by headings regardless of size
+        # Only skip chunking for small content when using size-based chunking
+        if not self.split_on_headings and len(document.content) <= self.chunk_size:
             return [document]
 
         # Split using markdown chunking logic, or fallback to paragraphs
@@ -130,7 +162,7 @@ class MarkdownChunking(ChunkingStrategy):
             section = section.strip()
             section_size = len(section)
 
-            # When split_on_headings is True, each section becomes its own chunk
+            # When split_on_headings is True or an int, each section becomes its own chunk
             if self.split_on_headings:
                 meta_data = chunk_meta_data.copy()
                 meta_data["chunk"] = chunk_number
@@ -141,11 +173,7 @@ class MarkdownChunking(ChunkingStrategy):
                     chunk_id = f"{document.name}_{chunk_number}"
                 meta_data["chunk_size"] = section_size
 
-                chunks.append(
-                    Document(
-                        id=chunk_id, name=document.name, meta_data=meta_data, content=section
-                    )
-                )
+                chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=section))
                 chunk_number += 1
             elif current_size + section_size <= self.chunk_size:
                 current_chunk.append(section)

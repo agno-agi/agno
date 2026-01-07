@@ -1,12 +1,13 @@
 from agno.agent import Agent
+from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
 from agno.vectordb.lancedb import LanceDb
-from agno.db.postgres.postgres import PostgresDb
 from agno.vectordb.pgvector import PgVector
+
 # Download all sample sales documents and get their paths
 downloaded_csv_paths = download_knowledge_filters_sample_data(
     num_files=4, file_extension=SampleDataFileExtension.CSV
