@@ -1,4 +1,3 @@
-import asyncio
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -91,8 +90,6 @@ agno_knowledge_agent = Agent(
 )
 
 if __name__ == "__main__":
-    asyncio.run(
-        knowledge.add_content_async(
-            name="Agno Documentation", url="https://docs.agno.com/llms-full.txt"
-        )
+    knowledge.add_content_async(
+        name="Agno Documentation", url="https://docs.agno.com/llms-full.txt"
     )
