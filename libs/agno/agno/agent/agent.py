@@ -71,6 +71,7 @@ from agno.run.cancel import (
 )
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
+    acancel_run as acancel_run_global,
 )
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
@@ -6773,6 +6774,18 @@ class Agent:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
         return cancel_run_global(run_id)
+
+    @staticmethod
+    async def acancel_run(run_id: str) -> bool:
+        """Cancel a running agent execution (async version).
+
+        Args:
+            run_id (str): The run_id to cancel.
+
+        Returns:
+            bool: True if the run was found and marked for cancellation, False otherwise.
+        """
+        return await acancel_run_global(run_id)
 
     # -*- Session Database Functions
     def _read_session(
