@@ -21,7 +21,7 @@ from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency, require_resource_access
-from agno.os.routers.agents.schema import AgentResponse
+from agno.os.routers.agents.schema import AgentResponse, AgentRunCancelledResponse
 from agno.os.schema import (
     AgentSummaryResponse,
     BadRequestResponse,
@@ -177,7 +177,6 @@ def get_agent_router(
         "/agents/{agent_id}/runs",
         tags=["Agents"],
         operation_id="create_agent_run",
-        response_model_exclude_none=True,
         summary="Create Agent Run",
         description=(
             "Execute an agent with a message and optional media files. Supports both streaming and non-streaming responses.\n\n"
@@ -390,7 +389,6 @@ def get_agent_router(
         "/agents/{agent_id}/runs/{run_id}/cancel",
         tags=["Agents"],
         operation_id="cancel_agent_run",
-        response_model_exclude_none=True,
         summary="Cancel Agent Run",
         description=(
             "Cancel a currently executing agent run. This will attempt to stop the agent's execution gracefully.\n\n"
@@ -406,7 +404,7 @@ def get_agent_router(
     async def cancel_agent_run(
         agent_id: str,
         run_id: str,
-    ):
+    ) -> AgentRunCancelledResponse:
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -415,13 +413,12 @@ def get_agent_router(
         if not cancelled:
             raise HTTPException(status_code=500, detail="Failed to cancel run - run not found or already completed")
 
-        return JSONResponse(content={}, status_code=200)
+        return AgentRunCancelledResponse(id=run_id, success=cancelled or False)
 
     @router.post(
         "/agents/{agent_id}/runs/{run_id}/continue",
         tags=["Agents"],
         operation_id="continue_agent_run",
-        response_model_exclude_none=True,
         summary="Continue Agent Run",
         description=(
             "Continue a paused or incomplete agent run with updated tool results.\n\n"
@@ -527,8 +524,13 @@ def get_agent_router(
 
     @router.get(
         "/agents",
+<<<<<<< Updated upstream
         response_model=List[Union[AgentResponse, AgentSummaryResponse]],
         response_model_exclude_none=True,
+=======
+        response_model=List[AgentResponse],
+        response_model_exclude_unset=True,
+>>>>>>> Stashed changes
         tags=["Agents"],
         operation_id="get_agents",
         summary="List All Agents",
@@ -610,7 +612,7 @@ def get_agent_router(
     @router.get(
         "/agents/{agent_id}",
         response_model=AgentResponse,
-        response_model_exclude_none=True,
+        response_model_exclude_unset=True,
         tags=["Agents"],
         operation_id="get_agent",
         summary="Get Agent Details",
@@ -646,7 +648,7 @@ def get_agent_router(
         },
         dependencies=[Depends(require_resource_access("agents", "read", "agent_id"))],
     )
-    async def get_agent(agent_id: str, request: Request) -> AgentResponse:
+    async def get_agent(agent_id: str) -> AgentResponse:
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")

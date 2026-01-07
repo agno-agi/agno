@@ -253,3 +253,7 @@ class AgentResponse(BaseModel):
             attributes=filter_meaningful_config(attributes, agent_defaults),
             metadata=agent.metadata,
         )
+
+class AgentRunCancelledResponse(BaseModel):
+    id: str
+    success: bool
