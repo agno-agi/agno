@@ -88,7 +88,7 @@ async def http_client_lifespan(_):
 
 @asynccontextmanager
 async def agent_os_lifespan(app: FastAPI, agent_os: "AgentOS"):
-    """Main initialization lifespan for AgentOS."""
+    """Lifespan orchestrating all initialization logic for AgentOS."""
     # 1. Initialize agents, teams, and workflows
     await agent_os._async_initialize_agents()
     await agent_os._async_initialize_teams()
@@ -439,6 +439,11 @@ class AgentOS:
         if not self.agents:
             return
         for agent in self.agents:
+            if isinstance(agent, RemoteAgent):
+                continue
+            # Set the default db to agents without their own
+            if self.db is not None and agent.db is None:
+                agent.db = self.db
             # Track all MCP tools to later handle their connection
             if agent.tools:
                 for tool in agent.tools:
@@ -468,6 +473,11 @@ class AgentOS:
             return
 
         for team in self.teams:
+            if isinstance(team, RemoteTeam):
+                continue
+            # Set the default db to teams without their own
+            if self.db is not None and team.db is None:
+                team.db = self.db
             # Track all MCP tools recursively
             collect_mcp_tools_from_team(team, self.mcp_tools)
 
@@ -509,6 +519,11 @@ class AgentOS:
             return
 
         for workflow in self.workflows:
+            if isinstance(workflow, RemoteWorkflow):
+                continue
+            # Set the default db to workflows without their own
+            if self.db is not None and workflow.db is None:
+                workflow.db = self.db
             # Track MCP tools recursively in workflow members
             collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
 

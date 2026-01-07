@@ -15,10 +15,9 @@ def test_os_instantiation_time():
     workflows = [Workflow(name=f"Workflow{i}") for i in range(3)]
 
     start = time.perf_counter()
-    AgentOS(agents=agents, teams=teams, workflows=workflows, telemetry=False)
+    AgentOS(agents=agents, teams=teams, workflows=workflows, telemetry=False)  # type: ignore
     elapsed_ms = (time.perf_counter() - start) * 1000
 
     # Instantiation should be very fast since heavy work is deferred
     # 50ms is a generous upper bound - actual time should be < 5ms
-    breakpoint()
     assert elapsed_ms < 50, f"AgentOS instantiation took {elapsed_ms:.2f}ms, expected < 50ms"
