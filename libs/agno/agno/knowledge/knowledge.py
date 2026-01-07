@@ -2028,13 +2028,6 @@ class Knowledge:
 
             return content_row.to_dict()
 
-        else:
-            if self.name:
-                log_warning(f"Contents DB not found for knowledge base: {self.name}")
-            else:
-                log_warning("Contents DB not found for knowledge base")
-            return None
-
     async def _aupdate_content(self, content: Content) -> Optional[Dict[str, Any]]:
         if self.contents_db:
             if not content.id:
@@ -2074,12 +2067,6 @@ class Knowledge:
 
             return content_row.to_dict()
 
-        else:
-            if self.name:
-                log_warning(f"Contents DB not found for knowledge base: {self.name}")
-            else:
-                log_warning("Contents DB not found for knowledge base")
-            return None
 
     def _prepare_lightrag_path_data(self, content: Content) -> Optional[Tuple[bytes, str, str]]:
         """Prepare file data from a path for LightRAG upload.
@@ -2239,12 +2226,12 @@ class Knowledge:
             if file_data is None:
                 return
 
-            file_content, filename, content_type_str = file_data
+            file_content_data, filename_data, content_type_str = file_data
 
             if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
                 result = await self.vector_db.insert_file_bytes(
-                    file_content=file_content,
-                    filename=filename,
+                    file_content=file_content_data,
+                    filename=filename_data,
                     content_type=content_type_str,
                     send_metadata=True,
                 )
@@ -2355,13 +2342,13 @@ class Knowledge:
             if file_data is None:
                 return
 
-            file_content, filename, content_type_str = file_data
+            file_content_data, filename_data, content_type_str = file_data
 
             if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
                 result = asyncio.run(
                     self.vector_db.insert_file_bytes(
-                        file_content=file_content,
-                        filename=filename,
+                        file_content=file_content_data,
+                        filename=filename_data,
                         content_type=content_type_str,
                         send_metadata=True,
                     )
