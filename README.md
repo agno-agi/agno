@@ -21,23 +21,22 @@
 
 Agno is a multi-agent framework, runtime, and control plane. Use it to build private and secure AI products that run in your cloud.
 
-- **Build** agents, teams, and workflows with memory, knowledge, guardrails, and 100+ toolkits.
+- **Build** agents, teams, and workflows with memory, knowledge, guardrails and 100+ integrations.
 - **Run** in production with a stateless FastAPI runtime. Horizontally scalable.
 - **Manage** with a control plane that connects directly to your runtime — no data leaves your environment.
 
 ## Why Agno?
 
-- **Your cloud, your data:** AgentOS runs entirely in your infrastructure. Zero data leaves your environment.
-- **Production-ready from day one:** Pre-built FastAPI runtime with SSE endpoints, ready to deploy.
-- **Actually fast:** 529× faster than LangGraph, 24× lower memory. Matters at scale.
+- **Your cloud, your data:** Runs entirely in your infrastructure. Nothing leaves your environment.
+- **Ready for production on day one:** Pre-built FastAPI runtime with SSE endpoints, ready to deploy.
+- **Incredibly fast:** 529× faster than LangGraph, 24× lower memory.
 
 ## Getting Started
 
-New to Agno? Start with the [getting started guide](https://github.com/agno-agi/agno/tree/main/cookbook/00_getting_started).
+Start with the [getting started guide](https://github.com/agno-agi/agno/tree/main/cookbook/00_getting_started), then:
 
-Then:
 - Browse the [cookbooks](https://github.com/agno-agi/agno/tree/main/cookbook) for real-world examples
-- Read the [docs](https://docs.agno.com) to learn more.
+- Read the [docs](https://docs.agno.com) to learn more
 
 ## Resources
 
@@ -105,26 +104,26 @@ This isn't a privacy mode or enterprise add-on. It's how Agno works.
 
 ## Features
 
-**Core**
+### Core:
 - Model agnostic — works with OpenAI, Anthropic, Google, local models, whatever
 - Type-safe I/O with `input_schema` and `output_schema`
 - Async-first, built for long-running tasks
 - Natively multimodal (text, images, audio, video, files)
 
-**Memory & Knowledge**
+### Memory & Knowledge:
 - Persistent storage for session history and state
 - User memory that persists across sessions
 - Agentic RAG with 20+ vector stores, hybrid search, reranking
 - Culture — shared long-term memory across agents
 
-**Execution**
+### Execution:
 - Human-in-the-loop (confirmations, approvals, overrides)
 - Guardrails for validation and security
 - Pre/post hooks for the agent lifecycle
 - First-class MCP and A2A support
 - 100+ built-in toolkits
 
-**Production**
+### Production:
 - Ready-to-use FastAPI runtime
 - Integrated control plane UI
 - Evals for accuracy, performance, latency
@@ -142,7 +141,7 @@ We're obsessive about performance because agent workloads spawn hundreds of inst
 | Instantiation | **3μs** | 1,587μs (529× slower) | 170μs (57× slower) | 210μs (70× slower) |
 | Memory | **6.6 KiB** | 161 KiB (24× higher) | 29 KiB (4× higher) | 66 KiB (10× higher) |
 
-Run the benchmarks yourself: [`cookbook/evals/performance`](https://github.com/agno-agi/agno/tree/main/cookbook/evals/performance)
+Run the benchmarks yourself: [`cookbook/12_evals/performance`](https://github.com/agno-agi/agno/tree/main/cookbook/12_evals/performance)
 
 https://github.com/user-attachments/assets/54b98576-1859-4880-9f2d-15e1a426719d
 

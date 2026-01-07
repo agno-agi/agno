@@ -124,7 +124,7 @@ Load your own knowledge:
    knowledge.add_content(path="path/to/document.pdf")
 
 3. From text directly
-   knowledge.add_content(text="Your content here...")
+   knowledge.add_content(text_content="Your content here...")
 
 Hybrid search combines:
 - Semantic search: Finds conceptually similar content

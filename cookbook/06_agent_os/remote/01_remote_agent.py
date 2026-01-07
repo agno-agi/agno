@@ -43,7 +43,8 @@ async def remote_streaming_example():
             print(chunk.content, end="", flush=True)
 
 
-if __name__ == "__main__":
+async def main():
+    """Run all examples in a single event loop."""
     print("=" * 60)
     print("RemoteAgent Examples")
     print("=" * 60)
@@ -52,7 +53,11 @@ if __name__ == "__main__":
     # Note: Remote examples require a running AgentOS instance
 
     print("\n1. Remote Agent Example:")
-    asyncio.run(remote_agent_example())
+    await remote_agent_example()
 
     print("\n2. Remote Streaming Example:")
-    asyncio.run(remote_streaming_example())
+    await remote_streaming_example()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
