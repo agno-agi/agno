@@ -488,7 +488,7 @@ class RemoteAgent(BaseRemote):
         else:
             raise ValueError("No client available")
 
-    async def cancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
+    async def acancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
         """Cancel a running agent execution.
 
         Args:
