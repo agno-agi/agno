@@ -20,9 +20,8 @@ from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency, require_resource_access
-from agno.os.routers.agents.schema import AgentResponse, AgentRunCancelledResponse
+from agno.os.routers.agents.schema import AgentResponse, AgentRunCancelledResponse, AgentSummaryResponse
 from agno.os.schema import (
-    AgentSummaryResponse,
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,

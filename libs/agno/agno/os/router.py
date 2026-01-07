@@ -11,9 +11,9 @@ from fastapi import (
 from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.managers import websocket_manager
+from agno.os.routers.agents.schema import AgentSummaryResponse
 from agno.os.routers.workflows.router import handle_workflow_subscription, handle_workflow_via_websocket
 from agno.os.schema import (
-    AgentSummaryResponse,
     BadRequestResponse,
     ConfigResponse,
     InterfaceResponse,

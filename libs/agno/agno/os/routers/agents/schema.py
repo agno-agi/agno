@@ -1,9 +1,9 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_serializer
 
-from agno.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.models.message import Message
 from agno.os.schema import DatabaseConfigResponse, MessageResponse, ModelResponse, ToolDefinitionResponse, filter_meaningful_config
 from agno.os.utils import (
@@ -18,6 +18,17 @@ from agno.session import AgentSession
 from agno.utils.agent import aexecute_instructions, aexecute_system_message
 
 
+class AgentSummaryResponse(BaseModel):
+    id: Optional[str] = Field(None, description="Unique identifier for the agent")
+    name: Optional[str] = Field(None, description="Name of the agent")
+    description: Optional[str] = Field(None, description="Description of the agent")
+    db_id: Optional[str] = Field(None, description="Database identifier")
+
+    @classmethod
+    def from_agent(cls, agent: Union[Agent, RemoteAgent]) -> "AgentSummaryResponse":
+        return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
+    
+    
 class AgentResponse(BaseModel):
     id: str = Field(..., description="The ID of the agent")
     name: Optional[str] = Field(None, description="The name of the agent")

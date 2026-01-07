@@ -37,7 +37,8 @@ class TeamResponse(BaseModel):
         data = handler(self)
         return remove_none_values(data)
 
-    def get_default_values(self) -> Dict[str, Any]:
+    @staticmethod
+    def get_default_values() -> Dict[str, Any]:
         return {
             # Sessions defaults
             "add_history_to_context": False,

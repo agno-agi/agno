@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar, Union
+from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar, Union, TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -23,6 +23,11 @@ from agno.team.team import Team
 from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
+
+if TYPE_CHECKING:
+    from agno.os.routers.agents.schema import AgentSummaryResponse
+    from agno.os.routers.teams.schema import TeamSummaryResponse
+    from agno.os.routers.workflows.schema import WorkflowSummaryResponse
 
 class ToolDefinitionResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the tool")
@@ -64,16 +69,6 @@ class ManagerResponse(BaseModel):
     version: str = Field(..., description="Version of the manager")
     route: str = Field(..., description="API route path")
 
-
-class AgentSummaryResponse(BaseModel):
-    id: Optional[str] = Field(None, description="Unique identifier for the agent")
-    name: Optional[str] = Field(None, description="Name of the agent")
-    description: Optional[str] = Field(None, description="Description of the agent")
-    db_id: Optional[str] = Field(None, description="Database identifier")
-
-    @classmethod
-    def from_agent(cls, agent: Union[Agent, RemoteAgent]) -> "AgentSummaryResponse":
-        return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
 
 
 class TeamSummaryResponse(BaseModel):
@@ -122,9 +117,9 @@ class ConfigResponse(BaseModel):
     evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
     traces: Optional[TracesConfig] = Field(None, description="Traces configuration")
 
-    agents: List[AgentSummaryResponse] = Field(..., description="List of registered agents")
-    teams: List[TeamSummaryResponse] = Field(..., description="List of registered teams")
-    workflows: List[WorkflowSummaryResponse] = Field(..., description="List of registered workflows")
+    agents: List["AgentSummaryResponse"] = Field(..., description="List of registered agents")
+    teams: List["TeamSummaryResponse"] = Field(..., description="List of registered teams")
+    workflows: List["WorkflowSummaryResponse"] = Field(..., description="List of registered workflows")
     interfaces: List[InterfaceResponse] = Field(..., description="List of available interfaces")
 
 
