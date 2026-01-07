@@ -297,7 +297,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             else:
                 raise HTTPException(status_code=400, detail=f"Invalid reader_id: {update_data.reader_id}")
 
-        updated_content_dict = knowledge.patch_content(content)
+        updated_content_dict = await knowledge.apatch_content(content)
         if not updated_content_dict:
             raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
 
@@ -1029,13 +1029,13 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                     search_types=search_types,
                 )
             )
-
+        filters = await knowledge.async_get_valid_filters()
         return ConfigResponseSchema(
             readers=reader_schemas,
             vector_dbs=vector_dbs,
             readersForType=types_of_readers,
             chunkers=chunkers_dict,
-            filters=knowledge.get_valid_filters(),
+            filters=filters,
         )
 
     return router
