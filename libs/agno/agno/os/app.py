@@ -728,9 +728,9 @@ class AgentOS:
         self._add_built_in_routes(app=fastapi_app)
 
         # These are populated in the main initialization lifespan.
-        self.dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]] = {}
-        self.knowledge_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb]]] = {}
-        self.knowledge_instances: List[Knowledge] = []
+        self.dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]] = {}
+        self.knowledge_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]] = {}
+        self.knowledge_instances: List[Knowledge | RemoteKnowledge] = []
 
         routers = [
             get_session_router(dbs=self.dbs),
