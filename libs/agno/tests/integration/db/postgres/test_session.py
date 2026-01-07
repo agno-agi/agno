@@ -23,7 +23,7 @@ def cleanup_sessions(postgres_db_real: PostgresDb):
 
     with postgres_db_real.Session() as session:
         try:
-            sessions_table = postgres_db_real._get_table("sessions")
+            sessions_table = postgres_db_real._get_table("sessions", create_table_if_not_found=True)
             if sessions_table is not None:
                 session.execute(sessions_table.delete())
             session.commit()
