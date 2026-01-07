@@ -1139,10 +1139,15 @@ class FunctionCall(BaseModel):
                 else:
                     result = self.function.entrypoint(**entrypoint_args, **self.arguments)
 
+                # Handle both sync and async entrypoints
                 if isasyncgenfunction(self.function.entrypoint):
                     self.result = result  # Store async generator directly
+                elif iscoroutinefunction(self.function.entrypoint):
+                    self.result = await result  # Await coroutine result
+                elif isgeneratorfunction(self.function.entrypoint):
+                    self.result = result  # Store sync generator directly
                 else:
-                    self.result = await result
+                    self.result = result  # Sync function, result is already computed
 
             # Only cache if not a generator
             if self.function.cache_results and not (isgenerator(self.result) or isasyncgen(self.result)):
