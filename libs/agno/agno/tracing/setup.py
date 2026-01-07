@@ -5,6 +5,7 @@ Setup helper functions for configuring Agno tracing.
 from typing import Union
 
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.remote.base import RemoteDb
 from agno.tracing.exporter import DatabaseSpanExporter
 from agno.utils.log import logger
 
@@ -20,7 +21,7 @@ except ImportError:
 
 
 def setup_tracing(
-    db: Union[BaseDb, AsyncBaseDb],
+    db: Union[BaseDb, AsyncBaseDb, RemoteDb],
     batch_processing: bool = False,
     max_queue_size: int = 2048,
     max_export_batch_size: int = 512,

@@ -1,10 +1,11 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.agent import Agent
+from agno.agent.remote import RemoteAgent
 from agno.db.base import SessionType
 from agno.os.config import (
     ChatConfig,
@@ -17,7 +18,9 @@ from agno.os.config import (
 )
 from agno.os.utils import extract_input_media, get_run_input, get_session_name, to_utc_datetime
 from agno.session import AgentSession, TeamSession, WorkflowSession
+from agno.team.remote import RemoteTeam
 from agno.team.team import Team
+from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
 
@@ -100,7 +103,7 @@ class AgentSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
-    def from_agent(cls, agent: Agent) -> "AgentSummaryResponse":
+    def from_agent(cls, agent: Union[Agent, RemoteAgent]) -> "AgentSummaryResponse":
         return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
 
 
@@ -111,8 +114,9 @@ class TeamSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
-    def from_team(cls, team: Team) -> "TeamSummaryResponse":
-        return cls(id=team.id, name=team.name, description=team.description, db_id=team.db.id if team.db else None)
+    def from_team(cls, team: Union[Team, RemoteTeam]) -> "TeamSummaryResponse":
+        db_id = team.db.id if team.db else None
+        return cls(id=team.id, name=team.name, description=team.description, db_id=db_id)
 
 
 class WorkflowSummaryResponse(BaseModel):
@@ -122,12 +126,13 @@ class WorkflowSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
-    def from_workflow(cls, workflow: Workflow) -> "WorkflowSummaryResponse":
+    def from_workflow(cls, workflow: Union[Workflow, RemoteWorkflow]) -> "WorkflowSummaryResponse":
+        db_id = workflow.db.id if workflow.db else None
         return cls(
             id=workflow.id,
             name=workflow.name,
             description=workflow.description,
-            db_id=workflow.db.id if workflow.db else None,
+            db_id=db_id,
         )
 
 
@@ -180,14 +185,39 @@ class SessionSchema(BaseModel):
 
     @classmethod
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
-        session_name = get_session_name(session)
+        session_name = session.get("session_name")
+        if not session_name:
+            session_name = get_session_name(session)
         session_data = session.get("session_data", {}) or {}
+
+        created_at = session.get("created_at", 0)
+        updated_at = session.get("updated_at", created_at)
+
+        # Handle created_at and updated_at as either ISO 8601 string or timestamp
+        def parse_datetime(val):
+            if isinstance(val, str):
+                try:
+                    # Accept both with and without Z
+                    if val.endswith("Z"):
+                        val = val[:-1] + "+00:00"
+                    return datetime.fromisoformat(val)
+                except Exception:
+                    return None
+            elif isinstance(val, (int, float)):
+                try:
+                    return datetime.fromtimestamp(val, tz=timezone.utc)
+                except Exception:
+                    return None
+            return None
+
+        created_at = to_utc_datetime(session.get("created_at", 0))
+        updated_at = to_utc_datetime(session.get("updated_at", created_at))
         return cls(
             session_id=session.get("session_id", ""),
             session_name=session_name,
             session_state=session_data.get("session_state", None),
-            created_at=to_utc_datetime(session.get("created_at")),
-            updated_at=to_utc_datetime(session.get("updated_at")),
+            created_at=created_at,
+            updated_at=updated_at,
         )
 
 
@@ -233,6 +263,8 @@ class AgentSessionDetailSchema(BaseModel):
     @classmethod
     def from_session(cls, session: AgentSession) -> "AgentSessionDetailSchema":
         session_name = get_session_name({**session.to_dict(), "session_type": "agent"})
+        created_at = datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None
+        updated_at = datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else created_at
         return cls(
             user_id=session.user_id,
             agent_session_id=session.session_id,
@@ -248,8 +280,8 @@ class AgentSessionDetailSchema(BaseModel):
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,  # type: ignore
             metadata=session.metadata,
             chat_history=[message.to_dict() for message in session.get_chat_history()],
-            created_at=to_utc_datetime(session.created_at),
-            updated_at=to_utc_datetime(session.updated_at),
+            created_at=to_utc_datetime(created_at),
+            updated_at=to_utc_datetime(updated_at),
         )
 
 
@@ -272,7 +304,8 @@ class TeamSessionDetailSchema(BaseModel):
     def from_session(cls, session: TeamSession) -> "TeamSessionDetailSchema":
         session_dict = session.to_dict()
         session_name = get_session_name({**session_dict, "session_type": "team"})
-
+        created_at = datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None
+        updated_at = datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else created_at
         return cls(
             session_id=session.session_id,
             team_id=session.team_id,
@@ -287,8 +320,8 @@ class TeamSessionDetailSchema(BaseModel):
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
             metadata=session.metadata,
             chat_history=[message.to_dict() for message in session.get_chat_history()],
-            created_at=to_utc_datetime(session.created_at),
-            updated_at=to_utc_datetime(session.updated_at),
+            created_at=to_utc_datetime(created_at),
+            updated_at=to_utc_datetime(updated_at),
         )
 
 
@@ -311,7 +344,8 @@ class WorkflowSessionDetailSchema(BaseModel):
     def from_session(cls, session: WorkflowSession) -> "WorkflowSessionDetailSchema":
         session_dict = session.to_dict()
         session_name = get_session_name({**session_dict, "session_type": "workflow"})
-
+        created_at = datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None
+        updated_at = datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else created_at
         return cls(
             session_id=session.session_id,
             user_id=session.user_id,
@@ -322,8 +356,8 @@ class WorkflowSessionDetailSchema(BaseModel):
             session_state=session.session_data.get("session_state", None) if session.session_data else None,
             workflow_data=session.workflow_data,
             metadata=session.metadata,
-            created_at=to_utc_datetime(session.created_at),
-            updated_at=to_utc_datetime(session.updated_at),
+            created_at=to_utc_datetime(created_at),
+            updated_at=to_utc_datetime(updated_at),
         )
 
 

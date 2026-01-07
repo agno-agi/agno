@@ -28,17 +28,17 @@ class DayAggregatedMetrics(BaseModel):
     @classmethod
     def from_dict(cls, metrics_dict: Dict[str, Any]) -> "DayAggregatedMetrics":
         created_at = to_utc_datetime(metrics_dict.get("created_at")) or datetime.now(timezone.utc)
-        updated_at = to_utc_datetime(metrics_dict.get("updated_at")) or datetime.now(timezone.utc)
+        updated_at = to_utc_datetime(metrics_dict.get("updated_at", created_at)) or created_at
         return cls(
             agent_runs_count=metrics_dict.get("agent_runs_count", 0),
             agent_sessions_count=metrics_dict.get("agent_sessions_count", 0),
-            created_at=created_at,
             date=metrics_dict.get("date", datetime.now(timezone.utc)),
             id=metrics_dict.get("id", ""),
             model_metrics=metrics_dict.get("model_metrics", {}),
             team_runs_count=metrics_dict.get("team_runs_count", 0),
             team_sessions_count=metrics_dict.get("team_sessions_count", 0),
             token_metrics=metrics_dict.get("token_metrics", {}),
+            created_at=created_at,
             updated_at=updated_at,
             users_count=metrics_dict.get("users_count", 0),
             workflow_runs_count=metrics_dict.get("workflow_runs_count", 0),

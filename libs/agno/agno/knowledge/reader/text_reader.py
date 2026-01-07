@@ -39,16 +39,10 @@ class TextReader(Reader):
                     raise FileNotFoundError(f"Could not find file: {file}")
                 log_debug(f"Reading: {file}")
                 file_name = name or file.stem
-                file_contents = file.read_text(self.encoding or "utf-8")
+                file_contents = file.read_text(encoding=self.encoding or "utf-8")
             else:
-                # Handle BytesIO and other file-like objects that may not have a name attribute
-                if name:
-                    file_name = name
-                elif hasattr(file, "name") and file.name is not None:
-                    file_name = file.name.split(".")[0]
-                else:
-                    file_name = "text_file"
-                log_debug(f"Reading uploaded file: {file_name}")
+                log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
+                file_name = name or getattr(file, "name", "text_file").split(".")[0]
                 file.seek(0)
                 file_contents = file.read().decode(self.encoding or "utf-8")
 
@@ -85,16 +79,10 @@ class TextReader(Reader):
                         file_contents = await f.read()
                 except ImportError:
                     log_warning("aiofiles not installed, using synchronous file I/O")
-                    file_contents = file.read_text(self.encoding or "utf-8")
+                    file_contents = file.read_text(encoding=self.encoding or "utf-8")
             else:
-                # Handle BytesIO and other file-like objects that may not have a name attribute
-                if name:
-                    file_name = name
-                elif hasattr(file, "name") and file.name is not None:
-                    file_name = file.name.split(".")[0]
-                else:
-                    file_name = "text_file"
-                log_debug(f"Reading uploaded file asynchronously: {file_name}")
+                log_debug(f"Reading uploaded file asynchronously: {getattr(file, 'name', 'BytesIO')}")
+                file_name = name or getattr(file, "name", "text_file").split(".")[0]
                 file.seek(0)
                 file_contents = file.read().decode(self.encoding or "utf-8")
 
