@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 from agno.tools.function import Function
 from agno.tools.tool_search import AgnoToolSearch
 from agno.tools.toolkit import Toolkit
