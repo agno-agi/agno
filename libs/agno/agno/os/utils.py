@@ -14,6 +14,7 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
+from agno.os.schema import ToolDefinitionResponse
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
@@ -426,6 +427,38 @@ def extract_format(file: UploadFile) -> Optional[str]:
 
     return None
 
+def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]) -> List[ToolDefinitionResponse]:
+    formatted_tools: List[ToolDefinitionResponse] = []
+    if agent_tools is not None:
+        for tool in agent_tools:
+            if isinstance(tool, dict):
+                if "name" in tool:
+                    formatted_tools.append(ToolDefinitionResponse(name=tool["name"], raw=tool))
+                else:
+                    formatted_tools.append(ToolDefinitionResponse(raw=tool))
+            elif isinstance(tool, Toolkit):
+                for _, f in tool.functions.items():
+                    formatted_tools.append(ToolDefinitionResponse(name=f.name, description=f.description, parameters=f.parameters))
+            elif isinstance(tool, Function):
+                formatted_tools.append(ToolDefinitionResponse(name=tool.name, description=tool.description, parameters=tool.parameters))
+            elif callable(tool):
+                func = Function.from_callable(tool)
+                formatted_tools.append(ToolDefinitionResponse(name=tool.name, description=tool.description, parameters=tool.parameters))
+            else:
+                logger.warning(f"Unknown tool type: {type(tool)}")
+    return formatted_tools
+
+
+def format_team_tools(team_tools: List[Union[Function, dict]]):
+    formatted_tools: List[Dict] = []
+    if team_tools is not None:
+        for tool in team_tools:
+            if isinstance(tool, dict):
+                formatted_tools.append(tool)
+            elif isinstance(tool, Function):
+                formatted_tools.append(tool.to_dict())
+    return formatted_tools
+
 
 def get_agent_by_id(
     agent_id: str, agents: Optional[List[Union[Agent, RemoteAgent]]] = None
@@ -461,6 +494,96 @@ def get_workflow_by_id(
         if workflow.id == workflow_id:
             return workflow
     return None
+
+
+#  INPUT SCHEMA VALIDATIONS
+def get_agent_input_schema_dict(agent: Agent) -> Optional[Dict[str, Any]]:
+    """Get input schema as dictionary for API responses"""
+
+    if agent.input_schema is not None:
+        try:
+            return agent.input_schema.model_json_schema()
+        except Exception:
+            return None
+
+    return None
+
+
+def get_team_input_schema_dict(team: Team) -> Optional[Dict[str, Any]]:
+    """Get input schema as dictionary for API responses"""
+
+    if team.input_schema is not None:
+        try:
+            return team.input_schema.model_json_schema()
+        except Exception:
+            return None
+
+    return None
+
+
+def get_workflow_input_schema_dict(workflow: Workflow) -> Optional[Dict[str, Any]]:
+    """Get input schema as dictionary for API responses"""
+
+    # Priority 1: Explicit input_schema (Pydantic model)
+    if workflow.input_schema is not None:
+        try:
+            return workflow.input_schema.model_json_schema()
+        except Exception:
+            return None
+
+    # Priority 2: Auto-generate from custom kwargs
+    if workflow.steps and callable(workflow.steps):
+        custom_params = workflow.run_parameters
+        if custom_params and len(custom_params) > 1:  # More than just 'message'
+            return _generate_schema_from_params(custom_params)
+
+    # Priority 3: No schema (expects string message)
+    return None
+
+
+def _generate_schema_from_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert function parameters to JSON schema"""
+    properties: Dict[str, Any] = {}
+    required: List[str] = []
+
+    for param_name, param_info in params.items():
+        # Skip the default 'message' parameter for custom kwargs workflows
+        if param_name == "message":
+            continue
+
+        # Map Python types to JSON schema types
+        param_type = param_info.get("annotation", "str")
+        default_value = param_info.get("default")
+        is_required = param_info.get("required", False)
+
+        # Convert Python type annotations to JSON schema types
+        if param_type == "str":
+            properties[param_name] = {"type": "string"}
+        elif param_type == "bool":
+            properties[param_name] = {"type": "boolean"}
+        elif param_type == "int":
+            properties[param_name] = {"type": "integer"}
+        elif param_type == "float":
+            properties[param_name] = {"type": "number"}
+        elif "List" in str(param_type):
+            properties[param_name] = {"type": "array", "items": {"type": "string"}}
+        else:
+            properties[param_name] = {"type": "string"}  # fallback
+
+        # Add default value if present
+        if default_value is not None:
+            properties[param_name]["default"] = default_value
+
+        # Add to required if no default value
+        if is_required and default_value is None:
+            required.append(param_name)
+
+    schema = {"type": "object", "properties": properties}
+
+    if required:
+        schema["required"] = required
+
+    return schema
 
 
 def resolve_origins(user_origins: Optional[List[str]] = None, default_origins: Optional[List[str]] = None) -> List[str]:

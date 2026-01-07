@@ -9,6 +9,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
 )
@@ -20,8 +21,9 @@ from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency, require_resource_access
-from agno.os.routers.agents.schema import AgentResponse
+from agno.os.routers.agents.schema import AgentResponse, AgentRunCancelledResponse
 from agno.os.schema import (
+    AgentSummaryResponse,
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
@@ -175,7 +177,6 @@ def get_agent_router(
         "/agents/{agent_id}/runs",
         tags=["Agents"],
         operation_id="create_agent_run",
-        response_model_exclude_none=True,
         summary="Create Agent Run",
         description=(
             "Execute an agent with a message and optional media files. Supports both streaming and non-streaming responses.\n\n"
@@ -388,7 +389,6 @@ def get_agent_router(
         "/agents/{agent_id}/runs/{run_id}/cancel",
         tags=["Agents"],
         operation_id="cancel_agent_run",
-        response_model_exclude_none=True,
         summary="Cancel Agent Run",
         description=(
             "Cancel a currently executing agent run. This will attempt to stop the agent's execution gracefully.\n\n"
@@ -404,7 +404,7 @@ def get_agent_router(
     async def cancel_agent_run(
         agent_id: str,
         run_id: str,
-    ):
+    ) -> AgentRunCancelledResponse:
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -413,13 +413,12 @@ def get_agent_router(
         if not cancelled:
             raise HTTPException(status_code=500, detail="Failed to cancel run - run not found or already completed")
 
-        return JSONResponse(content={}, status_code=200)
+        return AgentRunCancelledResponse(id=run_id, success=cancelled or False)
 
     @router.post(
         "/agents/{agent_id}/runs/{run_id}/continue",
         tags=["Agents"],
         operation_id="continue_agent_run",
-        response_model_exclude_none=True,
         summary="Continue Agent Run",
         description=(
             "Continue a paused or incomplete agent run with updated tool results.\n\n"
@@ -525,8 +524,6 @@ def get_agent_router(
 
     @router.get(
         "/agents",
-        response_model=List[AgentResponse],
-        response_model_exclude_none=True,
         tags=["Agents"],
         operation_id="get_agents",
         summary="List All Agents",
@@ -537,8 +534,11 @@ def get_agent_router(
             "- Model configuration and capabilities\n"
             "- Available tools and their configurations\n"
             "- Session, knowledge, memory, and reasoning settings\n"
-            "- Only meaningful (non-default) configurations are included"
+            "- Only meaningful (non-default) configurations are included\n\n"
+            "Use minimal=true for a lightweight response with basic agent info only."
         ),
+        response_model=List[Union[AgentResponse, AgentSummaryResponse]],
+        response_model_exclude_unset=True,
         responses={
             200: {
                 "description": "List of agents retrieved successfully",
@@ -561,7 +561,14 @@ def get_agent_router(
             }
         },
     )
-    async def get_agents(request: Request) -> List[AgentResponse]:
+    async def get_agents(
+        request: Request,
+        minimal: bool = Query(
+            default=False,
+            description="If true, return minimal agent info (id, name, description, db_id). "
+            "If false, return full agent details including model, tools, and configurations.",
+        ),
+    ) -> List[Union[AgentResponse, AgentSummaryResponse]]:
         """Return the list of all Agents present in the contextual OS"""
         if os.agents is None:
             return []
@@ -580,20 +587,27 @@ def get_agent_router(
         else:
             accessible_agents = os.agents
 
-        agents = []
+        agents: List[dict] = []
         for agent in accessible_agents:
-            if isinstance(agent, RemoteAgent):
-                agents.append(await agent.get_agent_config())
+            if minimal:
+                if isinstance(agent, RemoteAgent):
+                    # TODO: Implement minimal agent config for remote agents
+                    pass
+                else:
+                    agent_summary = AgentSummaryResponse.from_agent(agent=agent)
+                    agents.append(agent_summary.model_dump(exclude_none=True))
             else:
-                agent_response = await AgentResponse.from_agent(agent=agent)
-                agents.append(agent_response)
+                if isinstance(agent, RemoteAgent):
+                    agent_config = await agent.get_agent_config()
+                    agents.append(agent_config.model_dump(exclude_none=True))
+                else:
+                    agent_response = await AgentResponse.from_agent(agent=agent)
+                    agents.append(agent_response.model_dump(exclude_none=True))
 
         return agents
 
     @router.get(
         "/agents/{agent_id}",
-        response_model=AgentResponse,
-        response_model_exclude_none=True,
         tags=["Agents"],
         operation_id="get_agent",
         summary="Get Agent Details",
@@ -607,6 +621,8 @@ def get_agent_router(
             "- Reasoning capabilities and settings\n"
             "- System prompts and response formatting options"
         ),
+        response_model=AgentResponse,
+        response_model_exclude_unset=True,
         responses={
             200: {
                 "description": "Agent details retrieved successfully",
@@ -629,14 +645,16 @@ def get_agent_router(
         },
         dependencies=[Depends(require_resource_access("agents", "read", "agent_id"))],
     )
-    async def get_agent(agent_id: str, request: Request) -> AgentResponse:
+    async def get_agent(agent_id: str):
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
         if isinstance(agent, RemoteAgent):
-            return await agent.get_agent_config()
+            agent_config = await agent.get_agent_config()
+            return agent_config.model_dump(exclude_none=True)
         else:
-            return await AgentResponse.from_agent(agent=agent)
+            agent_response = await AgentResponse.from_agent(agent=agent)
+            return agent_response.model_dump(exclude_none=True)
 
     return router

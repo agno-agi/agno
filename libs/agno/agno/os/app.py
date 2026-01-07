@@ -1125,7 +1125,30 @@ class AgentOS:
         access_log: bool = False,
         **kwargs,
     ):
+        """Serve the AgentOS application using uvicorn.
+
+        Args:
+            app: The FastAPI application to serve. Can be either:
+                - A string import path (e.g., "basic:app") - required for reload=True
+                - A FastAPI instance - convenient but incompatible with reload=True
+                - None - will use self.get_app() to create the app (incompatible with reload=True)
+            host: The host to bind to. Defaults to "localhost".
+            port: The port to bind to. Defaults to 7777.
+            reload: Enable auto-reload on code changes. Requires app to be a string import path.
+            reload_includes: List of glob patterns to include for reload watching.
+            reload_excludes: List of glob patterns to exclude from reload watching.
+            workers: Number of worker processes. Cannot be used with reload=True.
+            access_log: Enable access logging. Defaults to False.
+            **kwargs: Additional arguments to pass to uvicorn.run().
+        """
         import uvicorn
+
+        if reload and not isinstance(app, str):
+            log_warning(
+                "reload=True requires app to be an import string (e.g., 'module:app'). "
+                "Disabling reload since a FastAPI instance was provided directly."
+            )
+            reload = False
 
         if getenv("AGNO_API_RUNTIME", "").lower() == "stg":
             public_endpoint = "https://os-stg.agno.com/"

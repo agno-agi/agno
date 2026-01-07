@@ -1,7 +1,7 @@
 import logging
 from typing import Optional, Union
 
-from fastapi import Depends, HTTPException, Query, Request
+from fastapi import Depends, HTTPException, Query, Request, Header
 from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
@@ -128,7 +128,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         ),
         page: int = Query(default=1, description="Page number (1-indexed)", ge=1),
         limit: int = Query(default=20, description="Number of traces per page", ge=1, le=100),
-        db_id: Optional[str] = Query(default=None, description="Database ID to query traces from"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to query traces from"),
     ):
         """Get list of traces with optional filters and pagination"""
         import time as time_module
@@ -328,7 +328,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         trace_id: str,
         span_id: Optional[str] = Query(default=None, description="Optional: Span ID to retrieve specific span"),
         run_id: Optional[str] = Query(default=None, description="Optional: Run ID to retrieve trace for"),
-        db_id: Optional[str] = Query(default=None, description="Database ID to query trace from"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to query trace from"),
     ):
         """Get detailed trace with hierarchical span tree, or a specific span within the trace"""
         # Get database using db_id or default to first available
@@ -456,7 +456,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         ),
         page: int = Query(default=1, description="Page number (1-indexed)", ge=1),
         limit: int = Query(default=20, description="Number of sessions per page", ge=1, le=100),
-        db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
+        db_id: Optional[str] = Header(
+            default=None, alias="X-DB-ID", description="Database ID to query statistics from"
+        ),
     ):
         """Get trace statistics grouped by session"""
         import time as time_module

@@ -2,7 +2,7 @@ import logging
 from datetime import date
 from typing import List, Optional, Union, cast
 
-from fastapi import Depends, HTTPException, Query, Request
+from fastapi import Depends, HTTPException, Query, Request, Header
 from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
@@ -44,6 +44,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     @router.get(
         "/metrics",
         response_model=MetricsResponse,
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="get_metrics",
         summary="Get AgentOS Metrics",
@@ -100,8 +101,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         ending_date: Optional[date] = Query(
             default=None, description="Ending date for metrics range (YYYY-MM-DD format)"
         ),
-        db_id: Optional[str] = Query(default=None, description="Database ID to query metrics from"),
-        table: Optional[str] = Query(default=None, description="The database table to use"),
+        db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to query metrics from"),
+        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="The database table to use"),
     ) -> MetricsResponse:
         try:
             db = await get_db(dbs, db_id, table)
@@ -130,6 +131,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     @router.post(
         "/metrics/refresh",
         response_model=List[DayAggregatedMetrics],
+        response_model_exclude_none=True,
         status_code=200,
         operation_id="refresh_metrics",
         summary="Refresh Metrics",
@@ -178,8 +180,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     )
     async def calculate_metrics(
         request: Request,
-        db_id: Optional[str] = Query(default=None, description="Database ID to use for metrics calculation"),
-        table: Optional[str] = Query(default=None, description="Table to use for metrics calculation"),
+        db_id: Optional[str] = Header(
+            default=None, alias="X-DB-ID", description="Database ID to use for metrics calculation"
+        ),
+        table: Optional[str] = Header(
+            default=None, alias="X-TABLE-NAME", description="Table to use for metrics calculation"
+        ),
     ) -> List[DayAggregatedMetrics]:
         try:
             db = await get_db(dbs, db_id, table)

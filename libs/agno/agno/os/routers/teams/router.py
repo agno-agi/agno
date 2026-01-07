@@ -8,6 +8,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
 )
@@ -22,6 +23,7 @@ from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
+    TeamSummaryResponse,
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
@@ -333,7 +335,7 @@ def get_team_router(
 
     @router.get(
         "/teams",
-        response_model=List[TeamResponse],
+        response_model=List[Union[TeamResponse, TeamSummaryResponse]],
         response_model_exclude_none=True,
         tags=["Teams"],
         operation_id="get_teams",
@@ -344,7 +346,8 @@ def get_team_router(
             "- Team metadata (ID, name, description, execution mode)\n"
             "- Model configuration for team coordination\n"
             "- Team member roster with roles and capabilities\n"
-            "- Knowledge sharing and memory configurations"
+            "- Knowledge sharing and memory configurations\n\n"
+            "Use minimal=true for a lightweight response with basic team info only."
         ),
         responses={
             200: {
@@ -412,7 +415,14 @@ def get_team_router(
             }
         },
     )
-    async def get_teams(request: Request) -> List[TeamResponse]:
+    async def get_teams(
+        request: Request,
+        minimal: bool = Query(
+            default=False,
+            description="If true, return minimal team info (id, name, description, db_id). "
+            "If false, return full team details including model, tools, members, and configurations.",
+        ),
+    ) -> List[Union[TeamResponse, TeamSummaryResponse]]:
         """Return the list of all Teams present in the contextual OS"""
         if os.teams is None:
             return []
@@ -430,13 +440,20 @@ def get_team_router(
         else:
             accessible_teams = os.teams
 
-        teams = []
+        teams: List[Union[TeamResponse, TeamSummaryResponse]] = []
         for team in accessible_teams:
-            if isinstance(team, RemoteTeam):
-                teams.append(await team.get_team_config())
+            if minimal:
+                if isinstance(team, RemoteTeam):
+                    # TODO: Implement minimal team config for remote teams
+                    pass
+                else:
+                    teams.append(TeamSummaryResponse.from_team(team=team))
             else:
-                team_response = await TeamResponse.from_team(team=team)
-                teams.append(team_response)
+                if isinstance(team, RemoteTeam):
+                    teams.append(await team.get_team_config())
+                else:
+                    team_response = await TeamResponse.from_team(team=team)
+                    teams.append(team_response)
 
         return teams
 
