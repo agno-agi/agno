@@ -220,7 +220,7 @@ class LearnedKnowledgeConfig:
     Learned Knowledge captures reusable insights and patterns that
     can be shared across users and agents.
 
-    Scope: KNOWLEDGE (fixed) + `namespace`:
+    Scope: `namespace` + KNOWLEDGE (fixed):
     - "user": Private learned knowledge per user
     - "global": Shared with everyone (default)
     - Custom string: Explicit grouping (e.g., "engineering", "sales_west")
