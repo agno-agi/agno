@@ -770,7 +770,7 @@ async def aprint_response_stream(
 
 
 def build_panels_stream(
-    response_content: Union[str, JSON, Markdown],
+    response_content: Optional[Union[str, JSON, Markdown]],
     response_event: RunOutputEvent,
     response_timer: Timer,
     response_reasoning_content_buffer: str,

@@ -8,8 +8,29 @@ from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
+from agno.run.agent import RunContentEvent as AgentRunContentEvent
 from agno.run.agent import RunOutput
+from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutput, TeamRunOutputEvent
+from agno.run.workflow import (
+    ConditionExecutionCompletedEvent,
+    ConditionExecutionStartedEvent,
+    LoopExecutionCompletedEvent,
+    LoopExecutionStartedEvent,
+    LoopIterationCompletedEvent,
+    LoopIterationStartedEvent,
+    ParallelExecutionCompletedEvent,
+    ParallelExecutionStartedEvent,
+    RouterExecutionCompletedEvent,
+    RouterExecutionStartedEvent,
+    StepCompletedEvent,
+    StepStartedEvent,
+    StepsExecutionCompletedEvent,
+    StepsExecutionStartedEvent,
+    WorkflowCompletedEvent,
+    WorkflowRunOutputEvent,
+    WorkflowStartedEvent,
+)
 from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
 from agno.utils.response import build_reasoning_step_panel, create_panel, escape_markdown_tags, format_tool_calls
@@ -465,6 +486,23 @@ def print_response_stream(
         # Dict to track member response panels by member_id
         member_response_panels = {}
 
+        # Track workflow state for displaying workflow events from tools
+        workflow_step_panels: List[Any] = []
+        current_workflow_step_name: str = ""
+        current_workflow_step_content: str = ""
+        workflow_in_progress: bool = False
+        all_panels: List[Any] = []  # Track all panels for final display
+
+        # Helper function to build current step streaming panel
+        def build_current_step_panel():
+            if current_workflow_step_name and current_workflow_step_content:
+                return create_panel(
+                    content=Markdown(current_workflow_step_content) if markdown else Text(current_workflow_step_content),
+                    title=f"Step: {current_workflow_step_name} (Running...)",
+                    border_style="orange3",
+                )
+            return None
+
         final_run_response = None
         for resp in stream_resp:
             if team_markdown is None:
@@ -475,6 +513,124 @@ def print_response_stream(
 
                 if team.output_schema is not None:
                     team_markdown = False
+
+            # Handle workflow events from tool calls
+            if isinstance(resp, tuple(get_args(WorkflowRunOutputEvent))):
+                if isinstance(resp, WorkflowStartedEvent):
+                    workflow_in_progress = True
+                    status.update(f"Workflow started: {resp.workflow_name or 'Workflow'}...")
+                    live_console.update(Group(*panels, status))
+                    continue
+
+                elif isinstance(resp, StepStartedEvent):
+                    step_name = resp.step_name or "Unknown"
+                    current_workflow_step_name = step_name
+                    current_workflow_step_content = ""
+                    status.update(f"Running step: {step_name}...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, StepCompletedEvent):
+                    step_name = resp.step_name or "Unknown"
+                    # Use accumulated streaming content, or fall back to event content
+                    step_content = current_workflow_step_content or (str(resp.content) if resp.content else "")
+                    if step_content:
+                        # Create a panel for the completed step
+                        step_panel = create_panel(
+                            content=Markdown(step_content) if markdown else Text(step_content),
+                            title=f"Step: {step_name} (Completed)",
+                            border_style="orange3",
+                        )
+                        workflow_step_panels.append(step_panel)
+                    status.update(f"Completed step: {step_name}")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    current_workflow_step_name = ""
+                    current_workflow_step_content = ""
+                    continue
+
+                elif isinstance(resp, LoopExecutionStartedEvent):
+                    status.update(f"Starting loop: {resp.step_name or 'Loop'} (max {resp.max_iterations} iterations)...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, LoopIterationStartedEvent):
+                    status.update(f"Loop iteration {resp.iteration}/{resp.max_iterations}: {resp.step_name}...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, LoopIterationCompletedEvent):
+                    status.update(f"Completed iteration {resp.iteration}/{resp.max_iterations}: {resp.step_name}")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, LoopExecutionCompletedEvent):
+                    status.update(f"Completed loop: {resp.step_name or 'Loop'} ({resp.total_iterations} iterations)")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, ParallelExecutionStartedEvent):
+                    status.update(f"Starting parallel execution: {resp.step_name or 'Parallel'}...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, ParallelExecutionCompletedEvent):
+                    status.update(f"Completed parallel execution: {resp.step_name or 'Parallel'}")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, ConditionExecutionStartedEvent):
+                    condition_result = "true" if resp.condition_result else "false"
+                    status.update(f"Evaluating condition: {resp.step_name or 'Condition'} ({condition_result})...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, ConditionExecutionCompletedEvent):
+                    condition_result = "true" if resp.condition_result else "false"
+                    status.update(f"Completed condition: {resp.step_name or 'Condition'} ({condition_result}, {resp.executed_steps or 0} steps)")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, RouterExecutionStartedEvent):
+                    selected = ", ".join(resp.selected_steps) if resp.selected_steps else "none"
+                    status.update(f"Router selecting: {resp.step_name or 'Router'} -> [{selected}]...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, RouterExecutionCompletedEvent):
+                    selected = ", ".join(resp.selected_steps) if resp.selected_steps else "none"
+                    status.update(f"Completed router: {resp.step_name or 'Router'} -> [{selected}] ({resp.executed_steps or 0} steps)")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, StepsExecutionStartedEvent):
+                    status.update(f"Starting steps: {resp.step_name or 'Steps'} ({resp.steps_count or 0} steps)...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, StepsExecutionCompletedEvent):
+                    status.update(f"Completed steps: {resp.step_name or 'Steps'} ({resp.executed_steps or 0}/{resp.steps_count or 0} steps)")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, WorkflowCompletedEvent):
+                    workflow_in_progress = False
+                    status.update("Workflow completed")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+            # Handle streaming content from agent/team in workflow steps - show in real-time
+            # IMPORTANT: Check this BEFORE TeamRunOutputEvent since AgentRunContentEvent/TeamRunContentEvent are subtypes
+            if workflow_in_progress and isinstance(resp, (AgentRunContentEvent, TeamRunContentEvent)):
+                if resp.content is not None and isinstance(resp.content, str):
+                    current_workflow_step_content += resp.content
+                    # Update display with current streaming content
+                    current_step_panel = build_current_step_panel()
+                    display_panels = panels + workflow_step_panels
+                    if current_step_panel:
+                        display_panels = display_panels + [current_step_panel]
+                    live_console.update(Group(*display_panels, status))
+                    continue
+                continue
 
             if isinstance(resp, TeamRunOutput):
                 final_run_response = resp
@@ -671,19 +827,26 @@ def print_response_stream(
                     )
                     panels.append(team_tool_calls_panel)
 
-            # Add the team response panel at the end
-            if response_content_stream:
-                render = True
-                # Create panel for response
-                response_panel = create_panel(
-                    content=response_content_stream,
-                    title=f"Response ({response_timer.elapsed:.1f}s)",
-                    border_style="blue",
-                )
-                panels.append(response_panel)
+            # During workflow execution, only show workflow step panels (no Response panel)
+            if workflow_in_progress:
+                # Workflow step panels come after tool calls
+                all_panels = panels + workflow_step_panels
+            else:
+                # Add the team response panel at the end
+                if response_content_stream:
+                    render = True
+                    # Create panel for response
+                    response_panel = create_panel(
+                        content=response_content_stream,
+                        title=f"Response ({response_timer.elapsed:.1f}s)",
+                        border_style="blue",
+                    )
+                    panels.append(response_panel)
+                # Workflow step panels come before response
+                all_panels = panels + workflow_step_panels
 
-            if render or len(panels) > 0:
-                live_console.update(Group(*panels))
+            if render or len(all_panels) > 0:
+                live_console.update(Group(*all_panels))
 
         response_timer.stop()
         run_response = final_run_response
@@ -946,6 +1109,9 @@ def print_response_stream(
                     border_style="green",
                 )
                 final_panels.append(citations_panel)
+
+        # Add workflow step panels before final update
+        final_panels = final_panels + workflow_step_panels
 
         # Final update with correctly ordered panels
         live_console.update(Group(*final_panels))
@@ -1373,6 +1539,23 @@ async def aprint_response_stream(
 
         input_content = get_text_from_message(input)
 
+        # Track workflow state for displaying workflow events from tools
+        workflow_step_panels: List[Any] = []
+        current_workflow_step_name: str = ""
+        current_workflow_step_content: str = ""
+        workflow_in_progress: bool = False
+        all_panels: List[Any] = []  # Track all panels for final display
+
+        # Helper function to build current step streaming panel
+        def build_current_step_panel():
+            if current_workflow_step_name and current_workflow_step_content:
+                return create_panel(
+                    content=Markdown(current_workflow_step_content) if markdown else Text(current_workflow_step_content),
+                    title=f"Step: {current_workflow_step_name} (Running...)",
+                    border_style="orange3",
+                )
+            return None
+
         final_run_response = None
         async for resp in team.arun(  # type: ignore
             input=input,
@@ -1404,6 +1587,124 @@ async def aprint_response_stream(
 
                 if team.output_schema is not None:
                     team_markdown = False
+
+            # Handle workflow events from tool calls
+            if isinstance(resp, tuple(get_args(WorkflowRunOutputEvent))):
+                if isinstance(resp, WorkflowStartedEvent):
+                    workflow_in_progress = True
+                    status.update(f"Workflow started: {resp.workflow_name or 'Workflow'}...")
+                    live_console.update(Group(*panels, status))
+                    continue
+
+                elif isinstance(resp, StepStartedEvent):
+                    step_name = resp.step_name or "Unknown"
+                    current_workflow_step_name = step_name
+                    current_workflow_step_content = ""
+                    status.update(f"Running step: {step_name}...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, StepCompletedEvent):
+                    step_name = resp.step_name or "Unknown"
+                    # Use accumulated streaming content, or fall back to event content
+                    step_content = current_workflow_step_content or (str(resp.content) if resp.content else "")
+                    if step_content:
+                        # Create a panel for the completed step
+                        step_panel = create_panel(
+                            content=Markdown(step_content) if markdown else Text(step_content),
+                            title=f"Step: {step_name} (Completed)",
+                            border_style="orange3",
+                        )
+                        workflow_step_panels.append(step_panel)
+                    status.update(f"Completed step: {step_name}")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    current_workflow_step_name = ""
+                    current_workflow_step_content = ""
+                    continue
+
+                elif isinstance(resp, LoopExecutionStartedEvent):
+                    status.update(f"Starting loop: {resp.step_name or 'Loop'} (max {resp.max_iterations} iterations)...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, LoopIterationStartedEvent):
+                    status.update(f"Loop iteration {resp.iteration}/{resp.max_iterations}: {resp.step_name}...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, LoopIterationCompletedEvent):
+                    status.update(f"Completed iteration {resp.iteration}/{resp.max_iterations}: {resp.step_name}")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, LoopExecutionCompletedEvent):
+                    status.update(f"Completed loop: {resp.step_name or 'Loop'} ({resp.total_iterations} iterations)")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, ParallelExecutionStartedEvent):
+                    status.update(f"Starting parallel execution: {resp.step_name or 'Parallel'}...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, ParallelExecutionCompletedEvent):
+                    status.update(f"Completed parallel execution: {resp.step_name or 'Parallel'}")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, ConditionExecutionStartedEvent):
+                    condition_result = "true" if resp.condition_result else "false"
+                    status.update(f"Evaluating condition: {resp.step_name or 'Condition'} ({condition_result})...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, ConditionExecutionCompletedEvent):
+                    condition_result = "true" if resp.condition_result else "false"
+                    status.update(f"Completed condition: {resp.step_name or 'Condition'} ({condition_result}, {resp.executed_steps or 0} steps)")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, RouterExecutionStartedEvent):
+                    selected = ", ".join(resp.selected_steps) if resp.selected_steps else "none"
+                    status.update(f"Router selecting: {resp.step_name or 'Router'} -> [{selected}]...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, RouterExecutionCompletedEvent):
+                    selected = ", ".join(resp.selected_steps) if resp.selected_steps else "none"
+                    status.update(f"Completed router: {resp.step_name or 'Router'} -> [{selected}] ({resp.executed_steps or 0} steps)")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, StepsExecutionStartedEvent):
+                    status.update(f"Starting steps: {resp.step_name or 'Steps'} ({resp.steps_count or 0} steps)...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, StepsExecutionCompletedEvent):
+                    status.update(f"Completed steps: {resp.step_name or 'Steps'} ({resp.executed_steps or 0}/{resp.steps_count or 0} steps)")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, WorkflowCompletedEvent):
+                    workflow_in_progress = False
+                    status.update("Workflow completed")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+            # Handle streaming content from agent/team in workflow steps - show in real-time
+            # IMPORTANT: Check this BEFORE TeamRunOutputEvent since AgentRunContentEvent/TeamRunContentEvent are subtypes
+            if workflow_in_progress and isinstance(resp, (AgentRunContentEvent, TeamRunContentEvent)):
+                if resp.content is not None and isinstance(resp.content, str):
+                    current_workflow_step_content += resp.content
+                    # Update display with current streaming content
+                    current_step_panel = build_current_step_panel()
+                    display_panels = panels + workflow_step_panels
+                    if current_step_panel:
+                        display_panels = display_panels + [current_step_panel]
+                    live_console.update(Group(*display_panels, status))
+                    continue
+                continue
 
             if isinstance(resp, TeamRunOutput):
                 final_run_response = resp
@@ -1599,19 +1900,26 @@ async def aprint_response_stream(
                     )
                     panels.append(team_tool_calls_panel)
 
-            # Add the team response panel at the end
-            if response_content_stream:
-                render = True
-                # Create panel for response
-                response_panel = create_panel(
-                    content=response_content_stream,
-                    title=f"Response ({response_timer.elapsed:.1f}s)",
-                    border_style="blue",
-                )
-                panels.append(response_panel)
+            # During workflow execution, only show workflow step panels (no Response panel)
+            if workflow_in_progress:
+                # Workflow step panels come after tool calls
+                all_panels = panels + workflow_step_panels
+            else:
+                # Add the team response panel at the end
+                if response_content_stream:
+                    render = True
+                    # Create panel for response
+                    response_panel = create_panel(
+                        content=response_content_stream,
+                        title=f"Response ({response_timer.elapsed:.1f}s)",
+                        border_style="blue",
+                    )
+                    panels.append(response_panel)
+                # Workflow step panels come before response
+                all_panels = panels + workflow_step_panels
 
-            if render or len(panels) > 0:
-                live_console.update(Group(*panels))
+            if render or len(all_panels) > 0:
+                live_console.update(Group(*all_panels))
 
         response_timer.stop()
 
@@ -1892,6 +2200,9 @@ async def aprint_response_stream(
                     border_style="green",
                 )
                 final_panels.append(citations_panel)
+
+        # Add workflow step panels before final update
+        final_panels = final_panels + workflow_step_panels
 
         # Final update with correctly ordered panels
         live_console.update(Group(*final_panels))
