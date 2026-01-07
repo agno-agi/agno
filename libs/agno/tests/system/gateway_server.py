@@ -193,7 +193,6 @@ agent_os = AgentOS(
         a2a_interface,
     ],
     tracing=True,
-    tracing_db=db,
     enable_mcp_server=True,
     authorization=ENABLE_AUTHORIZATION,
     authorization_config=AuthorizationConfig(
