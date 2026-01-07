@@ -2,7 +2,6 @@
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team import Team
