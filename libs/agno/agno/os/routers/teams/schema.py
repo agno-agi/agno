@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 from agno.agent import Agent
 from agno.os.routers.agents.schema import AgentResponse
@@ -9,6 +9,7 @@ from agno.os.schema import DatabaseConfigResponse, ModelResponse, ToolDefinition
 from agno.os.utils import (
     format_team_tools,
     get_team_input_schema_dict,
+    remove_none_values,
 )
 from agno.run import RunContext
 from agno.run.team import TeamRunOutput
@@ -29,6 +30,12 @@ class TeamResponse(BaseModel):
     input_schema: Optional[Dict[str, Any]] = Field(None, description="The input schema of the team")
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = Field(None, description="The members of the team")
     metadata: Optional[Dict[str, Any]] = Field(None, description="The metadata of the team")
+
+    @model_serializer(mode="wrap")
+    def serialize_model(self, handler) -> Dict[str, Any]:
+        """Custom serializer that recursively removes None values from nested structures."""
+        data = handler(self)
+        return remove_none_values(data)
 
     def get_default_values(self) -> Dict[str, Any]:
         return {

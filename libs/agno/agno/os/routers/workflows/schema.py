@@ -1,12 +1,12 @@
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.schema import DatabaseConfigResponse
-from agno.os.utils import get_workflow_input_schema_dict
+from agno.os.utils import get_workflow_input_schema_dict, remove_none_values
 from agno.workflow.agent import WorkflowAgent
 from agno.workflow.workflow import Workflow
 
@@ -56,6 +56,12 @@ class WorkflowResponse(BaseModel):
     steps: Optional[List[StepResponse]] = Field(None, description="The steps of the workflow")
     metadata: Optional[Dict[str, Any]] = Field(None, description="The metadata of the workflow")
     workflow_agent: bool = Field(False, description="Whether this workflow uses a WorkflowAgent")
+
+    @model_serializer(mode="wrap")
+    def serialize_model(self, handler) -> Dict[str, Any]:
+        """Custom serializer that recursively removes None values from nested structures."""
+        data = handler(self)
+        return remove_none_values(data)
 
     @classmethod
     async def _resolve_step_recursively(cls, step_dict: Dict[str, Any]) -> StepResponse:
