@@ -74,6 +74,7 @@ from agno.run.team import (
     TeamRunOutput,
     TeamRunOutputEvent,
 )
+from agno.run.workflow import WorkflowRunOutputEvent
 from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
@@ -3545,10 +3546,12 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
-        if isinstance(model_response_event, tuple(get_args(RunOutputEvent))) or isinstance(
-            model_response_event, tuple(get_args(TeamRunOutputEvent))
+        if (
+            isinstance(model_response_event, tuple(get_args(RunOutputEvent)))
+            or isinstance(model_response_event, tuple(get_args(TeamRunOutputEvent)))
+            or isinstance(model_response_event, tuple(get_args(WorkflowRunOutputEvent)))
         ):
-            if self.stream_member_events:
+            if self.stream_member_events or isinstance(model_response_event, tuple(get_args(WorkflowRunOutputEvent))):
                 if model_response_event.event == TeamRunEvent.custom_event:  # type: ignore
                     if hasattr(model_response_event, "team_id"):
                         model_response_event.team_id = self.id
