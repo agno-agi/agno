@@ -57,6 +57,9 @@ from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from agno.run.cancel import (
+    acancel_run as acancel_run_global,
+)
+from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
     aregister_run,
@@ -1012,6 +1015,18 @@ class Team:
         """
         return cancel_run_global(run_id)
 
+    @staticmethod
+    async def acancel_run(run_id: str) -> bool:
+        """Cancel a running team execution.
+
+        Args:
+            run_id (str): The run_id to cancel.
+
+        Returns:
+            bool: True if the run was found and marked for cancellation, False otherwise.
+        """
+        return await acancel_run_global(run_id)
+
     async def _connect_mcp_tools(self) -> None:
         """Connect the MCP tools to the agent."""
         if self.tools is not None:
@@ -1555,6 +1570,7 @@ class Team:
                         tools=_tools,
                         tool_choice=self.tool_choice,
                         tool_call_limit=self.tool_call_limit,
+                        run_response=run_response,
                         send_media_to_model=self.send_media_to_model,
                         compression_manager=self.compression_manager if self.compress_tool_results else None,
                     )
@@ -2653,6 +2669,8 @@ class Team:
         """
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
+        await aregister_run(run_context.run_id)
+
         memory_task = None
 
         try:
@@ -3376,6 +3394,7 @@ class Team:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
+            run_response=run_response,
             send_media_to_model=self.send_media_to_model,
             compression_manager=self.compression_manager if self.compress_tool_results else None,
         ):
@@ -5370,7 +5389,8 @@ class Team:
 
             elif isinstance(tool, Toolkit):
                 # For each function in the toolkit and process entrypoint
-                for name, _func in tool.functions.items():
+                toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
+                for name, _func in toolkit_functions.items():
                     if name in _function_names:
                         continue
                     _function_names.append(name)
@@ -8432,7 +8452,7 @@ class Team:
         gen_session_name_prompt = "Team Conversation\n"
 
         # Get team session messages for generating the name
-        messages_for_generating_session_name = self.get_session_messages()
+        messages_for_generating_session_name = session.get_messages()
 
         for message in messages_for_generating_session_name:
             gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"

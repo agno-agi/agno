@@ -4,6 +4,8 @@ System Tests for AgentOS Agent Routes.
 Run with: pytest test_agents_routes.py -v --tb=short
 """
 
+import asyncio
+import json
 import uuid
 
 import httpx
@@ -535,3 +537,112 @@ def test_create_a2a_researcher_agent_run_streaming(client: httpx.Client, test_us
     assert last_data["session_id"] == session_id
     assert "agent_id" in last_data
     assert last_data["agent_id"] == "researcher-agent-2"
+
+
+@pytest.mark.asyncio
+async def test_cancel_agent_run_streaming(client: httpx.Client, test_user_id: str, gateway_url: str):
+    """Test cancelling a streaming agent run returns cancellation event."""
+    session_id = str(uuid.uuid4())
+    latest_run_id = None
+    events_received = []
+    cancellation_event_received = False
+
+    async def stream_agent_run():
+        """Stream the agent run and collect events."""
+        nonlocal latest_run_id, cancellation_event_received
+        async with httpx.AsyncClient(
+            base_url=gateway_url,
+            timeout=REQUEST_TIMEOUT,
+            headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
+        ) as async_client:
+            async with async_client.stream(
+                "POST",
+                "/agents/gateway-agent/runs",
+                data={
+                    "message": "Tell me a very long story about artificial intelligence. Make it detailed and comprehensive.",
+                    "stream": "true",
+                    "session_id": session_id,
+                    "user_id": test_user_id,
+                },
+            ) as response:
+                assert response.status_code == 200
+                assert "text/event-stream" in response.headers.get("content-type", "")
+
+                async for line in response.aiter_lines():
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    # Handle SSE format: skip "event:" lines, parse "data:" lines
+                    if line.startswith("event:"):
+                        continue
+                    if line.startswith("data:"):
+                        line = line[5:].strip()  # Remove "data:" prefix
+
+                    try:
+                        data = json.loads(line)
+                        events_received.append(data)
+
+                        # Extract run_id from the first event that has it
+                        if latest_run_id is None and "run_id" in data:
+                            latest_run_id = data["run_id"]
+
+                        # Check if this is a cancellation event
+                        if data.get("event") == "RunCancelled":
+                            cancellation_event_received = True
+                    except json.JSONDecodeError:
+                        pass
+
+    async def cancel_agent_run():
+        """Cancel the agent run after a delay."""
+        # Wait for run_id to be set (with timeout)
+        timeout = 5
+        elapsed = 0
+        while latest_run_id is None and elapsed < timeout:
+            await asyncio.sleep(0.1)
+            elapsed += 0.1
+
+        if latest_run_id:
+            # Wait 1 second before canceling to ensure run has started
+            await asyncio.sleep(1)
+
+            async with httpx.AsyncClient(
+                base_url=gateway_url,
+                timeout=REQUEST_TIMEOUT,
+                headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
+            ) as async_client:
+                response = await async_client.post(f"/agents/gateway-agent/runs/{latest_run_id}/cancel")
+                assert response.status_code == 200
+        else:
+            pytest.fail("Run ID was not set before timeout")
+
+    # Start the agent run as a background task
+    agent_task = asyncio.create_task(stream_agent_run())
+
+    # Cancel the run concurrently
+    await cancel_agent_run()
+
+    # Wait for the agent task to complete (it should be cancelled)
+    try:
+        await agent_task
+    except (httpx.StreamError, httpx.ReadError, httpx.RemoteProtocolError):
+        # Stream errors are expected when cancellation closes the connection
+        pass
+
+    # Verify we received events
+    assert len(events_received) > 0, "Should have received at least some events"
+
+    # Verify we got a run_id
+    assert latest_run_id is not None, "Should have extracted run_id from stream"
+
+    # Verify cancellation event was received
+    assert cancellation_event_received, "Should have received RunCancelled event"
+
+    # Verify the cancellation event has the expected structure
+    cancelled_events = [e for e in events_received if e.get("event") == "RunCancelled"]
+    assert len(cancelled_events) > 0, "Should have at least one cancellation event"
+
+    cancelled_event = cancelled_events[0]
+    assert "run_id" in cancelled_event
+    assert cancelled_event["run_id"] == latest_run_id
+    assert "reason" in cancelled_event or "content" in cancelled_event
