@@ -11,9 +11,9 @@ from fastapi import (
 from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.managers import websocket_manager
-from agno.os.routers.agents.schema import AgentSummaryResponse
-from agno.os.routers.teams.schema import TeamSummaryResponse
-from agno.os.routers.workflows.schema import WorkflowSummaryResponse
+from agno.os.routers.agents.schema import AgentMinimalResponse
+from agno.os.routers.teams.schema import TeamMinimalResponse
+from agno.os.routers.workflows.schema import WorkflowMinimalResponse
 from agno.os.routers.workflows.router import handle_workflow_subscription, handle_workflow_via_websocket
 from agno.os.schema import (
     BadRequestResponse,
@@ -144,17 +144,17 @@ def get_base_router(
             agent_summaries = []
             if os.agents:
                 for agent in os.agents:
-                    agent_summaries.append(AgentSummaryResponse.from_agent(agent))
+                    agent_summaries.append(AgentMinimalResponse.from_agent(agent))
 
             team_summaries = []
             if os.teams:
                 for team in os.teams:
-                    team_summaries.append(TeamSummaryResponse.from_team(team))
+                    team_summaries.append(TeamMinimalResponse.from_team(team))
 
             workflow_summaries = []
             if os.workflows:
                 for workflow in os.workflows:
-                    workflow_summaries.append(WorkflowSummaryResponse.from_workflow(workflow))
+                    workflow_summaries.append(WorkflowMinimalResponse.from_workflow(workflow))
         except RemoteServerUnavailableError as e:
             raise HTTPException(
                 status_code=502,

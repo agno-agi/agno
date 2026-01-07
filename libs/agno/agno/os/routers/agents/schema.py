@@ -18,17 +18,19 @@ from agno.session import AgentSession
 from agno.utils.agent import aexecute_instructions, aexecute_system_message
 
 
-class AgentSummaryResponse(BaseModel):
+class AgentMinimalResponse(BaseModel):
     id: Optional[str] = Field(None, description="Unique identifier for the agent")
     name: Optional[str] = Field(None, description="Name of the agent")
     description: Optional[str] = Field(None, description="Description of the agent")
     db_id: Optional[str] = Field(None, description="Database identifier")
+    
+    # TODO: Add more minimal fields as needed.
 
     @classmethod
-    def from_agent(cls, agent: Union[Agent, RemoteAgent]) -> "AgentSummaryResponse":
+    def from_agent(cls, agent: Union[Agent, RemoteAgent]) -> "AgentMinimalResponse":
         return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
-    
-    
+
+
 class AgentResponse(BaseModel):
     id: str = Field(..., description="The ID of the agent")
     name: Optional[str] = Field(None, description="The name of the agent")
@@ -123,7 +125,7 @@ class AgentResponse(BaseModel):
             _agent_model_data["provider"] = model_provider
         model = ModelResponse(**_agent_model_data) if _agent_model_data else None
 
-    
+
         database: Optional[DatabaseConfigResponse] = None
         if agent.db:
             table_names, config = agent.db.to_config()
@@ -139,7 +141,7 @@ class AgentResponse(BaseModel):
         if additional_input and isinstance(additional_input[0], Message):
             additional_input = [MessageResponse(role=message.role, content=message.content, created_at=to_utc_datetime(message.created_at)) for message in additional_input]  # type: ignore
 
-        
+
         memory_info = {
             "enable_agentic_memory": agent.enable_agentic_memory,
             "enable_user_memories": agent.enable_user_memories,
@@ -150,7 +152,7 @@ class AgentResponse(BaseModel):
                 model=agent.memory_manager.model.id,
                 provider=agent.memory_manager.model.provider,
             ).model_dump()
-            
+
         reasoning_info = {
             "reasoning": agent.reasoning,
             "reasoning_agent_id": agent.reasoning_agent.id if agent.reasoning_agent else None,
@@ -163,8 +165,8 @@ class AgentResponse(BaseModel):
                 model=agent.reasoning_model.id,
                 provider=agent.reasoning_model.provider,
             ).model_dump()
-            
-        
+
+
         instructions = agent.instructions if agent.instructions else None
         if instructions and callable(instructions):
             instructions = await aexecute_instructions(instructions=instructions, agent=agent)
@@ -187,7 +189,7 @@ class AgentResponse(BaseModel):
             "timezone_identifier": agent.timezone_identifier,
             "resolve_in_context": agent.resolve_in_context,
         }
-        
+
         execution_configuration = {
             "stream": agent.stream,
             "stream_events": agent.stream_events,
@@ -208,12 +210,12 @@ class AgentResponse(BaseModel):
             "structured_outputs": agent.structured_outputs,
             "use_json_mode": agent.use_json_mode,
             "save_response_to_file": agent.save_response_to_file,
-            
+
         }
-        
+
         # TODO: Add information about configured pre/post hooks.
-    
-            
+
+
         # TODO: Review what works on the FE and looks sensible.
         attributes = {
             "system_context": system_context_info,

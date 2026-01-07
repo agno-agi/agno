@@ -45,7 +45,7 @@ from agno.os.routers.traces.schemas import (
 from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import (
     AgentSessionDetailSchema,
-    AgentSummaryResponse,
+    AgentMinimalResponse,
     ConfigResponse,
     CreateSessionRequest,
     DeleteSessionRequest,
@@ -56,11 +56,11 @@ from agno.os.schema import (
     SessionSchema,
     TeamRunSchema,
     TeamSessionDetailSchema,
-    TeamSummaryResponse,
+    TeamMinimalResponse,
     UpdateSessionRequest,
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
-    WorkflowSummaryResponse,
+    WorkflowMinimalResponse,
 )
 from agno.run.agent import RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent, team_run_output_event_from_dict
@@ -478,7 +478,7 @@ class AgentOSClient:
             f"/databases/{db_id}/migrate", data={"target_version": target_version}, headers=headers
         )
 
-    async def list_agents(self, headers: Optional[Dict[str, str]] = None) -> List[AgentSummaryResponse]:
+    async def list_agents(self, headers: Optional[Dict[str, str]] = None) -> List[AgentMinimalResponse]:
         """List all agents configured in the AgentOS instance.
 
         Returns summary information for each agent including:
@@ -490,13 +490,13 @@ class AgentOSClient:
             headers: HTTP headers to include in the request (optional)
 
         Returns:
-            List[AgentSummaryResponse]: List of agent summaries
+            List[AgentMinimalResponse]: List of agent summaries
 
         Raises:
             HTTPStatusError: On HTTP errors
         """
         data = await self._aget("/agents", headers=headers)
-        return [AgentSummaryResponse.model_validate(item) for item in data]
+        return [AgentMinimalResponse.model_validate(item) for item in data]
 
     def get_agent(self, agent_id: str, headers: Optional[Dict[str, str]] = None) -> AgentResponse:
         """Get detailed configuration for a specific agent.
@@ -755,7 +755,7 @@ class AgentOSClient:
         """
         await self._apost(f"/agents/{agent_id}/runs/{run_id}/cancel", headers=headers)
 
-    async def list_teams(self, headers: Optional[Dict[str, str]] = None) -> List[TeamSummaryResponse]:
+    async def list_teams(self, headers: Optional[Dict[str, str]] = None) -> List[TeamMinimalResponse]:
         """List all teams configured in the AgentOS instance.
 
         Returns summary information for each team including:
@@ -767,13 +767,13 @@ class AgentOSClient:
             headers: HTTP headers to include in the request (optional)
 
         Returns:
-            List[TeamSummaryResponse]: List of team summaries
+            List[TeamMinimalResponse]: List of team summaries
 
         Raises:
             HTTPStatusError: On HTTP errors
         """
         data = await self._aget("/teams", headers=headers)
-        return [TeamSummaryResponse.model_validate(item) for item in data]
+        return [TeamMinimalResponse.model_validate(item) for item in data]
 
     def get_team(self, team_id: str, headers: Optional[Dict[str, str]] = None) -> TeamResponse:
         """Get detailed configuration for a specific team.
@@ -942,7 +942,7 @@ class AgentOSClient:
         """
         await self._apost(f"/teams/{team_id}/runs/{run_id}/cancel", headers=headers)
 
-    async def list_workflows(self, headers: Optional[Dict[str, str]] = None) -> List[WorkflowSummaryResponse]:
+    async def list_workflows(self, headers: Optional[Dict[str, str]] = None) -> List[WorkflowMinimalResponse]:
         """List all workflows configured in the AgentOS instance.
 
         Returns summary information for each workflow including:
@@ -953,13 +953,13 @@ class AgentOSClient:
             headers: HTTP headers to include in the request (optional)
 
         Returns:
-            List[WorkflowSummaryResponse]: List of workflow summaries
+            List[WorkflowMinimalResponse]: List of workflow summaries
 
         Raises:
             HTTPStatusError: On HTTP errors
         """
         data = await self._aget("/workflows", headers=headers)
-        return [WorkflowSummaryResponse.model_validate(item) for item in data]
+        return [WorkflowMinimalResponse.model_validate(item) for item in data]
 
     def get_workflow(self, workflow_id: str, headers: Optional[Dict[str, str]] = None) -> WorkflowResponse:
         """Get detailed configuration for a specific workflow.

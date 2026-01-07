@@ -16,17 +16,17 @@ from agno.os.routers.memory.schemas import (
 )
 from agno.os.schema import (
     AgentSessionDetailSchema,
-    AgentSummaryResponse,
+    AgentMinimalResponse,
     ConfigResponse,
     InterfaceResponse,
     RunSchema,
     SessionSchema,
     TeamRunSchema,
     TeamSessionDetailSchema,
-    TeamSummaryResponse,
+    TeamMinimalResponse,
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
-    WorkflowSummaryResponse,
+    WorkflowMinimalResponse,
 )
 from agno.os.utils import (
     get_agent_by_id,
@@ -73,9 +73,9 @@ def get_mcp_server(
             evals=os._get_evals_config(),
             metrics=os._get_metrics_config(),
             traces=os._get_traces_config(),
-            agents=[AgentSummaryResponse.from_agent(agent) for agent in os.agents] if os.agents else [],
-            teams=[TeamSummaryResponse.from_team(team) for team in os.teams] if os.teams else [],
-            workflows=[WorkflowSummaryResponse.from_workflow(w) for w in os.workflows] if os.workflows else [],
+            agents=[AgentMinimalResponse.from_agent(agent) for agent in os.agents] if os.agents else [],
+            teams=[TeamMinimalResponse.from_team(team) for team in os.teams] if os.teams else [],
+            workflows=[WorkflowMinimalResponse.from_workflow(w) for w in os.workflows] if os.workflows else [],
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.prefix)
                 for interface in os.interfaces

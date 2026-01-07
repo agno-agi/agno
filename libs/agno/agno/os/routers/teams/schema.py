@@ -18,14 +18,14 @@ from agno.team import Team, RemoteTeam
 from agno.utils.agent import aexecute_instructions, aexecute_system_message
 
 
-class TeamSummaryResponse(BaseModel):
+class TeamMinimalResponse(BaseModel):
     id: Optional[str] = Field(None, description="Unique identifier for the team")
     name: Optional[str] = Field(None, description="Name of the team")
     description: Optional[str] = Field(None, description="Description of the team")
     db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
-    def from_team(cls, team: Union[Team, RemoteTeam]) -> "TeamSummaryResponse":
+    def from_team(cls, team: Union[Team, RemoteTeam]) -> "TeamMinimalResponse":
         db_id = team.db.id if team.db else None
         return cls(id=team.id, name=team.name, description=team.description, db_id=db_id)
 

@@ -18,7 +18,7 @@ from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency, require_resource_access
-from agno.os.routers.teams.schema import TeamResponse, TeamSummaryResponse
+from agno.os.routers.teams.schema import TeamResponse, TeamMinimalResponse
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -333,7 +333,7 @@ def get_team_router(
 
     @router.get(
         "/teams",
-        response_model=List[Union[TeamResponse, TeamSummaryResponse]],
+        response_model=List[Union[TeamResponse, TeamMinimalResponse]],
         response_model_exclude_unset=True,
         tags=["Teams"],
         operation_id="get_teams",
@@ -445,7 +445,7 @@ def get_team_router(
                     # TODO: Implement minimal team config for remote teams
                     pass
                 else:
-                    team_summary = TeamSummaryResponse.from_team(team=team)
+                    team_summary = TeamMinimalResponse.from_team(team=team)
                     teams.append(team_summary.model_dump(exclude_none=True))
             else:
                 if isinstance(team, RemoteTeam):

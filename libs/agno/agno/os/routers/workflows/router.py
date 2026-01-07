@@ -23,7 +23,7 @@ from agno.os.auth import (
     validate_websocket_token,
 )
 from agno.os.managers import event_buffer, websocket_manager
-from agno.os.routers.workflows.schema import WorkflowResponse, WorkflowSummaryResponse
+from agno.os.routers.workflows.schema import WorkflowResponse, WorkflowMinimalResponse
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -641,7 +641,7 @@ def get_workflow_router(
 
     @router.get(
         "/workflows",
-        response_model=List[Union[WorkflowResponse, WorkflowSummaryResponse]],
+        response_model=List[Union[WorkflowResponse, WorkflowMinimalResponse]],
         response_model_exclude_unset=True,
         tags=["Workflows"],
         operation_id="get_workflows",
@@ -704,7 +704,7 @@ def get_workflow_router(
                     # TODO: Implement minimal workflow config for remote workflows
                     pass
                 else:
-                    workflow_summary = WorkflowSummaryResponse.from_workflow(workflow=workflow)
+                    workflow_summary = WorkflowMinimalResponse.from_workflow(workflow=workflow)
                     workflows.append(workflow_summary.model_dump(exclude_none=True))
             else:
                 if isinstance(workflow, RemoteWorkflow):

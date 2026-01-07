@@ -3,22 +3,22 @@ from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field, model_serializer
 
-from agno.os.routers.agents.schema import AgentSummaryResponse
-from agno.os.routers.teams.schema import TeamSummaryResponse
+from agno.os.routers.agents.schema import AgentMinimalResponse
+from agno.os.routers.teams.schema import TeamMinimalResponse
 from agno.os.schema import DatabaseConfigResponse
 from agno.os.utils import get_workflow_input_schema_dict, remove_none_values
 from agno.workflow.agent import WorkflowAgent
 from agno.workflow import Workflow, RemoteWorkflow
 
 
-class WorkflowSummaryResponse(BaseModel):
+class WorkflowMinimalResponse(BaseModel):
     id: Optional[str] = Field(None, description="Unique identifier for the workflow")
     name: Optional[str] = Field(None, description="Name of the workflow")
     description: Optional[str] = Field(None, description="Description of the workflow")
     db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
-    def from_workflow(cls, workflow: Union[Workflow, RemoteWorkflow]) -> "WorkflowSummaryResponse":
+    def from_workflow(cls, workflow: Union[Workflow, RemoteWorkflow]) -> "WorkflowMinimalResponse":
         db_id = workflow.db.id if workflow.db else None
         return cls(
             id=workflow.id,
@@ -45,22 +45,22 @@ class StepResponse(BaseModel):
     name: Optional[str] = Field(None, description="The name of the step")
     description: Optional[str] = Field(None, description="The description of the step")
     type: Optional[StepTypeResponse] = Field(None, description="The type of the step")
-    
+
     # Executor configuration (only one should be present)
     agent: Optional[Dict[str, Any]] = Field(None, description="The agent configuration if this step uses an agent")
     team: Optional[Dict[str, Any]] = Field(None, description="The team configuration if this step uses a team")
-    
+
     # Nested steps for container types (Steps, Loop, Parallel, Condition, Router)
     steps: Optional[List["StepResponse"]] = Field(None, description="Nested steps for container step types")
-    
+
     # Step configuration
     max_retries: Optional[int] = Field(None, description="Maximum retry attempts for the step")
     timeout_seconds: Optional[int] = Field(None, description="Timeout in seconds for step execution")
     skip_on_failure: Optional[bool] = Field(None, description="Whether to skip this step on failure")
-    
+
     # Loop-specific configuration
     max_iterations: Optional[int] = Field(None, description="Maximum iterations for Loop steps")
-    
+
     # Additional metadata
     step_id: Optional[str] = Field(None, description="Unique identifier for the step")
 
@@ -84,19 +84,19 @@ class WorkflowResponse(BaseModel):
     @classmethod
     async def _resolve_step_recursively(cls, step_dict: Dict[str, Any]) -> StepResponse:
         """Convert a step dictionary to a StepResponse, resolving agents and teams."""
-        
+
         # Resolve agent if present
         agent_data: Optional[Dict[str, Any]] = None
         if step_dict.get("agent"):
-            agent_response = AgentSummaryResponse.from_agent(step_dict["agent"])
+            agent_response = AgentMinimalResponse.from_agent(step_dict["agent"])
             agent_data = agent_response.model_dump(exclude_none=True)
-        
+
         # Resolve team if present
         team_data: Optional[Dict[str, Any]] = None
         if step_dict.get("team"):
-            team_response = TeamSummaryResponse.from_team(step_dict["team"])
+            team_response = TeamMinimalResponse.from_team(step_dict["team"])
             team_data = team_response.model_dump(exclude_none=True)
-        
+
         # Recursively resolve nested steps
         nested_steps: Optional[List[StepResponse]] = None
         if step_dict.get("steps"):
@@ -104,7 +104,7 @@ class WorkflowResponse(BaseModel):
             for nested_step in step_dict["steps"]:
                 resolved_step = await cls._resolve_step_recursively(nested_step)
                 nested_steps.append(resolved_step)
-        
+
         # Map step type string to enum
         step_type: Optional[StepTypeResponse] = None
         if step_dict.get("type"):
@@ -112,7 +112,7 @@ class WorkflowResponse(BaseModel):
                 step_type = StepTypeResponse(step_dict["type"])
             except ValueError:
                 step_type = None
-        
+
         return StepResponse(
             name=step_dict.get("name"),
             description=step_dict.get("description"),

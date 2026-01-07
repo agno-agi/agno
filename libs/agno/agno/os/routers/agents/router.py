@@ -20,7 +20,7 @@ from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency, require_resource_access
-from agno.os.routers.agents.schema import AgentResponse, AgentRunCancelledResponse, AgentSummaryResponse
+from agno.os.routers.agents.schema import AgentResponse, AgentRunCancelledResponse, AgentMinimalResponse
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -535,7 +535,7 @@ def get_agent_router(
             "- Only meaningful (non-default) configurations are included\n\n"
             "Use minimal=true for a lightweight response with basic agent info only."
         ),
-        response_model=List[Union[AgentResponse, AgentSummaryResponse]],
+        response_model=List[Union[AgentResponse, AgentMinimalResponse]],
         response_model_exclude_none=True,
         responses={
             200: {
@@ -566,7 +566,7 @@ def get_agent_router(
             description="If true, return minimal agent info (id, name, description, db_id). "
             "If false, return full agent details including model, tools, and configurations.",
         ),
-    ) -> List[Union[AgentResponse, AgentSummaryResponse]]:
+    ) -> List[Union[AgentResponse, AgentMinimalResponse]]:
         """Return the list of all Agents present in the contextual OS"""
         if os.agents is None:
             return []
@@ -585,14 +585,14 @@ def get_agent_router(
         else:
             accessible_agents = os.agents
 
-        agents: List[Union[AgentResponse, AgentSummaryResponse]] = []
+        agents: List[Union[AgentResponse, AgentMinimalResponse]] = []
         for agent in accessible_agents:
             if minimal:
                 if isinstance(agent, RemoteAgent):
                     # TODO: Implement minimal agent config for remote agents
                     pass
                 else:
-                    agent_summary = AgentSummaryResponse.from_agent(agent=agent)
+                    agent_summary = AgentMinimalResponse.from_agent(agent=agent)
                     agents.append(agent_summary)
             else:
                 if isinstance(agent, RemoteAgent):

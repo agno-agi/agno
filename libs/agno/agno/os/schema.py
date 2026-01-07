@@ -25,16 +25,16 @@ from agno.workflow.workflow import Workflow
 
 
 if TYPE_CHECKING:
-    from agno.os.routers.agents.schema import AgentSummaryResponse
-    from agno.os.routers.teams.schema import TeamSummaryResponse
-    from agno.os.routers.workflows.schema import WorkflowSummaryResponse
+    from agno.os.routers.agents.schema import AgentMinimalResponse
+    from agno.os.routers.teams.schema import TeamMinimalResponse
+    from agno.os.routers.workflows.schema import WorkflowMinimalResponse
 
 class ToolDefinitionResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the tool")
     description: Optional[str] = Field(None, description="Description of the tool")
     parameters: Optional[Dict[str, Any]] = Field(None, description="Parameters of the tool")
     raw: Optional[Dict[str, Any]] = Field(None, description="Raw tool definition")
-    
+
 class DatabaseConfigResponse(BaseModel):
     id: str = Field(..., description="The ID of the database")
     table_names: List[Tuple[str, str]] = Field(..., description="The table names of the database")
@@ -87,9 +87,9 @@ class ConfigResponse(BaseModel):
     evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
     traces: Optional[TracesConfig] = Field(None, description="Traces configuration")
 
-    agents: List["AgentSummaryResponse"] = Field(..., description="List of registered agents")
-    teams: List["TeamSummaryResponse"] = Field(..., description="List of registered teams")
-    workflows: List["WorkflowSummaryResponse"] = Field(..., description="List of registered workflows")
+    agents: List["AgentMinimalResponse"] = Field(..., description="List of registered agents")
+    teams: List["TeamMinimalResponse"] = Field(..., description="List of registered teams")
+    workflows: List["WorkflowMinimalResponse"] = Field(..., description="List of registered workflows")
     interfaces: List[InterfaceResponse] = Field(..., description="List of available interfaces")
 
 
