@@ -3,6 +3,7 @@
 from unittest.mock import patch
 
 import pytest
+from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
 from agno.db.in_memory import InMemoryDb
@@ -25,42 +26,51 @@ def secondary_db():
 
 def test_db_propagates_to_agent_team_workflow_without_db(default_db):
     """Test that AgentOS db is set on agents without their own db."""
-    agent = Agent(name="test-agent", id="test-agent-id")
+    agent = Agent(name="test-agent", id="test-agent-id", telemetry=False)
     team = Team(name="test-team", id="test-team-id", members=[agent])
     workflow = Workflow(name="test-workflow", id="test-workflow-id")
     assert agent.db is None
     assert team.db is None
     assert workflow.db is None
 
-    AgentOS(agents=[agent], teams=[team], workflows=[workflow], db=default_db)
+    agent_os = AgentOS(agents=[agent], teams=[team], workflows=[workflow], db=default_db, telemetry=False)
+    app = agent_os.get_app()
 
-    assert agent.db is default_db
-    assert team.db is default_db
-    assert workflow.db is default_db
+    # Use TestClient to trigger the lifespan which performs db propagation
+    with TestClient(app):
+        assert agent.db is default_db
+        assert team.db is default_db
+        assert workflow.db is default_db
 
 
 def test_db_does_not_override_agent_team_workflow_db(default_db, secondary_db):
     """Test that AgentOS db does not override agent's own db."""
-    agent = Agent(name="test-agent", id="test-agent-id", db=secondary_db)
+    agent = Agent(name="test-agent", id="test-agent-id", db=secondary_db, telemetry=False)
     team = Team(name="test-team", id="test-team-id", members=[agent], db=secondary_db)
     workflow = Workflow(name="test-workflow", id="test-workflow-id", db=secondary_db)
     assert agent.db is secondary_db
     assert team.db is secondary_db
     assert workflow.db is secondary_db
 
-    agent_os = AgentOS(agents=[agent], teams=[team], workflows=[workflow], db=default_db)
+    agent_os = AgentOS(agents=[agent], teams=[team], workflows=[workflow], db=default_db, telemetry=False)
+    app = agent_os.get_app()
 
-    assert agent_os.db is default_db
-    assert agent.db is secondary_db
-    assert team.db is secondary_db
-    assert workflow.db is secondary_db
+    # Use TestClient to trigger the lifespan
+    with TestClient(app):
+        assert agent_os.db is default_db
+        assert agent.db is secondary_db
+        assert team.db is secondary_db
+        assert workflow.db is secondary_db
 
 
-@patch("agno.os.app.setup_tracing_for_os")
-def test_tracing_uses_default_db(mock_setup_tracing, default_db):
+def test_tracing_uses_default_db(default_db):
     """Test that tracing uses the AgentOS default db."""
-    agent = Agent(name="test-agent", id="test-agent-id")
+    agent = Agent(name="test-agent", id="test-agent-id", telemetry=False)
 
-    AgentOS(agents=[agent], db=default_db, tracing=True)
+    with patch("agno.os.app.setup_tracing_for_os") as mock_setup_tracing:
+        agent_os = AgentOS(agents=[agent], db=default_db, tracing=True, telemetry=False)
+        app = agent_os.get_app()
 
-    mock_setup_tracing.assert_called_once_with(db=default_db)
+        # Use TestClient to trigger the lifespan which sets up tracing
+        with TestClient(app):
+            mock_setup_tracing.assert_called_once_with(db=default_db)
