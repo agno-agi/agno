@@ -1,7 +1,16 @@
 """
 Example showing how to use an AgentOS instance as a gateway to remote agents, teams and workflows.
 
-Run `agent_os_setup.py` to start the remote AgentOS instance.
+This gateway demonstrates combining multiple remote agent sources:
+1. AgentOS protocol agents (from server.py on port 7778)
+2. Agno A2A protocol agents (from agno_a2a_server.py on port 7779)
+3. Google ADK A2A protocol agents (from adk_server.py on port 7780)
+4. Local agents and workflows
+
+Prerequisites:
+- Start server.py on port 7778
+- Start agno_a2a_server.py on port 7779
+- Start adk_server.py on port 7780 (requires GOOGLE_API_KEY)
 
 # Note:
 - Remote Workflows via Websocket are not yet supported
@@ -102,10 +111,35 @@ advanced_workflow = Workflow(
 
 # Setup our AgentOS app
 agent_os = AgentOS(
-    description="Example app for basic agent, team and workflow",
+    description="Gateway combining AgentOS, Agno A2A, and Google ADK agents",
     agents=[
+        # AgentOS protocol agents (from server.py on port 7778)
         RemoteAgent(base_url="http://localhost:7778", agent_id="assistant-agent"),
         RemoteAgent(base_url="http://localhost:7778", agent_id="researcher-agent"),
+        # Agno A2A protocol agents (from agno_a2a_server.py on port 7779)
+        RemoteAgent(
+            base_url="http://localhost:7779/a2a/agents/assistant-agent-2",
+            agent_id="assistant-agent-2",
+            protocol="a2a",
+            a2a_protocol="rest",
+        ),
+        RemoteAgent(
+            base_url="http://localhost:7779/a2a/agents/researcher-agent-2",
+            agent_id="researcher-agent-2",
+            protocol="a2a",
+            a2a_protocol="rest",
+        ),
+        # Google ADK A2A protocol agent (from adk_server.py on port 7780)
+        RemoteAgent(
+            base_url="http://localhost:7780",
+            agent_id="facts_agent",
+            protocol="a2a",
+            a2a_protocol="json-rpc",
+        ),
+        # Local agents
+        story_writer,
+        story_editor,
+        story_formatter,
     ],
     teams=[RemoteTeam(base_url="http://localhost:7778", team_id="research-team")],
     workflows=[
@@ -118,6 +152,14 @@ app = agent_os.get_app()
 
 if __name__ == "__main__":
     """
-    Run your AgentOS.
+    Run your AgentOS gateway.
+    
+    This gateway combines:
+    - Remote AgentOS agents (port 7778)
+    - Remote Agno A2A agents (port 7779)
+    - Remote Google ADK agents (port 7780)
+    - Local agents and workflows
+    
+    All accessible via a single API on port 7777.
     """
-    agent_os.serve(app="03_agent_os_gateway:app", reload=True, port=7777)
+    agent_os.serve(app="05_agent_os_gateway:app", reload=True, port=7777)

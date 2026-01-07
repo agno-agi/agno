@@ -34,6 +34,18 @@ def remote_url() -> str:
 
 
 @pytest.fixture(scope="session")
+def adk_url() -> str:
+    """Get the Google ADK server URL from environment or use default."""
+    return os.getenv("ADK_SERVER_URL", "http://localhost:7003")
+
+
+@pytest.fixture(scope="session")
+def agno_a2a_url() -> str:
+    """Get the Agno A2A server URL from environment or use default."""
+    return os.getenv("AGNO_A2A_SERVER_URL", "http://localhost:7004")
+
+
+@pytest.fixture(scope="session")
 def jwt_token() -> str:
     """Generate a JWT token for the gateway server."""
     return generate_jwt_token(audience="gateway-os")
