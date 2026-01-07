@@ -6552,8 +6552,7 @@ class Agent:
 
                 elif isinstance(tool, Toolkit):
                     # For each function in the toolkit and process entrypoint
-                    # Use get_functions() to get async variants when in async mode
-                    toolkit_functions = tool.get_functions(async_mode=async_mode)
+                    toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
                     for name, _func in toolkit_functions.items():
                         if name in _function_names:
                             continue

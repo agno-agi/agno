@@ -312,7 +312,7 @@ def mock_async_playwright():
 @pytest.fixture
 def async_browserbase_tools(mock_browserbase):
     """Create a BrowserbaseTools instance for async testing.
-    
+
     Note: With the new implementation, the same BrowserbaseTools instance
     can be used for both sync and async operations. Async tools are automatically
     selected when using arun()/aprint_response().

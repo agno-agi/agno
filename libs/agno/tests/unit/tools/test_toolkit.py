@@ -597,8 +597,8 @@ def test_get_functions_sync_mode():
     assert funcs["another_func"].entrypoint == another_func
 
 
-def test_get_functions_async_mode():
-    """Test get_functions with async_mode=True returns async functions where available."""
+def test_get_async_functions():
+    """Test get_async_functions returns async functions where available."""
     toolkit = Toolkit(
         name="test_toolkit",
         tools=[example_func, another_func],
@@ -608,8 +608,8 @@ def test_get_functions_async_mode():
         auto_register=True,
     )
 
-    # Async mode - should merge, with async overriding sync
-    funcs = toolkit.get_functions(async_mode=True)
+    # get_async_functions should merge, with async overriding sync
+    funcs = toolkit.get_async_functions()
     assert len(funcs) == 2
     # example_func should be the async version
     assert funcs["example_func"].entrypoint == async_example_func
@@ -632,7 +632,7 @@ def test_async_tools_only():
     # Sync mode returns empty
     assert len(toolkit.get_functions()) == 0
     # Async mode returns the async function
-    funcs = toolkit.get_functions(async_mode=True)
+    funcs = toolkit.get_async_functions()
     assert len(funcs) == 1
     assert "example_func" in funcs
 
@@ -648,9 +648,9 @@ def test_sync_tools_only():
     assert len(toolkit.functions) == 1
     assert len(toolkit.async_functions) == 0
 
-    # Both modes return the sync function
+    # Both methods return the sync function when no async variants exist
     assert len(toolkit.get_functions()) == 1
-    assert len(toolkit.get_functions(async_mode=True)) == 1
+    assert len(toolkit.get_async_functions()) == 1
 
 
 def test_manual_async_registration():
@@ -658,7 +658,8 @@ def test_manual_async_registration():
     toolkit = Toolkit(name="manual_async_toolkit", auto_register=False)
 
     toolkit.register(example_func)
-    toolkit.register(async_example_func, name="example_func", async_mode=True)
+    # Async is auto-detected, name param allows aliasing
+    toolkit.register(async_example_func, name="example_func")
 
     assert len(toolkit.functions) == 1
     assert len(toolkit.async_functions) == 1
@@ -670,7 +671,7 @@ def test_auto_detect_async_function():
     """Test that register auto-detects async functions."""
     toolkit = Toolkit(name="auto_detect_toolkit", auto_register=False)
 
-    # Register async function without async_mode flag
+    # Register async function - async is auto-detected
     toolkit.register(async_example_func)
 
     # Should be registered as async
@@ -697,9 +698,7 @@ def test_async_function_execution():
 
     # Test async execution
     async_func = toolkit.async_functions["example_func"]
-    async_result = asyncio.get_event_loop().run_until_complete(
-        async_func.entrypoint(1, 2)
-    )
+    async_result = asyncio.get_event_loop().run_until_complete(async_func.entrypoint(1, 2))
     assert async_result == 103  # 1 + 2 + 100
 
 
@@ -777,17 +776,17 @@ def test_partial_async_get_functions_sync_mode():
     """Test get_functions in sync mode for partial async toolkit."""
     toolkit = PartialAsyncToolkit()
 
-    sync_funcs = toolkit.get_functions(async_mode=False)
+    sync_funcs = toolkit.get_functions()
     assert len(sync_funcs) == 2
     assert sync_funcs["tool_a"].entrypoint == toolkit.tool_a
     assert sync_funcs["tool_b"].entrypoint == toolkit.tool_b
 
 
-def test_partial_async_get_functions_async_mode():
-    """Test get_functions in async mode - tool_a uses async, tool_b falls back to sync."""
+def test_partial_async_get_async_functions():
+    """Test get_async_functions - tool_a uses async, tool_b falls back to sync."""
     toolkit = PartialAsyncToolkit()
 
-    async_funcs = toolkit.get_functions(async_mode=True)
+    async_funcs = toolkit.get_async_functions()
     assert len(async_funcs) == 2
     # tool_a should be async version
     assert async_funcs["tool_a"].entrypoint == toolkit.atool_a

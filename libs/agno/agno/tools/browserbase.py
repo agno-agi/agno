@@ -171,7 +171,6 @@ class BrowserbaseTools(Toolkit):
             self._cleanup()
             raise e
 
-
     def screenshot(self, path: str, full_page: bool = True, connect_url: Optional[str] = None) -> str:
         """Takes a screenshot of the current page.
 
@@ -192,7 +191,6 @@ class BrowserbaseTools(Toolkit):
             self._cleanup()
             raise e
 
-
     def get_page_content(self, connect_url: Optional[str] = None) -> str:
         """Gets the HTML content of the current page.
 
@@ -208,7 +206,6 @@ class BrowserbaseTools(Toolkit):
         except Exception as e:
             self._cleanup()
             raise e
-
 
     def close_session(self) -> str:
         """Closes a browser session.
@@ -232,7 +229,6 @@ class BrowserbaseTools(Toolkit):
             )
         except Exception as e:
             return json.dumps({"status": "warning", "message": f"Cleanup completed with warning: {str(e)}"})
-
 
     async def _ainitialize_browser(self, connect_url: Optional[str] = None):
         """
@@ -290,7 +286,6 @@ class BrowserbaseTools(Toolkit):
             await self._acleanup()
             raise e
 
-
     async def ascreenshot(self, path: str, full_page: bool = True, connect_url: Optional[str] = None) -> str:
         """Takes a screenshot of the current page asynchronously.
 
@@ -311,7 +306,6 @@ class BrowserbaseTools(Toolkit):
             await self._acleanup()
             raise e
 
-
     async def aget_page_content(self, connect_url: Optional[str] = None) -> str:
         """Gets the HTML content of the current page asynchronously.
 
@@ -327,7 +321,6 @@ class BrowserbaseTools(Toolkit):
         except Exception as e:
             await self._acleanup()
             raise e
-
 
     async def aclose_session(self) -> str:
         """Closes a browser session asynchronously.
@@ -351,4 +344,3 @@ class BrowserbaseTools(Toolkit):
             )
         except Exception as e:
             return json.dumps({"status": "warning", "message": f"Cleanup completed with warning: {str(e)}"})
-
