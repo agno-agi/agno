@@ -218,7 +218,6 @@ class WorkflowTools(Toolkit):
                         else:
                             final_content = str(event.content)
 
-            # Store result in session state (just the final content, not full workflow result)
             if "workflow_results" not in session_state:
                 session_state["workflow_results"] = []
 
@@ -316,7 +315,6 @@ class WorkflowTools(Toolkit):
                         else:
                             final_content = str(event.content)
 
-            # Store result in session state (just the final content, not full workflow result)
             if "workflow_results" not in session_state:
                 session_state["workflow_results"] = []
 
