@@ -12,7 +12,6 @@ from agno.db.postgres.schemas import get_table_schema_definition as get_postgres
 from agno.db.sqlite.schemas import get_table_schema_definition as get_sqlite_schema
 from agno.db.sqlite.sqlite import SqliteDb
 
-
 # ==================== SQLite Schema Tests ====================
 
 
