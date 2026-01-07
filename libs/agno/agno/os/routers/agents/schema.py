@@ -73,7 +73,6 @@ class AgentResponse(BaseModel):
             "use_json_mode": False,
             # Streaming defaults
             "stream_events": False,
-            "stream_intermediate_steps": False,
         }
 
     @classmethod

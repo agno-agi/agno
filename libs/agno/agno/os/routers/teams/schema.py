@@ -63,7 +63,6 @@ class TeamResponse(BaseModel):
             "use_json_mode": False,
             # Streaming defaults
             "stream_events": False,
-            "stream_intermediate_steps": False,
             "stream_member_events": False,
         }
 
@@ -158,7 +157,6 @@ class TeamResponse(BaseModel):
         execution_configuration = {
             "stream": team.stream,
             "stream_events": team.stream_events,
-            "stream_intermediate_steps": team.stream_intermediate_steps,
             "stream_member_events": team.stream_member_events,
             "parser_model": ModelResponse(
                 name=team.parser_model.name,

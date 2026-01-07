@@ -5,6 +5,7 @@ from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.agent import Agent
+from agno.agent.remote import RemoteAgent
 from agno.db.base import SessionType
 from agno.os.config import (
     ChatConfig,
@@ -15,13 +16,11 @@ from agno.os.config import (
     SessionConfig,
     TracesConfig,
 )
-from agno.os.utils import (
-    extract_input_media,
-    get_run_input,
-    get_session_name,
-)
+from agno.os.utils import extract_input_media, get_run_input, get_session_name, to_utc_datetime
 from agno.session import AgentSession, TeamSession, WorkflowSession
+from agno.team.remote import RemoteTeam
 from agno.team.team import Team
+from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
 
@@ -45,10 +44,12 @@ class MessageResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": {"status": "ok", "instantiated_at": "1760169236.778903"}})
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"status": "ok", "instantiated_at": "2025-06-10T12:00:00Z"}}
+    )
 
     status: str = Field(..., description="Health status of the service")
-    instantiated_at: str = Field(..., description="Unix timestamp when service was instantiated")
+    instantiated_at: datetime = Field(..., description="Timestamp when service was instantiated")
 
 
 class InterfaceResponse(BaseModel):
@@ -71,7 +72,7 @@ class AgentSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
-    def from_agent(cls, agent: Agent) -> "AgentSummaryResponse":
+    def from_agent(cls, agent: Union[Agent, RemoteAgent]) -> "AgentSummaryResponse":
         return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
 
 
@@ -82,8 +83,9 @@ class TeamSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
-    def from_team(cls, team: Team) -> "TeamSummaryResponse":
-        return cls(id=team.id, name=team.name, description=team.description, db_id=team.db.id if team.db else None)
+    def from_team(cls, team: Union[Team, RemoteTeam]) -> "TeamSummaryResponse":
+        db_id = team.db.id if team.db else None
+        return cls(id=team.id, name=team.name, description=team.description, db_id=db_id)
 
 
 class WorkflowSummaryResponse(BaseModel):
@@ -93,12 +95,13 @@ class WorkflowSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
-    def from_workflow(cls, workflow: Workflow) -> "WorkflowSummaryResponse":
+    def from_workflow(cls, workflow: Union[Workflow, RemoteWorkflow]) -> "WorkflowSummaryResponse":
+        db_id = workflow.db.id if workflow.db else None
         return cls(
             id=workflow.id,
             name=workflow.name,
             description=workflow.description,
-            db_id=workflow.db.id if workflow.db else None,
+            db_id=db_id,
         )
 
 
@@ -151,18 +154,39 @@ class SessionSchema(BaseModel):
 
     @classmethod
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
-        session_name = get_session_name(session)
+        session_name = session.get("session_name")
+        if not session_name:
+            session_name = get_session_name(session)
         session_data = session.get("session_data", {}) or {}
+
+        created_at = session.get("created_at", 0)
+        updated_at = session.get("updated_at", created_at)
+
+        # Handle created_at and updated_at as either ISO 8601 string or timestamp
+        def parse_datetime(val):
+            if isinstance(val, str):
+                try:
+                    # Accept both with and without Z
+                    if val.endswith("Z"):
+                        val = val[:-1] + "+00:00"
+                    return datetime.fromisoformat(val)
+                except Exception:
+                    return None
+            elif isinstance(val, (int, float)):
+                try:
+                    return datetime.fromtimestamp(val, tz=timezone.utc)
+                except Exception:
+                    return None
+            return None
+
+        created_at = to_utc_datetime(session.get("created_at", 0))
+        updated_at = to_utc_datetime(session.get("updated_at", created_at))
         return cls(
             session_id=session.get("session_id", ""),
             session_name=session_name,
             session_state=session_data.get("session_state", None),
-            created_at=datetime.fromtimestamp(session.get("created_at", 0), tz=timezone.utc)
-            if session.get("created_at")
-            else None,
-            updated_at=datetime.fromtimestamp(session.get("updated_at", 0), tz=timezone.utc)
-            if session.get("updated_at")
-            else None,
+            created_at=created_at,
+            updated_at=updated_at,
         )
 
 
@@ -208,6 +232,8 @@ class AgentSessionDetailSchema(BaseModel):
     @classmethod
     def from_session(cls, session: AgentSession) -> "AgentSessionDetailSchema":
         session_name = get_session_name({**session.to_dict(), "session_type": "agent"})
+        created_at = datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None
+        updated_at = datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else created_at
         return cls(
             user_id=session.user_id,
             agent_session_id=session.session_id,
@@ -223,8 +249,8 @@ class AgentSessionDetailSchema(BaseModel):
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,  # type: ignore
             metadata=session.metadata,
             chat_history=[message.to_dict() for message in session.get_chat_history()],
-            created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
-            updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
+            created_at=to_utc_datetime(created_at),
+            updated_at=to_utc_datetime(updated_at),
         )
 
 
@@ -247,7 +273,8 @@ class TeamSessionDetailSchema(BaseModel):
     def from_session(cls, session: TeamSession) -> "TeamSessionDetailSchema":
         session_dict = session.to_dict()
         session_name = get_session_name({**session_dict, "session_type": "team"})
-
+        created_at = datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None
+        updated_at = datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else created_at
         return cls(
             session_id=session.session_id,
             team_id=session.team_id,
@@ -262,8 +289,8 @@ class TeamSessionDetailSchema(BaseModel):
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
             metadata=session.metadata,
             chat_history=[message.to_dict() for message in session.get_chat_history()],
-            created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
-            updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
+            created_at=to_utc_datetime(created_at),
+            updated_at=to_utc_datetime(updated_at),
         )
 
 
@@ -279,14 +306,15 @@ class WorkflowSessionDetailSchema(BaseModel):
     workflow_data: Optional[dict] = Field(None, description="Workflow-specific data")
     metadata: Optional[dict] = Field(None, description="Additional metadata")
 
-    created_at: Optional[int] = Field(None, description="Unix timestamp of session creation")
-    updated_at: Optional[int] = Field(None, description="Unix timestamp of last update")
+    created_at: Optional[datetime] = Field(None, description="Session creation timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
 
     @classmethod
     def from_session(cls, session: WorkflowSession) -> "WorkflowSessionDetailSchema":
         session_dict = session.to_dict()
         session_name = get_session_name({**session_dict, "session_type": "workflow"})
-
+        created_at = datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None
+        updated_at = datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else created_at
         return cls(
             session_id=session.session_id,
             user_id=session.user_id,
@@ -297,8 +325,8 @@ class WorkflowSessionDetailSchema(BaseModel):
             session_state=session.session_data.get("session_state", None) if session.session_data else None,
             workflow_data=session.workflow_data,
             metadata=session.metadata,
-            created_at=session.created_at,
-            updated_at=session.updated_at,
+            created_at=to_utc_datetime(created_at),
+            updated_at=to_utc_datetime(updated_at),
         )
 
 
@@ -359,9 +387,7 @@ class RunSchema(BaseModel):
             files=run_dict.get("files", []),
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
-            created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
-            if run_dict.get("created_at") is not None
-            else None,
+            created_at=to_utc_datetime(run_dict.get("created_at")),
         )
 
 
@@ -409,9 +435,7 @@ class TeamRunSchema(BaseModel):
             messages=[message for message in run_dict.get("messages", [])] if run_dict.get("messages") else None,
             tools=[tool for tool in run_dict.get("tools", [])] if run_dict.get("tools") else None,
             events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
-            created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
-            if run_dict.get("created_at") is not None
-            else None,
+            created_at=to_utc_datetime(run_dict.get("created_at")),
             references=run_dict.get("references", []),
             citations=run_dict.get("citations", None),
             reasoning_messages=run_dict.get("reasoning_messages", []),
@@ -437,7 +461,7 @@ class WorkflowRunSchema(BaseModel):
     step_results: Optional[list[dict]] = Field(None, description="Results from each workflow step")
     step_executor_runs: Optional[list[dict]] = Field(None, description="Executor runs for each step")
     metrics: Optional[dict] = Field(None, description="Performance and usage metrics")
-    created_at: Optional[int] = Field(None, description="Unix timestamp of run creation")
+    created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
     reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
     reasoning_steps: Optional[List[dict]] = Field(None, description="List of reasoning steps")
     references: Optional[List[dict]] = Field(None, description="References cited in the workflow")
@@ -466,7 +490,7 @@ class WorkflowRunSchema(BaseModel):
             metrics=run_response.get("metrics", {}),
             step_results=run_response.get("step_results", []),
             step_executor_runs=run_response.get("step_executor_runs", []),
-            created_at=run_response["created_at"],
+            created_at=to_utc_datetime(run_response.get("created_at")),
             reasoning_content=run_response.get("reasoning_content", ""),
             reasoning_steps=run_response.get("reasoning_steps", []),
             references=run_response.get("references", []),

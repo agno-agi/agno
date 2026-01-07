@@ -1,4 +1,3 @@
-import warnings
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
@@ -194,6 +193,7 @@ class Steps:
                 step_type=StepType.STEPS,
                 content=f"Steps {self.name} completed with {len(all_results)} results",
                 success=all(result.success for result in all_results) if all_results else True,
+                stop=any(result.stop for result in all_results) if all_results else False,
                 steps=all_results,
             )
 
@@ -215,7 +215,6 @@ class Steps:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
@@ -231,15 +230,6 @@ class Steps:
         steps_id = str(uuid4())
 
         self._prepare_steps()
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events:
             # Yield steps execution started event
@@ -351,6 +341,7 @@ class Steps:
                 step_type=StepType.STEPS,
                 content=f"Steps {self.name} completed with {len(all_results)} results",
                 success=all(result.success for result in all_results) if all_results else True,
+                stop=any(result.stop for result in all_results) if all_results else False,
                 steps=all_results,
             )
 
@@ -443,6 +434,7 @@ class Steps:
                 step_type=StepType.STEPS,
                 content=f"Steps {self.name} completed with {len(all_results)} results",
                 success=all(result.success for result in all_results) if all_results else True,
+                stop=any(result.stop for result in all_results) if all_results else False,
                 steps=all_results,
             )
 
@@ -464,7 +456,6 @@ class Steps:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
@@ -480,15 +471,6 @@ class Steps:
         steps_id = str(uuid4())
 
         self._prepare_steps()
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events:
             # Yield steps execution started event
@@ -599,6 +581,7 @@ class Steps:
                 step_type=StepType.STEPS,
                 content=f"Steps {self.name} completed with {len(all_results)} results",
                 success=all(result.success for result in all_results) if all_results else True,
+                stop=any(result.stop for result in all_results) if all_results else False,
                 steps=all_results,
             )
 

@@ -7,7 +7,7 @@ from fastapi.routing import APIRoute, APIRouter
 from pydantic import BaseModel, create_model
 from starlette.middleware.cors import CORSMiddleware
 
-from agno.agent.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
@@ -15,14 +15,28 @@ from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
 from agno.os.schema import ToolDefinitionResponse
+from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
-from agno.team.team import Team
-from agno.tools import Toolkit
-from agno.tools.function import Function
+from agno.team import RemoteTeam, Team
+from agno.tools import Function, Toolkit
 from agno.utils.log import log_warning, logger
-from agno.workflow.workflow import Workflow
+from agno.workflow import RemoteWorkflow, Workflow
+
+
+def to_utc_datetime(value: Optional[Union[int, float, datetime]]) -> Optional[datetime]:
+    """Convert a timestamp to a UTC datetime."""
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        # If already a datetime, make sure the timezone is UTC
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+
+    return datetime.fromtimestamp(value, tz=timezone.utc)
 
 
 async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
@@ -178,14 +192,14 @@ def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRu
 
 
 async def get_db(
-    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]], db_id: Optional[str] = None, table: Optional[str] = None
-) -> Union[BaseDb, AsyncBaseDb]:
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], db_id: Optional[str] = None, table: Optional[str] = None
+) -> Union[BaseDb, AsyncBaseDb, RemoteDb]:
     """Return the database with the given ID and/or table, or the first database if no ID/table is provided."""
 
     if table and not db_id:
         raise HTTPException(status_code=400, detail="The db_id query parameter is required when passing a table")
 
-    async def _has_table(db: Union[BaseDb, AsyncBaseDb], table_name: str) -> bool:
+    async def _has_table(db: Union[BaseDb, AsyncBaseDb, RemoteDb], table_name: str) -> bool:
         """Check if this database has the specified table (configured and actually exists)."""
         # First check if table name is configured
         is_configured = (
@@ -203,6 +217,10 @@ async def get_db(
 
         if not is_configured:
             return False
+
+        if isinstance(db, RemoteDb):
+            # We have to assume remote DBs are always configured and exist
+            return True
 
         # Then check if table actually exists in the database
         try:
@@ -242,7 +260,9 @@ async def get_db(
     return next(db for dbs in dbs.values() for db in dbs)
 
 
-def get_knowledge_instance_by_db_id(knowledge_instances: List[Knowledge], db_id: Optional[str] = None) -> Knowledge:
+def get_knowledge_instance_by_db_id(
+    knowledge_instances: List[Union[Knowledge, RemoteKnowledge]], db_id: Optional[str] = None
+) -> Union[Knowledge, RemoteKnowledge]:
     """Return the knowledge instance with the given ID, or the first knowledge instance if no ID is provided."""
     if not db_id and len(knowledge_instances) == 1:
         return next(iter(knowledge_instances))
@@ -351,11 +371,12 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
         "files": [],
     }
 
-    input = run_dict.get("input", {})
-    input_media["images"].extend(input.get("images", []))
-    input_media["videos"].extend(input.get("videos", []))
-    input_media["audios"].extend(input.get("audios", []))
-    input_media["files"].extend(input.get("files", []))
+    input_data = run_dict.get("input", {})
+    if isinstance(input_data, dict):
+        input_media["images"].extend(input_data.get("images", []))
+        input_media["videos"].extend(input_data.get("videos", []))
+        input_media["audios"].extend(input_data.get("audios", []))
+        input_media["files"].extend(input_data.get("files", []))
 
     return input_media
 
@@ -406,7 +427,6 @@ def extract_format(file: UploadFile) -> Optional[str]:
 
     return None
 
-
 def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]) -> List[ToolDefinitionResponse]:
     formatted_tools: List[ToolDefinitionResponse] = []
     if agent_tools is not None:
@@ -440,7 +460,9 @@ def format_team_tools(team_tools: List[Union[Function, dict]]):
     return formatted_tools
 
 
-def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Optional[Agent]:
+def get_agent_by_id(
+    agent_id: str, agents: Optional[List[Union[Agent, RemoteAgent]]] = None
+) -> Optional[Union[Agent, RemoteAgent]]:
     if agent_id is None or agents is None:
         return None
 
@@ -450,7 +472,9 @@ def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Opti
     return None
 
 
-def get_team_by_id(team_id: str, teams: Optional[List[Team]] = None) -> Optional[Team]:
+def get_team_by_id(
+    team_id: str, teams: Optional[List[Union[Team, RemoteTeam]]] = None
+) -> Optional[Union[Team, RemoteTeam]]:
     if team_id is None or teams is None:
         return None
 
@@ -460,7 +484,9 @@ def get_team_by_id(team_id: str, teams: Optional[List[Team]] = None) -> Optional
     return None
 
 
-def get_workflow_by_id(workflow_id: str, workflows: Optional[List[Workflow]] = None) -> Optional[Workflow]:
+def get_workflow_by_id(
+    workflow_id: str, workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None
+) -> Optional[Union[Workflow, RemoteWorkflow]]:
     if workflow_id is None or workflows is None:
         return None
 
@@ -785,32 +811,6 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         collect_mcp_tools_from_workflow(step, mcp_tools)
 
 
-def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any], BaseModel]) -> str:
-    """Convert any given input_content into its string representation.
-
-    This handles both serialized (dict) and live (object) input_content formats.
-    """
-    import json
-
-    if isinstance(input_content, str):
-        return input_content
-    elif isinstance(input_content, Message):
-        return json.dumps(input_content.to_dict())
-    elif isinstance(input_content, dict):
-        return json.dumps(input_content, indent=2, default=str)
-    elif isinstance(input_content, list):
-        if input_content:
-            # Handle live Message objects
-            if isinstance(input_content[0], Message):
-                return json.dumps([m.to_dict() for m in input_content])
-            # Handle serialized Message dicts
-            elif isinstance(input_content[0], dict) and input_content[0].get("role") == "user":
-                return input_content[0].get("content", str(input_content))
-        return str(input_content)
-    else:
-        return str(input_content)
-
-
 def _get_python_type_from_json_schema(field_schema: Dict[str, Any], field_name: str = "NestedModel") -> Type:
     """Map JSON schema type to Python type with recursive handling.
 
@@ -927,7 +927,7 @@ def json_schema_to_pydantic_model(schema: Dict[str, Any]) -> Type[BaseModel]:
         return create_model(model_name)
 
 
-def setup_tracing_for_os(db: Union[BaseDb, AsyncBaseDb]) -> None:
+def setup_tracing_for_os(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> None:
     """Set up OpenTelemetry tracing for this agent/team/workflow."""
     try:
         from agno.tracing import setup_tracing
@@ -956,7 +956,7 @@ def format_duration_ms(duration_ms: Optional[int]) -> str:
     return f"{duration_ms / 1000:.2f}s"
 
 
-def parse_datetime_to_utc(datetime_str: str, param_name: str = "datetime") -> "datetime":
+def timestamp_to_datetime(datetime_str: str, param_name: str = "datetime") -> "datetime":
     """Parse an ISO 8601 datetime string and convert to UTC.
 
     Args:
@@ -981,3 +981,59 @@ def parse_datetime_to_utc(datetime_str: str, param_name: str = "datetime") -> "d
             status_code=400,
             detail=f"Invalid {param_name} format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z' or '2025-11-19T10:00:00+05:30'): {e}",
         )
+
+
+def format_team_tools(team_tools: List[Union[Function, dict]]):
+    formatted_tools: List[Dict] = []
+    if team_tools is not None:
+        for tool in team_tools:
+            if isinstance(tool, dict):
+                formatted_tools.append(tool)
+            elif isinstance(tool, Function):
+                formatted_tools.append(tool.to_dict())
+    return formatted_tools
+
+
+def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):
+    formatted_tools: List[Dict] = []
+    if agent_tools is not None:
+        for tool in agent_tools:
+            if isinstance(tool, dict):
+                formatted_tools.append(tool)
+            elif isinstance(tool, Toolkit):
+                for _, f in tool.functions.items():
+                    formatted_tools.append(f.to_dict())
+            elif isinstance(tool, Function):
+                formatted_tools.append(tool.to_dict())
+            elif callable(tool):
+                func = Function.from_callable(tool)
+                formatted_tools.append(func.to_dict())
+            else:
+                logger.warning(f"Unknown tool type: {type(tool)}")
+    return formatted_tools
+
+
+def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any], BaseModel]) -> str:
+    """Convert any given input_content into its string representation.
+
+    This handles both serialized (dict) and live (object) input_content formats.
+    """
+    import json
+
+    if isinstance(input_content, str):
+        return input_content
+    elif isinstance(input_content, Message):
+        return json.dumps(input_content.to_dict())
+    elif isinstance(input_content, dict):
+        return json.dumps(input_content, indent=2, default=str)
+    elif isinstance(input_content, list):
+        if input_content:
+            # Handle live Message objects
+            if isinstance(input_content[0], Message):
+                return json.dumps([m.to_dict() for m in input_content])
+            # Handle serialized Message dicts
+            elif isinstance(input_content[0], dict) and input_content[0].get("role") == "user":
+                return input_content[0].get("content", str(input_content))
+        return str(input_content)
+    else:
+        return str(input_content)
