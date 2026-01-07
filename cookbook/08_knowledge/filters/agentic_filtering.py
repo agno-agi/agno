@@ -26,10 +26,10 @@ knowledge = Knowledge(
     name="CSV Knowledge Base",
     description="A knowledge base for CSV files",
     vector_db=vector_db,
-    # contents_db=PostgresDb(
-    #     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-    #     knowledge_table="knowledge_contents",
-    # ),
+    contents_db=PostgresDb(
+        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+        knowledge_table="knowledge_contents",
+    ),
 )
 
 # Load all documents into the vector database

@@ -2464,7 +2464,6 @@ class Knowledge:
 
     def get_valid_filters(self) -> Set[str]:
         if self.contents_db is None:
-            log_info("ContentsDB not configured. For improved filter validation and reliability, consider adding a ContentsDB.")
             return set()
         contents, _ = self.get_content()
         valid_filters: Set[str] = set()
@@ -2529,10 +2528,13 @@ class Knowledge:
     def validate_filters(
         self, filters: Union[Dict[str, Any], List[FilterExpr]]
     ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
+        if self.contents_db is None:
+            log_info("ContentsDB not configured. For improved filter validation and reliability, consider adding a ContentsDB.")
+            return filters, []
         valid_filters_from_db = self.get_valid_filters()
 
         valid_filters, invalid_keys = self._validate_filters(filters, valid_filters_from_db)
-
+        log_info("INVALID FILTERS: ", invalid_keys)
         return valid_filters, invalid_keys
 
     async def async_validate_filters(

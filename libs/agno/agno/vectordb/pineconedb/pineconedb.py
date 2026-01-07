@@ -136,7 +136,7 @@ class PineconeDb(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             _embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = _embedder
         self.reranker: Optional[Reranker] = reranker
 
