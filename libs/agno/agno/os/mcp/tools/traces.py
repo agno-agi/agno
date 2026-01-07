@@ -6,7 +6,7 @@ from fastmcp import FastMCP
 
 from agno.db.base import AsyncBaseDb
 from agno.os.routers.traces.schemas import TraceDetail, TraceNode, TraceSessionStats, TraceSummary
-from agno.os.utils import get_db, parse_datetime_to_utc
+from agno.os.utils import get_db, timestamp_to_datetime
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -37,8 +37,8 @@ def register_traces_tools(mcp: FastMCP, os: "AgentOS") -> None:
         db = await get_db(os.dbs, db_id)
 
         # Convert datetime strings to UTC
-        start_time_dt = parse_datetime_to_utc(start_time, "start_time") if start_time else None
-        end_time_dt = parse_datetime_to_utc(end_time, "end_time") if end_time else None
+        start_time_dt = timestamp_to_datetime(start_time, "start_time") if start_time else None
+        end_time_dt = timestamp_to_datetime(end_time, "end_time") if end_time else None
 
         if isinstance(db, AsyncBaseDb):
             traces, total_count = await db.get_traces(
@@ -153,8 +153,8 @@ def register_traces_tools(mcp: FastMCP, os: "AgentOS") -> None:
         db = await get_db(os.dbs, db_id)
 
         # Convert datetime strings to UTC
-        start_time_dt = parse_datetime_to_utc(start_time, "start_time") if start_time else None
-        end_time_dt = parse_datetime_to_utc(end_time, "end_time") if end_time else None
+        start_time_dt = timestamp_to_datetime(start_time, "start_time") if start_time else None
+        end_time_dt = timestamp_to_datetime(end_time, "end_time") if end_time else None
 
         if isinstance(db, AsyncBaseDb):
             stats_list, total_count = await db.get_trace_stats(
