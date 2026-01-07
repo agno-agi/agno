@@ -78,7 +78,7 @@ class Function(BaseModel):
     )
     strict: Optional[bool] = None
 
-    # If True, the function is discoverable via search but not automatically added to agent tools
+    # If True, the function is discoverable by the Agent on runtime, instead of automatically considered
     discoverable: bool = False
 
     instructions: Optional[str] = None
