@@ -134,7 +134,7 @@ class Toolkit:
             self.register(tool)
 
     def register(
-        self, function: Union[Callable[..., Any], Function], name: Optional[str] = None, async_variant: bool = False
+        self, function: Union[Callable[..., Any], Function], name: Optional[str] = None, async_mode: bool = False
     ) -> None:
         """Register a function with the toolkit.
 
@@ -149,20 +149,20 @@ class Toolkit:
         Args:
             function: The callable or Function object to register
             name: Optional custom name for the function
-            async_variant: If True, forces registration as async variant (useful when registering
-                          an async function with a different name than the sync version)
+            async_mode: If True, forces registration as async tool (useful when registering
+                       an async function with a different name than the sync version)
         """
         try:
             # Handle Function objects (from @tool decorator)
             if isinstance(function, Function):
                 # Determine if this is an async function
-                is_async = async_variant
+                is_async = async_mode
                 if not is_async and function.entrypoint is not None:
                     is_async = iscoroutinefunction(function.entrypoint)
-                return self._register_decorated_tool(function, name, async_variant=is_async)
+                return self._register_decorated_tool(function, name, async_mode=is_async)
 
             # Handle regular callables - auto-detect async
-            is_async = async_variant or iscoroutinefunction(function)
+            is_async = async_mode or iscoroutinefunction(function)
 
             tool_name = name or function.__name__
             if self.include_tools is not None and tool_name not in self.include_tools:
@@ -194,7 +194,7 @@ class Toolkit:
             raise e
 
     def _register_decorated_tool(
-        self, function: Function, name: Optional[str] = None, async_variant: bool = False
+        self, function: Function, name: Optional[str] = None, async_mode: bool = False
     ) -> None:
         """Register a Function object from @tool decorator, binding it to self.
 
@@ -205,7 +205,7 @@ class Toolkit:
         Args:
             function: The Function object from @tool decorator
             name: Optional custom name override
-            async_variant: If True, register to async_functions dict instead of functions
+            async_mode: If True, register to async_functions dict instead of functions
         """
         import inspect
 
@@ -228,7 +228,7 @@ class Toolkit:
 
         if params and params[0] == "self":
             # Create a bound method by wrapping the function to include self
-            if async_variant:
+            if async_mode:
                 def make_bound_method(func, instance):
                     async def bound(*args, **kwargs):
                         return await func(instance, *args, **kwargs)
@@ -281,7 +281,7 @@ class Toolkit:
             cache_ttl=function.cache_ttl if function.cache_ttl != 3600 else self.cache_ttl,
         )
 
-        if async_variant:
+        if async_mode:
             self.async_functions[f.name] = f
             log_debug(f"Async function: {f.name} registered with {self.name} (from @tool decorator)")
         else:
