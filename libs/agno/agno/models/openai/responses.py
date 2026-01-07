@@ -999,6 +999,9 @@ class OpenAIResponses(Model):
         """
         model_response = ModelResponse()
 
+        if stream_event.type != "response.output_text.delta":
+            print(stream_event)
+
         # 1. Add response ID
         if stream_event.type == "response.created":
             if stream_event.response.id:
@@ -1007,7 +1010,7 @@ class OpenAIResponses(Model):
                 model_response.provider_data["response_id"] = stream_event.response.id
             if not assistant_message.metrics.time_to_first_token:
                 assistant_message.metrics.set_time_to_first_token()
-
+                
         # 2. Add citations
         elif stream_event.type == "response.output_text.annotation.added":
             if model_response.citations is None:
@@ -1039,10 +1042,11 @@ class OpenAIResponses(Model):
                 model_response.reasoning_content = stream_event.delta
 
         # 4. Add tool calls information
-
         # 4.1 Add starting tool call
         elif stream_event.type == "response.output_item.added":
             item = stream_event.item
+            
+            # Tool call
             if item.type == "function_call":
                 tool_use = {
                     "id": getattr(item, "id", None),
@@ -1053,6 +1057,10 @@ class OpenAIResponses(Model):
                         "arguments": item.arguments,
                     },
                 }
+            
+            # Reasoning
+            elif item.type == "reasoning":
+                model_response.reasoning_content = item.content
 
         # 4.2 Add tool call arguments
         elif stream_event.type == "response.function_call_arguments.delta":
@@ -1100,7 +1108,7 @@ class OpenAIResponses(Model):
             # Add metrics
             if stream_event.response.usage is not None:
                 model_response.response_usage = self._get_metrics(stream_event.response.usage)
-
+        
         return model_response, tool_use
 
     def _get_metrics(self, response_usage: ResponseUsage) -> Metrics:
