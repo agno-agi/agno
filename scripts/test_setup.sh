@@ -32,8 +32,8 @@ print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_DIR}/requirements.t
 VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_DIR}/requirements.txt
 
 print_heading "Installing agno in editable mode with tests dependencies"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -U -e ${AGNO_DIR}[tests]
-VIRTUAL_ENV=${VENV_DIR} uv pip install brave-search 
+VIRTUAL_ENV=${VENV_DIR} uv pip install -U -e "${AGNO_DIR}[tests]"
+VIRTUAL_ENV=${VENV_DIR} uv pip install brave-search
 
 
 print_heading "Installing agno-infra"
