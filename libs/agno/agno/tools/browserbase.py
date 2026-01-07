@@ -85,8 +85,6 @@ class BrowserbaseTools(Toolkit):
 
         super().__init__(name="browserbase_tools", tools=tools, **kwargs)
 
-        # Register async variants with the same names
-        # These will be automatically used when running in async context (arun, aprint_response)
         if all or enable_navigate_to:
             self.register_async(self.anavigate_to, name="navigate_to")
         if all or enable_screenshot:
@@ -95,8 +93,6 @@ class BrowserbaseTools(Toolkit):
             self.register_async(self.aget_page_content, name="get_page_content")
         if all or enable_close_session:
             self.register_async(self.aclose_session, name="close_session")
-
-    # ==================== Sync Methods ====================
 
     def _ensure_session(self):
         """Ensures a session exists, creating one if needed."""
@@ -238,8 +234,6 @@ class BrowserbaseTools(Toolkit):
         except Exception as e:
             return json.dumps({"status": "warning", "message": f"Cleanup completed with warning: {str(e)}"})
 
-
-    # ==================== Async Methods ====================
 
     async def _ainitialize_browser(self, connect_url: Optional[str] = None):
         """
