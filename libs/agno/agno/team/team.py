@@ -57,6 +57,9 @@ from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from agno.run.cancel import (
+    acancel_run as acancel_run_global,
+)
+from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
     aregister_run,
@@ -1010,6 +1013,18 @@ class Team:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
         return cancel_run_global(run_id)
+
+    @staticmethod
+    async def acancel_run(run_id: str) -> bool:
+        """Cancel a running team execution.
+
+        Args:
+            run_id (str): The run_id to cancel.
+
+        Returns:
+            bool: True if the run was found and marked for cancellation, False otherwise.
+        """
+        return await acancel_run_global(run_id)
 
     async def _connect_mcp_tools(self) -> None:
         """Connect the MCP tools to the agent."""
@@ -2651,6 +2666,8 @@ class Team:
         13. Cleanup and store (scrub, add to session, calculate metrics, save session)
         """
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
+
+        await aregister_run(run_context.run_id)
 
         memory_task = None
 
