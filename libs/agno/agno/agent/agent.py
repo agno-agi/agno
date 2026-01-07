@@ -2002,6 +2002,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         session=agent_session,
+                        async_mode=True,
                     )
 
                     # 6. Prepare run messages
@@ -2351,6 +2352,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         session=agent_session,
+                        async_mode=True,
                     )
 
                     # 6. Prepare run messages
@@ -3910,6 +3912,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         session=agent_session,
+                        async_mode=True,
                     )
 
                     # 6. Prepare run messages
@@ -4216,6 +4219,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         session=agent_session,
+                        async_mode=True,
                     )
 
                     # 6. Prepare run messages
@@ -6425,6 +6429,7 @@ class Agent:
         run_response: RunOutput,
         run_context: RunContext,
         session: AgentSession,
+        async_mode: bool = False,
     ) -> List[Union[Function, dict]]:
         _function_names = []
         _functions: List[Union[Function, dict]] = []
@@ -6455,7 +6460,8 @@ class Agent:
 
                 elif isinstance(tool, Toolkit):
                     # For each function in the toolkit and process entrypoint
-                    for name, _func in tool.functions.items():
+                    toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
+                    for name, _func in toolkit_functions.items():
                         if name in _function_names:
                             continue
                         _function_names.append(name)
