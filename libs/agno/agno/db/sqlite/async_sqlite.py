@@ -31,7 +31,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, String, Table, func, select, text
+    from sqlalchemy import Column, ForeignKey, MetaData, String, Table, func, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
     from sqlalchemy.schema import Index, UniqueConstraint
@@ -124,6 +124,15 @@ class AsyncSqliteDb(AsyncBaseDb):
         # Initialize database session factory
         self.async_session_factory = async_sessionmaker(bind=self.db_engine, expire_on_commit=False)
 
+    async def close(self) -> None:
+        """Close database connections and dispose of the connection pool.
+
+        Should be called during application shutdown to properly release
+        all database connections.
+        """
+        if self.db_engine is not None:
+            await self.db_engine.dispose()
+
     # -- DB methods --
     async def table_exists(self, table_name: str) -> bool:
         """Check if a table with the given name exists in the SQLite database.
@@ -165,7 +174,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             Table: SQLAlchemy Table object
         """
         try:
-            table_schema = get_table_schema_definition(table_type)
+            # Pass traces_table_name for spans table foreign key resolution
+            table_schema = get_table_schema_definition(table_type, traces_table_name=self.trace_table_name).copy()
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -186,6 +196,10 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if col_config.get("unique", False):
                     column_kwargs["unique"] = True
                     unique_constraints.append(col_name)
+
+                # Handle foreign key constraint
+                if "foreign_key" in col_config:
+                    column_args.append(ForeignKey(col_config["foreign_key"]))
 
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 

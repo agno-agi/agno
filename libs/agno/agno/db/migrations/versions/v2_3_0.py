@@ -10,6 +10,7 @@ import time
 from typing import Any, List, Tuple
 
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.db.migrations.utils import quote_db_identifier
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
@@ -139,6 +140,9 @@ def _migrate_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
     from sqlalchemy import text
 
     db_schema = db.db_schema or "public"  # type: ignore
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -181,7 +185,7 @@ def _migrate_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
                 sess.execute(
                     text(
                         f"""
-                        ALTER TABLE {db_schema}.{table_name}
+                        ALTER TABLE {quoted_schema}.{quoted_table}
                         ADD COLUMN created_at BIGINT
                         """
                     ),
@@ -190,7 +194,7 @@ def _migrate_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
                 sess.execute(
                     text(
                         f"""
-                        UPDATE {db_schema}.{table_name}
+                        UPDATE {quoted_schema}.{quoted_table}
                         SET created_at = COALESCE(updated_at, :default_time)
                         """
                     ),
@@ -200,7 +204,7 @@ def _migrate_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
                 sess.execute(
                     text(
                         f"""
-                        ALTER TABLE {db_schema}.{table_name}
+                        ALTER TABLE {quoted_schema}.{quoted_table}
                         ALTER COLUMN created_at SET NOT NULL
                         """
                     ),
@@ -210,7 +214,7 @@ def _migrate_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
                     text(
                         f"""
                         CREATE INDEX IF NOT EXISTS idx_{table_name}_created_at
-                        ON {db_schema}.{table_name}(created_at)
+                        ON {quoted_schema}.{quoted_table}(created_at)
                         """
                     )
                 )
@@ -221,7 +225,7 @@ def _migrate_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
                 sess.execute(
                     text(
                         f"""
-                        ALTER TABLE {db_schema}.{table_name}
+                        ALTER TABLE {quoted_schema}.{quoted_table}
                         ADD COLUMN feedback TEXT
                         """
                     )
@@ -231,7 +235,7 @@ def _migrate_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
                 ("memory", table_name),
                 ("topics", table_name),
             ]
-            _convert_json_to_jsonb(sess, db_schema, json_columns)
+            _convert_json_to_jsonb(sess, db_schema, json_columns, db_type)
 
         if table_type == "sessions":
             json_columns = [
@@ -243,37 +247,41 @@ def _migrate_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
                 ("runs", table_name),
                 ("summary", table_name),
             ]
-            _convert_json_to_jsonb(sess, db_schema, json_columns)
+            _convert_json_to_jsonb(sess, db_schema, json_columns, db_type)
         if table_type == "evals":
             json_columns = [
                 ("eval_data", table_name),
                 ("eval_input", table_name),
             ]
-            _convert_json_to_jsonb(sess, db_schema, json_columns)
+            _convert_json_to_jsonb(sess, db_schema, json_columns, db_type)
         if table_type == "metrics":
             json_columns = [
                 ("token_metrics", table_name),
                 ("model_metrics", table_name),
             ]
-            _convert_json_to_jsonb(sess, db_schema, json_columns)
+            _convert_json_to_jsonb(sess, db_schema, json_columns, db_type)
         if table_type == "knowledge":
             json_columns = [
                 ("metadata", table_name),
             ]
-            _convert_json_to_jsonb(sess, db_schema, json_columns)
+            _convert_json_to_jsonb(sess, db_schema, json_columns, db_type)
         if table_type == "culture":
             json_columns = [
                 ("metadata", table_name),
             ]
-            _convert_json_to_jsonb(sess, db_schema, json_columns)
+            _convert_json_to_jsonb(sess, db_schema, json_columns, db_type)
 
         sess.commit()
         return True
 
 
-def _convert_json_to_jsonb(sess: Any, db_schema: str, json_columns: List[Tuple[str, str]]) -> None:
+def _convert_json_to_jsonb(
+    sess: Any, db_schema: str, json_columns: List[Tuple[str, str]], db_type: str = "PostgresDb"
+) -> None:
+    quoted_schema = quote_db_identifier(db_type, db_schema) if db_schema else None
     for column_name, table_name in json_columns:
-        table_full_name = f"{db_schema}.{table_name}" if db_schema else table_name
+        quoted_table = quote_db_identifier(db_type, table_name)
+        table_full_name = f"{quoted_schema}.{quoted_table}" if quoted_schema else quoted_table
         # Check current type
         col_type = sess.execute(
             text(
@@ -305,6 +313,9 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_type: str, table_name: 
     from sqlalchemy import text
 
     db_schema = db.db_schema or "public"  # type: ignore
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     async with db.async_session_factory() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -349,7 +360,7 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_type: str, table_name: 
                 await sess.execute(
                     text(
                         f"""
-                        ALTER TABLE {db_schema}.{table_name}
+                        ALTER TABLE {quoted_schema}.{quoted_table}
                         ADD COLUMN created_at BIGINT
                         """
                     ),
@@ -358,7 +369,7 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_type: str, table_name: 
                 await sess.execute(
                     text(
                         f"""
-                        UPDATE {db_schema}.{table_name}
+                        UPDATE {quoted_schema}.{quoted_table}
                         SET created_at = COALESCE(updated_at, :default_time)
                         """
                     ),
@@ -368,7 +379,7 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_type: str, table_name: 
                 await sess.execute(
                     text(
                         f"""
-                        ALTER TABLE {db_schema}.{table_name}
+                        ALTER TABLE {quoted_schema}.{quoted_table}
                         ALTER COLUMN created_at SET NOT NULL
                         """
                     ),
@@ -378,7 +389,7 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_type: str, table_name: 
                     text(
                         f"""
                         CREATE INDEX IF NOT EXISTS idx_{table_name}_created_at
-                        ON {db_schema}.{table_name}(created_at)
+                        ON {quoted_schema}.{quoted_table}(created_at)
                         """
                     )
                 )
@@ -389,7 +400,7 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_type: str, table_name: 
                 await sess.execute(
                     text(
                         f"""
-                        ALTER TABLE {db_schema}.{table_name}
+                        ALTER TABLE {quoted_schema}.{quoted_table}
                         ADD COLUMN feedback TEXT
                         """
                     )
@@ -399,7 +410,7 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_type: str, table_name: 
                 ("memory", table_name),
                 ("topics", table_name),
             ]
-            await _async_convert_json_to_jsonb(sess, db_schema, json_columns)
+            await _async_convert_json_to_jsonb(sess, db_schema, json_columns, db_type)
         if table_type == "sessions":
             json_columns = [
                 ("session_data", table_name),
@@ -410,39 +421,43 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_type: str, table_name: 
                 ("runs", table_name),
                 ("summary", table_name),
             ]
-            await _async_convert_json_to_jsonb(sess, db_schema, json_columns)
+            await _async_convert_json_to_jsonb(sess, db_schema, json_columns, db_type)
 
         if table_type == "evals":
             json_columns = [
                 ("eval_data", table_name),
                 ("eval_input", table_name),
             ]
-            await _async_convert_json_to_jsonb(sess, db_schema, json_columns)
+            await _async_convert_json_to_jsonb(sess, db_schema, json_columns, db_type)
         if table_type == "metrics":
             json_columns = [
                 ("token_metrics", table_name),
                 ("model_metrics", table_name),
             ]
-            await _async_convert_json_to_jsonb(sess, db_schema, json_columns)
+            await _async_convert_json_to_jsonb(sess, db_schema, json_columns, db_type)
         if table_type == "knowledge":
             json_columns = [
                 ("metadata", table_name),
             ]
-            await _async_convert_json_to_jsonb(sess, db_schema, json_columns)
+            await _async_convert_json_to_jsonb(sess, db_schema, json_columns, db_type)
 
         if table_type == "culture":
             json_columns = [
                 ("metadata", table_name),
             ]
-            await _async_convert_json_to_jsonb(sess, db_schema, json_columns)
+            await _async_convert_json_to_jsonb(sess, db_schema, json_columns, db_type)
 
         await sess.commit()
         return True
 
 
-async def _async_convert_json_to_jsonb(sess: Any, db_schema: str, json_columns: List[Tuple[str, str]]) -> None:
+async def _async_convert_json_to_jsonb(
+    sess: Any, db_schema: str, json_columns: List[Tuple[str, str]], db_type: str = "AsyncPostgresDb"
+) -> None:
+    quoted_schema = quote_db_identifier(db_type, db_schema) if db_schema else None
     for column_name, table_name in json_columns:
-        table_full_name = f"{db_schema}.{table_name}" if db_schema else table_name
+        quoted_table = quote_db_identifier(db_type, table_name)
+        table_full_name = f"{quoted_schema}.{quoted_table}" if quoted_schema else quoted_table
         # Check current type
         result = await sess.execute(
             text(
@@ -475,6 +490,9 @@ def _migrate_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
     from sqlalchemy import text
 
     db_schema = db.db_schema or "agno"  # type: ignore
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -517,7 +535,7 @@ def _migrate_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
                 sess.execute(
                     text(
                         f"""
-                        ALTER TABLE `{db_schema}`.`{table_name}`
+                        ALTER TABLE {quoted_schema}.{quoted_table}
                         ADD COLUMN `created_at` BIGINT,
                         ADD INDEX `idx_{table_name}_created_at` (`created_at`)
                         """
@@ -527,7 +545,7 @@ def _migrate_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
                 sess.execute(
                     text(
                         f"""
-                        UPDATE `{db_schema}`.`{table_name}`
+                        UPDATE {quoted_schema}.{quoted_table}
                         SET `created_at` = COALESCE(`updated_at`, :default_time)
                         """
                     ),
@@ -537,7 +555,7 @@ def _migrate_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
                 sess.execute(
                     text(
                         f"""
-                        ALTER TABLE `{db_schema}`.`{table_name}`
+                        ALTER TABLE {quoted_schema}.{quoted_table}
                         MODIFY COLUMN `created_at` BIGINT NOT NULL
                         """
                     )
@@ -549,7 +567,7 @@ def _migrate_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
                 sess.execute(
                     text(
                         f"""
-                        ALTER TABLE `{db_schema}`.`{table_name}`
+                        ALTER TABLE {quoted_schema}.{quoted_table}
                         ADD COLUMN `feedback` TEXT
                         """
                     )
@@ -561,6 +579,8 @@ def _migrate_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
 
 def _migrate_sqlite(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Migrate SQLite database."""
+    db_type = type(db).__name__
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -581,7 +601,7 @@ def _migrate_sqlite(db: BaseDb, table_type: str, table_name: str) -> bool:
             # SQLite doesn't support ALTER TABLE ADD COLUMN with constraints easily
             # We'll use a simpler approach
             # Check if columns already exist using PRAGMA
-            result = sess.execute(text(f"PRAGMA table_info({table_name})"))
+            result = sess.execute(text(f"PRAGMA table_info({quoted_table})"))
             columns_info = result.fetchall()
             existing_columns = {row[1] for row in columns_info}  # row[1] contains column name
 
@@ -592,13 +612,13 @@ def _migrate_sqlite(db: BaseDb, table_type: str, table_name: str) -> bool:
                 # Add created_at column with NOT NULL constraint and default value
                 # SQLite doesn't support ALTER COLUMN, so we add NOT NULL directly
                 sess.execute(
-                    text(f"ALTER TABLE {table_name} ADD COLUMN created_at BIGINT NOT NULL DEFAULT {current_time}"),
+                    text(f"ALTER TABLE {quoted_table} ADD COLUMN created_at BIGINT NOT NULL DEFAULT {current_time}"),
                 )
                 # Populate created_at for existing rows
                 sess.execute(
                     text(
                         f"""
-                        UPDATE {table_name}
+                        UPDATE {quoted_table}
                         SET created_at = COALESCE(updated_at, :default_time)
                         WHERE created_at = :default_time
                         """
@@ -607,13 +627,13 @@ def _migrate_sqlite(db: BaseDb, table_type: str, table_name: str) -> bool:
                 )
                 # Add index
                 sess.execute(
-                    text(f"CREATE INDEX IF NOT EXISTS idx_{table_name}_created_at ON {table_name}(created_at)")
+                    text(f"CREATE INDEX IF NOT EXISTS idx_{table_name}_created_at ON {quoted_table}(created_at)")
                 )
 
             # Add feedback if it doesn't exist
             if "feedback" not in existing_columns:
                 log_info(f"-- Adding feedback column to {table_name}")
-                sess.execute(text(f"ALTER TABLE {table_name} ADD COLUMN feedback VARCHAR"))
+                sess.execute(text(f"ALTER TABLE {quoted_table} ADD COLUMN feedback VARCHAR"))
 
         sess.commit()
         return True
@@ -621,6 +641,8 @@ def _migrate_sqlite(db: BaseDb, table_type: str, table_name: str) -> bool:
 
 async def _migrate_async_sqlite(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     """Migrate SQLite database."""
+    db_type = type(db).__name__
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     async with db.async_session_factory() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -642,7 +664,7 @@ async def _migrate_async_sqlite(db: AsyncBaseDb, table_type: str, table_name: st
             # SQLite doesn't support ALTER TABLE ADD COLUMN with constraints easily
             # We'll use a simpler approach
             # Check if columns already exist using PRAGMA
-            result = await sess.execute(text(f"PRAGMA table_info({table_name})"))
+            result = await sess.execute(text(f"PRAGMA table_info({quoted_table})"))
             columns_info = result.fetchall()
             existing_columns = {row[1] for row in columns_info}  # row[1] contains column name
 
@@ -653,13 +675,13 @@ async def _migrate_async_sqlite(db: AsyncBaseDb, table_type: str, table_name: st
                 # Add created_at column with NOT NULL constraint and default value
                 # SQLite doesn't support ALTER COLUMN, so we add NOT NULL directly
                 await sess.execute(
-                    text(f"ALTER TABLE {table_name} ADD COLUMN created_at BIGINT NOT NULL DEFAULT {current_time}"),
+                    text(f"ALTER TABLE {quoted_table} ADD COLUMN created_at BIGINT NOT NULL DEFAULT {current_time}"),
                 )
                 # Populate created_at for existing rows
                 await sess.execute(
                     text(
                         f"""
-                        UPDATE {table_name}
+                        UPDATE {quoted_table}
                         SET created_at = COALESCE(updated_at, :default_time)
                         WHERE created_at = :default_time
                         """
@@ -668,13 +690,13 @@ async def _migrate_async_sqlite(db: AsyncBaseDb, table_type: str, table_name: st
                 )
                 # Add index
                 await sess.execute(
-                    text(f"CREATE INDEX IF NOT EXISTS idx_{table_name}_created_at ON {table_name}(created_at)")
+                    text(f"CREATE INDEX IF NOT EXISTS idx_{table_name}_created_at ON {quoted_table}(created_at)")
                 )
 
             # Add feedback if it doesn't exist
             if "feedback" not in existing_columns:
                 log_info(f"-- Adding feedback column to {table_name}")
-                await sess.execute(text(f"ALTER TABLE {table_name} ADD COLUMN feedback VARCHAR"))
+                await sess.execute(text(f"ALTER TABLE {quoted_table} ADD COLUMN feedback VARCHAR"))
 
         await sess.commit()
         return True
@@ -685,6 +707,9 @@ def _migrate_singlestore(db: BaseDb, table_type: str, table_name: str) -> bool:
     from sqlalchemy import text
 
     db_schema = db.db_schema or "agno"  # type: ignore
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -727,7 +752,7 @@ def _migrate_singlestore(db: BaseDb, table_type: str, table_name: str) -> bool:
                 sess.execute(
                     text(
                         f"""
-                        ALTER TABLE `{db_schema}`.`{table_name}`
+                        ALTER TABLE {quoted_schema}.{quoted_table}
                         ADD COLUMN `created_at` BIGINT,
                         ADD INDEX `idx_{table_name}_created_at` (`created_at`)
                         """
@@ -737,7 +762,7 @@ def _migrate_singlestore(db: BaseDb, table_type: str, table_name: str) -> bool:
                 sess.execute(
                     text(
                         f"""
-                        UPDATE `{db_schema}`.`{table_name}`
+                        UPDATE {quoted_schema}.{quoted_table}
                         SET `created_at` = COALESCE(`updated_at`, :default_time)
                         """
                     ),
@@ -750,7 +775,7 @@ def _migrate_singlestore(db: BaseDb, table_type: str, table_name: str) -> bool:
                 sess.execute(
                     text(
                         f"""
-                        ALTER TABLE `{db_schema}`.`{table_name}`
+                        ALTER TABLE {quoted_schema}.{quoted_table}
                         ADD COLUMN `feedback` TEXT
                         """
                     )
@@ -765,6 +790,9 @@ def _revert_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
     from sqlalchemy import text
 
     db_schema = db.db_schema or "agno"  # type: ignore
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -786,9 +814,9 @@ def _revert_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
             return False
         if table_type == "memories":
             # Remove columns (in reverse order)
-            sess.execute(text(f"ALTER TABLE {db_schema}.{table_name} DROP COLUMN IF EXISTS feedback"))
+            sess.execute(text(f"ALTER TABLE {quoted_schema}.{quoted_table} DROP COLUMN IF EXISTS feedback"))
             sess.execute(text(f"DROP INDEX IF EXISTS idx_{table_name}_created_at"))
-            sess.execute(text(f"ALTER TABLE {db_schema}.{table_name} DROP COLUMN IF EXISTS created_at"))
+            sess.execute(text(f"ALTER TABLE {quoted_schema}.{quoted_table} DROP COLUMN IF EXISTS created_at"))
         sess.commit()
         return True
 
@@ -798,6 +826,9 @@ async def _revert_async_postgres(db: AsyncBaseDb, table_type: str, table_name: s
     from sqlalchemy import text
 
     db_schema = db.db_schema or "agno"  # type: ignore
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     async with db.async_session_factory() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -820,9 +851,9 @@ async def _revert_async_postgres(db: AsyncBaseDb, table_type: str, table_name: s
             return False
         if table_type == "memories":
             # Remove columns (in reverse order)
-            await sess.execute(text(f"ALTER TABLE {db_schema}.{table_name} DROP COLUMN IF EXISTS feedback"))
+            await sess.execute(text(f"ALTER TABLE {quoted_schema}.{quoted_table} DROP COLUMN IF EXISTS feedback"))
             await sess.execute(text(f"DROP INDEX IF EXISTS idx_{table_name}_created_at"))
-            await sess.execute(text(f"ALTER TABLE {db_schema}.{table_name} DROP COLUMN IF EXISTS created_at"))
+            await sess.execute(text(f"ALTER TABLE {quoted_schema}.{quoted_table} DROP COLUMN IF EXISTS created_at"))
         await sess.commit()
         return True
 
@@ -832,6 +863,9 @@ def _revert_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
     from sqlalchemy import text
 
     db_schema = db.db_schema or "agno"  # type: ignore
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -867,7 +901,7 @@ def _revert_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
             }
             # Drop feedback column if it exists
             if "feedback" in existing_columns:
-                sess.execute(text(f"ALTER TABLE `{db_schema}`.`{table_name}` DROP COLUMN `feedback`"))
+                sess.execute(text(f"ALTER TABLE {quoted_schema}.{quoted_table} DROP COLUMN `feedback`"))
             # Drop created_at index if it exists
             index_exists = sess.execute(
                 text(
@@ -881,10 +915,12 @@ def _revert_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
                 {"schema": db_schema, "table_name": table_name, "index_name": f"idx_{table_name}_created_at"},
             ).scalar()
             if index_exists:
-                sess.execute(text(f"ALTER TABLE `{db_schema}`.`{table_name}` DROP INDEX `idx_{table_name}_created_at`"))
+                sess.execute(
+                    text(f"ALTER TABLE {quoted_schema}.{quoted_table} DROP INDEX `idx_{table_name}_created_at`")
+                )
             # Drop created_at column if it exists
             if "created_at" in existing_columns:
-                sess.execute(text(f"ALTER TABLE `{db_schema}`.`{table_name}` DROP COLUMN `created_at`"))
+                sess.execute(text(f"ALTER TABLE {quoted_schema}.{quoted_table} DROP COLUMN `created_at`"))
 
         sess.commit()
         return True
@@ -909,6 +945,9 @@ def _revert_singlestore(db: BaseDb, table_type: str, table_name: str) -> bool:
     from sqlalchemy import text
 
     db_schema = db.db_schema or "agno"  # type: ignore
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    quoted_table = quote_db_identifier(db_type, table_name)
 
     with db.Session() as sess, sess.begin():  # type: ignore
         # Check if table exists
@@ -929,10 +968,10 @@ def _revert_singlestore(db: BaseDb, table_type: str, table_name: str) -> bool:
             log_info(f"Table {table_name} does not exist, skipping revert")
             return False
         if table_type == "memories":
-            sess.execute(text(f"ALTER TABLE `{db_schema}`.`{table_name}` DROP COLUMN IF EXISTS `feedback`"))
+            sess.execute(text(f"ALTER TABLE {quoted_schema}.{quoted_table} DROP COLUMN IF EXISTS `feedback`"))
             sess.execute(
-                text(f"ALTER TABLE `{db_schema}`.`{table_name}` DROP INDEX IF EXISTS `idx_{table_name}_created_at`")
+                text(f"ALTER TABLE {quoted_schema}.{quoted_table} DROP INDEX IF EXISTS `idx_{table_name}_created_at`")
             )
-            sess.execute(text(f"ALTER TABLE `{db_schema}`.`{table_name}` DROP COLUMN IF EXISTS `created_at`"))
+            sess.execute(text(f"ALTER TABLE {quoted_schema}.{quoted_table} DROP COLUMN IF EXISTS `created_at`"))
         sess.commit()
         return True

@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -25,12 +26,24 @@ class UserMemorySchema(BaseModel):
         if memory_dict["memory"] == "":
             return None
 
+        # Handle nested memory content (relevant for some memories migrated from v1)
+        if isinstance(memory_dict["memory"], dict):
+            if memory_dict["memory"].get("memory") is not None:
+                memory = str(memory_dict["memory"]["memory"])
+            else:
+                try:
+                    memory = json.dumps(memory_dict["memory"])
+                except json.JSONDecodeError:
+                    memory = str(memory_dict["memory"])
+        else:
+            memory = memory_dict["memory"]
+
         return cls(
             memory_id=memory_dict["memory_id"],
             user_id=str(memory_dict["user_id"]),
             agent_id=memory_dict.get("agent_id"),
             team_id=memory_dict.get("team_id"),
-            memory=memory_dict["memory"],
+            memory=memory,
             topics=memory_dict.get("topics", []),
             updated_at=memory_dict["updated_at"],
         )
