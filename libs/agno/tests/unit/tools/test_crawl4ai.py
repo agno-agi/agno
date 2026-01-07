@@ -334,6 +334,7 @@ def test_browser_config_proxy_forwarding(mock_async_crawler, mock_browser_config
         proxy_config={"server": "http://proxy:8080"},
     )
 
+
 @patch("agno.tools.crawl4ai.log_warning")
 def test_crawl_logging(mock_log_warning, crawl4ai_tools, mock_async_crawler):
     """Test logging during crawl operations."""
@@ -365,4 +366,3 @@ def test_asyncio_run_error(mock_asyncio_run, crawl4ai_tools):
         crawl4ai_tools.crawl("https://example.com")
 
     assert "Event loop error" in str(excinfo.value)
-

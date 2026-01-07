@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, Request, UploadFile
 
+from agno.db.base import AsyncBaseDb
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader import ReaderFactory
@@ -38,7 +39,6 @@ from agno.os.utils import get_knowledge_instance_by_db_id
 from agno.remote.base import RemoteKnowledge
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
-from agno.db.base import AsyncBaseDb
 
 logger = logging.getLogger(__name__)
 

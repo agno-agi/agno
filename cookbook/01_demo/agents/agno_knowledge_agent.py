@@ -1,3 +1,4 @@
+import asyncio
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -6,11 +7,6 @@ from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
 from agno.vectordb.pgvector import PgVector, SearchType
 from db import db_url, demo_db
-import asyncio
-from agno.db.postgres import AsyncPostgresDb
-
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-demo_db = AsyncPostgresDb(id="agno-demo-db-async", db_url=db_url)
 
 # ============================================================================
 # Setup knowledge base for storing Agno documentation
@@ -95,6 +91,8 @@ agno_knowledge_agent = Agent(
 )
 
 if __name__ == "__main__":
-    asyncio.run(knowledge.add_content_async(
-        name="Agno Documentation", url="https://docs.agno.com/llms-full.txt"
-    ))
+    asyncio.run(
+        knowledge.add_content_async(
+            name="Agno Documentation", url="https://docs.agno.com/llms-full.txt"
+        )
+    )
