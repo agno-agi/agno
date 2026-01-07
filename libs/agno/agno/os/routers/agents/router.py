@@ -524,13 +524,6 @@ def get_agent_router(
 
     @router.get(
         "/agents",
-<<<<<<< Updated upstream
-        response_model=List[Union[AgentResponse, AgentSummaryResponse]],
-        response_model_exclude_none=True,
-=======
-        response_model=List[AgentResponse],
-        response_model_exclude_unset=True,
->>>>>>> Stashed changes
         tags=["Agents"],
         operation_id="get_agents",
         summary="List All Agents",
@@ -544,6 +537,8 @@ def get_agent_router(
             "- Only meaningful (non-default) configurations are included\n\n"
             "Use minimal=true for a lightweight response with basic agent info only."
         ),
+        response_model=List[Union[AgentResponse, AgentSummaryResponse]],
+        response_model_exclude_unset=True,
         responses={
             200: {
                 "description": "List of agents retrieved successfully",
@@ -592,27 +587,27 @@ def get_agent_router(
         else:
             accessible_agents = os.agents
 
-        agents: List[Union[AgentResponse, AgentSummaryResponse]] = []
+        agents: List[dict] = []
         for agent in accessible_agents:
-                if minimal:
-                    if isinstance(agent, RemoteAgent):
-                        # TODO: Implement minimal agent config for remote agents
-                        pass
-                    else:
-                        agents.append(AgentSummaryResponse.from_agent(agent=agent))
+            if minimal:
+                if isinstance(agent, RemoteAgent):
+                    # TODO: Implement minimal agent config for remote agents
+                    pass
                 else:
-                    if isinstance(agent, RemoteAgent):
-                        agents.append(await agent.get_agent_config())
-                    else:
-                        agent_response = await AgentResponse.from_agent(agent=agent)
-                        agents.append(agent_response)
+                    agent_summary = AgentSummaryResponse.from_agent(agent=agent)
+                    agents.append(agent_summary.model_dump(exclude_none=True))
+            else:
+                if isinstance(agent, RemoteAgent):
+                    agent_config = await agent.get_agent_config()
+                    agents.append(agent_config.model_dump(exclude_none=True))
+                else:
+                    agent_response = await AgentResponse.from_agent(agent=agent)
+                    agents.append(agent_response.model_dump(exclude_none=True))
 
         return agents
 
     @router.get(
         "/agents/{agent_id}",
-        response_model=AgentResponse,
-        response_model_exclude_unset=True,
         tags=["Agents"],
         operation_id="get_agent",
         summary="Get Agent Details",
@@ -626,6 +621,8 @@ def get_agent_router(
             "- Reasoning capabilities and settings\n"
             "- System prompts and response formatting options"
         ),
+        response_model=AgentResponse,
+        response_model_exclude_unset=True,
         responses={
             200: {
                 "description": "Agent details retrieved successfully",
@@ -648,14 +645,16 @@ def get_agent_router(
         },
         dependencies=[Depends(require_resource_access("agents", "read", "agent_id"))],
     )
-    async def get_agent(agent_id: str) -> AgentResponse:
+    async def get_agent(agent_id: str):
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
         if isinstance(agent, RemoteAgent):
-            return await agent.get_agent_config()
+            agent_config = await agent.get_agent_config()
+            return agent_config.model_dump(exclude_none=True)
         else:
-            return await AgentResponse.from_agent(agent=agent)
+            agent_response = await AgentResponse.from_agent(agent=agent)
+            return agent_response.model_dump(exclude_none=True)
 
     return router
