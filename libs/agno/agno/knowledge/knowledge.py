@@ -2464,7 +2464,7 @@ class Knowledge:
 
     def get_valid_filters(self) -> Set[str]:
         if self.contents_db is None:
-            log_warning("No contents db provided. This is required for filtering.")
+            log_info("ContentsDB not configured. For improved filter validation and reliability, consider adding a ContentsDB.")
             return set()
         contents, _ = self.get_content()
         valid_filters: Set[str] = set()
@@ -2476,7 +2476,7 @@ class Knowledge:
 
     async def async_get_valid_filters(self) -> Set[str]:
         if self.contents_db is None:
-            log_warning("No contents db provided. This is required for filtering.")
+            log_info("ContentsDB not configured. For improved filter validation and reliability, consider adding a ContentsDB.")
             return set()
         contents, _ = await self.aget_content()
         valid_filters: Set[str] = set()
@@ -2496,13 +2496,10 @@ class Knowledge:
         invalid_keys = []
 
         if isinstance(filters, dict):
-            # If no metadata filters tracked yet, all keys are considered invalid
+            # If no metadata filters tracked yet, pass all filters through without validation
             if valid_metadata_filters is None or not valid_metadata_filters:
-                invalid_keys = list(filters.keys())
-                log_warning(
-                    f"No valid metadata filters tracked yet. All filter keys considered invalid: {invalid_keys}"
-                )
-                return {}, invalid_keys
+                log_debug("No metadata filter validation available. Passing filters to vector DB without validation.")
+                return filters, []
 
             for key, value in filters.items():
                 # Handle both normal keys and prefixed keys like meta_data.key

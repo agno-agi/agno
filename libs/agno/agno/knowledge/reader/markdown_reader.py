@@ -78,7 +78,6 @@ class MarkdownReader(Reader):
             if self.chunk:
                 chunked_documents = []
                 for document in documents:
-                    print("extending")
                     chunked_documents.extend(self.chunk_document(document))
                 return chunked_documents
             return documents
