@@ -31,7 +31,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
 
 try:
-    from sqlalchemy import Index, String, Table, UniqueConstraint, and_, case, func, or_, update
+    from sqlalchemy import ForeignKey, Index, String, Table, UniqueConstraint, and_, case, func, or_, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.dialects.postgresql import TIMESTAMP
     from sqlalchemy.exc import ProgrammingError
@@ -192,7 +192,10 @@ class AsyncPostgresDb(AsyncBaseDb):
             Table: SQLAlchemy Table object
         """
         try:
-            table_schema = get_table_schema_definition(table_type).copy()
+            # Pass traces_table_name and db_schema for spans table foreign key resolution
+            table_schema = get_table_schema_definition(
+                table_type, traces_table_name=self.trace_table_name, db_schema=self.db_schema
+            ).copy()
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -212,6 +215,11 @@ class AsyncPostgresDb(AsyncBaseDb):
                 if col_config.get("unique", False):
                     column_kwargs["unique"] = True
                     unique_constraints.append(col_name)
+
+                # Handle foreign key constraint
+                if "foreign_key" in col_config:
+                    column_args.append(ForeignKey(col_config["foreign_key"]))
+
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object

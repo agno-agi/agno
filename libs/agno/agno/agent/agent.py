@@ -62,6 +62,9 @@ from agno.run.agent import (
     RunOutputEvent,
 )
 from agno.run.cancel import (
+    acancel_run as acancel_run_global,
+)
+from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
     aregister_run,
@@ -2030,6 +2033,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         session=agent_session,
+                        async_mode=True,
                     )
 
                     # 6. Prepare run messages
@@ -2377,6 +2381,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         session=agent_session,
+                        async_mode=True,
                     )
 
                     # 6. Prepare run messages
@@ -3987,6 +3992,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         session=agent_session,
+                        async_mode=True,
                     )
 
                     # 6. Prepare run messages
@@ -4293,6 +4299,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         session=agent_session,
+                        async_mode=True,
                     )
 
                     # 6. Prepare run messages
@@ -6514,6 +6521,7 @@ class Agent:
         run_response: RunOutput,
         run_context: RunContext,
         session: AgentSession,
+        async_mode: bool = False,
     ) -> List[Union[Function, dict]]:
         _function_names = []
         _functions: List[Union[Function, dict]] = []
@@ -6544,7 +6552,8 @@ class Agent:
 
                 elif isinstance(tool, Toolkit):
                     # For each function in the toolkit and process entrypoint
-                    for name, _func in tool.functions.items():
+                    toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
+                    for name, _func in toolkit_functions.items():
                         if name in _function_names:
                             continue
                         _function_names.append(name)
@@ -6773,6 +6782,18 @@ class Agent:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
         return cancel_run_global(run_id)
+
+    @staticmethod
+    async def acancel_run(run_id: str) -> bool:
+        """Cancel a running agent execution (async version).
+
+        Args:
+            run_id (str): The run_id to cancel.
+
+        Returns:
+            bool: True if the run was found and marked for cancellation, False otherwise.
+        """
+        return await acancel_run_global(run_id)
 
     # -*- Session Database Functions
     def _read_session(
