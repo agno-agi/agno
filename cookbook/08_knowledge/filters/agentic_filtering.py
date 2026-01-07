@@ -45,48 +45,48 @@ knowledge = Knowledge(
 )
 
 # Load all documents into the vector database
-# knowledge.add_contents(
-#     [
-#         {
-#             "path": downloaded_csv_paths[0],
-#             "metadata": {
-#                 "data_type": "sales",
-#                 "quarter": "Q1",
-#                 "year": 2024,
-#                 "region": "north_america",
-#                 "currency": "USD",
-#             },
-#         },
-#         {
-#             "path": downloaded_csv_paths[1],
-#             "metadata": {
-#                 "data_type": "sales",
-#                 "year": 2024,
-#                 "region": "europe",
-#                 "currency": "EUR",
-#             },
-#         },
-#         {
-#             "path": downloaded_csv_paths[2],
-#             "metadata": {
-#                 "data_type": "survey",
-#                 "survey_type": "customer_satisfaction",
-#                 "year": 2024,
-#                 "target_demographic": "mixed",
-#             },
-#         },
-#         {
-#             "path": downloaded_csv_paths[3],
-#             "metadata": {
-#                 "data_type": "financial",
-#                 "sector": "technology",
-#                 "year": 2024,
-#                 "report_type": "quarterly_earnings",
-#             },
-#         },
-#     ],
-#     skip_if_exists=True,
-# )
+knowledge.add_contents(
+    [
+        {
+            "path": downloaded_csv_paths[0],
+            "metadata": {
+                "data_type": "sales",
+                "quarter": "Q1",
+                "year": 2024,
+                "region": "north_america",
+                "currency": "USD",
+            },
+        },
+        {
+            "path": downloaded_csv_paths[1],
+            "metadata": {
+                "data_type": "sales",
+                "year": 2024,
+                "region": "europe",
+                "currency": "EUR",
+            },
+        },
+        {
+            "path": downloaded_csv_paths[2],
+            "metadata": {
+                "data_type": "survey",
+                "survey_type": "customer_satisfaction",
+                "year": 2024,
+                "target_demographic": "mixed",
+            },
+        },
+        {
+            "path": downloaded_csv_paths[3],
+            "metadata": {
+                "data_type": "financial",
+                "sector": "technology",
+                "year": 2024,
+                "report_type": "quarterly_earnings",
+            },
+        },
+    ],
+    skip_if_exists=True,
+)
 # Step 2: Query the knowledge base with Agent using filters from query automatically
 # -----------------------------------------------------------------------------------
 
@@ -99,6 +99,6 @@ agent = Agent(
 )
 
 agent.print_response(
-    "Tell me about revenue performance and top selling products in the region north_america_updated",
+    "Tell me about revenue performance and top selling products in the region north_america",
     markdown=True,
 )

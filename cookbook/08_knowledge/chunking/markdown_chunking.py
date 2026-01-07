@@ -19,7 +19,6 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 # Example 1: Split on ALL headings (H1-H6)
 # ==============================================================================
 # This creates the most granular chunks, with each heading becoming a separate chunk.
-# Best for: Documentation with many subsections where you want precise retrieval
 
 print("\n" + "=" * 80)
 print("Example 1: Split on ALL headings (H1-H6)")
@@ -44,7 +43,6 @@ agent = Agent(
     search_knowledge=True,
 )
 
-print("\nQuery: 'What is a cappuccino?'")
 agent.print_response("What is a cappuccino?", markdown=True)
 
 
@@ -53,7 +51,6 @@ agent.print_response("What is a cappuccino?", markdown=True)
 # ==============================================================================
 # This creates medium-sized chunks by splitting on major sections (H1) and
 # subsections (H2), while keeping all H3-H6 content together.
-# Best for: Documentation where subsections provide important context for each other
 
 print("\n" + "=" * 80)
 print("Example 2: Split on H1 and H2 only (keep H3-H6 together)")
@@ -80,7 +77,6 @@ agent = Agent(
     search_knowledge=True,
 )
 
-print("\nQuery: 'What are espresso-based drinks?'")
 agent.print_response("What are espresso-based drinks?", markdown=True)
 
 
@@ -88,7 +84,6 @@ agent.print_response("What are espresso-based drinks?", markdown=True)
 # Example 3: Split only on H1 (entire major sections as chunks)
 # ==============================================================================
 # This creates the largest chunks, keeping entire major sections together.
-# Best for: High-level documentation where context across subsections is critical
 
 print("\n" + "=" * 80)
 print("Example 3: Split on H1 only (entire major sections)")
@@ -113,7 +108,6 @@ agent = Agent(
     search_knowledge=True,
 )
 
-print("\nQuery: 'Tell me about types of coffee'")
 agent.print_response("Tell me about types of coffee", markdown=True)
 
 
@@ -122,7 +116,6 @@ agent.print_response("Tell me about types of coffee", markdown=True)
 # ==============================================================================
 # This uses size-based chunking with the unstructured library, splitting on
 # paragraphs when chunks exceed the size limit.
-# Best for: Generic markdown without strong heading structure
 
 print("\n" + "=" * 80)
 print("Example 4: Traditional size-based chunking")
@@ -151,7 +144,6 @@ agent = Agent(
     search_knowledge=True,
 )
 
-print("\nQuery: 'How do I make cold brew?'")
 agent.print_response("How do I make cold brew?", markdown=True)
 
 
@@ -160,7 +152,6 @@ agent.print_response("How do I make cold brew?", markdown=True)
 # ==============================================================================
 # This creates balanced chunks by splitting on H1, H2, and H3, keeping H4-H6
 # content together with their parent H3 sections.
-# Best for: Most documentation - provides good balance between granularity and context
 
 print("\n" + "=" * 80)
 print("Example 5: Split on H1, H2, and H3 (balanced)")
@@ -185,5 +176,4 @@ agent = Agent(
     search_knowledge=True,
 )
 
-print("\nQuery: 'What are the different brewing methods?'")
 agent.print_response("What are the different brewing methods?", markdown=True)
