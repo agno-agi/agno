@@ -6,11 +6,18 @@ from collections.abc import Iterator
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple, Union
 
+try:
+    import jsonpatch
+except ImportError:
+    jsonpatch = None  # type: ignore
+
 from ag_ui.core import (
     BaseEvent,
     CustomEvent,
     EventType,
     RunFinishedEvent,
+    StateDeltaEvent,
+    StateSnapshotEvent,
     StepFinishedEvent,
     StepStartedEvent,
     TextMessageContentEvent,
@@ -73,6 +80,7 @@ class EventBuffer:
     current_text_message_id: str = ""  # ID of the current text message context (for tool call parenting)
     next_text_message_id: str = ""  # Pre-generated ID for the next text message
     pending_tool_calls_parent_id: str = ""  # Parent message ID for pending tool calls
+    previous_session_state: Optional[Dict[str, Any]] = None  # Previous session state for delta tracking
 
     def __init__(self):
         self.active_tool_call_ids = set()
@@ -80,6 +88,7 @@ class EventBuffer:
         self.current_text_message_id = ""
         self.next_text_message_id = str(uuid.uuid4())
         self.pending_tool_calls_parent_id = ""
+        self.previous_session_state = None
 
     def start_tool_call(self, tool_call_id: str) -> None:
         """Start a new tool call."""
@@ -433,6 +442,38 @@ def _create_completion_events(
                     tool_call_id=tool.tool_call_id,
                 )
                 events_to_emit.append(end_event)
+
+    # Emit state events if session_state is available
+    if hasattr(chunk, "session_state") and chunk.session_state is not None:
+        current_state = chunk.session_state
+
+        # Emit StateDeltaEvent if we have a previous state and jsonpatch is available
+        if jsonpatch and event_buffer.previous_session_state is not None:
+            try:
+                # Generate JSON patch between previous and current state
+                patch = jsonpatch.make_patch(event_buffer.previous_session_state, current_state)
+                patch_list = list(patch)
+
+                # Only emit if there are actual changes
+                if patch_list:
+                    state_delta_event = StateDeltaEvent(
+                        type=EventType.STATE_DELTA,
+                        delta=patch_list,
+                    )
+                    events_to_emit.append(state_delta_event)
+            except Exception:
+                # If delta generation fails, fall back to snapshot only
+                pass
+
+        # Always emit StateSnapshotEvent for full state
+        state_snapshot_event = StateSnapshotEvent(
+            type=EventType.STATE_SNAPSHOT,
+            snapshot=current_state,
+        )
+        events_to_emit.append(state_snapshot_event)
+
+        # Update the event buffer's previous state for next delta
+        event_buffer.previous_session_state = current_state
 
     run_finished_event = RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
     events_to_emit.append(run_finished_event)
