@@ -22,7 +22,6 @@ class BrowserbaseTools(Toolkit):
         enable_get_page_content: bool = True,
         enable_close_session: bool = True,
         all: bool = False,
-        async_tools: bool = False,
         **kwargs,
     ):
         """Initialize BrowserbaseTools.
@@ -37,7 +36,6 @@ class BrowserbaseTools(Toolkit):
             enable_get_page_content (bool): Enable the get_page_content tool. Defaults to True.
             enable_close_session (bool): Enable the close_session tool. Defaults to True.
             all (bool): Enable all tools. Defaults to False.
-            async_tools (bool): Use async versions of tools (for FastAPI/async contexts). Defaults to False.
         """
         self.api_key = api_key or getenv("BROWSERBASE_API_KEY")
         if not self.api_key:
@@ -52,7 +50,6 @@ class BrowserbaseTools(Toolkit):
             )
 
         self.base_url = base_url or getenv("BROWSERBASE_BASE_URL")
-        self.async_tools = async_tools
 
         # Initialize the Browserbase client with optional base_url
         if self.base_url:
@@ -75,27 +72,29 @@ class BrowserbaseTools(Toolkit):
         self._session = None
         self._connect_url = None
 
+        # Build sync tools list (same pattern as before)
         tools: List[Any] = []
-        if async_tools:
-            if all or enable_navigate_to:
-                tools.append(self.anavigate_to)
-            if all or enable_screenshot:
-                tools.append(self.ascreenshot)
-            if all or enable_get_page_content:
-                tools.append(self.aget_page_content)
-            if all or enable_close_session:
-                tools.append(self.aclose_session)
-        else:
-            if all or enable_navigate_to:
-                tools.append(self.navigate_to)
-            if all or enable_screenshot:
-                tools.append(self.screenshot)
-            if all or enable_get_page_content:
-                tools.append(self.get_page_content)
-            if all or enable_close_session:
-                tools.append(self.close_session)
+        if all or enable_navigate_to:
+            tools.append(self.navigate_to)
+        if all or enable_screenshot:
+            tools.append(self.screenshot)
+        if all or enable_get_page_content:
+            tools.append(self.get_page_content)
+        if all or enable_close_session:
+            tools.append(self.close_session)
 
         super().__init__(name="browserbase_tools", tools=tools, **kwargs)
+
+        # Register async variants with the same names
+        # These will be automatically used when running in async context (arun, aprint_response)
+        if all or enable_navigate_to:
+            self.register_async(self.anavigate_to, name="navigate_to")
+        if all or enable_screenshot:
+            self.register_async(self.ascreenshot, name="screenshot")
+        if all or enable_get_page_content:
+            self.register_async(self.aget_page_content, name="get_page_content")
+        if all or enable_close_session:
+            self.register_async(self.aclose_session, name="close_session")
 
     # ==================== Sync Methods ====================
 
@@ -177,6 +176,7 @@ class BrowserbaseTools(Toolkit):
             self._cleanup()
             raise e
 
+
     def screenshot(self, path: str, full_page: bool = True, connect_url: Optional[str] = None) -> str:
         """Takes a screenshot of the current page.
 
@@ -197,6 +197,7 @@ class BrowserbaseTools(Toolkit):
             self._cleanup()
             raise e
 
+
     def get_page_content(self, connect_url: Optional[str] = None) -> str:
         """Gets the HTML content of the current page.
 
@@ -212,6 +213,7 @@ class BrowserbaseTools(Toolkit):
         except Exception as e:
             self._cleanup()
             raise e
+
 
     def close_session(self) -> str:
         """Closes a browser session.
@@ -235,6 +237,7 @@ class BrowserbaseTools(Toolkit):
             )
         except Exception as e:
             return json.dumps({"status": "warning", "message": f"Cleanup completed with warning: {str(e)}"})
+
 
     # ==================== Async Methods ====================
 
@@ -294,6 +297,7 @@ class BrowserbaseTools(Toolkit):
             await self._acleanup()
             raise e
 
+
     async def ascreenshot(self, path: str, full_page: bool = True, connect_url: Optional[str] = None) -> str:
         """Takes a screenshot of the current page asynchronously.
 
@@ -314,6 +318,7 @@ class BrowserbaseTools(Toolkit):
             await self._acleanup()
             raise e
 
+
     async def aget_page_content(self, connect_url: Optional[str] = None) -> str:
         """Gets the HTML content of the current page asynchronously.
 
@@ -329,6 +334,7 @@ class BrowserbaseTools(Toolkit):
         except Exception as e:
             await self._acleanup()
             raise e
+
 
     async def aclose_session(self) -> str:
         """Closes a browser session asynchronously.
@@ -352,3 +358,4 @@ class BrowserbaseTools(Toolkit):
             )
         except Exception as e:
             return json.dumps({"status": "warning", "message": f"Cleanup completed with warning: {str(e)}"})
+

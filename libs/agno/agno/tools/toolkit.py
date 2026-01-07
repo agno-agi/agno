@@ -47,7 +47,11 @@ class Toolkit:
         """
         self.name: str = name
         self.tools: Sequence[Union[Callable[..., Any], Function]] = tools
+        # Primary functions dict - contains sync functions (or async if no sync variant exists)
         self.functions: Dict[str, Function] = OrderedDict()
+        # Async functions dict - contains async variants of tools when both sync and async exist
+        # When resolving tools in async context, async_functions takes precedence over functions
+        self.async_functions: Dict[str, Function] = OrderedDict()
         self.instructions: Optional[str] = instructions
         self.add_instructions: bool = add_instructions
 
@@ -175,7 +179,9 @@ class Toolkit:
             logger.warning(f"Failed to create Function for: {func_name}")
             raise e
 
-    def _register_decorated_tool(self, function: Function, name: Optional[str] = None) -> None:
+    def _register_decorated_tool(
+        self, function: Function, name: Optional[str] = None, async_variant: bool = False
+    ) -> None:
         """Register a Function object from @tool decorator, binding it to self.
 
         When @tool decorator is used on a class method, it creates a Function with an unbound
@@ -185,6 +191,7 @@ class Toolkit:
         Args:
             function: The Function object from @tool decorator
             name: Optional custom name override
+            async_variant: If True, register to async_functions dict instead of functions
         """
         import inspect
 
@@ -207,14 +214,22 @@ class Toolkit:
 
         if params and params[0] == "self":
             # Create a bound method by wrapping the function to include self
-            def make_bound_method(func, instance):
-                def bound(*args, **kwargs):
-                    return func(instance, *args, **kwargs)
+            if async_variant:
+                def make_bound_method(func, instance):
+                    async def bound(*args, **kwargs):
+                        return await func(instance, *args, **kwargs)
 
-                # Preserve function metadata for debugging
-                bound.__name__ = getattr(func, "__name__", tool_name)
-                bound.__doc__ = getattr(func, "__doc__", None)
-                return bound
+                    bound.__name__ = getattr(func, "__name__", tool_name)
+                    bound.__doc__ = getattr(func, "__doc__", None)
+                    return bound
+            else:
+                def make_bound_method(func, instance):
+                    def bound(*args, **kwargs):
+                        return func(instance, *args, **kwargs)
+
+                    bound.__name__ = getattr(func, "__name__", tool_name)
+                    bound.__doc__ = getattr(func, "__doc__", None)
+                    return bound
 
             bound_method = make_bound_method(original_func, self)
         else:
@@ -251,8 +266,89 @@ class Toolkit:
             cache_dir=function.cache_dir if function.cache_dir else self.cache_dir,
             cache_ttl=function.cache_ttl if function.cache_ttl != 3600 else self.cache_ttl,
         )
-        self.functions[f.name] = f
-        log_debug(f"Function: {f.name} registered with {self.name} (from @tool decorator)")
+
+        if async_variant:
+            self.async_functions[f.name] = f
+            log_debug(f"Async function: {f.name} registered with {self.name} (from @tool decorator)")
+        else:
+            self.functions[f.name] = f
+            log_debug(f"Function: {f.name} registered with {self.name} (from @tool decorator)")
+
+    def register_async(self, function: Union[Callable[..., Any], Function], name: Optional[str] = None) -> None:
+        """Register an async variant of a function with the toolkit.
+
+        This allows toolkits to provide both sync and async implementations of the same tool.
+        When running in async context (arun, aprint_response), the async variant will be used.
+
+        Args:
+            function: The async callable or Function object to register
+            name: Optional custom name for the function (must match sync variant's name)
+        """
+        try:
+            # Handle Function objects (from @tool decorator)
+            if isinstance(function, Function):
+                tool_name = name or function.name
+                if self.include_tools is not None and tool_name not in self.include_tools:
+                    return
+                if self.exclude_tools is not None and tool_name in self.exclude_tools:
+                    return
+
+                # Use the same registration logic but store in async_functions
+                self._register_async_decorated_tool(function, name)
+                return
+
+            # Handle regular async callables
+            tool_name = name or function.__name__
+            if self.include_tools is not None and tool_name not in self.include_tools:
+                return
+            if self.exclude_tools is not None and tool_name in self.exclude_tools:
+                return
+
+            f = Function(
+                name=tool_name,
+                entrypoint=function,
+                cache_results=self.cache_results,
+                cache_dir=self.cache_dir,
+                cache_ttl=self.cache_ttl,
+                requires_confirmation=tool_name in self.requires_confirmation_tools,
+                external_execution=tool_name in self.external_execution_required_tools,
+                stop_after_tool_call=tool_name in self.stop_after_tool_call_tools,
+                show_result=tool_name in self.show_result_tools or tool_name in self.stop_after_tool_call_tools,
+            )
+            self.async_functions[f.name] = f
+            log_debug(f"Async function: {f.name} registered with {self.name}")
+        except Exception as e:
+            func_name = self._get_tool_name(function)
+            logger.warning(f"Failed to create async Function for: {func_name}")
+            raise e
+
+    def _register_async_decorated_tool(self, function: Function, name: Optional[str] = None) -> None:
+        """Register an async Function object from @tool decorator, binding it to self.
+
+        Similar to _register_decorated_tool but stores in async_functions dict.
+        """
+        self._register_decorated_tool(function, name, async_variant=True)
+
+    def get_functions(self, async_mode: bool = False) -> Dict[str, Function]:
+        """Get the appropriate functions dict based on execution context.
+
+        When async_mode is True, returns a merged dict where async_functions
+        take precedence over functions. This allows async-optimized implementations
+        to be automatically used in async contexts.
+
+        Args:
+            async_mode: Whether the agent is running in async mode (arun, aprint_response)
+
+        Returns:
+            Dict of function name to Function, with async variants preferred in async mode
+        """
+        if not async_mode or not self.async_functions:
+            return self.functions
+
+        # Merge: start with sync functions, override with async variants
+        merged = OrderedDict(self.functions)
+        merged.update(self.async_functions)
+        return merged
 
     @property
     def requires_connect(self) -> bool:

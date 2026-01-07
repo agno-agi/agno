@@ -18,12 +18,14 @@ from agno.tools.browserbase import BrowserbaseTools
 #   - Optional: Defaults to https://api.browserbase.com if not specified
 #   - Only change this if you're using a custom API endpoint or proxy
 
-# ==================== Sync Usage ====================
-# Use this for regular scripts and synchronous execution
+# ==================== Usage ====================
+# BrowserbaseTools automatically uses the correct implementation based on context:
+# - Sync tools when using agent.run() or agent.print_response()
+# - Async tools when using agent.arun() or agent.aprint_response()
 
 agent = Agent(
     name="Web Automation Assistant",
-    tools=[BrowserbaseTools()],  # Default: sync tools
+    tools=[BrowserbaseTools()],
     instructions=[
         "You are a web automation assistant that can help with:",
         "1. Capturing screenshots of websites",
@@ -34,6 +36,9 @@ agent = Agent(
     ],
     markdown=True,
 )
+
+# ==================== Sync Usage ====================
+# Use this for regular scripts and synchronous execution
 
 # Content Extraction and SS
 # agent.print_response("""
@@ -52,27 +57,14 @@ agent.print_response("""
 
 # ==================== Async Usage ====================
 # Use this for FastAPI, async frameworks, or when using agent.arun()
-# Uncomment the code below to use async tools
+# The same agent instance works for both sync and async - just use arun/aprint_response!
 
 # import asyncio
 #
-# async_agent = Agent(
-#     name="Async Web Automation Assistant",
-#     tools=[BrowserbaseTools(async_tools=True)],  # Enable async tools
-#     instructions=[
-#         "You are a web automation assistant that can help with:",
-#         "1. Capturing screenshots of websites",
-#         "2. Extracting content from web pages",
-#         "3. Monitoring website changes",
-#         "4. Taking visual snapshots of responsive layouts",
-#         "5. Automated web testing and verification",
-#     ],
-#     markdown=True,
-# )
-#
 #
 # async def main():
-#     await async_agent.aprint_response("""
+#     # Same agent, just use async methods - it will automatically use async tools
+#     await agent.aprint_response("""
 #         Visit https://quotes.toscrape.com and:
 #         1. Extract the first 5 quotes and their authors
 #         2. Navigate to page 2

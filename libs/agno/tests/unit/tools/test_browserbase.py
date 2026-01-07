@@ -311,28 +311,36 @@ def mock_async_playwright():
 
 @pytest.fixture
 def async_browserbase_tools(mock_browserbase):
-    """Create a BrowserbaseTools instance with async tools enabled."""
+    """Create a BrowserbaseTools instance for async testing.
+    
+    Note: With the new implementation, the same BrowserbaseTools instance
+    can be used for both sync and async operations. Async tools are automatically
+    selected when using arun()/aprint_response().
+    """
     with patch.dict("os.environ", {"BROWSERBASE_API_KEY": TEST_API_KEY, "BROWSERBASE_PROJECT_ID": TEST_PROJECT_ID}):
-        tools = BrowserbaseTools(async_tools=True)
+        tools = BrowserbaseTools()
         # Directly set the app to our mock to avoid initialization issues
         tools.app = mock_browserbase
         return tools
 
 
-def test_init_with_async_tools():
-    """Test initialization with async_tools=True."""
+def test_async_tools_registered():
+    """Test that both sync and async tools are registered automatically."""
     with patch("agno.tools.browserbase.Browserbase"):
         with patch.dict(
             "os.environ", {"BROWSERBASE_API_KEY": TEST_API_KEY, "BROWSERBASE_PROJECT_ID": TEST_PROJECT_ID}, clear=True
         ):
-            tools = BrowserbaseTools(async_tools=True)
-            assert tools.async_tools is True
-            # Verify async tools are registered
-            tool_names = [tool.__name__ for tool in tools.tools]
-            assert "anavigate_to" in tool_names
-            assert "ascreenshot" in tool_names
-            assert "aget_page_content" in tool_names
-            assert "aclose_session" in tool_names
+            tools = BrowserbaseTools()
+            # Verify sync tools are registered in functions dict
+            assert "navigate_to" in tools.functions
+            assert "screenshot" in tools.functions
+            assert "get_page_content" in tools.functions
+            assert "close_session" in tools.functions
+            # Verify async tools are registered in async_functions dict
+            assert "navigate_to" in tools.async_functions
+            assert "screenshot" in tools.async_functions
+            assert "get_page_content" in tools.async_functions
+            assert "close_session" in tools.async_functions
 
 
 @pytest.mark.asyncio
