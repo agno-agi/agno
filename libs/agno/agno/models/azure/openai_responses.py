@@ -70,7 +70,7 @@ class AzureOpenAIResponses(OpenAIResponses):
         self.azure_deployment = self.azure_deployment or getenv("AZURE_OPENAI_DEPLOYMENT")
 
         # Validate authentication
-        if not (self.api_key or self.azure_ad_token):
+        if not self.api_key or not self.azure_ad_token:
             if not self.api_key:
                 raise ModelAuthenticationError(
                     message="AZURE_OPENAI_API_KEY not set. Please set the AZURE_OPENAI_API_KEY environment variable.",
