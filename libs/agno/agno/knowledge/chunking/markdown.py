@@ -32,7 +32,7 @@ class MarkdownChunking(ChunkingStrategy):
         self.split_on_headings = split_on_headings
 
         # Validate split_on_headings parameter
-        # Note: In Python, isinstance(False, int) is True, so check for bool first
+        # Note: In Python, isinstance(False, int) is True, so we exclude booleans explicitly
         if isinstance(split_on_headings, int) and not isinstance(split_on_headings, bool):
             if not (1 <= split_on_headings <= 6):
                 raise ValueError("split_on_headings must be between 1 and 6 when using integer value")
