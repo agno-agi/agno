@@ -111,7 +111,7 @@ def test_is_valid_header_provider_with_http_transport():
 def test_is_valid_header_provider_ignored_for_stdio():
     """Test that header_provider is ignored for stdio transport."""
     tools = MCPTools(command="npx foo", header_provider=lambda: {})
-    assert not hasattr(tools, "header_provider")
+    assert tools.header_provider is None
 
 
 def test_call_header_provider_no_params():
