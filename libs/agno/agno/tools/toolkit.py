@@ -1,9 +1,10 @@
 from collections import OrderedDict
 from inspect import iscoroutinefunction
-from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_warning, logger
 
 
 class Toolkit:
@@ -342,6 +343,38 @@ class Toolkit:
         Called automatically by the Agent when _requires_connect is True.
         """
         pass
+
+    def _check_path(
+        self, file_name: str, base_dir: Path, restrict_to_base_dir: bool = True
+    ) -> Tuple[bool, Path]:
+        """Check if the file path is within the base directory.
+
+        This method validates that a given file path resolves to a location
+        within the specified base_dir, preventing directory traversal attacks.
+
+        Args:
+            file_name: The file name or relative path to check.
+            base_dir: The base directory to validate against.
+            restrict_to_base_dir: If True, reject paths outside base_dir.
+
+        Returns:
+            Tuple of (is_safe, resolved_path). If not safe, returns base_dir as the path.
+        """
+        file_path = base_dir.joinpath(file_name).resolve()
+
+        if not restrict_to_base_dir:
+            return True, file_path
+
+        if base_dir == file_path:
+            return True, file_path
+
+        try:
+            file_path.relative_to(base_dir)
+        except ValueError:
+            log_error(f"Path escapes base directory: {file_name}")
+            return False, base_dir
+
+        return True, file_path
 
     def __repr__(self):
         return f"<{self.__class__.__name__} name={self.name} functions={list(self.functions.keys())}>"
