@@ -167,3 +167,88 @@ def test_create_team_run_with_new_session(client: httpx.Client, test_user_id: st
     assert "session_id" in data
     assert len(data["session_id"]) > 0
     assert data["session_id"] is not None
+
+
+# =============================================================================
+# Agno A2A Team Tests
+# =============================================================================
+
+
+def test_get_a2a_team_details(client: httpx.Client):
+    """Test GET /teams/research-team-2 returns Agno A2A team details."""
+    response = client.get("/teams/research-team-2")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["id"] == "research-team-2"
+    assert "name" in data
+
+
+def test_create_a2a_team_run_non_streaming(client: httpx.Client, test_user_id: str):
+    """Test POST /teams/research-team-2/runs (non-streaming) for Agno A2A team returns complete response."""
+    session_id = str(uuid.uuid4())
+    response = client.post(
+        "/teams/research-team-2/runs",
+        data={
+            "message": "Say exactly: A2A team test response",
+            "stream": "false",
+            "session_id": session_id,
+            "user_id": test_user_id,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    assert "content" in data
+    assert len(data["content"]) > 0
+    assert "run_id" in data
+    assert "team_id" in data
+    assert data["team_id"] == "research-team-2"
+    assert "session_id" in data
+    assert data["session_id"] == session_id
+    assert "user_id" in data
+    assert data["user_id"] == test_user_id
+
+
+def test_create_a2a_team_run_streaming(client: httpx.Client, test_user_id: str):
+    """Test POST /teams/research-team-2/runs (streaming) for Agno A2A team returns proper SSE stream."""
+    session_id = str(uuid.uuid4())
+    response = client.post(
+        "/teams/research-team-2/runs",
+        data={
+            "message": "Say hello from A2A team",
+            "stream": "true",
+            "session_id": session_id,
+            "user_id": test_user_id,
+        },
+    )
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers.get("content-type", "")
+
+    content = response.text
+    assert "data:" in content
+
+    # Parse and validate SSE events
+    events = parse_sse_events(content)
+    assert len(events) >= 2, "Should have at least TeamRunStarted and TeamRunCompleted events"
+
+    # Validate event structure
+    is_valid, error_msg = validate_team_stream_events(events)
+    assert is_valid, f"Stream validation failed: {error_msg}"
+
+    # Verify the completed event has expected fields
+    last_event = None
+    for event in reversed(events):
+        if "data" in event and isinstance(event["data"], dict):
+            last_event = event
+            break
+
+    assert last_event is not None
+    last_data = last_event["data"]
+    assert "run_id" in last_data
+    assert "session_id" in last_data
+    assert last_data["session_id"] == session_id
+    assert "team_id" in last_data
+    assert last_data["team_id"] == "research-team-2"
+    assert "content" in last_data
+    assert len(last_data["content"]) > 0
