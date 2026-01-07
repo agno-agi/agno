@@ -1,7 +1,7 @@
 import functools
 import runpy
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_info, logger
@@ -21,8 +21,7 @@ class PythonTools(Toolkit):
         restrict_to_base_dir: bool = True,
         **kwargs,
     ):
-        self.base_dir: Path = base_dir or Path.cwd()
-        self.base_dir = self.base_dir.resolve()
+        self.base_dir: Path = (base_dir or Path.cwd()).resolve()
         self.restrict_to_base_dir = restrict_to_base_dir
 
         # Restricted global and local scope
@@ -41,24 +40,6 @@ class PythonTools(Toolkit):
 
         super().__init__(name="python_tools", tools=tools, **kwargs)
 
-    def _check_path(self, file_name: str) -> Tuple[bool, Path]:
-        """Check if the file path is within the base directory.
-
-        :param file_name: The file name or relative path to check.
-        :return: Tuple of (is_safe, resolved_path). If not safe, returns base_dir as the path.
-        """
-        file_path = self.base_dir.joinpath(file_name).resolve()
-        if not self.restrict_to_base_dir:
-            return True, file_path
-        if self.base_dir == file_path:
-            return True, file_path
-        try:
-            file_path.relative_to(self.base_dir)
-        except ValueError:
-            log_error(f"Path escapes base directory: {file_name}")
-            return False, self.base_dir
-        return True, file_path
-
     def save_to_file_and_run(
         self, file_name: str, code: str, variable_to_return: Optional[str] = None, overwrite: bool = True
     ) -> str:
@@ -76,7 +57,7 @@ class PythonTools(Toolkit):
         """
         try:
             warn()
-            safe, file_path = self._check_path(file_name)
+            safe, file_path = self._check_path(file_name, self.base_dir, self.restrict_to_base_dir)
             if not safe:
                 return f"Error: Path '{file_name}' is outside the allowed base directory"
             log_debug(f"Saving code to {file_path}")
@@ -112,7 +93,7 @@ class PythonTools(Toolkit):
         """
         try:
             warn()
-            safe, file_path = self._check_path(file_name)
+            safe, file_path = self._check_path(file_name, self.base_dir, self.restrict_to_base_dir)
             if not safe:
                 return f"Error: Path '{file_name}' is outside the allowed base directory"
             log_info(f"Running {file_path}")
@@ -137,7 +118,7 @@ class PythonTools(Toolkit):
         """
         try:
             log_info(f"Reading file: {file_name}")
-            safe, file_path = self._check_path(file_name)
+            safe, file_path = self._check_path(file_name, self.base_dir, self.restrict_to_base_dir)
             if not safe:
                 log_error(f"Attempted to read file outside base directory: {file_name}")
                 return "Error reading file: path outside allowed directory"

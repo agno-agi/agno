@@ -168,15 +168,17 @@ def test_check_path_blocks_parent_traversal(temp_dir):
     python_tools = PythonTools(base_dir=temp_dir)
 
     # Attempting to escape via ..
-    safe, path = python_tools._check_path("../escape.py")
+    safe, path = python_tools._check_path("../escape.py", python_tools.base_dir, python_tools.restrict_to_base_dir)
     assert not safe
 
     # Multiple levels of escape
-    safe, path = python_tools._check_path("../../escape.py")
+    safe, path = python_tools._check_path("../../escape.py", python_tools.base_dir, python_tools.restrict_to_base_dir)
     assert not safe
 
     # Sneaky escape via subdir
-    safe, path = python_tools._check_path("subdir/../../escape.py")
+    safe, path = python_tools._check_path(
+        "subdir/../../escape.py", python_tools.base_dir, python_tools.restrict_to_base_dir
+    )
     assert not safe
 
 
