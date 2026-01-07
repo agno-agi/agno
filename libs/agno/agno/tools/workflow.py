@@ -28,7 +28,7 @@ class WorkflowTools(Toolkit):
         add_few_shot: bool = False,
         few_shot_examples: Optional[str] = None,
         async_mode: bool = False,
-        stream: bool = False,
+        stream: bool = True,
         **kwargs,
     ):
         # Add instructions for using this toolkit
