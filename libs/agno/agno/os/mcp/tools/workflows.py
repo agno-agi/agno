@@ -8,6 +8,7 @@ from agno.os.mcp.auth import filter_workflows_by_access, is_authorization_enable
 from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import WorkflowSummaryResponse
 from agno.os.utils import get_workflow_by_id
+from agno.workflow.remote import RemoteWorkflow
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -50,7 +51,10 @@ def register_workflow_tools(mcp: FastMCP, os: "AgentOS") -> None:
         if workflow is None:
             raise Exception(f"Workflow {workflow_id} not found")
 
-        workflow_response = await WorkflowResponse.from_workflow(workflow)
+        if isinstance(workflow, RemoteWorkflow):
+            workflow_response = await workflow.get_workflow_config()
+        else:
+            workflow_response = await WorkflowResponse.from_workflow(workflow)
         return workflow_response.model_dump(exclude_none=True)
 
     @mcp.tool(
@@ -66,7 +70,13 @@ def register_workflow_tools(mcp: FastMCP, os: "AgentOS") -> None:
         if workflow is None:
             raise Exception(f"Workflow {workflow_id} not found")
 
-        if not workflow.cancel_run(run_id=run_id):
+        # RemoteWorkflow.cancel_run is async, Workflow.cancel_run is sync
+        if isinstance(workflow, RemoteWorkflow):
+            cancelled = await workflow.cancel_run(run_id=run_id)
+        else:
+            cancelled = workflow.cancel_run(run_id=run_id)
+
+        if not cancelled:
             raise Exception("Failed to cancel workflow run")
 
         return {"message": f"Workflow run {run_id} cancelled successfully"}

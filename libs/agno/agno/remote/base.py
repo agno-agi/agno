@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from agno.os.routers.memory.schemas import OptimizeMemoriesResponse, UserMemorySchema, UserStatsSchema
     from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
     from agno.os.routers.traces.schemas import TraceDetail, TraceNode, TraceSessionStats, TraceSummary
+    from agno.tracing.schemas import Span
     from agno.os.schema import (
         AgentSessionDetailSchema,
         ConfigResponse,
@@ -212,6 +213,114 @@ class RemoteDb:
 
     async def get_trace_session_stats(self, **kwargs: Any) -> "PaginatedResponse[TraceSessionStats]":
         return await self.client.get_trace_session_stats(**kwargs)
+
+    async def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> List["Span"]:
+        """Get spans for a trace by fetching TraceDetail and flattening the tree.
+
+        This method fetches the TraceDetail from the remote API and extracts spans
+        from the hierarchical tree structure, converting TraceNode objects to Span objects.
+
+        Args:
+            trace_id: The trace ID to get spans for (required)
+            parent_span_id: Optional parent span ID to filter by (not fully supported for remote)
+            **kwargs: Additional arguments passed to get_trace
+
+        Returns:
+            List of Span objects
+        """
+        from datetime import datetime, timezone
+
+        from agno.tracing.schemas import Span
+
+        if not trace_id:
+            return []
+
+        # Fetch the TraceDetail which contains the hierarchical tree
+        trace_detail = await self.get_trace(trace_id=trace_id, **kwargs)
+
+        # Handle case where we got a TraceNode instead of TraceDetail (when span_id was provided)
+        if not hasattr(trace_detail, "tree"):
+            return []
+
+        def flatten_tree(
+            nodes: List["TraceNode"],
+            trace_id: str,
+            parent_id: Optional[str] = None,
+        ) -> List[Span]:
+            """Recursively flatten the tree of TraceNode into a list of Span objects."""
+            spans = []
+            for node in nodes:
+                # Build attributes dict from TraceNode fields
+                attributes: Dict[str, Any] = {}
+                if node.input:
+                    attributes["input.value"] = node.input
+                if node.output:
+                    attributes["output.value"] = node.output
+                if node.metadata:
+                    for key, value in node.metadata.items():
+                        attributes[key] = value
+                # Map type back to openinference span kind
+                span_kind_map = {
+                    "AGENT": "AGENT",
+                    "TEAM": "AGENT",  # Teams use AGENT kind with team.id attribute
+                    "WORKFLOW": "CHAIN",
+                    "LLM": "LLM",
+                    "TOOL": "TOOL",
+                }
+                attributes["openinference.span.kind"] = span_kind_map.get(node.type, node.type)
+
+                # Parse duration to get duration_ms
+                duration_ms = 0
+                if node.duration:
+                    duration_str = node.duration.lower()
+                    if "ms" in duration_str:
+                        try:
+                            duration_ms = int(float(duration_str.replace("ms", "").strip()))
+                        except ValueError:
+                            pass
+                    elif "s" in duration_str:
+                        try:
+                            duration_ms = int(float(duration_str.replace("s", "").strip()) * 1000)
+                        except ValueError:
+                            pass
+
+                # Create Span object
+                span = Span(
+                    span_id=node.id,
+                    trace_id=trace_id,
+                    parent_span_id=parent_id,
+                    name=node.name,
+                    span_kind=span_kind_map.get(node.type, "INTERNAL"),
+                    status_code=node.status,
+                    status_message=node.error,
+                    start_time=node.start_time if isinstance(node.start_time, datetime) else datetime.fromisoformat(str(node.start_time).replace("Z", "+00:00")),
+                    end_time=node.end_time if isinstance(node.end_time, datetime) else datetime.fromisoformat(str(node.end_time).replace("Z", "+00:00")),
+                    duration_ms=duration_ms,
+                    attributes=attributes,
+                    created_at=datetime.now(timezone.utc),
+                )
+                spans.append(span)
+
+                # Recursively process child spans
+                if node.spans:
+                    child_spans = flatten_tree(node.spans, trace_id, parent_id=node.id)
+                    spans.extend(child_spans)
+
+            return spans
+
+        # Flatten the tree
+        spans = flatten_tree(trace_detail.tree, trace_id)
+
+        # Filter by parent_span_id if specified
+        if parent_span_id is not None:
+            spans = [s for s in spans if s.parent_span_id == parent_span_id]
+
+        return spans
 
     # EVALS
     async def get_eval_runs(self, **kwargs: Any) -> "PaginatedResponse[EvalSchema]":

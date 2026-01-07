@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, List, Optional
 
 from fastmcp import Context, FastMCP
 
+from agno.agent.remote import RemoteAgent
 from agno.os.mcp.auth import (
     filter_agents_by_access,
     get_user_id_from_context,
@@ -38,7 +39,10 @@ def register_agent_tools(mcp: FastMCP, os: "AgentOS") -> None:
 
         agents = []
         for agent in accessible_agents:
-            agent_response = await AgentResponse.from_agent(agent=agent)
+            if isinstance(agent, RemoteAgent):
+                agent_response = await agent.get_agent_config()
+            else:
+                agent_response = await AgentResponse.from_agent(agent=agent)
             agents.append(agent_response.model_dump(exclude_none=True))
 
         return agents
@@ -56,7 +60,10 @@ def register_agent_tools(mcp: FastMCP, os: "AgentOS") -> None:
         if agent is None:
             raise Exception(f"Agent {agent_id} not found")
 
-        agent_response = await AgentResponse.from_agent(agent)
+        if isinstance(agent, RemoteAgent):
+            agent_response = await agent.get_agent_config()
+        else:
+            agent_response = await AgentResponse.from_agent(agent)
         return agent_response.model_dump(exclude_none=True)
 
     @mcp.tool(
@@ -72,7 +79,13 @@ def register_agent_tools(mcp: FastMCP, os: "AgentOS") -> None:
         if agent is None:
             raise Exception(f"Agent {agent_id} not found")
 
-        if not agent.cancel_run(run_id=run_id):
+        # RemoteAgent.cancel_run is async, Agent.cancel_run is sync
+        if isinstance(agent, RemoteAgent):
+            cancelled = await agent.cancel_run(run_id=run_id)
+        else:
+            cancelled = agent.cancel_run(run_id=run_id)
+
+        if not cancelled:
             raise Exception("Failed to cancel run")
 
         return {"message": f"Run {run_id} cancelled successfully"}

@@ -1,12 +1,13 @@
 """Authentication utilities for MCP tools."""
 
-from typing import TYPE_CHECKING, List, Optional, Set
+from typing import TYPE_CHECKING, List, Optional, Set, Union
 
 from fastmcp import Context
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
-    from agno.team.team import Team
+    from agno.team import RemoteTeam, Team
+    from agno.workflow.remote import RemoteWorkflow
     from agno.workflow.workflow import Workflow
 
 
@@ -123,7 +124,7 @@ def filter_agents_by_access(ctx: Context, agents: List["Agent"]) -> List["Agent"
     return [a for a in agents if a.id in accessible_ids]
 
 
-def filter_teams_by_access(ctx: Context, teams: List["Team"]) -> List["Team"]:
+def filter_teams_by_access(ctx: Context, teams: List[Union["Team", "RemoteTeam"]]) -> List[Union["Team", "RemoteTeam"]]:
     """Filter a list of teams based on user's access permissions.
 
     Args:
@@ -146,7 +147,9 @@ def filter_teams_by_access(ctx: Context, teams: List["Team"]) -> List["Team"]:
     return [t for t in teams if t.id in accessible_ids]
 
 
-def filter_workflows_by_access(ctx: Context, workflows: List["Workflow"]) -> List["Workflow"]:
+def filter_workflows_by_access(
+    ctx: Context, workflows: List[Union["Workflow", "RemoteWorkflow"]]
+) -> List[Union["Workflow", "RemoteWorkflow"]]:
     """Filter a list of workflows based on user's access permissions.
 
     Args:

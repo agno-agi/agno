@@ -7,6 +7,7 @@ from fastmcp import Context, FastMCP
 from agno.os.mcp.auth import filter_teams_by_access, is_authorization_enabled, require_resource_access
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.utils import get_team_by_id
+from agno.team.remote import RemoteTeam
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -33,7 +34,10 @@ def register_team_tools(mcp: FastMCP, os: "AgentOS") -> None:
 
         teams = []
         for team in accessible_teams:
-            team_response = await TeamResponse.from_team(team=team)
+            if isinstance(team, RemoteTeam):
+                team_response = await team.get_team_config()
+            else:
+                team_response = await TeamResponse.from_team(team=team)
             teams.append(team_response.model_dump(exclude_none=True))
 
         return teams
@@ -51,7 +55,10 @@ def register_team_tools(mcp: FastMCP, os: "AgentOS") -> None:
         if team is None:
             raise Exception(f"Team {team_id} not found")
 
-        team_response = await TeamResponse.from_team(team)
+        if isinstance(team, RemoteTeam):
+            team_response = await team.get_team_config()
+        else:
+            team_response = await TeamResponse.from_team(team)
         return team_response.model_dump(exclude_none=True)
 
     @mcp.tool(
@@ -67,7 +74,13 @@ def register_team_tools(mcp: FastMCP, os: "AgentOS") -> None:
         if team is None:
             raise Exception(f"Team {team_id} not found")
 
-        if not team.cancel_run(run_id=run_id):
+        # RemoteTeam.cancel_run is async, Team.cancel_run is sync
+        if isinstance(team, RemoteTeam):
+            cancelled = await team.cancel_run(run_id=run_id)
+        else:
+            cancelled = team.cancel_run(run_id=run_id)
+
+        if not cancelled:
             raise Exception("Failed to cancel team run")
 
         return {"message": f"Team run {run_id} cancelled successfully"}
