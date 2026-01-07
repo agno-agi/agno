@@ -1,20 +1,20 @@
 from textwrap import dedent
-
+import asyncio
 from agno.db.postgres import PostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.os import AgentOS
 from agno.vectordb.pgvector import PgVector, SearchType
-
+from agno.db.postgres import AsyncPostgresDb
 # ************* Setup Knowledge Databases *************
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-documents_db = PostgresDb(
-    db_url,
+documents_db = AsyncPostgresDb(
+    db_url=db_url,
     id="agno_knowledge_db",
     knowledge_table="agno_knowledge_contents",
 )
-faq_db = PostgresDb(
-    db_url,
+faq_db = AsyncPostgresDb(
+    db_url=db_url,
     id="agno_faq_db",
     knowledge_table="agno_faq_contents",
 )
@@ -50,10 +50,10 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    documents_knowledge.add_content(
+    asyncio.run(documents_knowledge.add_content_async(
         name="Agno Docs", url="https://docs.agno.com/llms-full.txt", skip_if_exists=True
-    )
-    faq_knowledge.add_content(
+    ))
+    asyncio.run(faq_knowledge.add_content_async(
         name="Agno FAQ",
         text_content=dedent("""
             What is Agno?
@@ -62,7 +62,7 @@ if __name__ == "__main__":
             human in the loop and MCP support.
         """),
         skip_if_exists=True,
-    )
+    ))
     # Run your AgentOS
     # You can test your AgentOS at: http://localhost:7777/
     agent_os.serve(app="agentos_knowledge:app", reload=True)
