@@ -44,7 +44,7 @@ knowledge = Knowledge(
     description="A knowledge base for the gateway server",
     vector_db=PgVector(
         db_url=os.getenv("DATABASE_URL", "postgresql+psycopg://ai:ai@postgres:5432/ai"),
-        table_name="system_test_knowledge",
+        table_name="gateway_knowledge",
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
     contents_db=db,
