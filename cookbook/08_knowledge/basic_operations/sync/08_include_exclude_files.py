@@ -17,7 +17,7 @@ knowledge = Knowledge(
 )
 
 # Add from local file to the knowledge base
-knowledge.add_content(
+knowledge.insert(
     name="CV",
     path="cookbook/08_knowledge/testing_resources",
     metadata={"user_tag": "Engineering Candidates"},

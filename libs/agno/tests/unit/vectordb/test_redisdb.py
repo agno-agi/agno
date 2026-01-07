@@ -164,7 +164,7 @@ def create_knowledge(import_knowledge, redis_db):
 def test_knowlwedge_add_content(create_knowledge):
     knowledge = create_knowledge
     try:
-        result = knowledge.add_content(
+        result = knowledge.insert(
             name="Recipes",
             url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
             metadata={"doc_type": "recipe_book"},

@@ -1,7 +1,8 @@
 import json
 import logging
 import math
-from typing import Any, Dict, List, Optional, Union
+import time
+from typing import List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, Request, UploadFile
 
@@ -9,7 +10,6 @@ from agno.db.base import AsyncBaseDb
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader import ReaderFactory
-from agno.knowledge.reader.base import Reader
 from agno.knowledge.utils import get_all_chunkers_info, get_all_readers_info, get_content_types_to_readers_mapping
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.routers.knowledge.schemas import (
@@ -355,8 +355,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     )
     async def get_content(
         request: Request,
-        limit: Optional[int] = Query(default=20, description="Number of content entries to return", ge=1),
-        page: Optional[int] = Query(default=1, description="Page number", ge=0),
+        limit: Optional[int] = Query(default=20, description="Number of content entries to return"),
+        page: Optional[int] = Query(default=1, description="Page number"),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
@@ -671,7 +671,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         # Use max_results if specified, otherwise use a higher limit for search then paginate
         search_limit = request.max_results
 
-        results = await knowledge.async_search(
+        results = await knowledge.asearch(
             query=request.query, max_results=search_limit, filters=request.filters, search_type=request.search_type
         )
 
@@ -966,6 +966,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         request: Request,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> ConfigResponseSchema:
+        start_time = time.perf_counter()
+
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
 
         if isinstance(knowledge, RemoteKnowledge):
@@ -973,10 +975,10 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await knowledge.get_config(headers=headers)
 
-        # Get factory readers info (including custom readers from this knowledge instance)
+        # Get all readers info (custom readers first, then factory readers)
+        # Custom readers take precedence over factory readers with the same ID
         readers_info = get_all_readers_info(knowledge)
         reader_schemas = {}
-        # Add factory readers
         for reader_info in readers_info:
             reader_schemas[reader_info["id"]] = ReaderSchema(
                 id=reader_info["id"],
@@ -984,32 +986,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 description=reader_info.get("description"),
                 chunkers=reader_info.get("chunking_strategies", []),
             )
-
-        # Add custom readers from knowledge.readers
-        readers_result: Any = knowledge.get_readers() or {}
-        # Ensure readers_dict is a dictionary (defensive check)
-        if not isinstance(readers_result, dict):
-            readers_dict: Dict[str, Reader] = {}
-        else:
-            readers_dict = readers_result
-        if readers_dict:
-            for reader_id, reader in readers_dict.items():
-                # Get chunking strategies from the reader
-                chunking_strategies = []
-                try:
-                    strategies = reader.get_supported_chunking_strategies()
-                    chunking_strategies = [strategy.value for strategy in strategies]
-                except Exception:
-                    chunking_strategies = []
-
-                # Check if this reader ID already exists in factory readers
-                if reader_id not in reader_schemas:
-                    reader_schemas[reader_id] = ReaderSchema(
-                        id=reader_id,
-                        name=getattr(reader, "name", reader.__class__.__name__),
-                        description=getattr(reader, "description", f"Custom {reader.__class__.__name__}"),
-                        chunkers=chunking_strategies,
-                    )
 
         # Get content types to readers mapping (including custom readers from this knowledge instance)
         types_of_readers = get_content_types_to_readers_mapping(knowledge)
@@ -1027,6 +1003,13 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                     metadata=chunker_info.get("metadata", {}),
                 )
 
+        # Filter each reader's chunkers to only include available chunkers
+        # (some chunkers may have missing dependencies and won't be in chunkers_dict)
+        available_chunker_keys = set(chunkers_dict.keys())
+        for reader_schema in reader_schemas.values():
+            if reader_schema.chunkers:
+                reader_schema.chunkers = [c for c in reader_schema.chunkers if c in available_chunker_keys]
+
         vector_dbs = []
         if knowledge.vector_db:
             search_types = knowledge.vector_db.get_supported_search_types()
@@ -1040,7 +1023,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                     search_types=search_types,
                 )
             )
-        filters = await knowledge.async_get_valid_filters()
+        filters = await knowledge.aget_valid_filters()
+
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        log_info(f"get_config completed in {elapsed_ms:.2f}ms")
+
         return ConfigResponseSchema(
             readers=reader_schemas,
             vector_dbs=vector_dbs,
@@ -1091,7 +1078,7 @@ async def process_content(
             log_debug(f"Set chunking strategy: {chunker}")
 
         log_debug(f"Using reader: {content.reader.__class__.__name__}")
-        await knowledge._load_content_async(content, upsert=False, skip_if_exists=True)
+        await knowledge._aload_content(content, upsert=False, skip_if_exists=True)
         log_info(f"Content {content.id} processed successfully")
     except Exception as e:
         log_info(f"Error processing content: {e}")

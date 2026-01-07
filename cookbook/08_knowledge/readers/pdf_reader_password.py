@@ -18,7 +18,7 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content(
+knowledge.insert(
     path="ThaiRecipes_protected.pdf",
     auth=ContentAuth(password="ThaiRecipes"),
 )

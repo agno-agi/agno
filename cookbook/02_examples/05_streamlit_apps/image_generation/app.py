@@ -112,7 +112,7 @@ def main():
                 tmp_file.write(uploaded_file.read())
                 tmp_path = tmp_file.name
 
-            recipe_image_agent.knowledge.add_content(
+            recipe_image_agent.knowledge.insert(
                 name=f"Uploaded Recipe: {uploaded_file.name}",
                 path=tmp_path,
                 description=f"Custom recipe PDF: {uploaded_file.name}",

@@ -22,7 +22,7 @@ def setup_vector_db():
 def test_firecrawl_knowledge_base_directory(setup_vector_db):
     """Test loading multiple URLs into knowledge base"""
     kb = Knowledge(vector_db=setup_vector_db)
-    kb.add_contents(
+    kb.insert_many(
         urls=["https://docs.agno.com/knowledge/introduction", "https://docs.agno.com/knowledge/pdf"],
         reader=FirecrawlReader(),
     )
@@ -46,7 +46,7 @@ def test_firecrawl_knowledge_base_directory(setup_vector_db):
 def test_firecrawl_knowledge_base_single_url(setup_vector_db):
     """Test loading a single URL into knowledge base"""
     kb = Knowledge(vector_db=setup_vector_db)
-    kb.add_contents(
+    kb.insert_many(
         urls=["https://docs.agno.com/knowledge/pdf"],
         reader=FirecrawlReader(),
     )
@@ -71,7 +71,7 @@ def test_firecrawl_knowledge_base_single_url(setup_vector_db):
 async def test_firecrawl_knowledge_base_async_directory(setup_vector_db):
     """Test async loading of multiple URLs into knowledge base"""
     kb = Knowledge(vector_db=setup_vector_db)
-    await kb.add_contents_async(
+    await kb.ainsert_many(
         urls=["https://docs.agno.com/knowledge/introduction", "https://docs.agno.com/knowledge/pdf"],
         reader=FirecrawlReader(),
     )
@@ -99,7 +99,7 @@ async def test_firecrawl_knowledge_base_async_directory(setup_vector_db):
 async def test_firecrawl_knowledge_base_async_single_url(setup_vector_db):
     """Test async loading of a single URL into knowledge base"""
     kb = Knowledge(vector_db=setup_vector_db)
-    await kb.add_contents_async(
+    await kb.ainsert_many(
         urls=["https://docs.agno.com/knowledge/introduction"],
         reader=FirecrawlReader(),
     )
@@ -123,7 +123,7 @@ async def test_firecrawl_knowledge_base_async_single_url(setup_vector_db):
 def test_firecrawl_knowledge_base_empty_urls(setup_vector_db):
     """Test handling of empty URL list"""
     kb = Knowledge(vector_db=setup_vector_db)
-    kb.add_contents(
+    kb.insert_many(
         urls=[],
         reader=FirecrawlReader(),
     )

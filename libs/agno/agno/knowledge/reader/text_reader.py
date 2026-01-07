@@ -18,7 +18,7 @@ class TextReader(Reader):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Text readers."""
         return [
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
@@ -29,7 +29,7 @@ class TextReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.TXT]
 
     def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:

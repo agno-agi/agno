@@ -24,7 +24,7 @@ agent = Agent(
 
 if __name__ == "__main__":
     # Comment out after first run
-    asyncio.run(knowledge.add_content_async(path=Path("data/csv")))
+    asyncio.run(knowledge.ainsert(path=Path("data/csv")))
 
     # Create and use the agent
     asyncio.run(agent.aprint_response("What is the csv file about", markdown=True))

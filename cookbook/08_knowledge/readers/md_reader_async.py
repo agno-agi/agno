@@ -23,7 +23,7 @@ agent = Agent(
 
 if __name__ == "__main__":
     asyncio.run(
-        knowledge.add_content_async(
+        knowledge.ainsert(
             url="https://github.com/agno-agi/agno/blob/main/README.md",
             reader=MarkdownReader(),
         )

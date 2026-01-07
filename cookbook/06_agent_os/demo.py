@@ -17,6 +17,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.mcp import MCPTools
 from agno.vectordb.pgvector import PgVector
 
+# from agno.knowledge.reader.pdf_reader import PDFReader
 # Database connection
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -28,10 +29,17 @@ vector_db = PgVector(
     db_url=db_url,
     table_name="agno_docs",
 )
+
+# MyCustomPDFReader = PDFReader(
+#     name="My Custom PDF Reader",
+#     description="A custom PDF reader",
+#     chunk_size=1000,
+# )
 knowledge = Knowledge(
     name="Agno Docs",
     contents_db=db,
     vector_db=vector_db,
+    # readers=[MyCustomPDFReader],
 )
 
 # Create your agents

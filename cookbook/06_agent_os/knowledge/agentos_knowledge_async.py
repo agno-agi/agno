@@ -52,14 +52,14 @@ app = agent_os.get_app()
 
 if __name__ == "__main__":
     asyncio.run(
-        documents_knowledge.add_content_async(
+        documents_knowledge.ainsert(
             name="Agno Docs",
             url="https://docs.agno.com/llms-full.txt",
             skip_if_exists=True,
         )
     )
     asyncio.run(
-        faq_knowledge.add_content_async(
+        faq_knowledge.ainsert(
             name="Agno FAQ",
             text_content=dedent("""
             What is Agno?
@@ -72,4 +72,4 @@ if __name__ == "__main__":
     )
     # Run your AgentOS
     # You can test your AgentOS at: http://localhost:7777/
-    agent_os.serve(app="agentos_knowledge:app", reload=True)
+    agent_os.serve(app="agentos_knowledge_async:app", reload=True)

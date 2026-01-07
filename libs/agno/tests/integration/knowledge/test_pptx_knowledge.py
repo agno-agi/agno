@@ -32,12 +32,12 @@ def prepare_knowledge_base(setup_vector_db):
     kb = Knowledge(vector_db=setup_vector_db)
 
     # Load documents with different user IDs and metadata
-    kb.add_content(
+    kb.insert(
         path=get_filtered_data_dir() / "presentation_1.pptx",
         metadata={"user_id": "alice_smith", "document_type": "presentation", "topic": "introduction"},
     )
 
-    kb.add_content(
+    kb.insert(
         path=get_filtered_data_dir() / "presentation_2.pptx",
         metadata={"user_id": "bob_jones", "document_type": "presentation", "topic": "advanced"},
     )
@@ -51,12 +51,12 @@ async def aprepare_knowledge_base(setup_vector_db):
     kb = Knowledge(vector_db=setup_vector_db)
 
     # Load contents with different user IDs and metadata
-    await kb.add_content_async(
+    await kb.ainsert(
         path=get_filtered_data_dir() / "presentation_1.pptx",
         metadata={"user_id": "alice_smith", "document_type": "presentation", "topic": "introduction"},
     )
 
-    await kb.add_content_async(
+    await kb.ainsert(
         path=get_filtered_data_dir() / "presentation_2.pptx",
         metadata={"user_id": "bob_jones", "document_type": "presentation", "topic": "advanced"},
     )
@@ -69,7 +69,7 @@ def test_pptx_knowledge_base_directory(setup_vector_db):
     pptx_dir = get_test_data_dir()
 
     kb = Knowledge(vector_db=setup_vector_db)
-    kb.add_content(
+    kb.insert(
         path=pptx_dir,
     )
 
@@ -95,7 +95,7 @@ async def test_pptx_knowledge_base_async_directory(setup_vector_db):
     pptx_dir = get_test_data_dir()
 
     kb = Knowledge(vector_db=setup_vector_db)
-    await kb.add_content_async(
+    await kb.ainsert(
         path=pptx_dir,
     )
 
@@ -123,11 +123,11 @@ def test_text_knowledge_base_with_metadata_path(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "presentation_1.pptx"),
         metadata={"user_id": "alice_smith", "document_type": "presentation", "topic": "introduction"},
     )
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "presentation_2.pptx"),
         metadata={"user_id": "bob_jones", "document_type": "presentation", "topic": "advanced"},
     )
@@ -147,11 +147,11 @@ def test_pptx_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "presentation_1.pptx"),
         metadata={"user_id": "alice_smith", "document_type": "presentation", "topic": "introduction"},
     )
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "presentation_2.pptx"),
         metadata={"user_id": "bob_jones", "document_type": "presentation", "topic": "advanced"},
     )

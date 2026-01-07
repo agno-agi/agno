@@ -61,7 +61,7 @@ def save_learning(
 
     logger.info(f"Saving learning: {payload['title']}")
 
-    agent_knowledge.add_content(
+    agent_knowledge.insert(
         name=payload["title"],
         text_content=json.dumps(payload, ensure_ascii=False),
         reader=TextReader(),

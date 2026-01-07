@@ -29,7 +29,7 @@ knowledge_all_headings = Knowledge(
 )
 
 asyncio.run(
-    knowledge_all_headings.add_content_async(
+    knowledge_all_headings.ainsert(
         path="cookbook/08_knowledge/testing_resources/coffee.md",
         reader=MarkdownReader(
             name="Split All Headings",
@@ -61,7 +61,7 @@ knowledge_h1_h2 = Knowledge(
 )
 
 asyncio.run(
-    knowledge_h1_h2.add_content_async(
+    knowledge_h1_h2.ainsert(
         path="cookbook/08_knowledge/testing_resources/coffee.md",
         reader=MarkdownReader(
             name="Split H1 and H2",
@@ -94,7 +94,7 @@ knowledge_h1_only = Knowledge(
 )
 
 asyncio.run(
-    knowledge_h1_only.add_content_async(
+    knowledge_h1_only.ainsert(
         path="cookbook/08_knowledge/testing_resources/coffee.md",
         reader=MarkdownReader(
             name="Split H1 Only",
@@ -126,7 +126,7 @@ knowledge_size_based = Knowledge(
 )
 
 asyncio.run(
-    knowledge_size_based.add_content_async(
+    knowledge_size_based.ainsert(
         path="cookbook/08_knowledge/testing_resources/coffee.md",
         reader=MarkdownReader(
             name="Size Based Chunking",
@@ -162,7 +162,7 @@ knowledge_balanced = Knowledge(
 )
 
 asyncio.run(
-    knowledge_balanced.add_content_async(
+    knowledge_balanced.ainsert(
         path="cookbook/08_knowledge/testing_resources/coffee.md",
         reader=MarkdownReader(
             name="Balanced Chunking",

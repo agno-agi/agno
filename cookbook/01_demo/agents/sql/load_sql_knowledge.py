@@ -14,5 +14,5 @@ knowledge_dir = cwd.joinpath("knowledge")
 # ============================================================================
 if __name__ == "__main__":
     logger.info(f"Loading SQL Agent Knowledge from {knowledge_dir}")
-    sql_agent_knowledge.add_content(path=str(knowledge_dir))
+    sql_agent_knowledge.insert(path=str(knowledge_dir))
     logger.info("SQL Agent Knowledge loaded.")

@@ -48,7 +48,7 @@ async def main():
     # Note: Comment out after first run to avoid re-adding the same content
     for url in urls_to_extract:
         print(f"\nExtracting content from: {url}")
-        await knowledge.add_content_async(
+        await knowledge.ainsert(
             url,
             reader=TavilyReader(
                 extract_format="markdown",
