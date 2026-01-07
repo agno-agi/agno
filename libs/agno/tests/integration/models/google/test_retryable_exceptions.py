@@ -5,10 +5,11 @@ from unittest.mock import Mock, patch
 import pytest
 
 from agno.agent import Agent
-from agno.exceptions import ModelProviderError
 from agno.models.google import Gemini
 from agno.models.google.gemini import RetryableModelProviderError
 from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE
+from agno.run.agent import RunEvent
+from agno.run.base import RunStatus
 
 
 @pytest.fixture
@@ -274,8 +275,6 @@ def test_guidance_message_is_not_in_final_response(model):
 
 
 # Tests for retry_with_guidance_limit
-
-
 def test_retry_with_guidance_limit_zero_raises_immediately(model):
     """Test that retry_with_guidance_limit=0 raises ModelProviderError immediately without retrying."""
     model.retry_with_guidance_limit = 0
@@ -294,14 +293,14 @@ def test_retry_with_guidance_limit_zero_raises_immediately(model):
         return create_mock_response(finish_reason="MALFORMED_FUNCTION_CALL", content="")
 
     with patch.object(model.get_client().models, "generate_content", side_effect=mock_generate_content):
-        with pytest.raises(ModelProviderError) as exc_info:
-            agent.run("Test message")
+        response = agent.run("Test message")
+        assert response.status == RunStatus.error
+        # Error message should include the error_code
+        assert "Max retries with guidance reached" in response.content
+        assert "MALFORMED_FUNCTION_CALL" in response.content
 
     # Should only be called once (no retries)
     assert call_count["count"] == 1
-    # Error message should include the error_code
-    assert "Max retries with guidance reached" in str(exc_info.value)
-    assert "MALFORMED_FUNCTION_CALL" in str(exc_info.value)
 
 
 def test_retry_with_guidance_limit_one_retries_once_then_raises(model):
@@ -322,13 +321,13 @@ def test_retry_with_guidance_limit_one_retries_once_then_raises(model):
         return create_mock_response(finish_reason="MALFORMED_FUNCTION_CALL", content="")
 
     with patch.object(model.get_client().models, "generate_content", side_effect=mock_generate_content):
-        with pytest.raises(ModelProviderError) as exc_info:
-            agent.run("Test message")
+        response = agent.run("Test message")
+        assert response.status == RunStatus.error
+        assert "Max retries with guidance reached" in response.content
+        assert "MALFORMED_FUNCTION_CALL" in response.content
 
     # Should be called twice (initial + 1 retry)
     assert call_count["count"] == 2
-    assert "Max retries with guidance reached" in str(exc_info.value)
-    assert "MALFORMED_FUNCTION_CALL" in str(exc_info.value)
 
 
 def test_retry_with_guidance_limit_two_retries_twice_then_raises(model):
@@ -349,13 +348,13 @@ def test_retry_with_guidance_limit_two_retries_twice_then_raises(model):
         return create_mock_response(finish_reason="MALFORMED_FUNCTION_CALL", content="")
 
     with patch.object(model.get_client().models, "generate_content", side_effect=mock_generate_content):
-        with pytest.raises(ModelProviderError) as exc_info:
-            agent.run("Test message")
+        response = agent.run("Test message")
+        assert response.status == RunStatus.error
 
     # Should be called three times (initial + 2 retries)
     assert call_count["count"] == 3
-    assert "Max retries with guidance reached" in str(exc_info.value)
-    assert "MALFORMED_FUNCTION_CALL" in str(exc_info.value)
+    assert "Max retries with guidance reached" in response.content
+    assert "MALFORMED_FUNCTION_CALL" in response.content
 
 
 @pytest.mark.asyncio
@@ -377,12 +376,12 @@ async def test_retry_with_guidance_limit_async_raises_after_limit(model):
         return create_mock_response(finish_reason="MALFORMED_FUNCTION_CALL", content="")
 
     with patch.object(model.get_client().aio.models, "generate_content", side_effect=mock_generate_content):
-        with pytest.raises(ModelProviderError) as exc_info:
-            await agent.arun("Test message")
+        response = await agent.arun("Test message")
+        assert response.status == RunStatus.error
 
     assert call_count["count"] == 3  # initial + 2 retries
-    assert "Max retries with guidance reached" in str(exc_info.value)
-    assert "MALFORMED_FUNCTION_CALL" in str(exc_info.value)
+    assert "Max retries with guidance reached" in response.content
+    assert "MALFORMED_FUNCTION_CALL" in response.content
 
 
 def test_retry_with_guidance_limit_stream_raises_after_limit(model):
@@ -403,13 +402,15 @@ def test_retry_with_guidance_limit_stream_raises_after_limit(model):
         yield create_mock_response(finish_reason="MALFORMED_FUNCTION_CALL", content="")
 
     with patch.object(model.get_client().models, "generate_content_stream", side_effect=mock_generate_content_stream):
-        with pytest.raises(ModelProviderError) as exc_info:
-            response_stream = agent.run("Test message", stream=True)
-            list(response_stream)  # Consume the stream
+        saw_error = False
+        for response in agent.run("Test message", stream=True):
+            if response.event == RunEvent.run_error:
+                saw_error = True
+                break
+
+        assert saw_error
 
     assert call_count["count"] == 3  # initial + 2 retries
-    assert "Max retries with guidance reached" in str(exc_info.value)
-    assert "MALFORMED_FUNCTION_CALL" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -434,11 +435,12 @@ async def test_retry_with_guidance_limit_async_stream_raises_after_limit(model):
     with patch.object(
         model.get_client().aio.models, "generate_content_stream", side_effect=mock_generate_content_stream
     ):
-        with pytest.raises(ModelProviderError) as exc_info:
-            response_stream = agent.arun("Test message", stream=True)
-            async for _ in response_stream:
-                pass
+        saw_error = False
+        async for response in agent.arun("Test message", stream=True):
+            if response.event == RunEvent.run_error:
+                saw_error = True
+                break
+
+        assert saw_error
 
     assert call_count["count"] == 3  # initial + 2 retries
-    assert "Max retries with guidance reached" in str(exc_info.value)
-    assert "MALFORMED_FUNCTION_CALL" in str(exc_info.value)
