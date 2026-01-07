@@ -72,28 +72,26 @@ class BrowserbaseTools(Toolkit):
         self._session = None
         self._connect_url = None
 
-        # Build sync tools list (same pattern as before)
+        # Build tools lists
+        # sync tools: used by agent.run() and agent.print_response()
+        # async tools: used by agent.arun() and agent.aprint_response()
         tools: List[Any] = []
+        async_tools: List[tuple] = []
+
         if all or enable_navigate_to:
             tools.append(self.navigate_to)
+            async_tools.append((self.anavigate_to, "navigate_to"))
         if all or enable_screenshot:
             tools.append(self.screenshot)
+            async_tools.append((self.ascreenshot, "screenshot"))
         if all or enable_get_page_content:
             tools.append(self.get_page_content)
+            async_tools.append((self.aget_page_content, "get_page_content"))
         if all or enable_close_session:
             tools.append(self.close_session)
+            async_tools.append((self.aclose_session, "close_session"))
 
-        super().__init__(name="browserbase_tools", tools=tools, **kwargs)
-
-        # These will be used automatically in async contexts (arun, aprint_response)
-        if all or enable_navigate_to:
-            self.register(self.anavigate_to, name="navigate_to", async_mode=True)
-        if all or enable_screenshot:
-            self.register(self.ascreenshot, name="screenshot", async_mode=True)
-        if all or enable_get_page_content:
-            self.register(self.aget_page_content, name="get_page_content", async_mode=True)
-        if all or enable_close_session:
-            self.register(self.aclose_session, name="close_session", async_mode=True)
+        super().__init__(name="browserbase_tools", tools=tools, async_tools=async_tools, **kwargs)
 
     def _ensure_session(self):
         """Ensures a session exists, creating one if needed."""

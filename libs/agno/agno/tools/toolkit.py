@@ -15,6 +15,7 @@ class Toolkit:
         self,
         name: str = "toolkit",
         tools: Sequence[Union[Callable[..., Any], Function]] = [],
+        async_tools: Optional[Sequence[tuple[Callable[..., Any], str]]] = None,
         instructions: Optional[str] = None,
         add_instructions: bool = False,
         include_tools: Optional[list[str]] = None,
@@ -33,6 +34,9 @@ class Toolkit:
         Args:
             name: A descriptive name for the toolkit
             tools: List of tools to include in the toolkit (can be callables or Function objects from @tool decorator)
+            async_tools: List of (async_callable, tool_name) tuples for async variants.
+                        Used when async methods have different names than sync methods.
+                        Example: [(self.anavigate_to, "navigate_to"), (self.ascreenshot, "screenshot")]
             instructions: Instructions for the toolkit
             add_instructions: Whether to add instructions to the toolkit
             include_tools: List of tool names to include in the toolkit
@@ -48,6 +52,7 @@ class Toolkit:
         """
         self.name: str = name
         self.tools: Sequence[Union[Callable[..., Any], Function]] = tools
+        self._async_tools: Sequence[tuple[Callable[..., Any], str]] = async_tools or []
         # Functions dict - used by agent.run() and agent.print_response()
         self.functions: Dict[str, Function] = OrderedDict()
         # Async functions dict - used by agent.arun() and agent.aprint_response()
@@ -75,8 +80,11 @@ class Toolkit:
         self.cache_dir: Optional[str] = cache_dir
 
         # Automatically register all methods if auto_register is True
-        if auto_register and self.tools:
-            self._register_tools()
+        if auto_register:
+            if self.tools:
+                self._register_tools()
+            if self._async_tools:
+                self._register_async_tools()
 
     def _get_tool_name(self, tool: Union[Callable[..., Any], Function]) -> str:
         """Get the name of a tool, whether it's a Function or callable."""
@@ -129,9 +137,14 @@ class Toolkit:
                 log_warning(f"Show result tool(s) not present in the toolkit: {', '.join(missing_show_result)}")
 
     def _register_tools(self) -> None:
-        """Register all tools."""
+        """Register all sync tools."""
         for tool in self.tools:
             self.register(tool)
+
+    def _register_async_tools(self) -> None:
+        """Register all async tools with their mapped names."""
+        for async_func, tool_name in self._async_tools:
+            self.register(async_func, name=tool_name, async_mode=True)
 
     def register(
         self, function: Union[Callable[..., Any], Function], name: Optional[str] = None, async_mode: bool = False
