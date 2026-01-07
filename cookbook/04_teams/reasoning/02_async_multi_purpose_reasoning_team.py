@@ -139,7 +139,7 @@ async def main():
     """Main async function to demonstrate different team capabilities."""
 
     # Add Agno documentation content
-    await agno_assist_knowledge.add_contents_async(
+    await agno_assist_knowledge.async_add_contents(
         url="https://docs.agno.com/llms-full.txt"
     )
 

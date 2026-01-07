@@ -76,7 +76,7 @@ def test_csv_knowledge(setup_csv_files):
     )
 
     asyncio.run(
-        knowledge.add_content_async(
+        knowledge.async_add_content(
             path=str(csv_dir),
             reader=reader,
         )
@@ -112,7 +112,7 @@ def test_csv_knowledge_single_file():
         )
 
         asyncio.run(
-            knowledge.add_content_async(
+            knowledge.async_add_content(
                 path=temp_file.name,
                 reader=reader,
             )
@@ -143,7 +143,7 @@ async def test_csv_knowledge_async(setup_csv_files):
         chunk=False,
     )
 
-    await knowledge.add_content_async(
+    await knowledge.async_add_content(
         path=str(csv_dir),
         reader=reader,
     )
@@ -180,7 +180,7 @@ async def test_csv_knowledge_async_single_file():
             chunk=False,
         )
 
-        await knowledge.add_content_async(
+        await knowledge.async_add_content(
             path=temp_file.name,
             reader=reader,
         )
@@ -243,7 +243,7 @@ async def test_csv_via_url_async():
     )
 
     # Set chunk explicitly to False
-    await knowledge.add_contents_async(
+    await knowledge.async_add_contents(
         urls=[
             "https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv",
             "https://agno-public.s3.amazonaws.com/csvs/employees.csv",

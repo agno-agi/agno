@@ -115,7 +115,7 @@ async def test_youtube_knowledge_base_async_directory(setup_vector_db):
 async def test_youtube_knowledge_base_async_single_url(setup_vector_db):
     """Test asynchronously loading a single YouTube video."""
     kb = Knowledge(vector_db=setup_vector_db)
-    await kb.add_content_async(
+    await kb.async_add_content(
         url="https://www.youtube.com/watch?v=lrg8ZWI7MCg",
     )
 

@@ -5838,7 +5838,7 @@ class Team:
             additional_information.append(f"Your name is: {self.name}.")
 
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = await self.knowledge.async_get_valid_filters()
+            valid_filters = await self.knowledge.aget_valid_filters()
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)
                 additional_information.append(
@@ -8940,7 +8940,7 @@ class Team:
 
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
-            valid_filters, invalid_keys = await self.knowledge.async_validate_filters(filters)  # type: ignore
+            valid_filters, invalid_keys = await self.knowledge.avalidate_filters(filters)  # type: ignore
 
             # Warn about invalid filter keys
             if invalid_keys:
@@ -8991,7 +8991,7 @@ class Team:
                 num_documents = self.knowledge.max_results
 
             log_debug(f"Searching knowledge base with filters: {filters}")
-            relevant_docs: List[Document] = await self.knowledge.async_search(
+            relevant_docs: List[Document] = await self.knowledge.asearch(
                 query=query, max_results=num_documents, filters=filters
             )
 

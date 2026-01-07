@@ -191,7 +191,7 @@ agent_team = Team(
 if __name__ == "__main__":
     # Load the knowledge base
     asyncio.run(
-        agno_assist_knowledge.add_contents_async(
+        agno_assist_knowledge.async_add_contents(
             url="https://docs.agno.com/llms-full.txt"
         )
     )

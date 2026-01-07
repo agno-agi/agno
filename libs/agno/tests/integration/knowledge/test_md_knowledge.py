@@ -85,7 +85,7 @@ async def test_text_knowledge_base_async_directory(setup_vector_db):
     text_dir = get_test_data_dir()
 
     kb = Knowledge(vector_db=setup_vector_db)
-    await kb.add_content_async(
+    await kb.async_add_content(
         path=text_dir,
         include=["*.md"],
     )

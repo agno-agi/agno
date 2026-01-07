@@ -137,10 +137,10 @@ async def async_pgvector_rag_demo():
 
     try:
         # Add content to knowledge bases
-        await vector_knowledge.add_contents_async(
+        await vector_knowledge.async_add_contents(
             url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
         )
-        await hybrid_knowledge.add_contents_async(
+        await hybrid_knowledge.async_add_contents(
             url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
         )
         # Run async distributed PgVector RAG

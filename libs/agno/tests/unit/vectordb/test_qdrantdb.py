@@ -233,7 +233,7 @@ async def test_async_search(mock_embedder):
     mock_results = [Document(name="test_doc", content="Test content", meta_data={"key": "value"})]
 
     with patch.object(db, "async_search", return_value=mock_results):
-        results = await db.async_search("test query", limit=1)
+        results = await db.asearch("test query", limit=1)
         assert len(results) == 1
         assert results[0].name == "test_doc"
 

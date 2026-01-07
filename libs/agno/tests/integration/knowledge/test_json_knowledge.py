@@ -106,7 +106,7 @@ async def test_json_knowledge_base_async():
         vector_db=vector_db,
     )
 
-    await knowledge_base.add_content_async(
+    await knowledge_base.async_add_content(
         path=str(Path(__file__).parent / "data/json"),
     )
 

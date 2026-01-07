@@ -51,12 +51,12 @@ async def aprepare_knowledge_base(setup_vector_db):
     kb = Knowledge(vector_db=setup_vector_db)
 
     # Load contents with different user IDs and metadata
-    await kb.add_content_async(
+    await kb.async_add_content(
         path=get_filtered_data_dir() / "cv_1.docx",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    await kb.add_content_async(
+    await kb.async_add_content(
         path=get_filtered_data_dir() / "cv_2.docx",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -95,7 +95,7 @@ async def test_docx_knowledge_base_async_directory(setup_vector_db):
     docx_dir = get_test_data_dir()
 
     kb = Knowledge(vector_db=setup_vector_db)
-    await kb.add_content_async(
+    await kb.async_add_content(
         path=docx_dir,
     )
 

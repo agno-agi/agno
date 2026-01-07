@@ -36,7 +36,7 @@ knowledge = Knowledge(
 
 async def main():
     # Add content (ingestion + chunking + embedding handled by Knowledge)
-    await knowledge.add_content_async(
+    await knowledge.async_add_content(
         name="Recipes",
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
         metadata={"doc_type": "recipe_book"},

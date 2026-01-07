@@ -39,7 +39,7 @@ async def async_demo():
         vector_db=surrealdb,
     )
 
-    await knowledge.add_content_async(
+    await knowledge.async_add_content(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
     )
 

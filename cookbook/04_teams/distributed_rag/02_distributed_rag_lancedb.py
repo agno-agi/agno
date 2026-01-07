@@ -136,10 +136,10 @@ async def async_distributed_rag_demo():
     query = "How do I make chicken and galangal in coconut milk soup? Include cooking tips and variations."
 
     # Add content to knowledge bases
-    await primary_knowledge.add_contents_async(
+    await primary_knowledge.async_add_contents(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
-    await context_knowledge.add_contents_async(
+    await context_knowledge.async_add_contents(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
 

@@ -51,12 +51,12 @@ async def aprepare_knowledge_base(setup_vector_db):
     kb = Knowledge(vector_db=setup_vector_db)
 
     # Load contents with different user IDs and metadata
-    await kb.add_content_async(
+    await kb.async_add_content(
         path=get_filtered_data_dir() / "presentation_1.pptx",
         metadata={"user_id": "alice_smith", "document_type": "presentation", "topic": "introduction"},
     )
 
-    await kb.add_content_async(
+    await kb.async_add_content(
         path=get_filtered_data_dir() / "presentation_2.pptx",
         metadata={"user_id": "bob_jones", "document_type": "presentation", "topic": "advanced"},
     )
@@ -95,7 +95,7 @@ async def test_pptx_knowledge_base_async_directory(setup_vector_db):
     pptx_dir = get_test_data_dir()
 
     kb = Knowledge(vector_db=setup_vector_db)
-    await kb.add_content_async(
+    await kb.async_add_content(
         path=pptx_dir,
     )
 

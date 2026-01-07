@@ -660,7 +660,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         # Use max_results if specified, otherwise use a higher limit for search then paginate
         search_limit = request.max_results
 
-        results = await knowledge.async_search(
+        results = await knowledge.asearch(
             query=request.query, max_results=search_limit, filters=request.filters, search_type=request.search_type
         )
 

@@ -141,10 +141,10 @@ async def async_reranking_rag_demo():
     query = "What's the best way to prepare authentic Tom Kha Gai? I want traditional methods and modern variations."
 
     # Add content to knowledge bases
-    await reranked_knowledge.add_contents_async(
+    await reranked_knowledge.async_add_contents(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
-    await validation_knowledge.add_contents_async(
+    await validation_knowledge.async_add_contents(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
 

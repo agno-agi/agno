@@ -96,7 +96,7 @@ class LightRag(VectorDb):
     def search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
-        result = asyncio.run(self.async_search(query, limit=limit, filters=filters))
+        result = asyncio.run(self.asearch(query, limit=limit, filters=filters))
         return result if result is not None else []
 
     async def async_search(

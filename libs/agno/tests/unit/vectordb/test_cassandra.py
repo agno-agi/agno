@@ -234,7 +234,7 @@ async def test_async_insert_and_search(vector_db, mock_table):
     assert mock_table.put_async.called
 
     # Test async search
-    results = await vector_db.async_search("test document", limit=1)
+    results = await vector_db.asearch("test document", limit=1)
     assert len(results) == 1
     assert all(isinstance(doc, Document) for doc in results)
     assert mock_table.metric_ann_search.called
@@ -260,7 +260,7 @@ async def test_async_upsert(vector_db, mock_table):
     assert mock_table.put_async.called
 
     # Check results with async search
-    results = await vector_db.async_search("test", limit=1)
+    results = await vector_db.asearch("test", limit=1)
     assert len(results) == 1
 
 

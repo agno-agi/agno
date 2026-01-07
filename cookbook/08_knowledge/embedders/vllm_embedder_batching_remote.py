@@ -49,7 +49,7 @@ def main():
 
     try:
         asyncio.run(
-            knowledge.add_content_async(
+            knowledge.async_add_content(
                 path="cookbook/knowledge/testing_resources/cv_1.pdf",
             )
         )

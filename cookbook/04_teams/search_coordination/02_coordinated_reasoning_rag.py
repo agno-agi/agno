@@ -132,7 +132,7 @@ async def async_reasoning_demo():
     query = "What are Agents and how do they work with tools? Explain the reasoning behind their design."
 
     # Add documentation content
-    await knowledge.add_contents_async(
+    await knowledge.async_add_contents(
         urls=["https://docs.agno.com/basics/agents/overview.md"]
     )
 

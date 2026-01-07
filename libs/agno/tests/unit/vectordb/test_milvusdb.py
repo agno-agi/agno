@@ -394,7 +394,7 @@ async def test_async_search(mock_embedder):
     mock_results = [Document(name="test_doc", content="Test content", meta_data={"key": "value"})]
 
     with patch.object(db, "async_search", return_value=mock_results):
-        results = await db.async_search("test query", limit=1)
+        results = await db.asearch("test query", limit=1)
         assert len(results) == 1
         assert results[0].name == "test_doc"
 
@@ -425,12 +425,12 @@ async def test_async_search_with_search_params(mock_embedder, mock_milvus_async_
 
     with patch.object(db.embedder, "get_embedding", return_value=[0.1] * 768):
         # Test with radius parameter
-        results = await db.async_search("Thai food", limit=5, search_params={"radius": 0.8})
+        results = await db.asearch("Thai food", limit=5, search_params={"radius": 0.8})
         assert len(results) == 1
         assert results[0].name == "tom_kha"
 
         # Test with both radius and range_filter
-        results = await db.async_search(
+        results = await db.asearch(
             "Thai food",
             limit=10,
             search_params={"radius": 0.8, "range_filter": 0.2},

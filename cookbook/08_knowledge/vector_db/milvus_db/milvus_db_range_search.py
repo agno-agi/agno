@@ -80,7 +80,7 @@ print("=" * 80)
 
 
 async def async_range_search():
-    results = await knowledge.vector_db.async_search(
+    results = await knowledge.vector_db.asearch(
         query="Thai desserts",
         limit=3,
         search_params={
