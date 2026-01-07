@@ -262,8 +262,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         team_id: Optional[str] = Query(default=None, description="Filter memories by team ID"),
         topics: Optional[List[str]] = Depends(parse_topics),
         search_content: Optional[str] = Query(default=None, description="Fuzzy search within memory content"),
-        limit: Optional[int] = Query(default=20, description="Number of memories to return per page"),
-        page: Optional[int] = Query(default=1, description="Page number for pagination"),
+        limit: Optional[int] = Query(default=20, description="Number of memories to return per page", ge=1),
+        page: Optional[int] = Query(default=1, description="Page number for pagination", ge=0),
         sort_by: Optional[str] = Query(default="updated_at", description="Field to sort memories by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
         db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to query memories from"),
@@ -568,8 +568,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     )
     async def get_user_memory_stats(
         request: Request,
-        limit: Optional[int] = Query(default=20, description="Number of user statistics to return per page"),
-        page: Optional[int] = Query(default=1, description="Page number for pagination"),
+        limit: Optional[int] = Query(default=20, description="Number of user statistics to return per page", ge=1),
+        page: Optional[int] = Query(default=1, description="Page number for pagination", ge=0),
         db_id: Optional[str] = Header(
             default=None, alias="X-DB-ID", description="Database ID to query statistics from"
         ),

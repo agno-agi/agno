@@ -346,8 +346,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     )
     async def get_content(
         request: Request,
-        limit: Optional[int] = Query(default=20, description="Number of content entries to return"),
-        page: Optional[int] = Query(default=1, description="Page number"),
+        limit: Optional[int] = Query(default=20, description="Number of content entries to return", ge=1),
+        page: Optional[int] = Query(default=1, description="Page number", ge=0),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
         db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="The ID of the database to use"),
