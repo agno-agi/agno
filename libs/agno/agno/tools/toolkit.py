@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from inspect import iscoroutinefunction
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
 from agno.tools.function import Function
@@ -132,10 +133,14 @@ class Toolkit:
         for tool in self.tools:
             self.register(tool)
 
-    def register(self, function: Union[Callable[..., Any], Function], name: Optional[str] = None) -> None:
+    def register(
+        self, function: Union[Callable[..., Any], Function], name: Optional[str] = None, async_variant: bool = False
+    ) -> None:
         """Register a function with the toolkit.
 
         This method supports both regular callables and Function objects (from @tool decorator).
+        Automatically detects if the function is async and registers it appropriately.
+
         When a Function object is passed (e.g., from a @tool decorated method), it will:
         1. Extract the configuration from the Function object
         2. Look for a bound method with the same name on `self`
@@ -144,16 +149,21 @@ class Toolkit:
         Args:
             function: The callable or Function object to register
             name: Optional custom name for the function
-
-        Returns:
-            The registered function
+            async_variant: If True, forces registration as async variant (useful when registering
+                          an async function with a different name than the sync version)
         """
         try:
             # Handle Function objects (from @tool decorator)
             if isinstance(function, Function):
-                return self._register_decorated_tool(function, name)
+                # Determine if this is an async function
+                is_async = async_variant
+                if not is_async and function.entrypoint is not None:
+                    is_async = iscoroutinefunction(function.entrypoint)
+                return self._register_decorated_tool(function, name, async_variant=is_async)
 
-            # Handle regular callables
+            # Handle regular callables - auto-detect async
+            is_async = async_variant or iscoroutinefunction(function)
+
             tool_name = name or function.__name__
             if self.include_tools is not None and tool_name not in self.include_tools:
                 return
@@ -171,8 +181,13 @@ class Toolkit:
                 stop_after_tool_call=tool_name in self.stop_after_tool_call_tools,
                 show_result=tool_name in self.show_result_tools or tool_name in self.stop_after_tool_call_tools,
             )
-            self.functions[f.name] = f
-            log_debug(f"Function: {f.name} registered with {self.name}")
+
+            if is_async:
+                self.async_functions[f.name] = f
+                log_debug(f"Async function: {f.name} registered with {self.name}")
+            else:
+                self.functions[f.name] = f
+                log_debug(f"Function: {f.name} registered with {self.name}")
         except Exception as e:
             func_name = self._get_tool_name(function)
             logger.warning(f"Failed to create Function for: {func_name}")
@@ -272,61 +287,6 @@ class Toolkit:
         else:
             self.functions[f.name] = f
             log_debug(f"Function: {f.name} registered with {self.name} (from @tool decorator)")
-
-    def register_async(self, function: Union[Callable[..., Any], Function], name: Optional[str] = None) -> None:
-        """Register an async variant of a function with the toolkit.
-
-        This allows toolkits to provide both sync and async implementations of the same tool.
-        When running in async context (arun, aprint_response), the async variant will be used.
-
-        Args:
-            function: The async callable or Function object to register
-            name: Optional custom name for the function (must match sync variant's name)
-        """
-        try:
-            # Handle Function objects (from @tool decorator)
-            if isinstance(function, Function):
-                tool_name = name or function.name
-                if self.include_tools is not None and tool_name not in self.include_tools:
-                    return
-                if self.exclude_tools is not None and tool_name in self.exclude_tools:
-                    return
-
-                # Use the same registration logic but store in async_functions
-                self._register_async_decorated_tool(function, name)
-                return
-
-            # Handle regular async callables
-            tool_name = name or function.__name__
-            if self.include_tools is not None and tool_name not in self.include_tools:
-                return
-            if self.exclude_tools is not None and tool_name in self.exclude_tools:
-                return
-
-            f = Function(
-                name=tool_name,
-                entrypoint=function,
-                cache_results=self.cache_results,
-                cache_dir=self.cache_dir,
-                cache_ttl=self.cache_ttl,
-                requires_confirmation=tool_name in self.requires_confirmation_tools,
-                external_execution=tool_name in self.external_execution_required_tools,
-                stop_after_tool_call=tool_name in self.stop_after_tool_call_tools,
-                show_result=tool_name in self.show_result_tools or tool_name in self.stop_after_tool_call_tools,
-            )
-            self.async_functions[f.name] = f
-            log_debug(f"Async function: {f.name} registered with {self.name}")
-        except Exception as e:
-            func_name = self._get_tool_name(function)
-            logger.warning(f"Failed to create async Function for: {func_name}")
-            raise e
-
-    def _register_async_decorated_tool(self, function: Function, name: Optional[str] = None) -> None:
-        """Register an async Function object from @tool decorator, binding it to self.
-
-        Similar to _register_decorated_tool but stores in async_functions dict.
-        """
-        self._register_decorated_tool(function, name, async_variant=True)
 
     def get_functions(self, async_mode: bool = False) -> Dict[str, Function]:
         """Get the appropriate functions dict based on execution context.

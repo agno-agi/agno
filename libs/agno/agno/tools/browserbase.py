@@ -85,14 +85,15 @@ class BrowserbaseTools(Toolkit):
 
         super().__init__(name="browserbase_tools", tools=tools, **kwargs)
 
+        # These will be used automatically in async contexts (arun, aprint_response)
         if all or enable_navigate_to:
-            self.register_async(self.anavigate_to, name="navigate_to")
+            self.register(self.anavigate_to, name="navigate_to", async_variant=True)
         if all or enable_screenshot:
-            self.register_async(self.ascreenshot, name="screenshot")
+            self.register(self.ascreenshot, name="screenshot", async_variant=True)
         if all or enable_get_page_content:
-            self.register_async(self.aget_page_content, name="get_page_content")
+            self.register(self.aget_page_content, name="get_page_content", async_variant=True)
         if all or enable_close_session:
-            self.register_async(self.aclose_session, name="close_session")
+            self.register(self.aclose_session, name="close_session", async_variant=True)
 
     def _ensure_session(self):
         """Ensures a session exists, creating one if needed."""
