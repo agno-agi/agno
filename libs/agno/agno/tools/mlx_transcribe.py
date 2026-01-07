@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 try:
     import mlx_whisper
@@ -33,6 +33,7 @@ class MLXTranscribeTools(Toolkit):
         self,
         base_dir: Optional[Path] = None,
         enable_read_files_in_base_dir: bool = True,
+        restrict_to_base_dir: bool = True,
         path_or_hf_repo: str = "mlx-community/whisper-large-v3-turbo",
         verbose: Optional[bool] = None,
         temperature: Optional[Union[float, Tuple[float, ...]]] = None,
@@ -51,6 +52,8 @@ class MLXTranscribeTools(Toolkit):
         **kwargs,
     ):
         self.base_dir: Path = base_dir or Path.cwd()
+        self.base_dir = self.base_dir.resolve()
+        self.restrict_to_base_dir = restrict_to_base_dir
         self.path_or_hf_repo: str = path_or_hf_repo
         self.verbose: Optional[bool] = verbose
         self.temperature: Optional[Union[float, Tuple[float, ...]]] = temperature
@@ -72,6 +75,27 @@ class MLXTranscribeTools(Toolkit):
 
         super().__init__(name="mlx_transcribe", tools=tools, **kwargs)
 
+    def _check_path(self, file_name: str) -> Tuple[bool, Path]:
+        """Check if the file path is within the base directory.
+
+        Args:
+            file_name: The file name or relative path to check.
+
+        Returns:
+            Tuple of (is_safe, resolved_path). If not safe, returns base_dir as the path.
+        """
+        file_path = self.base_dir.joinpath(file_name).resolve()
+        if not self.restrict_to_base_dir:
+            return True, file_path
+        if self.base_dir == file_path:
+            return True, file_path
+        try:
+            file_path.relative_to(self.base_dir)
+        except ValueError:
+            log_error(f"Path escapes base directory: {file_name}")
+            return False, self.base_dir
+        return True, file_path
+
     def transcribe(self, file_name: str) -> str:
         """
         Transcribe uses Apple's MLX Whisper model.
@@ -83,9 +107,10 @@ class MLXTranscribeTools(Toolkit):
             str: The transcribed text or an error message if the transcription fails.
         """
         try:
-            audio_file_path = str(self.base_dir.joinpath(file_name))
-            if audio_file_path is None:
-                return "No audio file path provided"
+            safe, file_path = self._check_path(file_name)
+            if not safe:
+                return f"Error: Path '{file_name}' is outside the allowed base directory"
+            audio_file_path = str(file_path)
 
             log_info(f"Transcribing audio file {audio_file_path}")
             transcription_kwargs: Dict[str, Any] = {
