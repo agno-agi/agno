@@ -1106,6 +1106,7 @@ async def process_content(
                 await knowledge.apatch_content(content)
             else:
                 knowledge.patch_content(content)
+
         except Exception:
             # Swallow any secondary errors to avoid crashing the background task
             pass
