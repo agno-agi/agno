@@ -1101,7 +1101,11 @@ async def process_content(
 
             content.status = KnowledgeContentStatus.FAILED
             content.status_message = str(e)
-            knowledge.patch_content(content)
+            # Use async patch method if contents_db is an AsyncBaseDb, otherwise use sync patch method
+            if knowledge.contents_db is not None and isinstance(knowledge.contents_db, AsyncBaseDb):
+                await knowledge.apatch_content(content)
+            else:
+                knowledge.patch_content(content)
         except Exception:
             # Swallow any secondary errors to avoid crashing the background task
             pass
