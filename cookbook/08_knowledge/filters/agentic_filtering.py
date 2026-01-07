@@ -21,12 +21,24 @@ vector_db = PgVector(
 
 # Step 1: Initialize knowledge base with documents and metadata
 # ------------------------------------------------------------------------------
-
+# Note: ContentsDB is OPTIONAL for agentic filtering
+# - Without ContentsDB: Filters work but are not validated against known metadata keys
+# - With ContentsDB: Filter keys are validated, improving reliability and providing helpful warnings
+#
+# Example without ContentsDB (filtering still works):
+# knowledge = Knowledge(
+#     name="CSV Knowledge Base",
+#     description="A knowledge base for CSV files",
+#     vector_db=vector_db,
+#     # contents_db not provided - agentic filtering will work without validation
+# )
+#
+# Example WITH ContentsDB (adds filter validation):
 knowledge = Knowledge(
     name="CSV Knowledge Base",
     description="A knowledge base for CSV files",
     vector_db=vector_db,
-    contents_db=PostgresDb(
+    contents_db=PostgresDb(  # Optional - enables filter validation
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
         knowledge_table="knowledge_contents",
     ),

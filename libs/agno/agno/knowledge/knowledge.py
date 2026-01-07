@@ -34,7 +34,14 @@ class KnowledgeContentOrigin(Enum):
 
 @dataclass
 class Knowledge:
-    """Knowledge class"""
+    """Knowledge class
+
+    Args:
+        vector_db: Vector database for storing and searching embeddings (required)
+        contents_db: Optional contents database for metadata tracking and filter validation.
+                     When configured, enables validation of agentic filter keys.
+                     When not configured, filters are passed directly to vector_db.
+    """
 
     name: Optional[str] = None
     description: Optional[str] = None
@@ -2451,6 +2458,15 @@ class Knowledge:
             return []
 
     def get_valid_filters(self) -> Set[str]:
+        """Get set of valid filter keys from ContentsDB metadata.
+
+        Returns:
+            Set of metadata keys available for filtering. Empty set if ContentsDB not configured.
+
+        Note:
+            When ContentsDB is not configured, filtering still works - filters are passed
+            directly to the vector database without validation.
+        """
         if self.contents_db is None:
             return set()
         contents, _ = self.get_content()
@@ -2518,6 +2534,18 @@ class Knowledge:
     def validate_filters(
         self, filters: Union[Dict[str, Any], List[FilterExpr]]
     ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
+        """Validate filters against known metadata keys from ContentsDB.
+
+        Args:
+            filters: Filters to validate
+
+        Returns:
+            Tuple of (valid_filters, invalid_keys)
+
+        Note:
+            When ContentsDB is not configured, returns (filters, []) - all filters
+            are considered valid and passed through without validation.
+        """
         if self.contents_db is None:
             log_info(
                 "ContentsDB not configured. For improved filter validation and reliability, consider adding a ContentsDB."
