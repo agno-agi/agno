@@ -286,7 +286,7 @@ class MultiMCPTools(Toolkit):
             ClientSession: Either the default session or a per-run session with dynamic headers
         """
         # If no header_provider or no run_context, use the default session
-        if not self.header_provider or not run_context:
+        if not getattr(self, "header_provider", None) or not run_context:
             # Return the default session for this server
             if server_idx < len(self._sessions):
                 return self._sessions[server_idx]

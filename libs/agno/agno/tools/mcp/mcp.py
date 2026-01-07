@@ -298,7 +298,7 @@ class MCPTools(Toolkit):
             ClientSession for the run
         """
         # If no header_provider or no run_context, use the default session
-        if not self.header_provider or not run_context:
+        if not getattr(self, "header_provider", None) or not run_context:
             if self.session is None:
                 raise ValueError("Session is not initialized")
             return self.session
