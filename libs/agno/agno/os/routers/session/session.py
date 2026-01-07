@@ -34,6 +34,9 @@ from agno.session import AgentSession, TeamSession, WorkflowSession
 
 logger = logging.getLogger(__name__)
 
+# Maximum number of items per page for pagination
+MAX_PAGE_SIZE = 100
+
 
 def get_session_router(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], settings: AgnoAPISettings = AgnoAPISettings()
@@ -107,7 +110,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         ),
         user_id: Optional[str] = Query(default=None, description="Filter sessions by user ID"),
         session_name: Optional[str] = Query(default=None, description="Filter sessions by name (partial match)"),
-        limit: Optional[int] = Query(default=20, description="Number of sessions to return per page"),
+        limit: Optional[int] = Query(
+            default=20, description=f"Number of sessions to return per page (max: {MAX_PAGE_SIZE})", le=MAX_PAGE_SIZE, ge=1
+        ),
         page: Optional[int] = Query(default=1, description="Page number for pagination"),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort sessions by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
