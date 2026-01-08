@@ -144,7 +144,7 @@ async def test_lance_db_basic_async_operations():
     assert await vector_db.async_get_count() == 2
 
     # Test search with different methods
-    vector_results = await vector_db.asearch("machine learning document", limit=2)
+    vector_results = await vector_db.async_search("machine learning document", limit=2)
     assert len(vector_results) > 0
     assert all(isinstance(doc, Document) for doc in vector_results)
 
@@ -190,7 +190,7 @@ async def test_lance_db_async_operations():
     # Test concurrent searches
     search_queries = ["concurrent operations", "test document", "operations test"]
 
-    search_results = await asyncio.gather(*[vector_db.asearch(query, limit=2) for query in search_queries])
+    search_results = await asyncio.gather(*[vector_db.async_search(query, limit=2) for query in search_queries])
 
     # Verify all searches returned results
     assert all(len(results) > 0 for results in search_results)

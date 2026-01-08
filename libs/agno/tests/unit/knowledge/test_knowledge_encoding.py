@@ -130,7 +130,7 @@ def _assert_insert_contains_text(fake_db: MockVectorDb, expected: str) -> None:
 
 
 @pytest.mark.parametrize("text", UTF8_SAMPLES)
-def test_add_content_sync_handles_utf8_samples(text: str) -> None:
+def test_insert_handles_utf8_samples(text: str) -> None:
     fake_db = MockVectorDb()
     kb = Knowledge(vector_db=fake_db)
     kb.insert(text_content=text)
@@ -139,14 +139,14 @@ def test_add_content_sync_handles_utf8_samples(text: str) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("text", UTF8_SAMPLES)
-async def test_async_add_content_handles_utf8_samples(text: str) -> None:
+async def test_async_insert_handles_utf8_samples(text: str) -> None:
     fake_db = MockVectorDb()
     kb = Knowledge(vector_db=fake_db)
     await kb.ainsert(text_content=text)
     _assert_insert_contains_text(fake_db, text)
 
 
-def test_add_content_sync_replaces_invalid_surrogates() -> None:
+def test_insert_replaces_invalid_surrogates() -> None:
     # Lone surrogate characters are not valid in UTF-8; they should be replaced with U+FFFD
     bad_text = "bad\udffftext"
     fake_db = MockVectorDb()
@@ -159,7 +159,7 @@ def test_add_content_sync_replaces_invalid_surrogates() -> None:
 
 
 @pytest.mark.asyncio
-async def test_async_add_content_replaces_invalid_surrogates() -> None:
+async def test_async_insert_replaces_invalid_surrogates() -> None:
     bad_text = "\ud800orphan"
     fake_db = MockVectorDb()
     kb = Knowledge(vector_db=fake_db)
