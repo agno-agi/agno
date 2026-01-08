@@ -343,7 +343,7 @@ def get_session_name(session: Dict[str, Any]) -> str:
 
         run_input = r.get("input")
         if run_input is not None:
-            return run_input.get("input_content")
+            return stringify_input_content(run_input)
 
     return ""
 
