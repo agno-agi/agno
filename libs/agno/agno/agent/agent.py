@@ -1823,8 +1823,8 @@ class Agent:
             session_state=session_state,
             dependencies=dependencies,
             output_schema=output_schema,
-            stream=stream if stream is not None else self.stream,
-            stream_events=stream_events if stream_events is not None else self.stream_events,
+            stream=stream if stream is not None else (self.stream or False),
+            stream_events=stream_events if stream_events is not None else (self.stream_events or False),
         )
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
@@ -3126,8 +3126,8 @@ class Agent:
             user_id=user_id,
             session_state=session_state,
             dependencies=dependencies,
-            stream=stream if stream is not None else self.stream,
-            stream_events=stream_events if stream_events is not None else self.stream_events,
+            stream=stream if stream is not None else (self.stream or False),
+            stream_events=stream_events if stream_events is not None else (self.stream_events or False),
         )
         # Update stream settings if they were passed explicitly
         if stream is not None:
