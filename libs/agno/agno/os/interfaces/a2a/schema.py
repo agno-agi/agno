@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from a2a.types import Task
 from pydantic import BaseModel
@@ -16,7 +16,7 @@ class GetTaskEndpointResponse(BaseModel):
     """Response schema for the Task endpoints."""
 
     jsonrpc: str = "2.0"
-    id: str
+    id: Optional[str] = None
     result: Task
 
 
@@ -24,5 +24,5 @@ class ListTasksEndpointResponse(BaseModel):
     """Response schema for the List Tasks endpoints."""
 
     jsonrpc: str = "2.0"
-    id: str
+    id: Optional[str] = None
     result: List[Task]
