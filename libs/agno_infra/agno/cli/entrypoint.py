@@ -1,5 +1,9 @@
+"""Agno cli
+This is the entrypoint for the `agno` cli application.
+"""
 
 import typer
+
 from agno.cli.infra_cli import infra_cli as infra_subcommands
 from agno.cli.skill_cli import skill_cli as skill_subcommands
 

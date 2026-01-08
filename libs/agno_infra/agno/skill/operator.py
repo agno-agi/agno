@@ -1,7 +1,7 @@
 """Skill operations for the CLI."""
 
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from rich.prompt import Prompt
 from rich.table import Table
@@ -13,9 +13,7 @@ from agno.cli.console import (
     print_info,
     print_subheading,
     success_style,
-    warn_style,
 )
-from agno.utilities.logging import logger
 
 
 def _validate_skill_name(name: str) -> List[str]:
@@ -110,9 +108,7 @@ def create_skill_from_template(
         )
 
     if len(description) > 1024:
-        console.print(
-            f"\n[bold red]Description too long ({len(description)} chars, max 1024)[/bold red]"
-        )
+        console.print(f"\n[bold red]Description too long ({len(description)} chars, max 1024)[/bold red]")
         return None
 
     # Create skill directory
@@ -169,7 +165,9 @@ def create_skill_from_template(
             console.print(
                 f"  {'3' if with_scripts else '2'}. Add reference docs to [cyan]{skill_dir}/references/[/cyan]"
             )
-        console.print(f"  {'4' if with_scripts and with_references else '3' if with_scripts or with_references else '2'}. Run [cyan]ag skill validate {skill_dir}[/cyan] to verify")
+        console.print(
+            f"  {'4' if with_scripts and with_references else '3' if with_scripts or with_references else '2'}. Run [cyan]ag skill validate {skill_dir}[/cyan] to verify"
+        )
         console.print("─" * 50)
 
         return skill_dir
@@ -339,7 +337,7 @@ def list_skills(path: str, verbose: bool = False) -> None:
                 console.print(f"    ... and {len(errors) - 3} more error(s)")
 
 
-def _load_skill_info(skill_path: Path) -> Tuple[bool, any]:
+def _load_skill_info(skill_path: Path) -> Tuple[bool, Any]:
     """Load skill info for listing.
 
     Args:
