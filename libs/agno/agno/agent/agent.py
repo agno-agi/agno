@@ -1517,6 +1517,7 @@ class Agent:
                         yield from wait_for_thread_tasks_stream(
                             memory_future=memory_future,  # type: ignore
                             cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
+                            learning_future=learning_future,  # type: ignore
                             stream_events=stream_events,
                             run_response=run_response,
                             events_to_skip=self.events_to_skip,
