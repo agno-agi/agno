@@ -32,4 +32,3 @@ def build_workflow_step_panel(
             border_style="orange3",
         )
     return None
-

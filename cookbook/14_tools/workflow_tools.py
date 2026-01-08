@@ -132,4 +132,5 @@ if __name__ == "__main__":
         instructions="When you run the workflow using the `run_workflow` tool, remember to pass `additional_data` as a dictionary of key-value pairs.",
         markdown=True,
         stream=True,
+        stream_events=True,
     )

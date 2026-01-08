@@ -124,8 +124,6 @@ workflow_tools = WorkflowTools(
     workflow=content_creation_workflow,
     add_few_shot=True,
     few_shot_examples=FEW_SHOT_EXAMPLES,
-    async_mode=True,
-    stream=True,
 )
 
 agent = Agent(
@@ -140,6 +138,6 @@ asyncio.run(
         instructions="When you run the workflow using the `run_workflow` tool, remember to pass `additional_data` as a dictionary of key-value pairs.",
         markdown=True,
         stream=True,
-        debug_mode=True,
+        stream_events=True,
     )
 )

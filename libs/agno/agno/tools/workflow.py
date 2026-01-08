@@ -5,6 +5,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 
 from pydantic import BaseModel, Field, ValidationError
 
+from agno.run.base import RunContext
 from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutputEvent
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
@@ -28,11 +29,28 @@ class WorkflowTools(Toolkit):
         add_instructions: bool = True,
         add_few_shot: bool = False,
         few_shot_examples: Optional[str] = None,
-        stream: bool = True,
+        stream: Optional[bool] = None,
+        stream_events: Optional[bool] = None,
         # Deprecated parameter
         async_mode: Optional[bool] = None,
         **kwargs,
     ):
+        """Initialize WorkflowTools.
+
+        Args:
+            workflow: The workflow to execute.
+            enable_run_workflow: Enable the run_workflow tool.
+            enable_think: Enable the think tool.
+            enable_analyze: Enable the analyze tool.
+            all: Enable all tools.
+            instructions: Custom instructions for the toolkit.
+            add_instructions: Whether to add instructions to the system message.
+            add_few_shot: Whether to add few-shot examples.
+            few_shot_examples: Custom few-shot examples.
+            stream: Whether to stream workflow output. If None, inherits from run_context at runtime.
+            stream_events: Whether to stream workflow events. If None, inherits from run_context at runtime.
+            async_mode: Deprecated. Async tools are now automatically registered.
+        """
         # Handle deprecated async_mode parameter
         if async_mode is not None:
             warnings.warn(
@@ -54,8 +72,9 @@ class WorkflowTools(Toolkit):
         # The workflow to execute
         self.workflow: Workflow = workflow
 
-        # Whether to stream workflow events
-        self.stream: bool = stream
+        # Streaming settings - None means inherit from run_context at runtime
+        self._stream: Optional[bool] = stream
+        self._stream_events: Optional[bool] = stream_events
 
         # Build tools lists
         # sync tools: used by agent.run() and agent.print_response()
@@ -67,12 +86,8 @@ class WorkflowTools(Toolkit):
             tools.append(self.think)
             async_tools.append((self.async_think, "think"))
         if enable_run_workflow or all:
-            if stream:
-                tools.append(self.run_workflow_stream)
-                async_tools.append((self.async_run_workflow_stream, "run_workflow_stream"))
-            else:
-                tools.append(self.run_workflow)
-                async_tools.append((self.async_run_workflow, "run_workflow"))
+            tools.append(self.run_workflow)
+            async_tools.append((self.async_run_workflow, "run_workflow"))
         if enable_analyze or all:
             tools.append(self.analyze)
             async_tools.append((self.async_analyze, "analyze"))
@@ -85,6 +100,42 @@ class WorkflowTools(Toolkit):
             add_instructions=add_instructions,
             **kwargs,
         )
+
+    def _should_stream(self, run_context: Optional[RunContext] = None) -> bool:
+        """Determine if workflow should stream based on settings and run_context.
+
+        Args:
+            run_context: The run context (injected at runtime).
+
+        Returns:
+            True if streaming should be enabled.
+        """
+        # If explicitly set on WorkflowTools, use that
+        if self._stream is not None:
+            return self._stream
+        # Otherwise inherit from run_context if available
+        if run_context is not None:
+            return run_context.stream
+        # Default to True
+        return True
+
+    def _should_stream_events(self, run_context: Optional[RunContext] = None) -> bool:
+        """Determine if workflow events should be streamed based on settings and run_context.
+
+        Args:
+            run_context: The run context (injected at runtime).
+
+        Returns:
+            True if event streaming should be enabled.
+        """
+        # If explicitly set on WorkflowTools, use that
+        if self._stream_events is not None:
+            return self._stream_events
+        # Otherwise inherit from run_context if available
+        if run_context is not None:
+            return run_context.stream_events
+        # Default to True when streaming
+        return True
 
     def think(self, session_state: Dict[str, Any], thought: str) -> str:
         """Use this tool as a scratchpad to reason about the workflow execution, refine your approach, brainstorm workflow inputs, or revise your plan.
@@ -146,9 +197,10 @@ class WorkflowTools(Toolkit):
 
     def run_workflow(
         self,
+        run_context: RunContext,
         session_state: Dict[str, Any],
         input: RunWorkflowInput,
-    ) -> str:
+    ) -> Union[str, Iterator[Union[WorkflowRunOutputEvent, str]]]:
         """Use this tool to execute the workflow with the specified inputs and parameters.
         After thinking through the requirements, use this tool to run the workflow with appropriate inputs.
 
@@ -162,6 +214,21 @@ class WorkflowTools(Toolkit):
             log_error(f"Invalid workflow input: {e}")
             return f"Invalid workflow input: {e}"
 
+        # Check if we should stream based on run_context settings
+        should_stream = self._should_stream(run_context)
+        should_stream_events = self._should_stream_events(run_context)
+
+        if should_stream:
+            return self._run_workflow_stream(session_state, input, stream_events=should_stream_events)
+        else:
+            return self._run_workflow(session_state, input)
+
+    def _run_workflow(
+        self,
+        session_state: Dict[str, Any],
+        input: RunWorkflowInput,
+    ) -> str:
+        """Execute workflow synchronously without streaming events."""
         try:
             log_debug(f"Running workflow with input: {input.input_data}")
 
@@ -188,26 +255,13 @@ class WorkflowTools(Toolkit):
             log_error(f"Error running workflow: {e}")
             return f"Error running workflow: {e}"
 
-    def run_workflow_stream(
+    def _run_workflow_stream(
         self,
         session_state: Dict[str, Any],
         input: RunWorkflowInput,
+        stream_events: bool = True,
     ) -> Iterator[Union[WorkflowRunOutputEvent, str]]:
-        """Use this tool to execute the workflow with the specified inputs and parameters.
-        After thinking through the requirements, use this tool to run the workflow with appropriate inputs.
-        This version streams workflow events during execution.
-
-        Args:
-            input: The input data for the workflow.
-        """
-        try:
-            if isinstance(input, dict):
-                input = RunWorkflowInput.model_validate(input)
-        except ValidationError as e:
-            log_error(f"Invalid workflow input: {e}")
-            yield f"Invalid workflow input: {e}"
-            return
-
+        """Execute workflow with streaming events."""
         try:
             log_debug(f"Running workflow (streaming) with input: {input.input_data}")
 
@@ -224,7 +278,7 @@ class WorkflowTools(Toolkit):
                 session_state=session_state,
                 additional_data=input.additional_data,
                 stream=True,
-                stream_events=True,
+                stream_events=stream_events,
             ):
                 # Yield workflow events for display
                 yield event
@@ -252,14 +306,15 @@ class WorkflowTools(Toolkit):
 
     async def async_run_workflow(
         self,
+        run_context: RunContext,
         session_state: Dict[str, Any],
         input: RunWorkflowInput,
-    ) -> str:
+    ) -> Union[str, AsyncIterator[Union[WorkflowRunOutputEvent, str]]]:
         """Use this tool to execute the workflow with the specified inputs and parameters.
         After thinking through the requirements, use this tool to run the workflow with appropriate inputs.
+
         Args:
-            input_data: The input data for the workflow (use a `str` for a simple input)
-            additional_data: The additional data for the workflow. This is a dictionary of key-value pairs that will be passed to the workflow. E.g. {"topic": "food", "style": "Humour"}
+            input: The input data for the workflow.
         """
         try:
             if isinstance(input, dict):
@@ -268,6 +323,21 @@ class WorkflowTools(Toolkit):
             log_error(f"Invalid workflow input: {e}")
             return f"Invalid workflow input: {e}"
 
+        # Check if we should stream based on run_context settings
+        should_stream = self._should_stream(run_context)
+        should_stream_events = self._should_stream_events(run_context)
+
+        if should_stream and should_stream_events:
+            return self._async_run_workflow_stream(session_state, input, stream_events=should_stream_events)
+        else:
+            return await self._async_run_workflow(session_state, input)
+
+    async def _async_run_workflow(
+        self,
+        session_state: Dict[str, Any],
+        input: RunWorkflowInput,
+    ) -> str:
+        """Execute workflow asynchronously without streaming events."""
         try:
             log_debug(f"Running workflow with input: {input.input_data}")
 
@@ -294,26 +364,13 @@ class WorkflowTools(Toolkit):
             log_error(f"Error running workflow: {e}")
             return f"Error running workflow: {e}"
 
-    async def async_run_workflow_stream(
+    async def _async_run_workflow_stream(
         self,
         session_state: Dict[str, Any],
         input: RunWorkflowInput,
+        stream_events: bool = True,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, str]]:
-        """Use this tool to execute the workflow with the specified inputs and parameters.
-        After thinking through the requirements, use this tool to run the workflow with appropriate inputs.
-        This version streams workflow events during execution.
-        Args:
-            input_data: The input data for the workflow (use a `str` for a simple input)
-            additional_data: The additional data for the workflow. This is a dictionary of key-value pairs that will be passed to the workflow. E.g. {"topic": "food", "style": "Humour"}
-        """
-        try:
-            if isinstance(input, dict):
-                input = RunWorkflowInput.model_validate(input)
-        except ValidationError as e:
-            log_error(f"Invalid workflow input: {e}")
-            yield f"Invalid workflow input: {e}"
-            return
-
+        """Execute workflow asynchronously with streaming events."""
         try:
             log_debug(f"Running workflow (streaming) with input: {input.input_data}")
 
@@ -330,7 +387,7 @@ class WorkflowTools(Toolkit):
                 session_state=session_state,
                 additional_data=input.additional_data,
                 stream=True,
-                stream_events=True,
+                stream_events=stream_events,
             ):
                 # Yield workflow events for display
                 yield event

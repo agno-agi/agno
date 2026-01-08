@@ -3,10 +3,12 @@
 import os
 import tempfile
 import uuid
+from unittest.mock import MagicMock
 
 import pytest
 
 from agno.db.sqlite import SqliteDb
+from agno.run.base import RunContext
 from agno.run.workflow import (
     ConditionExecutionCompletedEvent,
     ConditionExecutionStartedEvent,
@@ -19,9 +21,9 @@ from agno.run.workflow import (
     RouterExecutionCompletedEvent,
     RouterExecutionStartedEvent,
     StepCompletedEvent,
-    StepStartedEvent,
     StepsExecutionCompletedEvent,
     StepsExecutionStartedEvent,
+    StepStartedEvent,
     WorkflowCompletedEvent,
     WorkflowStartedEvent,
 )
@@ -55,6 +57,24 @@ def shared_db(temp_storage_db_file):
     table_name = f"sessions_{uuid.uuid4().hex[:8]}"
     db = SqliteDb(session_table=table_name, db_file=temp_storage_db_file)
     return db
+
+
+@pytest.fixture
+def mock_run_context():
+    """Create a mock RunContext for testing."""
+    context = MagicMock(spec=RunContext)
+    context.stream = True
+    context.stream_events = True
+    return context
+
+
+@pytest.fixture
+def mock_run_context_no_stream():
+    """Create a mock RunContext with streaming disabled."""
+    context = MagicMock(spec=RunContext)
+    context.stream = False
+    context.stream_events = False
+    return context
 
 
 # === Helper Functions for Steps ===
@@ -91,13 +111,22 @@ def select_first_step(step_input: StepInput):
 
 # === Test WorkflowTools Initialization ===
 def test_basic_init(shared_db):
-    """Test basic WorkflowTools initialization (stream=True by default)."""
+    """Test basic WorkflowTools initialization."""
     workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
     tools = WorkflowTools(workflow=workflow)
 
     assert tools.workflow == workflow
-    assert tools.stream is True  # Default is now True
-    assert "run_workflow_stream" in [f.name for f in tools.functions.values()]
+    assert tools._stream is None  # Default is None (inherits from run_context)
+    assert "run_workflow" in [f.name for f in tools.functions.values()]
+
+
+def test_init_with_stream_true(shared_db):
+    """Test WorkflowTools with stream=True."""
+    workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
+    tools = WorkflowTools(workflow=workflow, stream=True)
+
+    assert tools._stream is True
+    assert "run_workflow" in [f.name for f in tools.functions.values()]
 
 
 def test_init_with_stream_false(shared_db):
@@ -105,7 +134,7 @@ def test_init_with_stream_false(shared_db):
     workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
     tools = WorkflowTools(workflow=workflow, stream=False)
 
-    assert tools.stream is False
+    assert tools._stream is False
     assert "run_workflow" in [f.name for f in tools.functions.values()]
 
 
@@ -116,7 +145,7 @@ def test_init_with_think_enabled(shared_db):
 
     function_names = [f.name for f in tools.functions.values()]
     assert "think" in function_names
-    assert "run_workflow_stream" in function_names  # stream=True by default
+    assert "run_workflow" in function_names
 
 
 def test_init_with_analyze_enabled(shared_db):
@@ -126,7 +155,7 @@ def test_init_with_analyze_enabled(shared_db):
 
     function_names = [f.name for f in tools.functions.values()]
     assert "analyze" in function_names
-    assert "run_workflow_stream" in function_names  # stream=True by default
+    assert "run_workflow" in function_names
 
 
 def test_init_with_all_tools(shared_db):
@@ -137,7 +166,7 @@ def test_init_with_all_tools(shared_db):
     function_names = [f.name for f in tools.functions.values()]
     assert "think" in function_names
     assert "analyze" in function_names
-    assert "run_workflow_stream" in function_names  # stream=True by default
+    assert "run_workflow" in function_names
 
 
 def test_init_async_mode_deprecated(shared_db):
@@ -155,7 +184,7 @@ def test_init_async_mode_deprecated(shared_db):
         assert "async_mode" in str(w[0].message)
 
     # Tools should still work
-    assert "run_workflow_stream" in [f.name for f in tools.functions.values()]
+    assert "run_workflow" in [f.name for f in tools.functions.values()]
 
 
 def test_init_async_mode_with_stream(shared_db):
@@ -168,7 +197,7 @@ def test_init_async_mode_with_stream(shared_db):
         warnings.simplefilter("always")
         tools = WorkflowTools(workflow=workflow, async_mode=True, stream=True)
 
-    assert tools.stream is True
+    assert tools._stream is True
 
 
 # === Test Think Tool ===
@@ -203,7 +232,7 @@ def test_think_accumulates_thoughts(shared_db):
 async def test_async_think(shared_db):
     """Test async think tool."""
     workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
-    tools = WorkflowTools(workflow=workflow, enable_think=True, async_mode=True)
+    tools = WorkflowTools(workflow=workflow, enable_think=True)
 
     session_state = {}
     result = await tools.async_think(session_state, "Async thought")
@@ -244,7 +273,7 @@ def test_analyze_accumulates(shared_db):
 async def test_async_analyze(shared_db):
     """Test async analyze tool."""
     workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
-    tools = WorkflowTools(workflow=workflow, enable_analyze=True, async_mode=True)
+    tools = WorkflowTools(workflow=workflow, enable_analyze=True)
 
     session_state = {}
     result = await tools.async_analyze(session_state, "Async analysis")
@@ -254,70 +283,70 @@ async def test_async_analyze(shared_db):
 
 
 # === Test Run Workflow (Non-Streaming) ===
-def test_run_workflow_basic(shared_db):
+def test_run_workflow_basic(shared_db, mock_run_context_no_stream):
     """Test basic workflow execution."""
     workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
-    tools = WorkflowTools(workflow=workflow)
+    tools = WorkflowTools(workflow=workflow, stream=False)
 
     session_state = {}
     input_data = RunWorkflowInput(input_data="test input")
-    result = tools.run_workflow(session_state, input_data)
+    result = tools.run_workflow(mock_run_context_no_stream, session_state, input_data)
 
     assert "Processed: test input" in result
     assert "workflow_results" in session_state
 
 
-def test_run_workflow_with_dict_input(shared_db):
+def test_run_workflow_with_dict_input(shared_db, mock_run_context_no_stream):
     """Test workflow execution with dict input."""
     workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
-    tools = WorkflowTools(workflow=workflow)
+    tools = WorkflowTools(workflow=workflow, stream=False)
 
     session_state = {}
-    result = tools.run_workflow(session_state, {"input_data": "dict input"})
+    result = tools.run_workflow(mock_run_context_no_stream, session_state, {"input_data": "dict input"})
 
     assert "Processed: dict input" in result
 
 
-def test_run_workflow_stores_results(shared_db):
+def test_run_workflow_stores_results(shared_db, mock_run_context_no_stream):
     """Test that workflow results are stored in session state."""
     workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
-    tools = WorkflowTools(workflow=workflow)
+    tools = WorkflowTools(workflow=workflow, stream=False)
 
     session_state = {}
     input_data = RunWorkflowInput(input_data="test")
-    tools.run_workflow(session_state, input_data)
+    tools.run_workflow(mock_run_context_no_stream, session_state, input_data)
 
     assert "workflow_results" in session_state
     assert len(session_state["workflow_results"]) == 1
 
 
-def test_run_workflow_multiple_times(shared_db):
+def test_run_workflow_multiple_times(shared_db, mock_run_context_no_stream):
     """Test running workflow multiple times accumulates results."""
     workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
-    tools = WorkflowTools(workflow=workflow)
+    tools = WorkflowTools(workflow=workflow, stream=False)
 
     session_state = {}
-    tools.run_workflow(session_state, RunWorkflowInput(input_data="first"))
-    tools.run_workflow(session_state, RunWorkflowInput(input_data="second"))
+    tools.run_workflow(mock_run_context_no_stream, session_state, RunWorkflowInput(input_data="first"))
+    tools.run_workflow(mock_run_context_no_stream, session_state, RunWorkflowInput(input_data="second"))
 
     assert len(session_state["workflow_results"]) == 2
 
 
 @pytest.mark.asyncio
-async def test_async_run_workflow(shared_db):
+async def test_async_run_workflow(shared_db, mock_run_context_no_stream):
     """Test async workflow execution."""
     workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
-    tools = WorkflowTools(workflow=workflow, async_mode=True)
+    tools = WorkflowTools(workflow=workflow, stream=False)
 
     session_state = {}
     input_data = RunWorkflowInput(input_data="async test")
-    result = await tools.async_run_workflow(session_state, input_data)
+    result = await tools.async_run_workflow(mock_run_context_no_stream, session_state, input_data)
 
     assert "Processed: async test" in result
 
 
 # === Test Run Workflow Stream ===
-def test_stream_yields_events(shared_db):
+def test_stream_yields_events(shared_db, mock_run_context):
     """Test that streaming yields workflow events."""
     workflow = Workflow(
         name="Test",
@@ -328,7 +357,7 @@ def test_stream_yields_events(shared_db):
 
     session_state = {}
     input_data = RunWorkflowInput(input_data="stream test")
-    events = list(tools.run_workflow_stream(session_state, input_data))
+    events = list(tools.run_workflow(mock_run_context, session_state, input_data))
 
     assert len(events) > 0
 
@@ -339,7 +368,7 @@ def test_stream_yields_events(shared_db):
     assert "WorkflowCompletedEvent" in event_types
 
 
-def test_stream_yields_final_content(shared_db):
+def test_stream_yields_final_content(shared_db, mock_run_context):
     """Test that streaming yields final content as last item."""
     workflow = Workflow(
         name="Test",
@@ -350,13 +379,13 @@ def test_stream_yields_final_content(shared_db):
 
     session_state = {}
     input_data = RunWorkflowInput(input_data="final content test")
-    events = list(tools.run_workflow_stream(session_state, input_data))
+    events = list(tools.run_workflow(mock_run_context, session_state, input_data))
 
     final_item = events[-1]
     assert isinstance(final_item, str)
 
 
-def test_stream_workflow_started_event(shared_db):
+def test_stream_workflow_started_event(shared_db, mock_run_context):
     """Test WorkflowStartedEvent is yielded."""
     workflow = Workflow(
         name="TestWorkflow",
@@ -366,14 +395,14 @@ def test_stream_workflow_started_event(shared_db):
     tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
-    events = list(tools.run_workflow_stream(session_state, RunWorkflowInput(input_data="test")))
+    events = list(tools.run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="test")))
 
     started_events = [e for e in events if isinstance(e, WorkflowStartedEvent)]
     assert len(started_events) == 1
     assert started_events[0].workflow_name == "TestWorkflow"
 
 
-def test_stream_workflow_completed_event(shared_db):
+def test_stream_workflow_completed_event(shared_db, mock_run_context):
     """Test WorkflowCompletedEvent is yielded."""
     workflow = Workflow(
         name="TestWorkflow",
@@ -383,13 +412,13 @@ def test_stream_workflow_completed_event(shared_db):
     tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
-    events = list(tools.run_workflow_stream(session_state, RunWorkflowInput(input_data="test")))
+    events = list(tools.run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="test")))
 
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
     assert len(completed_events) == 1
 
 
-def test_stream_step_events(shared_db):
+def test_stream_step_events(shared_db, mock_run_context):
     """Test StepStartedEvent and StepCompletedEvent are yielded."""
     workflow = Workflow(
         name="Test",
@@ -402,7 +431,7 @@ def test_stream_step_events(shared_db):
     tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
-    events = list(tools.run_workflow_stream(session_state, RunWorkflowInput(input_data="test")))
+    events = list(tools.run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="test")))
 
     started_events = [e for e in events if isinstance(e, StepStartedEvent)]
     completed_events = [e for e in events if isinstance(e, StepCompletedEvent)]
@@ -414,20 +443,22 @@ def test_stream_step_events(shared_db):
 
 
 @pytest.mark.asyncio
-async def test_async_stream_yields_events(shared_db):
+async def test_async_stream_yields_events(shared_db, mock_run_context):
     """Test async streaming yields workflow events."""
     workflow = Workflow(
         name="Test",
         db=shared_db,
         steps=[Step(name="test_step", executor=simple_step)],
     )
-    tools = WorkflowTools(workflow=workflow, stream=True, async_mode=True)
+    tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
     input_data = RunWorkflowInput(input_data="async stream test")
 
     events = []
-    async for event in tools.async_run_workflow_stream(session_state, input_data):
+    result = await tools.async_run_workflow(mock_run_context, session_state, input_data)
+    # Result is an async iterator when streaming
+    async for event in result:
         events.append(event)
 
     assert len(events) > 0
@@ -437,7 +468,7 @@ async def test_async_stream_yields_events(shared_db):
 
 
 # === Test Streaming with Condition Steps ===
-def test_condition_true_events(shared_db):
+def test_condition_true_events(shared_db, mock_run_context):
     """Test streaming events when condition is True."""
     workflow = Workflow(
         name="Test",
@@ -453,7 +484,7 @@ def test_condition_true_events(shared_db):
     tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
-    events = list(tools.run_workflow_stream(session_state, RunWorkflowInput(input_data="test")))
+    events = list(tools.run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="test")))
 
     started_events = [e for e in events if isinstance(e, ConditionExecutionStartedEvent)]
     completed_events = [e for e in events if isinstance(e, ConditionExecutionCompletedEvent)]
@@ -463,7 +494,7 @@ def test_condition_true_events(shared_db):
     assert started_events[0].condition_result is True
 
 
-def test_condition_false_events(shared_db):
+def test_condition_false_events(shared_db, mock_run_context):
     """Test streaming events when condition is False."""
     workflow = Workflow(
         name="Test",
@@ -479,7 +510,7 @@ def test_condition_false_events(shared_db):
     tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
-    events = list(tools.run_workflow_stream(session_state, RunWorkflowInput(input_data="test")))
+    events = list(tools.run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="test")))
 
     started_events = [e for e in events if isinstance(e, ConditionExecutionStartedEvent)]
     completed_events = [e for e in events if isinstance(e, ConditionExecutionCompletedEvent)]
@@ -490,7 +521,7 @@ def test_condition_false_events(shared_db):
 
 
 # === Test Streaming with Loop Steps ===
-def test_loop_events(shared_db):
+def test_loop_events(shared_db, mock_run_context):
     """Test streaming events for loop execution."""
     workflow = Workflow(
         name="Test",
@@ -507,7 +538,7 @@ def test_loop_events(shared_db):
     tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
-    events = list(tools.run_workflow_stream(session_state, RunWorkflowInput(input_data="test")))
+    events = list(tools.run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="test")))
 
     loop_started = [e for e in events if isinstance(e, LoopExecutionStartedEvent)]
     loop_completed = [e for e in events if isinstance(e, LoopExecutionCompletedEvent)]
@@ -521,7 +552,7 @@ def test_loop_events(shared_db):
 
 
 # === Test Streaming with Parallel Steps ===
-def test_parallel_events(shared_db):
+def test_parallel_events(shared_db, mock_run_context):
     """Test streaming events for parallel execution."""
     workflow = Workflow(
         name="Test",
@@ -537,7 +568,7 @@ def test_parallel_events(shared_db):
     tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
-    events = list(tools.run_workflow_stream(session_state, RunWorkflowInput(input_data="test")))
+    events = list(tools.run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="test")))
 
     parallel_started = [e for e in events if isinstance(e, ParallelExecutionStartedEvent)]
     parallel_completed = [e for e in events if isinstance(e, ParallelExecutionCompletedEvent)]
@@ -547,7 +578,7 @@ def test_parallel_events(shared_db):
 
 
 # === Test Streaming with Router Steps ===
-def test_router_events(shared_db):
+def test_router_events(shared_db, mock_run_context):
     """Test streaming events for router execution."""
     workflow = Workflow(
         name="Test",
@@ -566,7 +597,7 @@ def test_router_events(shared_db):
     tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
-    events = list(tools.run_workflow_stream(session_state, RunWorkflowInput(input_data="test")))
+    events = list(tools.run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="test")))
 
     router_started = [e for e in events if isinstance(e, RouterExecutionStartedEvent)]
     router_completed = [e for e in events if isinstance(e, RouterExecutionCompletedEvent)]
@@ -576,7 +607,7 @@ def test_router_events(shared_db):
 
 
 # === Test Streaming with Steps (Sequential Group) ===
-def test_steps_events(shared_db):
+def test_steps_events(shared_db, mock_run_context):
     """Test streaming events for Steps (sequential group) execution."""
     workflow = Workflow(
         name="Test",
@@ -594,7 +625,7 @@ def test_steps_events(shared_db):
     tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
-    events = list(tools.run_workflow_stream(session_state, RunWorkflowInput(input_data="test")))
+    events = list(tools.run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="test")))
 
     steps_started = [e for e in events if isinstance(e, StepsExecutionStartedEvent)]
     steps_completed = [e for e in events if isinstance(e, StepsExecutionCompletedEvent)]
@@ -604,7 +635,7 @@ def test_steps_events(shared_db):
 
 
 # === Test Event Order ===
-def test_workflow_events_order(shared_db):
+def test_workflow_events_order(shared_db, mock_run_context):
     """Test that events are in correct order."""
     workflow = Workflow(
         name="Test",
@@ -614,7 +645,7 @@ def test_workflow_events_order(shared_db):
     tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
-    events = list(tools.run_workflow_stream(session_state, RunWorkflowInput(input_data="test")))
+    events = list(tools.run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="test")))
 
     workflow_started_idx = None
     step_started_idx = None
@@ -642,22 +673,22 @@ def test_workflow_events_order(shared_db):
 
 
 # === Test Error Handling ===
-def test_run_workflow_error_handling(shared_db):
+def test_run_workflow_error_handling(shared_db, mock_run_context_no_stream):
     """Test error handling in run_workflow."""
 
     def failing_step(step_input: StepInput) -> StepOutput:
         raise ValueError("Step failed")
 
     workflow = Workflow(name="Test", db=shared_db, steps=[failing_step])
-    tools = WorkflowTools(workflow=workflow)
+    tools = WorkflowTools(workflow=workflow, stream=False)
 
     session_state = {}
-    result = tools.run_workflow(session_state, RunWorkflowInput(input_data="test"))
+    result = tools.run_workflow(mock_run_context_no_stream, session_state, RunWorkflowInput(input_data="test"))
 
     assert "Error" in result or "error" in result.lower()
 
 
-def test_stream_error_handling(shared_db):
+def test_stream_error_handling(shared_db, mock_run_context):
     """Test error handling in streaming mode."""
 
     def failing_step(step_input: StepInput) -> StepOutput:
@@ -667,7 +698,7 @@ def test_stream_error_handling(shared_db):
     tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
-    events = list(tools.run_workflow_stream(session_state, RunWorkflowInput(input_data="test")))
+    events = list(tools.run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="test")))
 
     assert len(events) > 0
     last_event = events[-1]
@@ -690,3 +721,55 @@ def test_run_workflow_input_without_additional_data():
 
     assert input_model.input_data == "test"
     assert input_model.additional_data is None
+
+
+# === Test _should_stream helper ===
+def test_should_stream_with_explicit_setting(shared_db, mock_run_context):
+    """Test _should_stream uses explicit setting when provided."""
+    workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
+    tools = WorkflowTools(workflow=workflow, stream=False)
+
+    # Even with run_context.stream=True, explicit setting takes precedence
+    assert tools._should_stream(mock_run_context) is False
+
+
+def test_should_stream_inherits_from_context(shared_db, mock_run_context):
+    """Test _should_stream inherits from run_context when not explicitly set."""
+    workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
+    tools = WorkflowTools(workflow=workflow)  # stream=None
+
+    assert tools._should_stream(mock_run_context) is True
+
+
+def test_should_stream_defaults_to_true(shared_db):
+    """Test _should_stream defaults to True when no context."""
+    workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
+    tools = WorkflowTools(workflow=workflow)  # stream=None
+
+    assert tools._should_stream(None) is True
+
+
+# === Test _should_stream_events helper ===
+def test_should_stream_events_with_explicit_setting(shared_db, mock_run_context):
+    """Test _should_stream_events uses explicit setting when provided."""
+    workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
+    tools = WorkflowTools(workflow=workflow, stream_events=False)
+
+    # Even with run_context.stream_events=True, explicit setting takes precedence
+    assert tools._should_stream_events(mock_run_context) is False
+
+
+def test_should_stream_events_inherits_from_context(shared_db, mock_run_context):
+    """Test _should_stream_events inherits from run_context when not explicitly set."""
+    workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
+    tools = WorkflowTools(workflow=workflow)  # stream_events=None
+
+    assert tools._should_stream_events(mock_run_context) is True
+
+
+def test_should_stream_events_defaults_to_true(shared_db):
+    """Test _should_stream_events defaults to True when no context."""
+    workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
+    tools = WorkflowTools(workflow=workflow)  # stream_events=None
+
+    assert tools._should_stream_events(None) is True

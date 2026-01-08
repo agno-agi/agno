@@ -2227,9 +2227,16 @@ class Team:
             session_state=session_state,
             dependencies=dependencies,
             output_schema=output_schema,
+            stream=stream if stream is not None else self.stream,
+            stream_events=stream_events if stream_events is not None else self.stream_events,
         )
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
+        # Update stream settings if they were passed explicitly
+        if stream is not None:
+            run_context.stream = stream
+        if stream_events is not None:
+            run_context.stream_events = stream_events
 
         # Resolve callable dependencies if present
         if run_context.dependencies is not None:
@@ -3225,9 +3232,16 @@ class Team:
             knowledge_filters=effective_filters,
             metadata=metadata,
             output_schema=output_schema,
+            stream=stream if stream is not None else self.stream,
+            stream_events=stream_events if stream_events is not None else self.stream_events,
         )
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
+        # Update stream settings if they were passed explicitly
+        if stream is not None:
+            run_context.stream = stream
+        if stream_events is not None:
+            run_context.stream_events = stream_events
 
         # Configure the model for runs
         response_format: Optional[Union[Dict, Type[BaseModel]]] = (

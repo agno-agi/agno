@@ -24,6 +24,10 @@ class RunContext:
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 
+    # Streaming settings from the agent/team
+    stream: bool = False
+    stream_events: bool = False
+
 
 @dataclass
 class BaseRunOutputEvent:

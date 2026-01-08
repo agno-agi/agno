@@ -130,7 +130,6 @@ def print_response_stream(
             metadata=metadata,
             **kwargs,
         ):
-
             if isinstance(response_event, tuple(get_args(WorkflowRunOutputEvent))):
                 if isinstance(response_event, WorkflowStartedEvent):
                     workflow_in_progress = True

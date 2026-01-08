@@ -1,11 +1,13 @@
 """Integration tests for WorkflowTools with Agent and Team."""
 
 from typing import get_args
+from unittest.mock import MagicMock
 
 import pytest
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.base import RunContext
 from agno.run.workflow import (
     ConditionExecutionCompletedEvent,
     ConditionExecutionStartedEvent,
@@ -21,6 +23,16 @@ from agno.workflow.condition import Condition
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
+
+
+# === Fixtures ===
+@pytest.fixture
+def mock_run_context():
+    """Create a mock RunContext for testing."""
+    context = MagicMock(spec=RunContext)
+    context.stream = True
+    context.stream_events = True
+    return context
 
 
 # === Helper Functions ===
@@ -60,9 +72,9 @@ def test_agent_runs_workflow_tool(shared_db):
     workflow_tools = WorkflowTools(workflow=workflow)
 
     agent = Agent(
-        model=OpenAIChat(id="gpt-5-mini"),
+        model=OpenAIChat(id="gpt-4o-mini"),
         tools=[workflow_tools],
-        instructions="Use the run_workflow_stream tool to process the user's request.",
+        instructions="Use the run_workflow tool to process the user's request.",
     )
 
     response = agent.run("Research AI trends")
@@ -84,9 +96,9 @@ def test_agent_streams_workflow_events(shared_db):
     workflow_tools = WorkflowTools(workflow=workflow, stream=True)
 
     agent = Agent(
-        model=OpenAIChat(id="gpt-5-mini"),
+        model=OpenAIChat(id="gpt-4o-mini"),
         tools=[workflow_tools],
-        instructions="You MUST always use the run_workflow_stream tool. Never respond without calling run_workflow_stream first.",
+        instructions="You MUST always use the run_workflow tool. Never respond without calling run_workflow first.",
     )
 
     events = list(agent.run("Research AI trends", stream=True))
@@ -112,9 +124,9 @@ def test_agent_receives_step_events(shared_db):
     workflow_tools = WorkflowTools(workflow=workflow, stream=True)
 
     agent = Agent(
-        model=OpenAIChat(id="gpt-5-mini"),
+        model=OpenAIChat(id="gpt-4o-mini"),
         tools=[workflow_tools],
-        instructions="You MUST always use the run_workflow_stream tool. Never respond without calling run_workflow_stream first.",
+        instructions="You MUST always use the run_workflow tool. Never respond without calling run_workflow first.",
     )
 
     events = list(agent.run("Research topic", stream=True))
@@ -145,10 +157,10 @@ def test_team_runs_workflow_tool(shared_db):
 
     team = Team(
         name="Research Team",
-        model=OpenAIChat(id="gpt-5-mini"),
+        model=OpenAIChat(id="gpt-4o-mini"),
         tools=[workflow_tools],
         members=[],
-        instructions="Use the run_workflow_stream tool to process requests.",
+        instructions="Use the run_workflow tool to process requests.",
     )
 
     response = team.run("Research AI trends")
@@ -171,10 +183,10 @@ def test_team_streams_workflow_events(shared_db):
 
     team = Team(
         name="Research Team",
-        model=OpenAIChat(id="gpt-5-mini"),
+        model=OpenAIChat(id="gpt-4o-mini"),
         tools=[workflow_tools],
         members=[],
-        instructions="You MUST always use the run_workflow_stream tool. Never respond without calling run_workflow_stream first.",
+        instructions="You MUST always use the run_workflow tool. Never respond without calling run_workflow first.",
     )
 
     events = list(team.run("Research AI trends", stream=True))
@@ -191,7 +203,7 @@ def test_team_streams_workflow_events(shared_db):
 
 
 # === Test Workflow Events Propagation ===
-def test_workflow_events_are_workflow_run_output_event(shared_db):
+def test_workflow_events_are_workflow_run_output_event(shared_db, mock_run_context):
     """Test that all workflow events are WorkflowRunOutputEvent types."""
     workflow = Workflow(
         name="Test",
@@ -201,15 +213,17 @@ def test_workflow_events_are_workflow_run_output_event(shared_db):
     tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
-    events = list(tools.run_workflow_stream(session_state, RunWorkflowInput(input_data="test")))
+    events = list(tools.run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="test")))
 
     workflow_events = [e for e in events if not isinstance(e, str)]
 
     for event in workflow_events:
-        assert isinstance(event, tuple(get_args(WorkflowRunOutputEvent))), f"Event {type(event)} is not a WorkflowRunOutputEvent"
+        assert isinstance(event, tuple(get_args(WorkflowRunOutputEvent))), (
+            f"Event {type(event)} is not a WorkflowRunOutputEvent"
+        )
 
 
-def test_step_completed_has_content(shared_db):
+def test_step_completed_has_content(shared_db, mock_run_context):
     """Test that StepCompletedEvent contains content."""
     workflow = Workflow(
         name="Test",
@@ -219,7 +233,7 @@ def test_step_completed_has_content(shared_db):
     tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
-    events = list(tools.run_workflow_stream(session_state, RunWorkflowInput(input_data="my topic")))
+    events = list(tools.run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="my topic")))
 
     step_completed = [e for e in events if isinstance(e, StepCompletedEvent)]
     assert len(step_completed) == 1
@@ -227,7 +241,7 @@ def test_step_completed_has_content(shared_db):
     assert "my topic" in str(step_completed[0].content)
 
 
-def test_condition_events_have_result(shared_db):
+def test_condition_events_have_result(shared_db, mock_run_context):
     """Test that condition events have condition_result."""
     workflow = Workflow(
         name="Test",
@@ -243,7 +257,7 @@ def test_condition_events_have_result(shared_db):
     tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
-    events = list(tools.run_workflow_stream(session_state, RunWorkflowInput(input_data="check the data")))
+    events = list(tools.run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="check the data")))
 
     condition_started = [e for e in events if isinstance(e, ConditionExecutionStartedEvent)]
     condition_completed = [e for e in events if isinstance(e, ConditionExecutionCompletedEvent)]
@@ -254,7 +268,7 @@ def test_condition_events_have_result(shared_db):
 
 
 # === Test Multiple Steps ===
-def test_multiple_steps_all_events_received(shared_db):
+def test_multiple_steps_all_events_received(shared_db, mock_run_context):
     """Test that all step events are received for multi-step workflow."""
     workflow = Workflow(
         name="Multi-Step",
@@ -268,7 +282,7 @@ def test_multiple_steps_all_events_received(shared_db):
     tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
-    events = list(tools.run_workflow_stream(session_state, RunWorkflowInput(input_data="test")))
+    events = list(tools.run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="test")))
 
     step_started = [e for e in events if isinstance(e, StepStartedEvent)]
     step_completed = [e for e in events if isinstance(e, StepCompletedEvent)]
@@ -282,7 +296,7 @@ def test_multiple_steps_all_events_received(shared_db):
     assert "step3" in step_names
 
 
-def test_steps_execute_in_order(shared_db):
+def test_steps_execute_in_order(shared_db, mock_run_context):
     """Test that steps execute in correct order."""
     workflow = Workflow(
         name="Ordered",
@@ -295,7 +309,7 @@ def test_steps_execute_in_order(shared_db):
     tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
-    events = list(tools.run_workflow_stream(session_state, RunWorkflowInput(input_data="test")))
+    events = list(tools.run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="test")))
 
     step_started = [e for e in events if isinstance(e, StepStartedEvent)]
 
@@ -306,18 +320,20 @@ def test_steps_execute_in_order(shared_db):
 
 # === Test Async Workflow Tools ===
 @pytest.mark.asyncio
-async def test_async_stream_yields_events(shared_db):
+async def test_async_stream_yields_events(shared_db, mock_run_context):
     """Test async streaming yields events."""
     workflow = Workflow(
         name="Async Test",
         db=shared_db,
         steps=[Step(name="test", executor=research_step)],
     )
-    tools = WorkflowTools(workflow=workflow, stream=True, async_mode=True)
+    tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
     events = []
-    async for event in tools.async_run_workflow_stream(session_state, RunWorkflowInput(input_data="async test")):
+    result = await tools.async_run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="async test"))
+    # Result is an async iterator when streaming
+    async for event in result:
         events.append(event)
 
     workflow_started = [e for e in events if isinstance(e, WorkflowStartedEvent)]
@@ -328,7 +344,7 @@ async def test_async_stream_yields_events(shared_db):
 
 
 @pytest.mark.asyncio
-async def test_async_step_events(shared_db):
+async def test_async_step_events(shared_db, mock_run_context):
     """Test async streaming yields step events."""
     workflow = Workflow(
         name="Async Steps",
@@ -338,11 +354,13 @@ async def test_async_step_events(shared_db):
             Step(name="async_step2", executor=summarize_step),
         ],
     )
-    tools = WorkflowTools(workflow=workflow, stream=True, async_mode=True)
+    tools = WorkflowTools(workflow=workflow, stream=True)
 
     session_state = {}
     events = []
-    async for event in tools.async_run_workflow_stream(session_state, RunWorkflowInput(input_data="async test")):
+    result = await tools.async_run_workflow(mock_run_context, session_state, RunWorkflowInput(input_data="async test"))
+    # Result is an async iterator when streaming
+    async for event in result:
         events.append(event)
 
     step_started = [e for e in events if isinstance(e, StepStartedEvent)]
