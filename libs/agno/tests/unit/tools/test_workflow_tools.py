@@ -91,21 +91,22 @@ def select_first_step(step_input: StepInput):
 
 # === Test WorkflowTools Initialization ===
 def test_basic_init(shared_db):
-    """Test basic WorkflowTools initialization."""
+    """Test basic WorkflowTools initialization (stream=True by default)."""
     workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
     tools = WorkflowTools(workflow=workflow)
 
     assert tools.workflow == workflow
+    assert tools.stream is True  # Default is now True
+    assert "run_workflow_stream" in [f.name for f in tools.functions.values()]
+
+
+def test_init_with_stream_false(shared_db):
+    """Test WorkflowTools with stream=False."""
+    workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
+    tools = WorkflowTools(workflow=workflow, stream=False)
+
     assert tools.stream is False
     assert "run_workflow" in [f.name for f in tools.functions.values()]
-
-
-def test_init_with_stream(shared_db):
-    """Test WorkflowTools with stream=True."""
-    workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
-    tools = WorkflowTools(workflow=workflow, stream=True)
-
-    assert tools.stream is True
 
 
 def test_init_with_think_enabled(shared_db):
@@ -115,7 +116,7 @@ def test_init_with_think_enabled(shared_db):
 
     function_names = [f.name for f in tools.functions.values()]
     assert "think" in function_names
-    assert "run_workflow" in function_names
+    assert "run_workflow_stream" in function_names  # stream=True by default
 
 
 def test_init_with_analyze_enabled(shared_db):
@@ -125,7 +126,7 @@ def test_init_with_analyze_enabled(shared_db):
 
     function_names = [f.name for f in tools.functions.values()]
     assert "analyze" in function_names
-    assert "run_workflow" in function_names
+    assert "run_workflow_stream" in function_names  # stream=True by default
 
 
 def test_init_with_all_tools(shared_db):
@@ -136,21 +137,36 @@ def test_init_with_all_tools(shared_db):
     function_names = [f.name for f in tools.functions.values()]
     assert "think" in function_names
     assert "analyze" in function_names
-    assert "run_workflow" in function_names
+    assert "run_workflow_stream" in function_names  # stream=True by default
 
 
-def test_init_async_mode(shared_db):
-    """Test WorkflowTools in async mode."""
+def test_init_async_mode_deprecated(shared_db):
+    """Test WorkflowTools async_mode is deprecated but still works."""
+    import warnings
+
     workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
-    tools = WorkflowTools(workflow=workflow, async_mode=True)
 
-    assert "run_workflow" in [f.name for f in tools.functions.values()]
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        tools = WorkflowTools(workflow=workflow, async_mode=True)
+
+        assert len(w) == 1
+        assert issubclass(w[0].category, DeprecationWarning)
+        assert "async_mode" in str(w[0].message)
+
+    # Tools should still work
+    assert "run_workflow_stream" in [f.name for f in tools.functions.values()]
 
 
 def test_init_async_mode_with_stream(shared_db):
     """Test WorkflowTools in async mode with streaming."""
+    import warnings
+
     workflow = Workflow(name="Test", db=shared_db, steps=[simple_step])
-    tools = WorkflowTools(workflow=workflow, async_mode=True, stream=True)
+
+    with warnings.catch_warnings(record=True):
+        warnings.simplefilter("always")
+        tools = WorkflowTools(workflow=workflow, async_mode=True, stream=True)
 
     assert tools.stream is True
 

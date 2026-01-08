@@ -1,6 +1,7 @@
 import json
+import warnings
 from textwrap import dedent
-from typing import Any, AsyncIterator, Dict, Iterator, Optional, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -27,10 +28,20 @@ class WorkflowTools(Toolkit):
         add_instructions: bool = True,
         add_few_shot: bool = False,
         few_shot_examples: Optional[str] = None,
-        async_mode: bool = False,
         stream: bool = True,
+        # Deprecated parameter
+        async_mode: Optional[bool] = None,
         **kwargs,
     ):
+        # Handle deprecated async_mode parameter
+        if async_mode is not None:
+            warnings.warn(
+                "The 'async_mode' parameter is deprecated and will be removed in future versions. "
+                "Async tools are now automatically registered alongside sync tools.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # Add instructions for using this toolkit
         if instructions is None:
             self.instructions = self.DEFAULT_INSTRUCTIONS
@@ -46,35 +57,34 @@ class WorkflowTools(Toolkit):
         # Whether to stream workflow events
         self.stream: bool = stream
 
-        super().__init__(
-            name="workflow_tools",
-            instructions=self.instructions,
-            add_instructions=add_instructions,
-            auto_register=False,
-            **kwargs,
-        )
+        # Build tools lists
+        # sync tools: used by agent.run() and agent.print_response()
+        # async tools: used by agent.arun() and agent.aprint_response()
+        tools: List[Any] = []
+        async_tools: List[tuple] = []
 
         if enable_think or all:
-            if async_mode:
-                self.register(self.async_think, name="think")
-            else:
-                self.register(self.think, name="think")
+            tools.append(self.think)
+            async_tools.append((self.async_think, "think"))
         if enable_run_workflow or all:
-            if async_mode:
-                if stream:
-                    self.register(self.async_run_workflow_stream, name="run_workflow")
-                else:
-                    self.register(self.async_run_workflow, name="run_workflow")
+            if stream:
+                tools.append(self.run_workflow_stream)
+                async_tools.append((self.async_run_workflow_stream, "run_workflow_stream"))
             else:
-                if stream:
-                    self.register(self.run_workflow_stream, name="run_workflow")
-                else:
-                    self.register(self.run_workflow, name="run_workflow")
+                tools.append(self.run_workflow)
+                async_tools.append((self.async_run_workflow, "run_workflow"))
         if enable_analyze or all:
-            if async_mode:
-                self.register(self.async_analyze, name="analyze")
-            else:
-                self.register(self.analyze, name="analyze")
+            tools.append(self.analyze)
+            async_tools.append((self.async_analyze, "analyze"))
+
+        super().__init__(
+            name="workflow_tools",
+            tools=tools,
+            async_tools=async_tools,
+            instructions=self.instructions,
+            add_instructions=add_instructions,
+            **kwargs,
+        )
 
     def think(self, session_state: Dict[str, Any], thought: str) -> str:
         """Use this tool as a scratchpad to reason about the workflow execution, refine your approach, brainstorm workflow inputs, or revise your plan.
