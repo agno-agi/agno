@@ -3228,7 +3228,6 @@ class Agent:
                         tools=tools,
                         tool_choice=self.tool_choice,
                         tool_call_limit=self.tool_call_limit,
-                        run_response=run_response,
                     )
 
                     # Check for cancellation after model processing
@@ -3906,7 +3905,6 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         session=agent_session,
-                        async_mode=True,
                     )
 
                     # 6. Prepare run messages
@@ -3929,7 +3927,6 @@ class Agent:
                         tools=_tools,
                         tool_choice=self.tool_choice,
                         tool_call_limit=self.tool_call_limit,
-                        run_response=run_response,
                     )
                     # Check for cancellation after model call
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -6421,7 +6418,6 @@ class Agent:
         run_response: RunOutput,
         run_context: RunContext,
         session: AgentSession,
-        async_mode: bool = False,
     ) -> List[Union[Function, dict]]:
         _function_names = []
         _functions: List[Union[Function, dict]] = []

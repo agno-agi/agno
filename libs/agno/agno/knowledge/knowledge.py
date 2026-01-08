@@ -676,7 +676,7 @@ class Knowledge:
             if self._should_include_file(str(path), include, exclude):
                 log_debug(f"Adding file {path} due to include/exclude filters")
 
-                await self._async_add_to_contents_db(content)
+                await self._ainsert_contents_db(content)
                 if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
                     content.status = ContentStatus.COMPLETED
                     await self._aupdate_content(content)
@@ -757,7 +757,7 @@ class Knowledge:
             if self._should_include_file(str(path), include, exclude):
                 log_debug(f"Adding file {path} due to include/exclude filters")
 
-                self._add_to_contents_db(content)
+                self._insert_contents_db(content)
                 if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
                     content.status = ContentStatus.COMPLETED
                     self._update_content(content)
@@ -843,7 +843,7 @@ class Knowledge:
             raise ValueError("No url provided")
 
         # 1. Add content to contents database
-        await self._async_add_to_contents_db(content)
+        await self._ainsert_contents_db(content)
         if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             await self._aupdate_content(content)
@@ -940,7 +940,7 @@ class Knowledge:
             raise ValueError("No url provided")
 
         # 1. Add content to contents database
-        self._add_to_contents_db(content)
+        self._insert_contents_db(content)
         if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             self._update_content(content)
@@ -1044,7 +1044,7 @@ class Knowledge:
 
         log_info(f"Adding content from {content.name}")
 
-        await self._async_add_to_contents_db(content)
+        await self._ainsert_contents_db(content)
         if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             await self._aupdate_content(content)
@@ -1141,7 +1141,7 @@ class Knowledge:
 
         log_info(f"Adding content from {content.name}")
 
-        self._add_to_contents_db(content)
+        self._insert_contents_db(content)
         if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             self._update_content(content)
@@ -1235,7 +1235,7 @@ class Knowledge:
             content.content_hash = self._build_content_hash(content)
             content.id = generate_id(content.content_hash)
 
-            await self._async_add_to_contents_db(content)
+            await self._ainsert_contents_db(content)
             if self._should_skip(content.content_hash, skip_if_exists):
                 content.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content)
@@ -1249,7 +1249,7 @@ class Knowledge:
                 log_info(f"Content {content.content_hash} already exists, skipping")
                 continue
 
-            await self._async_add_to_contents_db(content)
+            await self._ainsert_contents_db(content)
             if content.reader is None:
                 log_error(f"No reader available for topic: {topic}")
                 content.status = ContentStatus.FAILED
@@ -1297,7 +1297,7 @@ class Knowledge:
             content.content_hash = self._build_content_hash(content)
             content.id = generate_id(content.content_hash)
 
-            self._add_to_contents_db(content)
+            self._insert_contents_db(content)
             if self._should_skip(content.content_hash, skip_if_exists):
                 content.status = ContentStatus.COMPLETED
                 self._update_content(content)
@@ -1311,7 +1311,7 @@ class Knowledge:
                 log_info(f"Content {content.content_hash} already exists, skipping")
                 continue
 
-            self._add_to_contents_db(content)
+            self._insert_contents_db(content)
             if content.reader is None:
                 log_error(f"No reader available for topic: {topic}")
                 content.status = ContentStatus.FAILED
@@ -1394,7 +1394,7 @@ class Knowledge:
             # 3. Hash content and add it to the contents database
             content_entry.content_hash = self._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
-            await self._async_add_to_contents_db(content_entry)
+            await self._ainsert_contents_db(content_entry)
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content_entry)
@@ -1464,7 +1464,7 @@ class Knowledge:
             # 3. Hash content and add it to the contents database
             content_entry.content_hash = self._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
-            await self._async_add_to_contents_db(content_entry)
+            await self._ainsert_contents_db(content_entry)
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content_entry)
@@ -1553,7 +1553,7 @@ class Knowledge:
             # 3. Hash content and add it to the contents database
             content_entry.content_hash = self._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
-            self._add_to_contents_db(content_entry)
+            self._insert_contents_db(content_entry)
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 self._update_content(content_entry)
@@ -1624,7 +1624,7 @@ class Knowledge:
             # 3. Hash content and add it to the contents database
             content_entry.content_hash = self._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
-            self._add_to_contents_db(content_entry)
+            self._insert_contents_db(content_entry)
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 self._update_content(content_entry)
@@ -1932,7 +1932,7 @@ class Knowledge:
                 return ContentStatus.COMPLETED
             return ContentStatus.PROCESSING
 
-    async def _async_add_to_contents_db(self, content: Content):
+    async def _ainsert_contents_db(self, content: Content):
         if self.contents_db:
             content_row = self._build_knowledge_row(content)
             if isinstance(self.contents_db, AsyncBaseDb):
@@ -1940,12 +1940,12 @@ class Knowledge:
             else:
                 self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
-    def _add_to_contents_db(self, content: Content):
+    def _insert_contents_db(self, content: Content):
         """Synchronously add content to contents database."""
         if self.contents_db:
             if isinstance(self.contents_db, AsyncBaseDb):
                 raise ValueError(
-                    "_add_to_contents_db() is not supported with an async DB. Please use async_add_content with AsyncDb."
+                    "_insert_contents_db() is not supported with an async DB. Please use ainsert() with AsyncDb."
                 )
             content_row = self._build_knowledge_row(content)
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
@@ -2062,7 +2062,7 @@ class Knowledge:
 
         self.vector_db = cast(VectorDb, self.vector_db)
 
-        await self._async_add_to_contents_db(content)
+        await self._ainsert_contents_db(content)
         if content_type == KnowledgeContentOrigin.PATH:
             if content.file_data is None:
                 log_warning("No file data provided")
@@ -2220,7 +2220,7 @@ class Knowledge:
 
         self.vector_db = cast(VectorDb, self.vector_db)
 
-        self._add_to_contents_db(content)
+        self._insert_contents_db(content)
         if content_type == KnowledgeContentOrigin.PATH:
             if content.file_data is None:
                 log_warning("No file data provided")
