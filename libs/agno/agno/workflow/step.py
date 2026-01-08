@@ -10,8 +10,8 @@ from typing_extensions import TypeGuard
 
 from agno.agent import Agent
 from agno.media import Audio, Image, Video
+from agno.metrics import RunMetrics
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.run import RunContext
 from agno.run.agent import RunContentEvent, RunOutput
 from agno.run.base import BaseRunOutputEvent
@@ -174,7 +174,7 @@ class Step:
         else:
             raise ValueError("No executor configured")
 
-    def _extract_metrics_from_response(self, response: Union[RunOutput, TeamRunOutput]) -> Optional[Metrics]:
+    def _extract_metrics_from_response(self, response: Union[RunOutput, TeamRunOutput]) -> Optional[RunMetrics]:
         """Extract metrics from agent or team response"""
         if hasattr(response, "metrics") and response.metrics:
             return response.metrics

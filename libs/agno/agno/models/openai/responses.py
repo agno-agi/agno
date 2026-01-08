@@ -8,9 +8,9 @@ from typing_extensions import Literal
 
 from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.media import File
+from agno.metrics import RunMetrics
 from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -589,10 +589,8 @@ class OpenAIResponses(Model):
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             provider_response = self.get_client().responses.create(
                 model=self.id,
@@ -600,7 +598,9 @@ class OpenAIResponses(Model):
                 **request_params,
             )
 
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                if assistant_message.metrics is not None:
+                    assistant_message.metrics.stop_timer()
 
             model_response = self._parse_provider_response(provider_response, response_format=response_format)
 
@@ -662,10 +662,8 @@ class OpenAIResponses(Model):
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             provider_response = await self.get_async_client().responses.create(
                 model=self.id,
@@ -673,7 +671,8 @@ class OpenAIResponses(Model):
                 **request_params,
             )
 
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
             model_response = self._parse_provider_response(provider_response, response_format=response_format)
 
@@ -736,10 +735,8 @@ class OpenAIResponses(Model):
             )
             tool_use: Dict[str, Any] = {}
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             for chunk in self.get_client().responses.create(
                 model=self.id,
@@ -754,7 +751,8 @@ class OpenAIResponses(Model):
                 )
                 yield model_response
 
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
@@ -813,10 +811,8 @@ class OpenAIResponses(Model):
             )
             tool_use: Dict[str, Any] = {}
 
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
-            assistant_message.metrics.start_timer()
+            # Initialize MessageMetrics and start timer
+            self._ensure_message_metrics_initialized(assistant_message)
 
             async_stream = await self.get_async_client().responses.create(
                 model=self.id,
@@ -828,7 +824,8 @@ class OpenAIResponses(Model):
                 model_response, tool_use = self._parse_provider_response_delta(chunk, assistant_message, tool_use)  # type: ignore
                 yield model_response
 
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
@@ -1005,8 +1002,9 @@ class OpenAIResponses(Model):
                 if model_response.provider_data is None:
                     model_response.provider_data = {}
                 model_response.provider_data["response_id"] = stream_event.response.id
-            if not assistant_message.metrics.time_to_first_token:
-                assistant_message.metrics.set_time_to_first_token()
+            if assistant_message.metrics is not None:
+                if not assistant_message.metrics.time_to_first_token:
+                    assistant_message.metrics.set_time_to_first_token()
 
         # 2. Add citations
         elif stream_event.type == "response.output_text.annotation.added":
@@ -1103,7 +1101,7 @@ class OpenAIResponses(Model):
 
         return model_response, tool_use
 
-    def _get_metrics(self, response_usage: ResponseUsage) -> Metrics:
+    def _get_metrics(self, response_usage: ResponseUsage) -> RunMetrics:
         """
         Parse the given OpenAI-specific usage into an Agno Metrics object.
 
@@ -1113,7 +1111,7 @@ class OpenAIResponses(Model):
         Returns:
             Metrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = RunMetrics()
 
         metrics.input_tokens = response_usage.input_tokens or 0
         metrics.output_tokens = response_usage.output_tokens or 0

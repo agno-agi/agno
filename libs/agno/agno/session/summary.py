@@ -211,6 +211,8 @@ class SessionSummaryManager:
     def create_session_summary(
         self,
         session: Union["AgentSession", "TeamSession"],
+        run_response: Optional[Any] = None,
+        run_messages: Optional[Any] = None,
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
         log_debug("Creating session summary", center=True)
@@ -227,7 +229,16 @@ class SessionSummaryManager:
 
         response_format = self.get_response_format(self.model)
 
-        summary_response = self.model.response(messages=messages, response_format=response_format)
+        summary_response = self.model.response(
+            messages=messages, response_format=response_format, run_response=run_response
+        )
+
+        # Accumulate metrics immediately if run_response is provided
+        if run_response is not None:
+            from agno.metrics import accumulate_model_metrics
+
+            accumulate_model_metrics(summary_response, self.model, "session_summary_model", run_response)
+
         session_summary = self._process_summary_response(summary_response, self.model)
 
         if session is not None and session_summary is not None:
@@ -239,6 +250,8 @@ class SessionSummaryManager:
     async def acreate_session_summary(
         self,
         session: Union["AgentSession", "TeamSession"],
+        run_response: Optional[Any] = None,
+        run_messages: Optional[Any] = None,
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
         log_debug("Creating session summary", center=True)
@@ -255,7 +268,16 @@ class SessionSummaryManager:
 
         response_format = self.get_response_format(self.model)
 
-        summary_response = await self.model.aresponse(messages=messages, response_format=response_format)
+        summary_response = await self.model.aresponse(
+            messages=messages, response_format=response_format, run_response=run_response
+        )
+
+        # Accumulate metrics immediately if run_response is provided
+        if run_response is not None:
+            from agno.metrics import accumulate_model_metrics
+
+            accumulate_model_metrics(summary_response, self.model, "session_summary_model", run_response)
+
         session_summary = self._process_summary_response(summary_response, self.model)
 
         if session is not None and session_summary is not None:

@@ -202,6 +202,7 @@ async def test_acreate_user_memories_with_async_db():
         db,
         update_memories,
         add_memories,
+        run_response=None,
     ):
         await db.upsert_user_memory(
             UserMemory(

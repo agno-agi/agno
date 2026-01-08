@@ -31,8 +31,8 @@ from pydantic import BaseModel
 
 from agno.exceptions import AgentRunException, ModelProviderError, RetryableModelProviderError
 from agno.media import Audio, File, Image, Video
+from agno.metrics import MessageMetrics, ToolCallMetrics
 from agno.models.message import Citations, Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.requirement import RunRequirement
@@ -59,7 +59,7 @@ class MessageData:
     response_video: Optional[Video] = None
     response_file: Optional[File] = None
 
-    response_metrics: Optional[Metrics] = None
+    response_metrics: Optional[MessageMetrics] = None
 
     # Data from the provider that we might need on subsequent messages
     response_provider_data: Optional[Dict[str, Any]] = None
@@ -542,6 +542,19 @@ class Model(ABC):
     ) -> int:
         return self.count_tokens(messages, tools, output_schema=output_schema)
 
+    def _ensure_message_metrics_initialized(self, assistant_message: Message) -> None:
+        """
+        Ensure message metrics are initialized and timer is started.
+        This should be called before making model API calls.
+
+        Args:
+            assistant_message: The assistant message to initialize metrics for
+        """
+        if assistant_message.metrics is None:
+            assistant_message.metrics = MessageMetrics()
+        if assistant_message.metrics.timer is None or assistant_message.metrics.timer.start_time is None:
+            assistant_message.metrics.start_timer()
+
     def response(
         self,
         messages: List[Message],
@@ -600,6 +613,9 @@ class Model(ABC):
 
                 # Get response from model
                 assistant_message = Message(role=self.assistant_message_role)
+                # Initialize message metrics and start timer before model call
+                assistant_message.metrics = MessageMetrics()
+                assistant_message.metrics.start_timer()
                 self._process_model_response(
                     messages=messages,
                     assistant_message=assistant_message,
@@ -991,6 +1007,10 @@ class Model(ABC):
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
+        # Copy response_usage from provider_response to model_response
+        if provider_response.response_usage is not None:
+            model_response.response_usage = provider_response.response_usage
+
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
             if model_response.content is None:
@@ -1050,6 +1070,10 @@ class Model(ABC):
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
+        # Copy response_usage from provider_response to model_response
+        if provider_response.response_usage is not None:
+            model_response.response_usage = provider_response.response_usage
+
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
             if model_response.content is None:
@@ -1099,6 +1123,9 @@ class Model(ABC):
         # Add content to assistant message
         if provider_response.content is not None:
             assistant_message.content = provider_response.content
+            # Set time_to_first_token when we receive content if not already set
+            if assistant_message.metrics is not None and assistant_message.metrics.time_to_first_token is None:
+                assistant_message.metrics.set_time_to_first_token()
 
         # Add tool calls to assistant message
         if provider_response.tool_calls is not None and len(provider_response.tool_calls) > 0:
@@ -1142,9 +1169,21 @@ class Model(ABC):
         if provider_response.citations is not None:
             assistant_message.citations = provider_response.citations
 
-        # Add usage metrics if provided
+        # Add usage metrics if provided - convert RunMetrics to MessageMetrics
         if provider_response.response_usage is not None:
-            assistant_message.metrics += provider_response.response_usage
+            if assistant_message.metrics is None:
+                # Initialize if not already initialized (shouldn't happen, but safety check)
+                assistant_message.metrics = MessageMetrics()
+                assistant_message.metrics.start_timer()
+            # Update MessageMetrics with usage data from response
+            usage = provider_response.response_usage
+            # Convert RunMetrics to MessageMetrics for addition
+            usage_metrics = MessageMetrics.from_metrics(usage)
+            # Use in-place addition to preserve timer automatically
+            assistant_message.metrics += usage_metrics
+            # Set time_to_first_token if we have content and it's not already set
+            if provider_response.content is not None and assistant_message.metrics.time_to_first_token is None:
+                assistant_message.metrics.set_time_to_first_token()
 
         return assistant_message
 
@@ -1181,6 +1220,33 @@ class Model(ABC):
         # Populate assistant message from stream data after the stream ends
         self._populate_assistant_message_from_stream_data(assistant_message=assistant_message, stream_data=stream_data)
 
+        # Accumulate metrics at the end of the stream if run_response is provided
+        if run_response is not None and assistant_message.metrics is not None:
+            from agno.metrics import RunMetrics, accumulate_model_metrics
+            from agno.models.response import ModelResponse
+
+            # Get model_type from run_response context if available, otherwise default to "model"
+            model_type = getattr(run_response, "_current_model_type", "model")
+
+            # Create a ModelResponse with the metrics from the assistant message
+            model_response_with_metrics = ModelResponse()
+            # Convert MessageMetrics back to RunMetrics for accumulation
+            run_metrics = RunMetrics(
+                input_tokens=assistant_message.metrics.input_tokens,
+                output_tokens=assistant_message.metrics.output_tokens,
+                total_tokens=assistant_message.metrics.total_tokens,
+                audio_input_tokens=assistant_message.metrics.audio_input_tokens,
+                audio_output_tokens=assistant_message.metrics.audio_output_tokens,
+                audio_total_tokens=assistant_message.metrics.audio_total_tokens,
+                cache_read_tokens=assistant_message.metrics.cache_read_tokens,
+                cache_write_tokens=assistant_message.metrics.cache_write_tokens,
+                reasoning_tokens=assistant_message.metrics.reasoning_tokens,
+                time_to_first_token=assistant_message.metrics.time_to_first_token,
+                provider_metrics=assistant_message.metrics.provider_metrics,
+            )
+            model_response_with_metrics.response_usage = run_metrics
+            accumulate_model_metrics(model_response_with_metrics, self, model_type, run_response)
+
     def response_stream(
         self,
         messages: List[Message],
@@ -1192,6 +1258,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        model_type: str = "model",
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -1239,22 +1306,37 @@ class Model(ABC):
                 assistant_message = Message(role=self.assistant_message_role)
                 # Create assistant message and stream data
                 stream_data = MessageData()
+                # Initialize message metrics and start timer before model call
+                stream_data.response_metrics = MessageMetrics()
+                stream_data.response_metrics.start_timer()
                 model_response = ModelResponse()
                 if stream_model_response:
                     # Generate response
-                    for response in self.process_response_stream(
-                        messages=messages,
-                        assistant_message=assistant_message,
-                        stream_data=stream_data,
-                        response_format=response_format,
-                        tools=_tool_dicts,
-                        tool_choice=tool_choice or self._tool_choice,
-                        run_response=run_response,
-                        compress_tool_results=_compress_tool_results,
-                    ):
-                        if self.cache_response and isinstance(response, ModelResponse):
-                            streaming_responses.append(response)
-                        yield response
+                    # Temporarily set model_type on run_response for metrics accumulation
+                    if run_response is not None:
+                        original_model_type = getattr(run_response, "_current_model_type", None)
+                        setattr(run_response, "_current_model_type", model_type)
+                    try:
+                        for response in self.process_response_stream(
+                            messages=messages,
+                            assistant_message=assistant_message,
+                            stream_data=stream_data,
+                            response_format=response_format,
+                            tools=_tool_dicts,
+                            tool_choice=tool_choice or self._tool_choice,
+                            run_response=run_response,
+                            compress_tool_results=_compress_tool_results,
+                        ):
+                            if self.cache_response and isinstance(response, ModelResponse):
+                                streaming_responses.append(response)
+                            yield response
+                    finally:
+                        # Restore original model_type
+                        if run_response is not None:
+                            if original_model_type is not None:
+                                setattr(run_response, "_current_model_type", original_model_type)
+                            else:
+                                delattr(run_response, "_current_model_type")
 
                 else:
                     self._process_model_response(
@@ -1401,6 +1483,33 @@ class Model(ABC):
         # Populate assistant message from stream data after the stream ends
         self._populate_assistant_message_from_stream_data(assistant_message=assistant_message, stream_data=stream_data)
 
+        # Accumulate metrics at the end of the stream if run_response is provided
+        if run_response is not None and assistant_message.metrics is not None:
+            from agno.metrics import RunMetrics, accumulate_model_metrics
+            from agno.models.response import ModelResponse
+
+            # Get model_type from run_response context if available, otherwise default to "model"
+            model_type = getattr(run_response, "_current_model_type", "model")
+
+            # Create a ModelResponse with the metrics from the assistant message
+            model_response_with_metrics = ModelResponse()
+            # Convert MessageMetrics back to RunMetrics for accumulation
+            run_metrics = RunMetrics(
+                input_tokens=assistant_message.metrics.input_tokens,
+                output_tokens=assistant_message.metrics.output_tokens,
+                total_tokens=assistant_message.metrics.total_tokens,
+                audio_input_tokens=assistant_message.metrics.audio_input_tokens,
+                audio_output_tokens=assistant_message.metrics.audio_output_tokens,
+                audio_total_tokens=assistant_message.metrics.audio_total_tokens,
+                cache_read_tokens=assistant_message.metrics.cache_read_tokens,
+                cache_write_tokens=assistant_message.metrics.cache_write_tokens,
+                reasoning_tokens=assistant_message.metrics.reasoning_tokens,
+                time_to_first_token=assistant_message.metrics.time_to_first_token,
+                provider_metrics=assistant_message.metrics.provider_metrics,
+            )
+            model_response_with_metrics.response_usage = run_metrics
+            accumulate_model_metrics(model_response_with_metrics, self, model_type, run_response)
+
     async def aresponse_stream(
         self,
         messages: List[Message],
@@ -1412,6 +1521,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        model_type: str = "model",
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1462,16 +1572,31 @@ class Model(ABC):
                 model_response = ModelResponse()
                 if stream_model_response:
                     # Generate response
-                    async for model_response in self.aprocess_response_stream(
-                        messages=messages,
-                        assistant_message=assistant_message,
-                        stream_data=stream_data,
-                        response_format=response_format,
-                        tools=_tool_dicts,
-                        tool_choice=tool_choice or self._tool_choice,
-                        run_response=run_response,
-                        compress_tool_results=_compress_tool_results,
-                    ):
+                    # Temporarily set model_type on run_response for metrics accumulation
+                    if run_response is not None:
+                        original_model_type = getattr(run_response, "_current_model_type", None)
+                        setattr(run_response, "_current_model_type", model_type)
+                    try:
+                        async for model_response_delta in self.aprocess_response_stream(
+                            messages=messages,
+                            assistant_message=assistant_message,
+                            stream_data=stream_data,
+                            response_format=response_format,
+                            tools=_tool_dicts,
+                            tool_choice=tool_choice or self._tool_choice,
+                            run_response=run_response,
+                            compress_tool_results=_compress_tool_results,
+                        ):
+                            if self.cache_response and isinstance(model_response_delta, ModelResponse):
+                                streaming_responses.append(model_response_delta)
+                            yield model_response_delta
+                    finally:
+                        # Restore original model_type
+                        if run_response is not None:
+                            if original_model_type is not None:
+                                setattr(run_response, "_current_model_type", original_model_type)
+                            else:
+                                delattr(run_response, "_current_model_type")
                         if self.cache_response and isinstance(model_response, ModelResponse):
                             streaming_responses.append(model_response)
                         yield model_response
@@ -1632,12 +1757,22 @@ class Model(ABC):
 
         if model_response_delta.response_usage is not None:
             if stream_data.response_metrics is None:
-                stream_data.response_metrics = Metrics()
-            stream_data.response_metrics += model_response_delta.response_usage
+                # Initialize if not already initialized (shouldn't happen, but safety check)
+                stream_data.response_metrics = MessageMetrics()
+                stream_data.response_metrics.start_timer()
+            # Update MessageMetrics with usage data from response
+            usage = model_response_delta.response_usage
+            # Convert RunMetrics to MessageMetrics for addition
+            usage_metrics = MessageMetrics.from_metrics(usage)
+            # Use in-place addition to preserve timer automatically
+            stream_data.response_metrics += usage_metrics
 
         # Update stream_data content
         if model_response_delta.content is not None:
             stream_data.response_content += model_response_delta.content
+            # Set time_to_first_token on first content chunk if not already set
+            if stream_data.response_metrics is not None and stream_data.response_metrics.time_to_first_token is None:
+                stream_data.response_metrics.set_time_to_first_token()
             should_yield = True
 
         if model_response_delta.reasoning_content is not None:
@@ -1771,9 +1906,8 @@ class Model(ABC):
         function_execution_result: Optional[FunctionExecutionResult] = None,
     ) -> Message:
         """Create a function call result message."""
-        kwargs = {}
-        if timer is not None:
-            kwargs["metrics"] = Metrics(duration=timer.elapsed)
+        kwargs: Dict[str, Any] = {}
+        # Tool messages don't get metrics - only assistant messages do
 
         # Include media artifacts from function execution result in the tool message
         images = None
@@ -1948,6 +2082,20 @@ class Model(ABC):
         # Override stop_after_tool_call if set by exception
         if stop_after_tool_call_from_exception:
             function_call_result.stop_after_tool_call = True
+
+        # Create ToolCallMetrics for the tool execution
+        tool_metrics = None
+        if function_call_timer is not None and function_call_timer.elapsed > 0:
+            from time import time
+
+            tool_metrics = ToolCallMetrics()
+            tool_metrics.timer = function_call_timer
+            tool_metrics.duration = function_call_timer.elapsed
+            # Calculate Unix timestamps (Timer uses perf_counter which is relative)
+            current_time = time()
+            tool_metrics.end_time = current_time
+            tool_metrics.start_time = current_time - function_call_timer.elapsed
+
         yield ModelResponse(
             content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
             tool_executions=[
@@ -1958,7 +2106,7 @@ class Model(ABC):
                     tool_call_error=function_call_result.tool_call_error,
                     result=str(function_call_result.content),
                     stop_after_tool_call=function_call_result.stop_after_tool_call,
-                    metrics=function_call_result.metrics,
+                    metrics=tool_metrics,
                 )
             ],
             event=ModelResponseEvent.tool_call_completed.value,
@@ -2514,6 +2662,20 @@ class Model(ABC):
             # Override stop_after_tool_call if set by exception
             if stop_after_tool_call_from_exception:
                 function_call_result.stop_after_tool_call = True
+
+            # Create ToolCallMetrics for the tool execution
+            tool_metrics = None
+            if function_call_timer is not None and function_call_timer.elapsed > 0:
+                from time import time
+
+                tool_metrics = ToolCallMetrics()
+                tool_metrics.timer = function_call_timer
+                tool_metrics.duration = function_call_timer.elapsed
+                # Calculate Unix timestamps (Timer uses perf_counter which is relative)
+                current_time = time()
+                tool_metrics.end_time = current_time
+                tool_metrics.start_time = current_time - function_call_timer.elapsed
+
             yield ModelResponse(
                 content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
                 tool_executions=[
@@ -2524,7 +2686,7 @@ class Model(ABC):
                         tool_call_error=function_call_result.tool_call_error,
                         result=str(function_call_result.content),
                         stop_after_tool_call=function_call_result.stop_after_tool_call,
-                        metrics=function_call_result.metrics,
+                        metrics=tool_metrics,
                     )
                 ],
                 event=ModelResponseEvent.tool_call_completed.value,

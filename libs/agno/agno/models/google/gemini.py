@@ -13,10 +13,10 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
+from agno.metrics import RunMetrics
 from agno.models.base import Model, RetryableModelProviderError
 from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason
 from agno.models.message import Citations, Message, UrlCitation
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -443,16 +443,16 @@ class Gemini(Model):
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
         )
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
+            # Initialize MessageMetrics if None
 
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = self.get_client().models.generate_content(
                 model=self.id,
                 contents=formatted_messages,
                 **request_kwargs,
             )
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
             model_response = self._parse_provider_response(
                 provider_response, response_format=response_format, retry_with_guidance=retry_with_guidance
@@ -504,10 +504,9 @@ class Gemini(Model):
             system_message, response_format=response_format, tools=tools, tool_choice=tool_choice
         )
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
+            # Initialize MessageMetrics if None
 
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
             for response in self.get_client().models.generate_content_stream(
                 model=self.id,
                 contents=formatted_messages,
@@ -519,7 +518,8 @@ class Gemini(Model):
             if retry_with_guidance is True:
                 self._remove_temporary_messages(messages)
 
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
@@ -562,16 +562,16 @@ class Gemini(Model):
         )
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
+            # Initialize MessageMetrics if None
 
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
             provider_response = await self.get_client().aio.models.generate_content(
                 model=self.id,
                 contents=formatted_messages,
                 **request_kwargs,
             )
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
             model_response = self._parse_provider_response(
                 provider_response, response_format=response_format, retry_with_guidance=retry_with_guidance
@@ -624,10 +624,9 @@ class Gemini(Model):
         )
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
+            # Initialize MessageMetrics if None
 
-            assistant_message.metrics.start_timer()
+            self._ensure_message_metrics_initialized(assistant_message)
 
             async_stream = await self.get_client().aio.models.generate_content_stream(
                 model=self.id,
@@ -641,7 +640,8 @@ class Gemini(Model):
             if retry_with_guidance is True:
                 self._remove_temporary_messages(messages)
 
-            assistant_message.metrics.stop_timer()
+            if assistant_message.metrics is not None:
+                assistant_message.metrics.stop_timer()
 
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
@@ -1013,7 +1013,9 @@ class Gemini(Model):
         combined_function_result: List = []
         tool_names: List[str] = []
 
-        message_metrics = Metrics()
+        from agno.metrics import MessageMetrics
+
+        message_metrics = MessageMetrics()
 
         if len(function_call_results) > 0:
             for idx, result in enumerate(function_call_results):
@@ -1024,7 +1026,8 @@ class Gemini(Model):
                 )
                 if result.tool_name:
                     tool_names.append(result.tool_name)
-                message_metrics += result.metrics
+                if result.metrics is not None:
+                    message_metrics += result.metrics
 
         tool_name = ", ".join(tool_names) if tool_names else None
 
@@ -1393,7 +1396,7 @@ class Gemini(Model):
 
         return new_instance
 
-    def _get_metrics(self, response_usage: GenerateContentResponseUsageMetadata) -> Metrics:
+    def _get_metrics(self, response_usage: GenerateContentResponseUsageMetadata) -> RunMetrics:
         """
         Parse the given Google Gemini usage into an Agno Metrics object.
 
@@ -1403,7 +1406,7 @@ class Gemini(Model):
         Returns:
             Metrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = RunMetrics()
 
         metrics.input_tokens = response_usage.prompt_token_count or 0
         metrics.output_tokens = response_usage.candidates_token_count or 0
@@ -1413,8 +1416,7 @@ class Gemini(Model):
 
         metrics.cache_read_tokens = response_usage.cached_content_token_count or 0
 
-        if response_usage.traffic_type is not None:
-            metrics.provider_metrics = {"traffic_type": response_usage.traffic_type}
+        # traffic_type removed - provider_metrics no longer supported
 
         return metrics
 
