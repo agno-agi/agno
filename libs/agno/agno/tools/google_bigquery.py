@@ -8,14 +8,15 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
 
 try:
-    from google.cloud import bigquery
     from google.api_core import exceptions as gexc
+    from google.cloud import bigquery
 except ImportError as e:
     raise ImportError(
         "`google-cloud-bigquery` not installed. Please install using `pip install google-cloud-bigquery`"
     ) from e
 
 T = TypeVar("T")
+
 
 class GoogleBigQueryTools(Toolkit):
     """
@@ -292,11 +293,7 @@ class GoogleBigQueryTools(Toolkit):
 
             columns = [f.get("name", "") for f in fields if f.get("name")]
             column_details = [normalize_field(f) for f in fields]
-            column_descriptions = {
-                f.get("name", ""): (f.get("description", "") or "")
-                for f in fields
-                if f.get("name")
-            }
+            column_descriptions = {f.get("name", ""): (f.get("description", "") or "") for f in fields if f.get("name")}
 
             payload = {
                 "ok": True,
@@ -317,13 +314,7 @@ class GoogleBigQueryTools(Toolkit):
           {"ok": true, "rows": [ {...}, ... ]}
         """
         # Key by normalized query text to enforce budget per logical query
-        cleaned_query = (
-            (query or "")
-            .replace("\\r\\n", "\n")
-            .replace("\\n", "\n")
-            .replace("\\r", "\n")
-            .strip()
-        )
+        cleaned_query = (query or "").replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n").strip()
         key = self._fingerprint(cleaned_query)
 
         def _do() -> str:
@@ -353,5 +344,4 @@ class GoogleBigQueryTools(Toolkit):
             location=self.location,
         )
         results = query_job.result(max_results=self.max_results)
-        
         return [dict(row) for row in results]
