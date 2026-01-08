@@ -1,13 +1,20 @@
+import inspect
+import time
 import weakref
 from dataclasses import asdict
 from datetime import timedelta
-from typing import Any, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Tuple, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.mcp import get_entrypoint_for_tool, prepare_command
+
+if TYPE_CHECKING:
+    from agno.agent import Agent
+    from agno.run import RunContext
+    from agno.team.team import Team
 
 try:
     from mcp import ClientSession, StdioServerParameters
@@ -35,7 +42,7 @@ class MCPTools(Toolkit):
         *,
         url: Optional[str] = None,
         env: Optional[dict[str, str]] = None,
-        transport: Literal["stdio", "sse", "streamable-http"] = "stdio",
+        transport: Optional[Literal["stdio", "sse", "streamable-http"]] = None,
         server_params: Optional[Union[StdioServerParameters, SSEClientParams, StreamableHTTPClientParams]] = None,
         session: Optional[ClientSession] = None,
         timeout_seconds: int = 10,
@@ -44,6 +51,7 @@ class MCPTools(Toolkit):
         exclude_tools: Optional[list[str]] = None,
         refresh_connection: bool = False,
         tool_name_prefix: Optional[str] = None,
+        header_provider: Optional[Callable[..., dict[str, Any]]] = None,
         **kwargs,
     ):
         """
@@ -59,10 +67,23 @@ class MCPTools(Toolkit):
             timeout_seconds: Read timeout in seconds for the MCP client
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
-            transport: The transport protocol to use, either "stdio" or "sse" or "streamable-http"
+            transport: The transport protocol to use, either "stdio" or "sse" or "streamable-http".
+                       Defaults to "streamable-http" when url is provided, otherwise defaults to "stdio".
             refresh_connection: If True, the connection and tools will be refreshed on each run
+            header_provider: Optional function to generate dynamic HTTP headers.
+                Only relevant with HTTP transports (Streamable HTTP or SSE).
+                Creates a new session per agent run with dynamic headers merged into connection config.
         """
         super().__init__(name="MCPTools", **kwargs)
+
+        if url is not None:
+            if transport is None:
+                transport = "streamable-http"
+            elif transport == "stdio":
+                log_warning(
+                    "Transport cannot be 'stdio' when url is provided. Setting transport to 'streamable-http' instead."
+                )
+                transport = "streamable-http"
 
         if transport == "sse":
             log_info("SSE as a standalone transport is deprecated. Please use Streamable HTTP instead.")
@@ -104,12 +125,17 @@ class MCPTools(Toolkit):
                         "If using the streamable-http transport, server_params must be an instance of StreamableHTTPClientParams."
                     )
 
+        self.transport = transport
+
+        self.header_provider = None
+        if self._is_valid_header_provider(header_provider):
+            self.header_provider = header_provider
+
         self.timeout_seconds = timeout_seconds
         self.session: Optional[ClientSession] = session
         self.server_params: Optional[Union[StdioServerParameters, SSEClientParams, StreamableHTTPClientParams]] = (
             server_params
         )
-        self.transport = transport
         self.url = url
 
         # Merge provided env with system env
@@ -135,6 +161,12 @@ class MCPTools(Toolkit):
         self._context = None
         self._session_context = None
 
+        # Session management for per-agent-run sessions with dynamic headers
+        # Maps run_id to (session, timestamp) for TTL-based cleanup
+        self._run_sessions: dict[str, Tuple[ClientSession, float]] = {}
+        self._run_session_contexts: dict[str, Any] = {}  # Maps run_id to session context managers
+        self._session_ttl_seconds: float = 300.0  # 5 minutes TTL for MCP sessions
+
         def cleanup():
             """Cancel active connections"""
             if self._connection_task and not self._connection_task.done():
@@ -146,6 +178,234 @@ class MCPTools(Toolkit):
     @property
     def initialized(self) -> bool:
         return self._initialized
+
+    def _is_valid_header_provider(self, header_provider: Optional[Callable[..., dict[str, Any]]]) -> bool:
+        """Logic to validate a given header_provider function.
+
+        Args:
+            header_provider: The header_provider function to validate
+
+        Raises:
+            Exception: If there is an error validating the header_provider.
+        """
+        if not header_provider:
+            return False
+
+        if self.transport not in ["sse", "streamable-http"]:
+            log_warning(
+                f"header_provider specified but transport is '{self.transport}'. "
+                "Dynamic headers only work with 'sse' or 'streamable-http' transports. "
+                "The header_provider logic will be ignored."
+            )
+            return False
+
+        log_debug("Dynamic header support enabled for MCP tools")
+        return True
+
+    def _call_header_provider(
+        self,
+        run_context: Optional["RunContext"] = None,
+        agent: Optional["Agent"] = None,
+        team: Optional["Team"] = None,
+    ) -> dict[str, Any]:
+        """Call the header_provider with run_context, agent, and/or team based on its signature.
+
+        Args:
+            run_context: The RunContext for the current agent run
+            agent: The Agent instance (if running within an agent)
+            team: The Team instance (if running within a team)
+
+        Returns:
+            dict[str, Any]: The headers returned by the header_provider
+        """
+        header_provider = getattr(self, "header_provider", None)
+        if header_provider is None:
+            return {}
+
+        try:
+            sig = inspect.signature(header_provider)
+            param_names = set(sig.parameters.keys())
+
+            # Build kwargs based on what the function accepts
+            call_kwargs: dict[str, Any] = {}
+
+            if "run_context" in param_names:
+                call_kwargs["run_context"] = run_context
+            if "agent" in param_names:
+                call_kwargs["agent"] = agent
+            if "team" in param_names:
+                call_kwargs["team"] = team
+
+            # Check if function accepts **kwargs (VAR_KEYWORD)
+            has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+
+            if has_var_keyword:
+                # Pass all available context to **kwargs
+                call_kwargs = {"run_context": run_context, "agent": agent, "team": team}
+                return header_provider(**call_kwargs)
+            elif call_kwargs:
+                return header_provider(**call_kwargs)
+            else:
+                # Function takes no recognized parameters - check for positional
+                positional_params = [
+                    p
+                    for p in sig.parameters.values()
+                    if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+                ]
+                if positional_params:
+                    # Legacy support: pass run_context as first positional arg
+                    return header_provider(run_context)
+                else:
+                    # Function takes no parameters
+                    return header_provider()
+        except Exception as e:
+            log_warning(f"Error calling header_provider: {e}")
+            return {}
+
+    async def _cleanup_stale_sessions(self) -> None:
+        """Clean up sessions older than TTL to prevent memory leaks."""
+        if not self._run_sessions:
+            return
+
+        now = time.time()
+        stale_run_ids = [
+            run_id
+            for run_id, (_, created_at) in self._run_sessions.items()
+            if now - created_at > self._session_ttl_seconds
+        ]
+
+        for run_id in stale_run_ids:
+            log_debug(f"Cleaning up stale MCP sessions for run_id={run_id}")
+            await self.cleanup_run_session(run_id)
+
+    async def get_session_for_run(
+        self,
+        run_context: Optional["RunContext"] = None,
+        agent: Optional["Agent"] = None,
+        team: Optional["Team"] = None,
+    ) -> ClientSession:
+        """
+        Get or create a session for the given run context.
+
+        If header_provider is set and run_context is provided, creates a new session
+        with dynamic headers merged into the connection config.
+
+        Args:
+            run_context: The RunContext for the current agent run
+            agent: The Agent instance (if running within an agent)
+            team: The Team instance (if running within a team)
+
+        Returns:
+            ClientSession for the run
+        """
+        # If no header_provider or no run_context, use the default session
+        if not self.header_provider or not run_context:
+            if self.session is None:
+                raise ValueError("Session is not initialized")
+            return self.session
+
+        # Lazy cleanup of stale sessions
+        await self._cleanup_stale_sessions()
+
+        # Check if we already have a session for this run
+        run_id = run_context.run_id
+        if run_id in self._run_sessions:
+            session, _ = self._run_sessions[run_id]
+            return session
+
+        # Create a new session with dynamic headers for this run
+        log_debug(f"Creating new session for run_id={run_id} with dynamic headers")
+
+        # Generate dynamic headers from the provider
+        dynamic_headers = self._call_header_provider(run_context=run_context, agent=agent, team=team)
+
+        # Create new session with merged headers based on transport type
+        if self.transport == "sse":
+            sse_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
+            if "url" not in sse_params:
+                sse_params["url"] = self.url
+
+            # Merge dynamic headers into existing headers
+            existing_headers = sse_params.get("headers", {})
+            sse_params["headers"] = {**existing_headers, **dynamic_headers}
+
+            context = sse_client(**sse_params)  # type: ignore
+            client_timeout = min(self.timeout_seconds, sse_params.get("timeout", self.timeout_seconds))
+
+        elif self.transport == "streamable-http":
+            streamable_http_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
+            if "url" not in streamable_http_params:
+                streamable_http_params["url"] = self.url
+
+            # Merge dynamic headers into existing headers
+            existing_headers = streamable_http_params.get("headers", {})
+            streamable_http_params["headers"] = {**existing_headers, **dynamic_headers}
+
+            context = streamablehttp_client(**streamable_http_params)  # type: ignore
+            params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
+            if isinstance(params_timeout, timedelta):
+                params_timeout = int(params_timeout.total_seconds())
+            client_timeout = min(self.timeout_seconds, params_timeout)
+        else:
+            # stdio doesn't support headers, fall back to default session
+            log_warning(f"Cannot use dynamic headers with {self.transport} transport, using default session")
+            if self.session is None:
+                raise ValueError("Session is not initialized")
+            return self.session
+
+        # Enter the context and create session
+        session_params = await context.__aenter__()  # type: ignore
+        read, write = session_params[0:2]
+
+        session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
+        session = await session_context.__aenter__()  # type: ignore
+
+        # Initialize the session
+        await session.initialize()
+
+        # Store the session with timestamp and context for cleanup
+        self._run_sessions[run_id] = (session, time.time())
+        self._run_session_contexts[run_id] = (context, session_context)
+
+        return session
+
+    async def cleanup_run_session(self, run_id: str) -> None:
+        """
+        Clean up the session for a specific run.
+
+        Note: Cleanup may fail due to async context manager limitations when
+        contexts are entered/exited across different tasks. Errors are logged
+        but not raised.
+        """
+        if run_id not in self._run_sessions:
+            return
+
+        try:
+            # Get the context managers
+            context, session_context = self._run_session_contexts.get(run_id, (None, None))
+
+            # Try to clean up session context
+            # Silently ignore cleanup errors - these are harmless
+            if session_context is not None:
+                try:
+                    await session_context.__aexit__(None, None, None)
+                except (RuntimeError, Exception):
+                    pass  # Silently ignore
+
+            # Try to clean up transport context
+            if context is not None:
+                try:
+                    await context.__aexit__(None, None, None)
+                except (RuntimeError, Exception):
+                    pass  # Silently ignore
+
+            # Remove from tracking regardless of cleanup success
+            # The connections will be cleaned up by garbage collection
+            del self._run_sessions[run_id]
+            del self._run_session_contexts[run_id]
+
+        except Exception:
+            pass  # Silently ignore all cleanup errors
 
     async def is_alive(self) -> bool:
         if self.session is None:
@@ -227,17 +487,36 @@ class MCPTools(Toolkit):
         if not self._initialized:
             return
 
-        try:
-            if self._session_context is not None:
-                await self._session_context.__aexit__(None, None, None)
-                self.session = None
-                self._session_context = None
+        import warnings
 
-            if self._context is not None:
-                await self._context.__aexit__(None, None, None)
-                self._context = None
-        except (RuntimeError, BaseException) as e:
-            log_error(f"Failed to close MCP connection: {e}")
+        # Suppress async generator cleanup warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*async_generator.*")
+            warnings.filterwarnings("ignore", message=".*cancel scope.*")
+
+            try:
+                # Clean up all per-run sessions first
+                run_ids = list(self._run_sessions.keys())
+                for run_id in run_ids:
+                    await self.cleanup_run_session(run_id)
+
+                # Clean up the main session
+                if self._session_context is not None:
+                    try:
+                        await self._session_context.__aexit__(None, None, None)
+                    except (RuntimeError, Exception):
+                        pass  # Silently ignore cleanup errors
+                    self.session = None
+                    self._session_context = None
+
+                if self._context is not None:
+                    try:
+                        await self._context.__aexit__(None, None, None)
+                    except (RuntimeError, Exception):
+                        pass  # Silently ignore cleanup errors
+                    self._context = None
+            except (RuntimeError, BaseException):
+                pass  # Silently ignore all cleanup errors
 
         self._initialized = False
 
@@ -290,7 +569,11 @@ class MCPTools(Toolkit):
             for tool in filtered_tools:
                 try:
                     # Get an entrypoint for the tool
-                    entrypoint = get_entrypoint_for_tool(tool, self.session)  # type: ignore
+                    entrypoint = get_entrypoint_for_tool(
+                        tool=tool,
+                        session=self.session,  # type: ignore
+                        mcp_tools_instance=self,
+                    )
                     # Create a Function for the tool
                     f = Function(
                         name=tool_name_prefix + tool.name,
