@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from typing import Any, List, Optional, Union, cast
 from uuid import uuid4
@@ -32,6 +33,64 @@ from agno.os.utils import get_db
 from agno.session import AgentSession, TeamSession, WorkflowSession
 
 logger = logging.getLogger(__name__)
+
+# Check if unauthenticated access is allowed (dev mode)
+_ALLOW_UNAUTHENTICATED = os.getenv("ALLOW_UNAUTHENTICATED", "false").lower() == "true"
+
+
+def _get_workspace_id_from_request(request: Request) -> Optional[str]:
+    """
+    Extract workspace_id from request state.
+
+    Checks request.state.metadata.workspace_id (set by WorkspaceContextMiddleware)
+    or request.state.workspace_id as fallback.
+    """
+    # Check metadata first (set by workspace middleware)
+    if hasattr(request.state, "metadata"):
+        metadata = getattr(request.state, "metadata", None)
+        if metadata and isinstance(metadata, dict):
+            workspace_id = metadata.get("workspace_id")
+            if workspace_id:
+                return str(workspace_id)
+
+    # Fallback to direct workspace_id
+    if hasattr(request.state, "workspace_id"):
+        return getattr(request.state, "workspace_id", None)
+
+    return None
+
+
+def _filter_sessions_by_workspace(
+    sessions: List[dict],
+    workspace_id: str
+) -> List[dict]:
+    """
+    Filter sessions to only include those belonging to the specified workspace.
+
+    Sessions must have metadata.workspace_id matching the request workspace.
+    Sessions without workspace metadata are excluded (strict mode).
+    """
+    filtered = []
+    for session in sessions:
+        session_metadata = session.get("metadata") or {}
+        session_workspace = session_metadata.get("workspace_id")
+        if session_workspace == workspace_id:
+            filtered.append(session)
+    return filtered
+
+
+def _validate_session_workspace(
+    session: dict,
+    workspace_id: str
+) -> bool:
+    """
+    Validate that a session belongs to the specified workspace.
+
+    Returns True if session's metadata.workspace_id matches, False otherwise.
+    """
+    session_metadata = session.get("metadata") or {}
+    session_workspace = session_metadata.get("workspace_id")
+    return session_workspace == workspace_id
 
 
 def get_session_router(
@@ -120,6 +179,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
 
+        # Get workspace_id from request state (set by WorkspaceContextMiddleware)
+        workspace_id = _get_workspace_id_from_request(request)
+
+        # Pass workspace_id to DB layer for proper filtering with accurate pagination
+        # This filters at the SQL level before pagination is applied
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             sessions, total_count = await db.get_sessions(
@@ -132,6 +196,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 sort_by=sort_by,
                 sort_order=sort_order,
                 deserialize=False,
+                metadata_workspace_id=workspace_id,  # DB-level filtering for workspace isolation
             )
         else:
             sessions, total_count = db.get_sessions(  # type: ignore
@@ -144,7 +209,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 sort_by=sort_by,
                 sort_order=sort_order,
                 deserialize=False,
+                metadata_workspace_id=workspace_id,  # DB-level filtering for workspace isolation
             )
+
+        if workspace_id:
+            logger.debug(f"Fetched sessions with DB-level workspace_id={workspace_id} filter, count={total_count}")
 
         return PaginatedResponse(
             data=[SessionSchema.from_dict(session) for session in sessions],  # type: ignore
@@ -214,6 +283,18 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
 
+        # Get workspace_id from request state (set by WorkspaceContextMiddleware)
+        # This is REQUIRED for proper session isolation
+        workspace_id = _get_workspace_id_from_request(request)
+
+        # Enforce workspace context requirement (unless in dev mode)
+        # This prevents orphaned sessions without workspace_id that could leak across tenants
+        if not workspace_id and not _ALLOW_UNAUTHENTICATED:
+            raise HTTPException(
+                status_code=400,
+                detail="Workspace context required to create session. Provide X-Workspace-ID header."
+            )
+
         # Generate session_id if not provided
         session_id = create_session_request.session_id or str(uuid4())
 
@@ -226,6 +307,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         current_time = int(time.time())
 
+        # Merge workspace_id into metadata (server-side enforcement)
+        # workspace_id is immutable - always set from request context, not from client
+        session_metadata = dict(create_session_request.metadata) if create_session_request.metadata else {}
+        if workspace_id:
+            session_metadata["workspace_id"] = workspace_id
+            logger.debug(f"Setting session metadata workspace_id={workspace_id}")
+
         # Create the appropriate session type
         session: Union[AgentSession, TeamSession, WorkflowSession]
         if session_type == SessionType.AGENT:
@@ -234,7 +322,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 agent_id=create_session_request.agent_id,
                 user_id=user_id,
                 session_data=session_data if session_data else None,
-                metadata=create_session_request.metadata,
+                metadata=session_metadata if session_metadata else None,
                 created_at=current_time,
                 updated_at=current_time,
             )
@@ -244,7 +332,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 team_id=create_session_request.team_id,
                 user_id=user_id,
                 session_data=session_data if session_data else None,
-                metadata=create_session_request.metadata,
+                metadata=session_metadata if session_metadata else None,
                 created_at=current_time,
                 updated_at=current_time,
             )
@@ -254,7 +342,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 workflow_id=create_session_request.workflow_id,
                 user_id=user_id,
                 session_data=session_data if session_data else None,
-                metadata=create_session_request.metadata,
+                metadata=session_metadata if session_metadata else None,
                 created_at=current_time,
                 updated_at=current_time,
             )
@@ -385,6 +473,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
 
+        # Get workspace_id from request state (set by WorkspaceContextMiddleware)
+        workspace_id = _get_workspace_id_from_request(request)
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             session = await db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
@@ -394,6 +485,20 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             raise HTTPException(
                 status_code=404, detail=f"{session_type.value.title()} Session with id '{session_id}' not found"
             )
+
+        # Validate workspace ownership if workspace context is present
+        if workspace_id:
+            session_metadata = getattr(session, "metadata", None) or {}
+            session_workspace = session_metadata.get("workspace_id")
+            if session_workspace != workspace_id:
+                logger.warning(
+                    f"Session {session_id} workspace mismatch: "
+                    f"session={session_workspace}, request={workspace_id}"
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail="Session does not belong to the current workspace"
+                )
 
         if session_type == SessionType.AGENT:
             return AgentSessionDetailSchema.from_session(session)  # type: ignore
@@ -541,6 +646,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
 
+        # Get workspace_id from request state (set by WorkspaceContextMiddleware)
+        workspace_id = _get_workspace_id_from_request(request)
+
         # Use timestamp filters directly (already in epoch format)
         start_timestamp = created_after
         end_timestamp = created_before
@@ -557,6 +665,16 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+
+        # Validate workspace ownership if workspace context is present
+        if workspace_id:
+            session_metadata = session.get("metadata") or {}
+            session_workspace = session_metadata.get("workspace_id")
+            if session_workspace != workspace_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Session does not belong to the current workspace"
+                )
 
         runs = session.get("runs")  # type: ignore
         if not runs:
@@ -656,6 +774,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
 
+        # Get workspace_id from request state (set by WorkspaceContextMiddleware)
+        workspace_id = _get_workspace_id_from_request(request)
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             session = await db.get_session(
@@ -668,6 +789,16 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+
+        # Validate workspace ownership if workspace context is present
+        if workspace_id:
+            session_metadata = session.get("metadata") or {}
+            session_workspace = session_metadata.get("workspace_id")
+            if session_workspace != workspace_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Session does not belong to the current workspace"
+                )
 
         runs = session.get("runs")  # type: ignore
         if not runs:
@@ -703,15 +834,48 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         ),
         responses={
             204: {},
+            403: {"description": "Session does not belong to the current workspace"},
             500: {"description": "Failed to delete session", "model": InternalServerErrorResponse},
         },
     )
     async def delete_session(
+        request: Request,
         session_id: str = Path(description="Session ID to delete"),
+        session_type: SessionType = Query(
+            default=SessionType.AGENT, description="Session type", alias="type"
+        ),
+        user_id: Optional[str] = Query(default=None, description="User ID"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
         db = await get_db(dbs, db_id, table)
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
+        # Get workspace_id from request state (set by WorkspaceContextMiddleware)
+        workspace_id = _get_workspace_id_from_request(request)
+
+        # Validate workspace ownership before deletion if workspace context is present
+        if workspace_id:
+            if isinstance(db, AsyncBaseDb):
+                session = await db.get_session(
+                    session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
+                )
+            else:
+                session = db.get_session(
+                    session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
+                )
+
+            if session:
+                session_metadata = session.get("metadata") or {}
+                session_workspace = session_metadata.get("workspace_id")
+                if session_workspace != workspace_id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Session does not belong to the current workspace"
+                    )
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_session(session_id=session_id)
@@ -737,6 +901,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def delete_sessions(
+        http_request: Request,
         request: DeleteSessionRequest,
         session_type: SessionType = Query(
             default=SessionType.AGENT, description="Default session type filter", alias="type"
@@ -748,6 +913,32 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             raise HTTPException(status_code=400, detail="Session IDs and session types must have the same length")
 
         db = await get_db(dbs, db_id, table)
+
+        # Get user_id and workspace_id from request state
+        user_id = getattr(http_request.state, "user_id", None)
+        workspace_id = _get_workspace_id_from_request(http_request)
+
+        # Validate workspace ownership for each session before deletion
+        if workspace_id:
+            for session_id, sess_type in zip(request.session_ids, request.session_types):
+                if isinstance(db, AsyncBaseDb):
+                    session = await db.get_session(
+                        session_id=session_id, session_type=sess_type, user_id=user_id, deserialize=False
+                    )
+                else:
+                    session = db.get_session(
+                        session_id=session_id, session_type=sess_type, user_id=user_id, deserialize=False
+                    )
+
+                if session:
+                    session_metadata = session.get("metadata") or {}
+                    session_workspace = session_metadata.get("workspace_id")
+                    if session_workspace != workspace_id:
+                        raise HTTPException(
+                            status_code=403,
+                            detail=f"Session {session_id} does not belong to the current workspace"
+                        )
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_sessions(session_ids=request.session_ids)
@@ -843,15 +1034,44 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         },
     )
     async def rename_session(
+        request: Request,
         session_id: str = Path(description="Session ID to rename"),
         session_type: SessionType = Query(
             default=SessionType.AGENT, description="Session type (agent, team, or workflow)", alias="type"
         ),
         session_name: str = Body(embed=True, description="New name for the session"),
+        user_id: Optional[str] = Query(default=None, description="User ID"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for rename operation"),
         table: Optional[str] = Query(default=None, description="Table to use for rename operation"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         db = await get_db(dbs, db_id, table)
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
+        # Get workspace_id from request state (set by WorkspaceContextMiddleware)
+        workspace_id = _get_workspace_id_from_request(request)
+
+        # Validate workspace ownership before rename
+        if workspace_id:
+            if isinstance(db, AsyncBaseDb):
+                existing_session = await db.get_session(
+                    session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
+                )
+            else:
+                existing_session = db.get_session(
+                    session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
+                )
+
+            if existing_session:
+                session_metadata = existing_session.get("metadata") or {}
+                session_workspace = session_metadata.get("workspace_id")
+                if session_workspace != workspace_id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Session does not belong to the current workspace"
+                    )
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             session = await db.rename_session(
@@ -941,6 +1161,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if hasattr(request.state, "user_id"):
             user_id = request.state.user_id
 
+        # Get workspace_id from request state (set by WorkspaceContextMiddleware)
+        workspace_id = _get_workspace_id_from_request(request)
+
         # Get the existing session
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -954,6 +1177,16 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         if not existing_session:
             raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
+
+        # Validate workspace ownership if workspace context is present
+        if workspace_id:
+            session_metadata = getattr(existing_session, "metadata", None) or {}
+            session_workspace = session_metadata.get("workspace_id")
+            if session_workspace != workspace_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Session does not belong to the current workspace"
+                )
 
         # Update session properties
         # Handle session_name - stored in session_data
@@ -969,7 +1202,18 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             existing_session.session_data["session_state"] = update_data.session_state  # type: ignore
 
         if update_data.metadata is not None:
-            existing_session.metadata = update_data.metadata  # type: ignore
+            # Preserve workspace_id - it's immutable and cannot be changed by clients
+            # Merge new metadata with workspace_id from existing session
+            existing_metadata = getattr(existing_session, "metadata", None) or {}
+            preserved_workspace_id = existing_metadata.get("workspace_id")
+
+            new_metadata = dict(update_data.metadata)
+            if preserved_workspace_id:
+                # Always enforce the original workspace_id
+                new_metadata["workspace_id"] = preserved_workspace_id
+                logger.debug(f"Preserving immutable workspace_id={preserved_workspace_id} on update")
+
+            existing_session.metadata = new_metadata  # type: ignore
 
         if update_data.summary is not None:
             from agno.session.summary import SessionSummary

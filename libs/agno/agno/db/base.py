@@ -101,7 +101,16 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        metadata_workspace_id: Optional[str] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
+        """Get sessions with optional filtering.
+
+        Args:
+            metadata_workspace_id: Filter sessions by workspace_id in metadata.
+                When provided, only sessions with metadata.workspace_id matching
+                this value are returned. This enables proper workspace isolation
+                with accurate pagination (filtering happens at DB level).
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -574,7 +583,16 @@ class AsyncBaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        metadata_workspace_id: Optional[str] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
+        """Get sessions with optional filtering.
+
+        Args:
+            metadata_workspace_id: Filter sessions by workspace_id in metadata.
+                When provided, only sessions with metadata.workspace_id matching
+                this value are returned. This enables proper workspace isolation
+                with accurate pagination (filtering happens at DB level).
+        """
         raise NotImplementedError
 
     @abstractmethod
