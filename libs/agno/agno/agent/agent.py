@@ -2190,7 +2190,7 @@ class Agent:
                         await await_for_open_threads(
                             memory_task=memory_task,
                             cultural_knowledge_task=cultural_knowledge_task,
-                            learning_future=learning_task,
+                            learning_task=learning_task,
                         )
                         return await self._ahandle_agent_run_paused(
                             run_response=run_response, session=agent_session, user_id=user_id
@@ -2224,7 +2224,7 @@ class Agent:
                     await await_for_open_threads(
                         memory_task=memory_task,
                         cultural_knowledge_task=cultural_knowledge_task,
-                        learning_future=learning_task,
+                        learning_task=learning_task,
                     )
 
                     # 15. Create session summary
