@@ -38,6 +38,7 @@ from agno.os.utils import (
     process_image,
     process_video,
 )
+from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -156,6 +157,7 @@ async def agent_continue_response_streamer(
 def get_agent_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
+    registry: Optional[Registry] = None,
 ) -> APIRouter:
     """
     Create the agent router with comprehensive OpenAPI documentation.
@@ -243,7 +245,7 @@ def get_agent_router(
                 log_warning("Metadata parameter passed in both request state and kwargs, using request state")
             kwargs["metadata"] = metadata
 
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(agent_id, os.agents, os.db, registry)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 

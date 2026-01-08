@@ -9,7 +9,6 @@ from agno.registry import Registry
 from agno.tools.duckduckgo import DuckDuckGoTools
 from pydantic import BaseModel
 
-
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 

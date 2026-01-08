@@ -11,6 +11,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
+
 def sample_tool():
     return "Hello, world!"
 
@@ -33,6 +34,7 @@ agent_os = AgentOS(
     agents=[agent],
     id="registry-agent-os",
     registry=registry,
+    db=db,
 )
 
 app = agent_os.get_app()

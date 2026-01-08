@@ -169,6 +169,7 @@ def _get_span_table_schema(traces_table_name: str = "agno_traces", db_schema: st
         "created_at": {"type": String, "nullable": False, "index": True},  # ISO 8601 datetime string
     }
 
+
 ENTITIES_TABLE_SCHEMA = {
     "entity_id": {"type": String, "primary_key": True},
     "entity_type": {"type": String, "nullable": False, "index": True},  # agent|team|workflow
@@ -242,6 +243,9 @@ def get_table_schema_definition(
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
+        "entities": ENTITIES_TABLE_SCHEMA,
+        "configs": CONFIGS_TABLE_SCHEMA,
+        "entity_refs": ENTITY_REFS_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

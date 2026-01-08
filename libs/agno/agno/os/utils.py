@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timezone
+from token import OP
 from typing import Any, Callable, Dict, List, Optional, Set, Type, Union
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
@@ -14,6 +15,7 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
+from agno.registry import Registry
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
@@ -429,14 +431,30 @@ def extract_format(file: UploadFile) -> Optional[str]:
 
 
 def get_agent_by_id(
-    agent_id: str, agents: Optional[List[Union[Agent, RemoteAgent]]] = None
+    agent_id: str,
+    agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    registry: Optional[Registry] = None,
 ) -> Optional[Union[Agent, RemoteAgent]]:
     if agent_id is None or agents is None:
         return None
 
+    # Try to get the agent from the list of agents
     for agent in agents:
         if agent.id == agent_id:
             return agent
+
+    # Try to get the agent from the database
+    if db:
+        from agno.agent.agent import get_agent_by_id
+
+        try:
+            agent = get_agent_by_id(db=db, id=agent_id, registry=registry)
+            return agent
+        except Exception as e:
+            logger.error(f"Error getting agent {agent_id} from database: {e}")
+            return None
+
     return None
 
 

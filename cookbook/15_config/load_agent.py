@@ -1,8 +1,9 @@
 """
 This cookbook demonstrates how to load an agent from the database.
 
-This is useful for loading a latest config of an Agent from the database. 
+This is useful for loading a latest config of an Agent from the database.
 """
+
 from agno.agent.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
