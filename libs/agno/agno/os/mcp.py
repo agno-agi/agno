@@ -11,10 +11,10 @@ from fastmcp.server.http import (
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.schemas import UserMemory
-from agno.os.routers.memory.schemas import (
-    UserMemorySchema,
+from agno.os.routers.memory.schema import (
+    UserMemoryResponse,
 )
-from agno.os.schema import (
+from agno.os.router.schema import (
     AgentSessionDetailSchema,
     AgentMinimalResponse,
     ConfigResponse,
@@ -613,7 +613,7 @@ def get_mcp_server(
         memory: str,
         user_id: str,
         topics: Optional[List[str]] = None,
-    ) -> UserMemorySchema:
+    ) -> UserMemoryResponse:
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
@@ -650,7 +650,7 @@ def get_mcp_server(
         if not user_memory:
             raise Exception("Failed to create memory")
 
-        return UserMemorySchema.from_dict(user_memory)  # type: ignore
+        return UserMemoryResponse.from_dict(user_memory)  # type: ignore
 
     @mcp.tool(
         name="get_memory",
@@ -661,7 +661,7 @@ def get_mcp_server(
         memory_id: str,
         db_id: str,
         user_id: Optional[str] = None,
-    ) -> UserMemorySchema:
+    ) -> UserMemoryResponse:
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
@@ -677,7 +677,7 @@ def get_mcp_server(
         if not user_memory:
             raise Exception(f"Memory {memory_id} not found")
 
-        return UserMemorySchema.from_dict(user_memory)  # type: ignore
+        return UserMemoryResponse.from_dict(user_memory)  # type: ignore
 
     @mcp.tool(
         name="get_memories",
@@ -742,7 +742,7 @@ def get_mcp_server(
                 deserialize=False,
             )
 
-        memories = [UserMemorySchema.from_dict(m) for m in user_memories]  # type: ignore
+        memories = [UserMemoryResponse.from_dict(m) for m in user_memories]  # type: ignore
         return {
             "data": [m.model_dump() for m in memories if m is not None],
             "meta": {
@@ -760,7 +760,7 @@ def get_mcp_server(
         memory: str,
         user_id: str,
         topics: Optional[List[str]] = None,
-    ) -> UserMemorySchema:
+    ) -> UserMemoryResponse:
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
@@ -798,7 +798,7 @@ def get_mcp_server(
         if not user_memory:
             raise Exception("Failed to update memory")
 
-        return UserMemorySchema.from_dict(user_memory)  # type: ignore
+        return UserMemoryResponse.from_dict(user_memory)  # type: ignore
 
     @mcp.tool(name="delete_memory", description="Delete a specific memory by ID", tags={"memory"})  # type: ignore
     async def delete_memory(

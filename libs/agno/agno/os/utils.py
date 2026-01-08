@@ -23,6 +23,19 @@ from agno.tools import Function, Toolkit
 from agno.utils.log import log_warning, logger
 from agno.workflow import RemoteWorkflow, Workflow
 
+def filter_meaningful_config(d: Dict[str, Any], defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Filter out fields that match their default values, keeping only meaningful user configurations"""
+    filtered = {}
+    for key, value in d.items():
+        if value is None:
+            continue
+        # Skip if value matches the default exactly
+        if key in defaults and value == defaults[key]:
+            continue
+        # Keep non-default values
+        filtered[key] = value
+    return filtered if filtered else None
+
 
 def remove_none_values(obj: Any) -> Any:
     """Recursively remove None values from nested dicts and lists."""
@@ -386,6 +399,16 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
         input_media["audios"].extend(input_data.get("audios", []))
         input_media["files"].extend(input_data.get("files", []))
 
+    if not input_media["images"]:
+        input_media.pop("images")
+    if not input_media["videos"]:
+        input_media.pop("videos")
+    if not input_media["audios"]:
+        input_media.pop("audios")
+    if not input_media["files"]:
+        input_media.pop("files")
+    if not input_media:
+        return None
     return input_media
 
 
@@ -436,7 +459,7 @@ def extract_format(file: UploadFile) -> Optional[str]:
     return None
 
 def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]) -> List["ToolDefinitionResponse"]:
-    from agno.os.schema import ToolDefinitionResponse
+    from agno.os.router.schema import ToolDefinitionResponse
     formatted_tools: List[ToolDefinitionResponse] = []
     if agent_tools is not None:
         for tool in agent_tools:

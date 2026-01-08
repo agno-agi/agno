@@ -20,17 +20,17 @@ if TYPE_CHECKING:
     from agno.client import AgentOSClient
     from agno.client.a2a import A2AClient
     from agno.client.a2a.schemas import AgentCard
-    from agno.os.routers.evals.schemas import EvalSchema
-    from agno.os.routers.knowledge.schemas import (
+    from agno.os.router.evals.schema import EvalRunResponse
+    from agno.os.router.knowledge.schema import (
         ConfigResponseSchema,
-        ContentResponseSchema,
+        ContentResponseResponse,
         ContentStatusResponse,
         VectorSearchResult,
     )
-    from agno.os.routers.memory.schemas import OptimizeMemoriesResponse, UserMemorySchema, UserStatsSchema
-    from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
-    from agno.os.routers.traces.schemas import TraceDetail, TraceNode, TraceSessionStats, TraceSummary
-    from agno.os.schema import (
+    from agno.os.router.memory.schema import OptimizeMemoriesResponse, UserMemoryResponse, UserStatsResponse
+    from agno.os.router.metrics.schema import MetricsResponse
+    from agno.os.router.traces.schemas import TraceDetailResponse, TraceNodeResponse, TraceSessionStatsResponse, TraceSummaryResponse
+    from agno.os.router.schema import (
         AgentSessionDetailSchema,
         ConfigResponse,
         PaginatedResponse,
@@ -115,6 +115,21 @@ class RemoteDb:
             eval_table_name=eval_table_name,
             traces_table_name=traces_table_name,
         )
+    def to_config(self) -> Tuple[List[Tuple[str, str]], Dict[str, Any]]:
+        config = {"remote": True, "client_url": self.client.base_url}
+        
+        table_names = [
+            ("sessions", self.session_table_name),
+            ("culture", self.culture_table_name),
+            ("memories", self.memory_table_name),
+            ("metrics", self.metrics_table_name),
+            ("evals", self.eval_table_name),
+            ("knowledge", self.knowledge_table_name),
+            ("traces", self.traces_table_name),
+            ("spans", self.spans_table_name),
+        ]
+        
+        return table_names, config
 
     # SESSIONS
     async def get_sessions(self, **kwargs: Any) -> "PaginatedResponse[SessionSchema]":
@@ -176,7 +191,7 @@ class RemoteDb:
         return await self.client.delete_sessions(session_ids, session_types, **kwargs)
 
     # MEMORIES
-    async def create_memory(self, memory: str, topics: List[str], user_id: str, **kwargs: Any) -> "UserMemorySchema":
+    async def create_memory(self, memory: str, topics: List[str], user_id: str, **kwargs: Any) -> "UserMemoryResponse":
         return await self.client.create_memory(memory=memory, topics=topics, user_id=user_id, **kwargs)
 
     async def delete_memory(self, memory_id: str, **kwargs: Any) -> None:
@@ -185,58 +200,61 @@ class RemoteDb:
     async def delete_memories(self, memory_ids: List[str], **kwargs: Any) -> None:
         return await self.client.delete_memories(memory_ids, **kwargs)
 
-    async def get_memory(self, memory_id: str, **kwargs: Any) -> "UserMemorySchema":
+    async def get_memory(self, memory_id: str, **kwargs: Any) -> "UserMemoryResponse":
         return await self.client.get_memory(memory_id, **kwargs)
 
-    async def get_memories(self, user_id: Optional[str] = None, **kwargs: Any) -> "PaginatedResponse[UserMemorySchema]":
+    async def get_memories(self, user_id: Optional[str] = None, **kwargs: Any) -> "PaginatedResponse[UserMemoryResponse]":
         return await self.client.list_memories(user_id, **kwargs)
 
-    async def update_memory(self, memory_id: str, **kwargs: Any) -> "UserMemorySchema":
+    async def update_memory(self, memory_id: str, **kwargs: Any) -> "UserMemoryResponse":
         return await self.client.update_memory(memory_id, **kwargs)
 
-    async def get_user_memory_stats(self, **kwargs: Any) -> "PaginatedResponse[UserStatsSchema]":
+    async def get_user_memory_stats(self, **kwargs: Any) -> "PaginatedResponse[UserStatsResponse]":
         return await self.client.get_user_memory_stats(**kwargs)
 
     async def optimize_memories(self, **kwargs: Any) -> "OptimizeMemoriesResponse":
         return await self.client.optimize_memories(**kwargs)
 
-    async def get_memory_topics(self, **kwargs: Any) -> List[str]:
-        return await self.client.get_memory_topics(**kwargs)
+    async def get_memory_config(self, **kwargs: Any) -> List[str]:
+        return await self.client.get_memory_config(**kwargs)
 
     # TRACES
-    async def get_traces(self, **kwargs: Any) -> "PaginatedResponse[TraceSummary]":
+    async def get_traces(self, **kwargs: Any) -> "PaginatedResponse[TraceSummaryResponse]":
         return await self.client.get_traces(**kwargs)
 
-    async def get_trace(self, trace_id: str, **kwargs: Any) -> Union["TraceDetail", "TraceNode"]:
+    async def get_trace(self, trace_id: str, **kwargs: Any) -> Union["TraceDetailResponse", "TraceNodeResponse"]:
         return await self.client.get_trace(trace_id, **kwargs)
 
-    async def get_trace_session_stats(self, **kwargs: Any) -> "PaginatedResponse[TraceSessionStats]":
+    async def get_trace_session_stats(self, **kwargs: Any) -> "PaginatedResponse[TraceSessionStatsResponse]":
         return await self.client.get_trace_session_stats(**kwargs)
 
     # EVALS
-    async def get_eval_runs(self, **kwargs: Any) -> "PaginatedResponse[EvalSchema]":
+    async def get_eval_runs(self, **kwargs: Any) -> "PaginatedResponse[EvalRunResponse]":
         return await self.client.list_eval_runs(**kwargs)
 
-    async def get_eval_run(self, eval_run_id: str, **kwargs: Any) -> "EvalSchema":
+    async def get_eval_run(self, eval_run_id: str, **kwargs: Any) -> "EvalRunResponse":
         return await self.client.get_eval_run(eval_run_id, **kwargs)
 
     async def delete_eval_runs(self, eval_run_ids: List[str], **kwargs: Any) -> None:
         return await self.client.delete_eval_runs(eval_run_ids, **kwargs)
 
-    async def update_eval_run(self, eval_run_id: str, **kwargs: Any) -> "EvalSchema":
+    async def update_eval_run(self, eval_run_id: str, **kwargs: Any) -> "EvalRunResponse":
         return await self.client.update_eval_run(eval_run_id, **kwargs)
 
-    async def create_eval_run(self, **kwargs: Any) -> Optional["EvalSchema"]:
+    async def create_eval_run(self, **kwargs: Any) -> Optional["EvalRunResponse"]:
         return await self.client.run_eval(**kwargs)
 
     # METRICS
     async def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, **kwargs: Any
+        self,
+        refresh: bool = False,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        **kwargs: Any,
     ) -> "MetricsResponse":
-        return await self.client.get_metrics(starting_date=starting_date, ending_date=ending_date, **kwargs)
-
-    async def refresh_metrics(self, **kwargs: Any) -> List["DayAggregatedMetrics"]:
-        return await self.client.refresh_metrics(**kwargs)
+        return await self.client.get_metrics(
+            refresh=refresh, starting_date=starting_date, ending_date=ending_date, **kwargs
+        )
 
     # OTHER
     async def migrate_database(self, target_version: Optional[str] = None) -> None:
@@ -276,7 +294,7 @@ class RemoteKnowledge:
         chunk_overlap: Optional[int] = None,
         db_id: Optional[str] = None,
         **kwargs: Any,
-    ) -> "ContentResponseSchema":
+    ) -> "ContentResponseResponse":
         return await self.client.upload_knowledge_content(
             name=name,
             description=description,
@@ -301,7 +319,7 @@ class RemoteKnowledge:
         reader_id: Optional[str] = None,
         db_id: Optional[str] = None,
         **kwargs: Any,
-    ) -> "ContentResponseSchema":
+    ) -> "ContentResponseResponse":
         return await self.client.update_knowledge_content(
             content_id=content_id,
             name=name,
@@ -320,14 +338,14 @@ class RemoteKnowledge:
         sort_order: Optional[str] = None,
         db_id: Optional[str] = None,
         **kwargs: Any,
-    ) -> "PaginatedResponse[ContentResponseSchema]":
+    ) -> "PaginatedResponse[ContentResponseResponse]":
         return await self.client.list_knowledge_content(
             limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, db_id=db_id, **kwargs
         )
 
     async def get_content_by_id(
         self, content_id: str, db_id: Optional[str] = None, **kwargs: Any
-    ) -> "ContentResponseSchema":
+    ) -> "ContentResponseResponse":
         return await self.client.get_knowledge_content(content_id=content_id, db_id=db_id, **kwargs)
 
     async def delete_content_by_id(self, content_id: str, db_id: Optional[str] = None, **kwargs: Any) -> None:
@@ -427,7 +445,7 @@ class BaseRemote:
     @property
     def _config(self) -> Optional["ConfigResponse"]:
         """Get the OS config from remote, cached with TTL."""
-        from agno.os.schema import ConfigResponse
+        from agno.os.router.schema import ConfigResponse
 
         if self.protocol == "a2a":
             return None
@@ -447,7 +465,7 @@ class BaseRemote:
 
     async def refresh_os_config(self) -> "ConfigResponse":
         """Force refresh the cached OS config."""
-        from agno.os.schema import ConfigResponse
+        from agno.os.router.schema import ConfigResponse
 
         config: ConfigResponse = await self.agentos_client.aget_config()  # type: ignore
         self._cached_config = (config, time.time())

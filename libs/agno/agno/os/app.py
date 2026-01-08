@@ -34,19 +34,19 @@ from agno.os.config import (
     TracesDomainConfig,
 )
 from agno.os.interfaces.base import BaseInterface
-from agno.os.router import get_base_router, get_websocket_router
-from agno.os.routers.agents import get_agent_router
-from agno.os.routers.database import get_database_router
-from agno.os.routers.evals import get_eval_router
-from agno.os.routers.health import get_health_router
-from agno.os.routers.home import get_home_router
-from agno.os.routers.knowledge import get_knowledge_router
-from agno.os.routers.memory import get_memory_router
-from agno.os.routers.metrics import get_metrics_router
-from agno.os.routers.session import get_session_router
-from agno.os.routers.teams import get_team_router
-from agno.os.routers.traces import get_traces_router
-from agno.os.routers.workflows import get_workflow_router
+from agno.os.router.agents import get_agent_router
+from agno.os.router.config.router import get_config_router
+from agno.os.router.database import get_database_router
+from agno.os.router.evals import get_eval_router
+from agno.os.router.health import get_health_router
+from agno.os.router.home import get_home_router
+from agno.os.router.knowledge import get_knowledge_router
+from agno.os.router.memory import get_memory_router
+from agno.os.router.metrics import get_metrics_router
+from agno.os.router.session import get_session_router
+from agno.os.router.teams import get_team_router
+from agno.os.router.traces import get_traces_router
+from agno.os.router.workflows import get_workflow_router, get_websocket_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     collect_mcp_tools_from_team,
@@ -179,6 +179,7 @@ class AgentOS:
             telemetry: Whether to enable telemetry
 
         """
+        
         if not agents and not workflows and not teams and not knowledge:
             raise ValueError("Either agents, teams, workflows or knowledge bases must be provided.")
 
@@ -336,7 +337,7 @@ class AgentOS:
             self._add_router(app, get_home_router(self))
 
         self._add_router(app, get_health_router(health_endpoint="/health"))
-        self._add_router(app, get_base_router(self, settings=self.settings))
+        self._add_router(app, get_config_router(self, settings=self.settings))
         self._add_router(app, get_agent_router(self, settings=self.settings))
         self._add_router(app, get_team_router(self, settings=self.settings))
         self._add_router(app, get_workflow_router(self, settings=self.settings))
@@ -942,6 +943,7 @@ class AgentOS:
         db: Union[BaseDb, AsyncBaseDb, RemoteDb],
     ) -> None:
         """Register a database in the contextual OS after validating it is not conflicting with registered databases"""
+        # TODO: Disallow duplicate databases
         if db.id in registered_dbs:
             registered_dbs[db.id].append(db)
         else:

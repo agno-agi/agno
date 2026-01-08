@@ -2804,6 +2804,7 @@ class Knowledge:
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
+                # TODO: Add async version of this method
                 self.vector_db.delete_by_content_id(content_id)
 
         if self.contents_db is not None:

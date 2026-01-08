@@ -2,7 +2,7 @@
 
 import json
 
-from agno.os.routers.memory.schemas import UserMemorySchema
+from agno.os.routers.memory.schema import UserMemoryResponse
 
 
 def test_user_memory_schema():
@@ -17,7 +17,7 @@ def test_user_memory_schema():
         "updated_at": 1719859200,
         "created_at": 1719859200,
     }
-    user_memory_schema = UserMemorySchema.from_dict(memory_dict)
+    user_memory_schema = UserMemoryResponse.from_dict(memory_dict)
     assert user_memory_schema is not None
     assert user_memory_schema.memory == "This is a test memory"
     assert user_memory_schema.topics == ["test", "memory"]
@@ -35,7 +35,7 @@ def test_v1_migrated_user_memories():
         "input": "This is a test input",
         "updated_at": 1719859200,
     }
-    user_memory_schema = UserMemorySchema.from_dict(memory_dict)
+    user_memory_schema = UserMemoryResponse.from_dict(memory_dict)
     assert user_memory_schema is not None
     assert user_memory_schema.memory == "This is a test memory"
 
@@ -50,7 +50,7 @@ def test_user_memory_schema_complex_memory_content():
         "input": "This is a test input",
         "updated_at": 1719859200,
     }
-    user_memory_schema = UserMemorySchema.from_dict(memory_dict)
+    user_memory_schema = UserMemoryResponse.from_dict(memory_dict)
     assert user_memory_schema is not None
     assert json.loads(user_memory_schema.memory) == complex_content
     assert user_memory_schema.user_id == "456"

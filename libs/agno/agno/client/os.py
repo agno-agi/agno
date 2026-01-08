@@ -12,29 +12,30 @@ from agno.media import Audio, File, Image, Video
 from agno.media import File as MediaFile
 from agno.models.response import ToolExecution
 from agno.os.routers.agents.schema import AgentResponse
-from agno.os.routers.evals.schemas import (
+from agno.os.routers.evals.schema import (
     DeleteEvalRunsRequest,
-    EvalRunInput,
-    EvalSchema,
+    EvalRunRequest,
+    EvalRunResponse,
     UpdateEvalRunRequest,
 )
-from agno.os.routers.knowledge.schemas import (
+from agno.os.routers.knowledge.schema import (
     ConfigResponseSchema as KnowledgeConfigResponse,
 )
-from agno.os.routers.knowledge.schemas import (
-    ContentResponseSchema,
+from agno.os.routers.knowledge.schema import (
+    ContentResponseResponse,
     ContentStatusResponse,
     VectorSearchResult,
 )
-from agno.os.routers.memory.schemas import (
+from agno.os.routers.memory.schema import (
     DeleteMemoriesRequest,
     OptimizeMemoriesRequest,
     OptimizeMemoriesResponse,
-    UserMemoryCreateSchema,
-    UserMemorySchema,
-    UserStatsSchema,
+    UserMemoryCreateRequest,
+    UserMemoryResponse,
+    UserStatsResponse,
+    MemoryConfigResponse,
 )
-from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
+from agno.os.routers.metrics.schema import MetricsResponse
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.routers.traces.schemas import (
     TraceDetail,
@@ -43,7 +44,7 @@ from agno.os.routers.traces.schemas import (
     TraceSummary,
 )
 from agno.os.routers.workflows.schema import WorkflowResponse
-from agno.os.schema import (
+from agno.os.router.schema import (
     AgentSessionDetailSchema,
     AgentMinimalResponse,
     ConfigResponse,
@@ -1137,7 +1138,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> UserMemorySchema:
+    ) -> UserMemoryResponse:
         """Create a new user memory.
 
         Args:
@@ -1158,10 +1159,10 @@ class AgentOSClient:
         params = {k: v for k, v in params.items() if v is not None}
 
         # Use schema for type-safe payload construction
-        payload = UserMemoryCreateSchema(memory=memory, user_id=user_id, topics=topics)
+        payload = UserMemoryCreateRequest(memory=memory, user_id=user_id, topics=topics)
 
         data = await self._apost("/memories", payload.model_dump(exclude_none=True), params=params, headers=headers)
-        return UserMemorySchema.model_validate(data)
+        return UserMemoryResponse.model_validate(data)
 
     async def get_memory(
         self,
@@ -1170,7 +1171,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> UserMemorySchema:
+    ) -> UserMemoryResponse:
         """Get a specific memory by ID.
 
         Args:
@@ -1190,7 +1191,7 @@ class AgentOSClient:
         params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget(f"/memories/{memory_id}", params=params, headers=headers)
-        return UserMemorySchema.model_validate(data)
+        return UserMemoryResponse.model_validate(data)
 
     async def list_memories(
         self,
@@ -1206,7 +1207,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> PaginatedResponse[UserMemorySchema]:
+    ) -> PaginatedResponse[UserMemoryResponse]:
         """List user memories with filtering and pagination.
 
         Args:
@@ -1245,7 +1246,7 @@ class AgentOSClient:
         params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget("/memories", params=params, headers=headers)
-        return PaginatedResponse[UserMemorySchema].model_validate(data)
+        return PaginatedResponse[UserMemoryResponse].model_validate(data)
 
     async def update_memory(
         self,
@@ -1256,7 +1257,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> UserMemorySchema:
+    ) -> UserMemoryResponse:
         """Update an existing memory.
 
         Args:
@@ -1278,12 +1279,12 @@ class AgentOSClient:
         params = {k: v for k, v in params.items() if v is not None}
 
         # Use schema for type-safe payload construction
-        payload = UserMemoryCreateSchema(memory=memory, user_id=user_id, topics=topics)
+        payload = UserMemoryCreateRequest(memory=memory, user_id=user_id, topics=topics)
 
         data = await self._apatch(
             f"/memories/{memory_id}", payload.model_dump(exclude_none=True), params=params, headers=headers
         )
-        return UserMemorySchema.model_validate(data)
+        return UserMemoryResponse.model_validate(data)
 
     async def delete_memory(
         self,
@@ -1338,13 +1339,13 @@ class AgentOSClient:
 
         await self._adelete("/memories", payload.model_dump(exclude_none=True), params=params, headers=headers)
 
-    async def get_memory_topics(
+    async def get_memory_config(
         self,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> List[str]:
-        """Get all unique memory topics.
+    ) -> MemoryConfigResponse:
+        """Get memory configuration.
 
         Args:
             db_id: Optional database ID to use
@@ -1360,7 +1361,8 @@ class AgentOSClient:
         params = {"db_id": db_id, "table": table}
         params = {k: v for k, v in params.items() if v is not None}
 
-        return await self._aget("/memory_topics", params=params, headers=headers)
+        data = await self._aget("/memory/config", params=params, headers=headers)
+        return MemoryConfigResponse.model_validate(data)
 
     async def get_user_memory_stats(
         self,
@@ -1369,7 +1371,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> PaginatedResponse[UserStatsSchema]:
+    ) -> PaginatedResponse[UserStatsResponse]:
         """Get user memory statistics.
 
         Args:
@@ -1389,7 +1391,7 @@ class AgentOSClient:
         params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget("/user_memory_stats", params=params, headers=headers)
-        return PaginatedResponse[UserStatsSchema].model_validate(data)
+        return PaginatedResponse[UserStatsResponse].model_validate(data)
 
     async def optimize_memories(
         self,
@@ -1855,7 +1857,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> PaginatedResponse[EvalSchema]:
+    ) -> PaginatedResponse[EvalRunResponse]:
         """List evaluation runs with filtering and pagination.
 
         Args:
@@ -1896,7 +1898,7 @@ class AgentOSClient:
         params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget("/eval-runs", params=params, headers=headers)
-        return PaginatedResponse[EvalSchema].model_validate(data)
+        return PaginatedResponse[EvalRunResponse].model_validate(data)
 
     async def get_eval_run(
         self,
@@ -1904,7 +1906,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> EvalSchema:
+    ) -> EvalRunResponse:
         """Get a specific evaluation run by ID.
 
         Args:
@@ -1926,7 +1928,7 @@ class AgentOSClient:
         params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget(f"/eval-runs/{eval_run_id}", params=params, headers=headers)
-        return EvalSchema.model_validate(data)
+        return EvalRunResponse.model_validate(data)
 
     async def delete_eval_runs(
         self,
@@ -1963,7 +1965,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> EvalSchema:
+    ) -> EvalRunResponse:
         """Update an evaluation run (rename).
 
         Args:
@@ -1988,7 +1990,7 @@ class AgentOSClient:
         # Use schema for type-safe payload construction
         payload = UpdateEvalRunRequest(name=name)
         data = await self._apatch(f"/eval-runs/{eval_run_id}", payload.model_dump(), params=params, headers=headers)
-        return EvalSchema.model_validate(data)
+        return EvalRunResponse.model_validate(data)
 
     async def run_eval(
         self,
@@ -2004,7 +2006,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> Optional[EvalSchema]:
+    ) -> Optional[EvalRunResponse]:
         """Execute an evaluation on an agent or team.
 
         Args:
@@ -2034,7 +2036,7 @@ class AgentOSClient:
         params = {k: v for k, v in params.items() if v is not None}
 
         # Use schema for type-safe payload construction
-        payload = EvalRunInput(
+        payload = EvalRunRequest(
             eval_type=eval_type,
             input=input_text,
             agent_id=agent_id,
@@ -2052,7 +2054,7 @@ class AgentOSClient:
         )
         if data is None:
             return None
-        return EvalSchema.model_validate(data)
+        return EvalRunResponse.model_validate(data)
 
     # Knowledge Operations
 
@@ -2122,7 +2124,7 @@ class AgentOSClient:
         chunk_overlap: Optional[int] = None,
         db_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> ContentResponseSchema:
+    ) -> ContentResponseResponse:
         """Upload content to the knowledge base.
 
         Args:
@@ -2184,7 +2186,7 @@ class AgentOSClient:
                 }
 
         data = await self._apost_multipart("/knowledge/content", form_data, files=files, params=params, headers=headers)
-        return ContentResponseSchema.model_validate(data)
+        return ContentResponseResponse.model_validate(data)
 
     async def update_knowledge_content(
         self,
@@ -2195,7 +2197,7 @@ class AgentOSClient:
         reader_id: Optional[str] = None,
         db_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> ContentResponseSchema:
+    ) -> ContentResponseResponse:
         """Update content properties.
 
         Args:
@@ -2229,7 +2231,7 @@ class AgentOSClient:
         data = await self._arequest(
             "PATCH", f"/knowledge/content/{content_id}", data=form_data, params=params, headers=headers, as_form=True
         )
-        return ContentResponseSchema.model_validate(data)
+        return ContentResponseResponse.model_validate(data)
 
     async def list_knowledge_content(
         self,
@@ -2239,7 +2241,7 @@ class AgentOSClient:
         sort_order: Optional[str] = "desc",
         db_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> PaginatedResponse[ContentResponseSchema]:
+    ) -> PaginatedResponse[ContentResponseResponse]:
         """List all content in the knowledge base.
 
         Args:
@@ -2266,14 +2268,14 @@ class AgentOSClient:
         params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget("/knowledge/content", params=params, headers=headers)
-        return PaginatedResponse[ContentResponseSchema].model_validate(data)
+        return PaginatedResponse[ContentResponseResponse].model_validate(data)
 
     async def get_knowledge_content(
         self,
         content_id: str,
         db_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> ContentResponseSchema:
+    ) -> ContentResponseResponse:
         """Get a specific content by ID.
 
         Args:
@@ -2291,14 +2293,14 @@ class AgentOSClient:
         params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget(f"/knowledge/content/{content_id}", params=params, headers=headers)
-        return ContentResponseSchema.model_validate(data)
+        return ContentResponseResponse.model_validate(data)
 
     async def delete_knowledge_content(
         self,
         content_id: str,
         db_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> ContentResponseSchema:
+    ) -> ContentResponseResponse:
         """Delete a specific content.
 
         Args:
@@ -2319,7 +2321,7 @@ class AgentOSClient:
         endpoint = f"/knowledge/content/{content_id}"
 
         data = await self._arequest("DELETE", endpoint, params=params, headers=headers)
-        return ContentResponseSchema.model_validate(data)
+        return ContentResponseResponse.model_validate(data)
 
     async def delete_all_knowledge_content(
         self,
@@ -2606,6 +2608,7 @@ class AgentOSClient:
     # Metrics Operations
     async def get_metrics(
         self,
+        refresh: bool = False,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
         db_id: Optional[str] = None,
@@ -2615,8 +2618,10 @@ class AgentOSClient:
         """Retrieve AgentOS metrics and analytics data for a specified date range.
 
         If no date range is specified, returns all available metrics.
+        Use the refresh parameter to trigger recalculation of metrics from raw data.
 
         Args:
+            refresh: Trigger recalculation of metrics from raw data before returning
             starting_date: Starting date for metrics range (YYYY-MM-DD format)
             ending_date: Ending date for metrics range (YYYY-MM-DD format)
             db_id: Optional database ID to use
@@ -2630,6 +2635,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         params: Dict[str, Any] = {
+            "refresh": refresh,
             "starting_date": starting_date.strftime("%Y-%m-%d") if starting_date else None,
             "ending_date": ending_date.strftime("%Y-%m-%d") if ending_date else None,
             "db_id": db_id,
@@ -2639,31 +2645,3 @@ class AgentOSClient:
 
         data = await self._aget("/metrics", params=params, headers=headers)
         return MetricsResponse.model_validate(data)
-
-    async def refresh_metrics(
-        self,
-        db_id: Optional[str] = None,
-        table: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
-    ) -> List[DayAggregatedMetrics]:
-        """Manually trigger recalculation of system metrics from raw data.
-
-        This operation analyzes system activity logs and regenerates aggregated metrics.
-        Useful for ensuring metrics are up-to-date or after system maintenance.
-
-        Args:
-            db_id: Optional database ID to use
-            table: Optional database table to use
-            headers: HTTP headers to include in the request (optional)
-
-        Returns:
-            List[DayAggregatedMetrics]: List of refreshed daily aggregated metrics
-
-        Raises:
-            HTTPStatusError: On HTTP errors
-        """
-        params: Dict[str, Any] = {"db_id": db_id, "table": table}
-        params = {k: v for k, v in params.items() if v is not None}
-
-        data = await self._apost("/metrics/refresh", params=params, headers=headers)
-        return [DayAggregatedMetrics.model_validate(m) for m in data]

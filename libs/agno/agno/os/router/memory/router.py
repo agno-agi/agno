@@ -10,7 +10,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
 from agno.models.utils import get_model
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
-from agno.os.routers.memory.schema import (
+from agno.os.router.memory.schema import (
     DeleteMemoriesRequest,
     MemoryConfigResponse,
     OptimizeMemoriesRequest,

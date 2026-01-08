@@ -3,8 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
-if TYPE_CHECKING:
-    from agno.tracing.schemas import Span, Trace
+from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
@@ -2348,7 +2347,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         self,
         trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
-    ):
+    ) -> Optional[Trace]:
         """Get a single trace by trace_id or other filters.
 
         Args:
@@ -2363,7 +2362,6 @@ class AsyncPostgresDb(AsyncBaseDb):
             For other filters, the most recent trace is returned.
         """
         try:
-            from agno.tracing.schemas import Trace
 
             table = await self._get_table(table_type="traces")
 
@@ -2408,7 +2406,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
-    ) -> tuple[List, int]:
+    ) -> tuple[List[Trace], int]:
         """Get traces matching the provided filters with pagination.
 
         Args:

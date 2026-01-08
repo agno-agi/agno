@@ -640,7 +640,6 @@ class RunOutput:
 
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
-
         if self.metadata is not None:
             _dict["metadata"] = self.metadata
 
