@@ -276,3 +276,120 @@ def test_toolkit_discoverable_tools_parameter():
     assert toolkit.functions["sample_add"].discoverable is True
     # sample_multiply should not be discoverable
     assert toolkit.functions["sample_multiply"].discoverable is False
+
+
+# Tests for use_tool method
+
+
+def test_use_tool_executes_callable():
+    """Test executing a discovered callable tool."""
+    tool_search = AgnoToolSearch(discoverable_tools=[sample_add, sample_multiply])
+
+    result = json.loads(tool_search.use_tool("sample_add", parameters={"a": 5, "b": 3}))
+
+    assert result["result"] == 8
+
+
+def test_use_tool_executes_multiply():
+    """Test executing a multiply tool with float arguments."""
+    tool_search = AgnoToolSearch(discoverable_tools=[sample_multiply])
+
+    result = json.loads(tool_search.use_tool("sample_multiply", parameters={"x": 2.5, "y": 4.0}))
+
+    assert result["result"] == 10.0
+
+
+def test_use_tool_with_toolkit_function():
+    """Test executing a tool from a Toolkit."""
+    toolkit = SampleToolkit()
+    tool_search = AgnoToolSearch(discoverable_tools=[toolkit])
+
+    result = json.loads(tool_search.use_tool("toolkit_add", parameters={"a": 10, "b": 20}))
+
+    assert result["result"] == 30
+
+
+def test_use_tool_toolkit_subtract():
+    """Test executing subtract tool from a Toolkit."""
+    toolkit = SampleToolkit()
+    tool_search = AgnoToolSearch(discoverable_tools=[toolkit])
+
+    result = json.loads(tool_search.use_tool("toolkit_subtract", parameters={"a": 100, "b": 40}))
+
+    assert result["result"] == 60
+
+
+def test_use_tool_not_found():
+    """Test error when tool is not found."""
+    tool_search = AgnoToolSearch(discoverable_tools=[sample_add])
+
+    result = json.loads(tool_search.use_tool("nonexistent_tool", parameters={}))
+
+    assert result["status"] == "error"
+    assert "not found" in result["error"]
+    assert "sample_add" in result["available_tools"]
+
+
+def test_use_tool_with_optional_params():
+    """Test executing a tool with optional parameters."""
+    tool_search = AgnoToolSearch(discoverable_tools=[sample_search])
+
+    # Call with only required param
+    result = json.loads(tool_search.use_tool("sample_search", parameters={"query": "test"}))
+
+    assert result["query"] == "test"
+
+
+def test_use_tool_with_none_input():
+    """Test executing a tool with None as parameters."""
+
+    def no_args_tool() -> str:
+        """A tool that takes no arguments."""
+        return json.dumps({"message": "success"})
+
+    tool_search = AgnoToolSearch(discoverable_tools=[no_args_tool])
+
+    result = json.loads(tool_search.use_tool("no_args_tool", parameters=None))
+
+    assert result["message"] == "success"
+
+
+def test_use_tool_with_empty_dict():
+    """Test executing a tool with empty dict as parameters."""
+
+    def no_args_tool() -> str:
+        """A tool that takes no arguments."""
+        return json.dumps({"message": "success"})
+
+    tool_search = AgnoToolSearch(discoverable_tools=[no_args_tool])
+
+    result = json.loads(tool_search.use_tool("no_args_tool", parameters={}))
+
+    assert result["message"] == "success"
+
+
+def test_use_tool_returns_non_json_result():
+    """Test executing a tool that returns a non-JSON serializable result."""
+
+    def returns_dict(value: str) -> dict:
+        """A tool that returns a dict directly."""
+        return {"value": value, "processed": True}
+
+    tool_search = AgnoToolSearch(discoverable_tools=[returns_dict])
+
+    result = json.loads(tool_search.use_tool("returns_dict", parameters={"value": "test"}))
+
+    assert result["status"] == "success"
+    assert result["tool_name"] == "returns_dict"
+    assert result["result"]["value"] == "test"
+    assert result["result"]["processed"] is True
+
+
+def test_use_tool_registers_in_toolkit():
+    """Test that use_tool is registered as a toolkit function."""
+    tool_search = AgnoToolSearch(discoverable_tools=[sample_add])
+
+    # Check that use_tool is in the toolkit's functions
+    assert "use_tool" in tool_search.functions
+    assert "search_tools" in tool_search.functions
+    assert "list_all_tools" in tool_search.functions
