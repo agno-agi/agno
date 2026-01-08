@@ -327,7 +327,7 @@ async def test_async_search(async_surrealdb_vector: SurrealDb, mock_async_surrea
     ]
 
     # Test search
-    results = await async_surrealdb_vector.asearch("Thai food", limit=2)
+    results = await async_surrealdb_vector.async_search("Thai food", limit=2)
     assert len(results) == 2
     assert results[0].content == "Tom Kha Gai is a Thai coconut soup with chicken"
     assert results[1].content == "Green curry is a spicy Thai curry with coconut milk"

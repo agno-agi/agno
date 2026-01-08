@@ -544,7 +544,7 @@ async def test_async_search(
     mock_embedder.get_embedding.return_value = [0.1] * 384
 
     # Perform the search
-    results = await async_vector_db.asearch("test query", limit=5)
+    results = await async_vector_db.async_search("test query", limit=5)
 
     # Verify results
     assert len(results) == 1

@@ -528,7 +528,7 @@ async def test_async_search_documents(chroma_db, sample_documents):
     await chroma_db.async_insert(content_hash="test_hash", documents=sample_documents)
 
     # Search for coconut-related dishes
-    results = await chroma_db.asearch("coconut dishes", limit=2)
+    results = await chroma_db.async_search("coconut dishes", limit=2)
     assert len(results) == 2
     assert any("coconut" in doc.content.lower() for doc in results)
 
@@ -555,7 +555,7 @@ async def test_async_upsert_documents(chroma_db, sample_documents):
     await chroma_db.async_upsert(content_hash="test_hash", documents=[modified_doc])
 
     # Search to verify the update
-    results = await chroma_db.asearch("spicy and sour", limit=1)
+    results = await chroma_db.async_search("spicy and sour", limit=1)
     assert len(results) == 1
     assert "spicy and sour" in results[0].content
 

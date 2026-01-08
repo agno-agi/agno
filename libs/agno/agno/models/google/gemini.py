@@ -466,12 +466,7 @@ class Gemini(Model):
 
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
-            error_message = str(e)
-            if hasattr(e, "response"):
-                if hasattr(e.response, "text"):
-                    error_message = e.response.text
-                else:
-                    error_message = str(e.response)
+            error_message = str(e.response) if hasattr(e, "response") else str(e)
             raise ModelProviderError(
                 message=error_message,
                 status_code=e.code if hasattr(e, "code") and e.code is not None else 502,
@@ -523,14 +518,8 @@ class Gemini(Model):
 
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
-            error_message = str(e)
-            if hasattr(e, "response"):
-                if hasattr(e.response, "text"):
-                    error_message = e.response.text
-                else:
-                    error_message = str(e.response)
             raise ModelProviderError(
-                message=error_message,
+                message=str(e.response) if hasattr(e, "response") else str(e),
                 status_code=e.code if hasattr(e, "code") and e.code is not None else 502,
                 model_name=self.name,
                 model_id=self.id,
@@ -585,14 +574,8 @@ class Gemini(Model):
 
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
-            error_message = str(e)
-            if hasattr(e, "response"):
-                if hasattr(e.response, "text"):
-                    error_message = e.response.text
-                else:
-                    error_message = str(e.response)
             raise ModelProviderError(
-                message=error_message,
+                message=str(e.response) if hasattr(e, "response") else str(e),
                 status_code=e.code if hasattr(e, "code") and e.code is not None else 502,
                 model_name=self.name,
                 model_id=self.id,
@@ -645,14 +628,8 @@ class Gemini(Model):
 
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
-            error_message = str(e)
-            if hasattr(e, "response"):
-                if hasattr(e.response, "text"):
-                    error_message = e.response.text
-                else:
-                    error_message = str(e.response)
             raise ModelProviderError(
-                message=error_message,
+                message=str(e.response) if hasattr(e, "response") else str(e),
                 status_code=e.code if hasattr(e, "code") and e.code is not None else 502,
                 model_name=self.name,
                 model_id=self.id,

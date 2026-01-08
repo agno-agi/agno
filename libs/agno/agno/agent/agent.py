@@ -62,9 +62,6 @@ from agno.run.agent import (
     RunOutputEvent,
 )
 from agno.run.cancel import (
-    acancel_run as acancel_run_global,
-)
-from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
     aregister_run,
@@ -1098,8 +1095,6 @@ class Agent:
                         tool_call_limit=self.tool_call_limit,
                         response_format=response_format,
                         run_response=run_response,
-                        send_media_to_model=self.send_media_to_model,
-                        compression_manager=self.compression_manager if self.compress_tool_results else None,
                     )
 
                     # Check for cancellation after model call
@@ -2002,7 +1997,6 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         session=agent_session,
-                        async_mode=True,
                     )
 
                     # 6. Prepare run messages
@@ -2352,7 +2346,6 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         session=agent_session,
-                        async_mode=True,
                     )
 
                     # 6. Prepare run messages
@@ -3236,8 +3229,6 @@ class Agent:
                         tool_choice=self.tool_choice,
                         tool_call_limit=self.tool_call_limit,
                         run_response=run_response,
-                        send_media_to_model=self.send_media_to_model,
-                        compression_manager=self.compression_manager if self.compress_tool_results else None,
                     )
 
                     # Check for cancellation after model processing
@@ -3939,8 +3930,6 @@ class Agent:
                         tool_choice=self.tool_choice,
                         tool_call_limit=self.tool_call_limit,
                         run_response=run_response,
-                        send_media_to_model=self.send_media_to_model,
-                        compression_manager=self.compression_manager if self.compress_tool_results else None,
                     )
                     # Check for cancellation after model call
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -4225,7 +4214,6 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         session=agent_session,
-                        async_mode=True,
                     )
 
                     # 6. Prepare run messages
@@ -6404,7 +6392,6 @@ class Agent:
                     agent_tools.append(
                         self._search_knowledge_base_with_agentic_filters_function(
                             run_response=run_response,
-                            async_mode=True,
                             knowledge_filters=run_context.knowledge_filters,
                             run_context=run_context,
                         )
@@ -6413,7 +6400,6 @@ class Agent:
                     agent_tools.append(
                         self._get_search_knowledge_base_function(
                             run_response=run_response,
-                            async_mode=True,
                             knowledge_filters=run_context.knowledge_filters,
                             run_context=run_context,
                         )
@@ -6466,8 +6452,7 @@ class Agent:
 
                 elif isinstance(tool, Toolkit):
                     # For each function in the toolkit and process entrypoint
-                    toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
-                    for name, _func in toolkit_functions.items():
+                    for name, _func in tool.functions.items():
                         if name in _function_names:
                             continue
                         _function_names.append(name)
@@ -6694,18 +6679,6 @@ class Agent:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
         return cancel_run_global(run_id)
-
-    @staticmethod
-    async def acancel_run(run_id: str) -> bool:
-        """Cancel a running agent execution (async version).
-
-        Args:
-            run_id (str): The run_id to cancel.
-
-        Returns:
-            bool: True if the run was found and marked for cancellation, False otherwise.
-        """
-        return await acancel_run_global(run_id)
 
     # -*- Session Database Functions
     def _read_session(

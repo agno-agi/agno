@@ -408,7 +408,7 @@ async def test_async_search(mock_clickhouse, mock_embedder):
     mock_clickhouse.async_client.query.return_value = query_result
 
     # Test async_search
-    results = await mock_clickhouse.asearch(query, limit=2)
+    results = await mock_clickhouse.async_search(query, limit=2)
 
     # Check that embedder.get_embedding was called
     mock_embedder.get_embedding.assert_called_with(query)

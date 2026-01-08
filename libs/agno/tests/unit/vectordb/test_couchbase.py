@@ -799,7 +799,7 @@ async def test_async_search_scope_level(couchbase_fts, mock_embedder):
     ):
         couchbase_fts.is_global_level_index = False  # Ensure scope level search
 
-        results = await couchbase_fts.asearch("test query scope kv", limit=5)
+        results = await couchbase_fts.async_search("test query scope kv", limit=5)
 
         mock_embedder.get_embedding.assert_called_once_with("test query scope kv")
         mock_get_async_scope.assert_called_once()  # For the search part
@@ -824,7 +824,7 @@ async def test_async_search_scope_level(couchbase_fts, mock_embedder):
         mock_async_collection_instance.get.reset_mock()
 
         filters = {"category": "test_scope_kv"}
-        results_with_filters = await couchbase_fts.asearch("test query filter scope kv", limit=5, filters=filters)
+        results_with_filters = await couchbase_fts.async_search("test query filter scope kv", limit=5, filters=filters)
 
         mock_embedder.get_embedding.assert_called_once_with("test query filter scope kv")
         mock_get_async_scope.assert_called_once()
@@ -878,7 +878,7 @@ async def test_async_search_cluster_level(couchbase_fts, mock_embedder):
     ):
         couchbase_fts.is_global_level_index = True  # Ensure cluster level search
 
-        results = await couchbase_fts.asearch("cluster query kv", limit=3)
+        results = await couchbase_fts.async_search("cluster query kv", limit=3)
 
         mock_embedder.get_embedding.assert_called_once_with("cluster query kv")
         mock_get_async_cluster_for_search.assert_called_once()  # For the search part

@@ -470,7 +470,7 @@ async def test_async_search(mock_pgvector):
     ):
         mock_to_thread.return_value = expected_results
 
-        results = await mock_pgvector.asearch("test query")
+        results = await mock_pgvector.async_search("test query")
 
         # Check results and that search was called via to_thread
         assert results == expected_results
