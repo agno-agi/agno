@@ -3,7 +3,7 @@ import warnings
 from textwrap import dedent
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutputEvent
 from agno.tools import Toolkit
@@ -155,8 +155,12 @@ class WorkflowTools(Toolkit):
         Args:
             input: The input data for the workflow.
         """
-        if isinstance(input, dict):
-            input = RunWorkflowInput.model_validate(input)
+        try:
+            if isinstance(input, dict):
+                input = RunWorkflowInput.model_validate(input)
+        except ValidationError as e:
+            log_error(f"Invalid workflow input: {e}")
+            return f"Invalid workflow input: {e}"
 
         try:
             log_debug(f"Running workflow with input: {input.input_data}")
@@ -196,8 +200,13 @@ class WorkflowTools(Toolkit):
         Args:
             input: The input data for the workflow.
         """
-        if isinstance(input, dict):
-            input = RunWorkflowInput.model_validate(input)
+        try:
+            if isinstance(input, dict):
+                input = RunWorkflowInput.model_validate(input)
+        except ValidationError as e:
+            log_error(f"Invalid workflow input: {e}")
+            yield f"Invalid workflow input: {e}"
+            return
 
         try:
             log_debug(f"Running workflow (streaming) with input: {input.input_data}")
@@ -252,8 +261,12 @@ class WorkflowTools(Toolkit):
             input_data: The input data for the workflow (use a `str` for a simple input)
             additional_data: The additional data for the workflow. This is a dictionary of key-value pairs that will be passed to the workflow. E.g. {"topic": "food", "style": "Humour"}
         """
-        if isinstance(input, dict):
-            input = RunWorkflowInput.model_validate(input)
+        try:
+            if isinstance(input, dict):
+                input = RunWorkflowInput.model_validate(input)
+        except ValidationError as e:
+            log_error(f"Invalid workflow input: {e}")
+            return f"Invalid workflow input: {e}"
 
         try:
             log_debug(f"Running workflow with input: {input.input_data}")
@@ -293,8 +306,13 @@ class WorkflowTools(Toolkit):
             input_data: The input data for the workflow (use a `str` for a simple input)
             additional_data: The additional data for the workflow. This is a dictionary of key-value pairs that will be passed to the workflow. E.g. {"topic": "food", "style": "Humour"}
         """
-        if isinstance(input, dict):
-            input = RunWorkflowInput.model_validate(input)
+        try:
+            if isinstance(input, dict):
+                input = RunWorkflowInput.model_validate(input)
+        except ValidationError as e:
+            log_error(f"Invalid workflow input: {e}")
+            yield f"Invalid workflow input: {e}"
+            return
 
         try:
             log_debug(f"Running workflow (streaming) with input: {input.input_data}")
