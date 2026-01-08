@@ -143,6 +143,7 @@ from agno.utils.hooks import (
     should_run_hook_in_background,
 )
 from agno.utils.knowledge import get_agentic_or_user_search_filters
+from agno.utils.context import get_session_metadata_context
 from agno.utils.log import (
     log_debug,
     log_error,
@@ -6349,13 +6350,23 @@ class Agent:
                 from copy import deepcopy
 
                 session_data["session_state"] = deepcopy(self.session_state)
+
+            # Issue #404 Fix: Merge context metadata (e.g., workspace_id) into session metadata
+            # This ensures sessions created during agent runs have proper tenant isolation
+            session_metadata = dict(self.metadata) if self.metadata else {}
+            context_metadata = get_session_metadata_context()
+            if context_metadata:
+                # Context metadata takes precedence (e.g., workspace_id from request)
+                session_metadata.update(context_metadata)
+                log_debug(f"Merged context metadata into session: {context_metadata}")
+
             agent_session = AgentSession(
                 session_id=session_id,
                 agent_id=self.id,
                 user_id=user_id,
                 agent_data=self._get_agent_data(),
                 session_data=session_data,
-                metadata=self.metadata,
+                metadata=session_metadata if session_metadata else None,
                 created_at=int(time()),
             )
             if self.introduction is not None:
@@ -6406,13 +6417,23 @@ class Agent:
                 from copy import deepcopy
 
                 session_data["session_state"] = deepcopy(self.session_state)
+
+            # Issue #404 Fix: Merge context metadata (e.g., workspace_id) into session metadata
+            # This ensures sessions created during agent runs have proper tenant isolation
+            session_metadata = dict(self.metadata) if self.metadata else {}
+            context_metadata = get_session_metadata_context()
+            if context_metadata:
+                # Context metadata takes precedence (e.g., workspace_id from request)
+                session_metadata.update(context_metadata)
+                log_debug(f"Merged context metadata into session: {context_metadata}")
+
             agent_session = AgentSession(
                 session_id=session_id,
                 agent_id=self.id,
                 user_id=user_id,
                 agent_data=self._get_agent_data(),
                 session_data=session_data,
-                metadata=self.metadata,
+                metadata=session_metadata if session_metadata else None,
                 created_at=int(time()),
             )
             if self.introduction is not None:
