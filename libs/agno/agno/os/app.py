@@ -180,9 +180,6 @@ class AgentOS:
             telemetry: Whether to enable telemetry
 
         """
-        if not agents and not workflows and not teams and not knowledge:
-            raise ValueError("Either agents, teams, workflows or knowledge bases must be provided.")
-
         self.config = load_yaml_config(config) if isinstance(config, str) else config
 
         self.agents: Optional[List[Union[Agent, RemoteAgent]]] = agents
