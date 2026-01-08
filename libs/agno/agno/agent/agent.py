@@ -109,6 +109,8 @@ from agno.utils.agent import (
 )
 from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
+    create_model_hook_completed_event,
+    create_model_hook_started_event,
     create_parser_model_response_completed_event,
     create_parser_model_response_started_event,
     create_post_hook_completed_event,
@@ -136,6 +138,7 @@ from agno.utils.events import (
 from agno.utils.hooks import (
     copy_args_for_background,
     filter_hook_args,
+    normalize_model_hooks,
     normalize_post_hooks,
     normalize_pre_hooks,
     should_run_hook_in_background,
@@ -281,6 +284,9 @@ class Agent:
     pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None
     # Functions called after output is generated but before the response is returned
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None
+    # Functions called after context is built but before model is called
+    # Has access to full message list, tools, system message, can modify before model sees them
+    model_hooks: Optional[List[Union[Callable[..., Any], BaseEval]]] = None
     # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
     _run_hooks_in_background: Optional[bool] = None
 
@@ -487,6 +493,7 @@ class Agent:
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
+        model_hooks: Optional[List[Union[Callable[..., Any], BaseEval]]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -612,6 +619,7 @@ class Agent:
 
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks
+        self.model_hooks = model_hooks
 
         self.reasoning = reasoning
         self.reasoning_model = reasoning_model  # type: ignore[assignment]
@@ -1131,6 +1139,20 @@ class Agent:
             # Check for cancellation before model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
+            # 5.5. Execute model hooks (after context built, before model call)
+            for _ in self._execute_model_hooks(
+                hooks=self.model_hooks,
+                run_messages=run_messages,
+                tools=_tools,
+                run_response=run_response,
+                run_context=run_context,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                stream_events=False,
+            ):
+                pass
+
             # 6. Generate a response from the Model (includes running function calls)
             self.model = cast(Model, self.model)
 
@@ -1365,6 +1387,19 @@ class Agent:
 
             # Check for cancellation before model processing
             raise_if_cancelled(run_response.run_id)  # type: ignore
+
+            # 5.5. Execute model hooks (after context built, before model call)
+            yield from self._execute_model_hooks(
+                hooks=self.model_hooks,
+                run_messages=run_messages,
+                tools=_tools,
+                run_response=run_response,
+                run_context=run_context,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                stream_events=stream_events,
+            )
 
             # 6. Process model response
             if self.output_model is None:
@@ -1680,6 +1715,8 @@ class Agent:
                 self.pre_hooks = normalize_pre_hooks(self.pre_hooks)  # type: ignore
             if self.post_hooks:
                 self.post_hooks = normalize_post_hooks(self.post_hooks)  # type: ignore
+            if self.model_hooks:
+                self.model_hooks = normalize_model_hooks(self.model_hooks)  # type: ignore
             self._hooks_normalised = True
 
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -2030,6 +2067,20 @@ class Agent:
             # Check for cancellation before model call
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
+            # 8.5. Execute model hooks (after context built, before model call)
+            async for _ in self._aexecute_model_hooks(
+                hooks=self.model_hooks,
+                run_messages=run_messages,
+                tools=_tools,
+                run_response=run_response,
+                run_context=run_context,
+                session=agent_session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                stream_events=False,
+            ):
+                pass
+
             # 9. Generate a response from the Model (includes running function calls)
             model_response: ModelResponse = await self.model.aresponse(
                 messages=run_messages.messages,
@@ -2316,6 +2367,20 @@ class Agent:
                 yield item
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
+
+            # 8.5. Execute model hooks (after context built, before model call)
+            async for event in self._aexecute_model_hooks(
+                hooks=self.model_hooks,
+                run_messages=run_messages,
+                tools=_tools,
+                run_response=run_response,
+                run_context=run_context,
+                session=agent_session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                stream_events=stream_events,
+            ):
+                yield event
 
             # 9. Generate a response from the Model
             if self.output_model is None:
@@ -2653,6 +2718,8 @@ class Agent:
                 self.pre_hooks = normalize_pre_hooks(self.pre_hooks, async_mode=True)  # type: ignore
             if self.post_hooks:
                 self.post_hooks = normalize_post_hooks(self.post_hooks, async_mode=True)  # type: ignore
+            if self.model_hooks:
+                self.model_hooks = normalize_model_hooks(self.model_hooks, async_mode=True)  # type: ignore
             self._hooks_normalised = True
 
         # Initialize session
@@ -4580,6 +4647,145 @@ class Agent:
                 log_exception(e)
             finally:
                 # Reset global log mode incase an agent in the pre-hook changed it
+                self._set_debug(debug_mode=debug_mode)
+
+    def _execute_model_hooks(
+        self,
+        hooks: Optional[List[Callable[..., Any]]],
+        run_messages: "RunMessages",
+        tools: Optional[List[Union[Function, Dict[str, Any]]]],
+        run_response: RunOutput,
+        run_context: RunContext,
+        session: AgentSession,
+        user_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
+        **kwargs: Any,
+    ) -> Iterator[RunOutputEvent]:
+        """Execute model hooks after context is built but before model is called.
+
+        Model hooks have access to:
+        - run_messages: The full message list (system, history, user input)
+        - tools: The tools being sent to the model
+        - All standard hook args (agent, session, run_context, etc.)
+
+        Hooks can modify run_messages.messages and tools in-place.
+        """
+        if hooks is None:
+            return
+
+        all_args = {
+            "run_messages": run_messages,
+            "tools": tools,
+            "agent": self,
+            "session": session,
+            "run_context": run_context,
+            "session_state": run_context.session_state,
+            "dependencies": run_context.dependencies,
+            "metadata": run_context.metadata,
+            "user_id": user_id,
+            "debug_mode": debug_mode or self.debug_mode,
+        }
+        all_args.update(kwargs)
+
+        for i, hook in enumerate(hooks):
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_response,
+                    event=create_model_hook_started_event(
+                        from_run_response=run_response,
+                        model_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
+            try:
+                filtered_args = filter_hook_args(hook, all_args)
+                hook(**filtered_args)
+
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_response,
+                        event=create_model_hook_completed_event(
+                            from_run_response=run_response,
+                            model_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
+            except Exception as e:
+                log_error(f"Model-hook #{i + 1} execution failed: {str(e)}")
+                log_exception(e)
+                raise
+            finally:
+                self._set_debug(debug_mode=debug_mode)
+
+    async def _aexecute_model_hooks(
+        self,
+        hooks: Optional[List[Callable[..., Any]]],
+        run_messages: "RunMessages",
+        tools: Optional[List[Union[Function, Dict[str, Any]]]],
+        run_response: RunOutput,
+        run_context: RunContext,
+        session: AgentSession,
+        user_id: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        stream_events: bool = False,
+        **kwargs: Any,
+    ) -> AsyncIterator[RunOutputEvent]:
+        """Execute model hooks asynchronously."""
+        if hooks is None:
+            return
+
+        all_args = {
+            "run_messages": run_messages,
+            "tools": tools,
+            "agent": self,
+            "session": session,
+            "run_context": run_context,
+            "session_state": run_context.session_state,
+            "dependencies": run_context.dependencies,
+            "metadata": run_context.metadata,
+            "user_id": user_id,
+            "debug_mode": debug_mode or self.debug_mode,
+        }
+        all_args.update(kwargs)
+
+        for i, hook in enumerate(hooks):
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    run_response=run_response,
+                    event=create_model_hook_started_event(
+                        from_run_response=run_response,
+                        model_hook_name=hook.__name__,
+                    ),
+                    events_to_skip=self.events_to_skip,  # type: ignore
+                    store_events=self.store_events,
+                )
+            try:
+                filtered_args = filter_hook_args(hook, all_args)
+                from inspect import iscoroutinefunction
+
+                if iscoroutinefunction(hook):
+                    await hook(**filtered_args)
+                else:
+                    hook(**filtered_args)
+
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        run_response=run_response,
+                        event=create_model_hook_completed_event(
+                            from_run_response=run_response,
+                            model_hook_name=hook.__name__,
+                        ),
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
+            except Exception as e:
+                log_error(f"Model-hook #{i + 1} execution failed: {str(e)}")
+                log_exception(e)
+                raise
+            finally:
                 self._set_debug(debug_mode=debug_mode)
 
     def _handle_agent_run_paused(

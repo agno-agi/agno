@@ -140,6 +140,44 @@ def normalize_post_hooks(
     return result_hooks if result_hooks else None
 
 
+def normalize_model_hooks(
+    hooks: Optional[List[Union[Callable[..., Any], BaseEval]]],
+    async_mode: bool = False,
+) -> Optional[List[Callable[..., Any]]]:
+    """Normalize model-hooks to a list format.
+
+    Args:
+        hooks: List of hook functions or eval instances
+        async_mode: Whether to use async versions of methods
+    """
+    result_hooks: List[Callable[..., Any]] = []
+
+    if hooks is not None:
+        for hook in hooks:
+            if isinstance(hook, BaseEval):
+                # Extract model_check method
+                method = hook.async_model_check if async_mode else hook.model_check  # type: ignore[assignment]
+
+                from functools import partial
+
+                wrapped = partial(method)
+                wrapped.__name__ = method.__name__  # type: ignore
+                setattr(wrapped, HOOK_RUN_IN_BACKGROUND_ATTR, getattr(hook, "run_in_background", False))
+                result_hooks.append(wrapped)
+            else:
+                # Check if the hook is async and used within sync methods
+                if not async_mode:
+                    import asyncio
+
+                    if asyncio.iscoroutinefunction(hook):
+                        raise ValueError(
+                            f"Cannot use {hook.__name__} (an async hook) with `run()`. Use `arun()` instead."
+                        )
+
+                result_hooks.append(hook)
+    return result_hooks if result_hooks else None
+
+
 def filter_hook_args(hook: Callable[..., Any], all_args: Dict[str, Any]) -> Dict[str, Any]:
     """Filter arguments to only include those that the hook function accepts."""
     import inspect

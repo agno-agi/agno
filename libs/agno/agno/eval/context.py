@@ -15,6 +15,7 @@ from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
 from agno.exceptions import EvalError
 from agno.models.base import Model
 from agno.run.agent import RunInput, RunOutput
+from agno.run.messages import RunMessages
 from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.utils.log import log_warning, logger, set_log_level_to_debug, set_log_level_to_info
 
@@ -122,7 +123,8 @@ class ContextEvaluation:
             title_justify="center",
         )
         results_table.add_row("Input", self.input[:200] + "..." if len(self.input) > 200 else self.input)
-        results_table.add_row("Output", self.output[:200] + "..." if len(self.output) > 200 else self.output)
+        if self.output:
+            results_table.add_row("Output", self.output[:200] + "..." if len(self.output) > 200 else self.output)
         results_table.add_row("Score", f"{self.score}/10")
         results_table.add_row("Status", f"[{status_style}]{status_text}[/{status_style}]")
         results_table.add_row("Reason", Markdown(self.reason))
@@ -280,16 +282,6 @@ class ContextEval(BaseEval):
             self.evaluator_agent.output_schema = ContextEvalResponse
             return self.evaluator_agent
 
-        model = self.model
-        if model is None:
-            try:
-                from agno.models.openai import OpenAIChat
-
-                model = OpenAIChat(id="gpt-4o-mini")
-            except (ModuleNotFoundError, ImportError) as e:
-                logger.exception(e)
-                raise EvalError("Agno uses `openai` as the default model provider. Please run `pip install openai`.")
-
         instructions_parts = [
             "## Your Task",
             "Evaluate how well the agent's response follows its system message/context.",
@@ -336,7 +328,7 @@ class ContextEval(BaseEval):
         instructions_parts.append("Be objective and thorough in your evaluation.")
 
         return Agent(
-            model=model,
+            model=self._get_model(),
             description="You are an expert evaluator assessing how well an agent follows its system message.",
             instructions="\n".join(instructions_parts),
             output_schema=ContextEvalResponse,
@@ -371,6 +363,7 @@ class ContextEval(BaseEval):
             if evaluator_agent is not None:
                 knowledge_section = f"<knowledge>\n{knowledge_context}\n</knowledge>\n\n" if knowledge_context else ""
                 tool_section = f"<tools>\n{tool_context}\n</tools>\n\n" if tool_context else ""
+
                 prompt = f"""<system_message>
 {system_message}
 </system_message>
@@ -518,6 +511,166 @@ class ContextEval(BaseEval):
             return evaluation
         except Exception as e:
             logger.exception(f"Async context evaluation failed: {e}")
+            return None
+
+    def _get_model(self) -> Model:
+        """Return the model for evaluation, with default fallback."""
+        if self.model is not None:
+            return self.model
+        try:
+            from agno.models.openai import OpenAIChat
+
+            return OpenAIChat(id="gpt-4o-mini")
+        except (ModuleNotFoundError, ImportError) as e:
+            logger.exception(e)
+            raise EvalError("Agno uses `openai` as the default model provider. Please run `pip install openai`.")
+
+    def _evaluate_context_quality(
+        self,
+        system_message: str,
+        user_input: str,
+    ) -> Optional[ContextEvaluation]:
+        """Evaluate context quality (for model hooks)."""
+        try:
+            instructions = """## Your Task
+Evaluate the quality of the context/system message BEFORE the model generates a response.
+
+## How to Identify Aspects
+Analyze the system message and evaluate ONLY the parts that are present.
+Look for these sections in the system message:
+
+- **description**: Text at the beginning describing the agent's persona (evaluate if present)
+- **role**: Content inside `<your_role>` tags (evaluate if present)
+- **instructions**: Content inside `<instructions>` tags (evaluate if present)
+- **expected_output**: Content inside `<expected_output>` tags (evaluate if present)
+- **memories**: Content inside `<memories_from_previous_interactions>` tags (evaluate if present)
+- **session_summary**: Content inside `<summary_of_previous_interactions>` tags (evaluate if present)
+- **knowledge**: If `<knowledge>` section is present, evaluate if it's relevant to the user input
+- **tools**: If `<tools>` section is present, evaluate if appropriate tools are available
+
+## Important
+- Only create aspects for sections that EXIST in the system message
+- If `<memories_from_previous_interactions>` is NOT in the system message, do NOT include 'memories' aspect
+- If `<your_role>` is NOT in the system message, do NOT include 'role' aspect
+
+## Scoring (1-10) - Is this section well-structured?
+- 1-2: Section is confusing or contradictory
+- 3-4: Major issues - vague or incomplete
+- 5-6: Adequate but could be clearer
+- 7-8: Well-structured with minor issues
+- 9-10: Excellent, clear, and actionable
+
+Be objective. Only evaluate aspects that are present."""
+
+            evaluator = Agent(
+                model=self._get_model(),
+                description="You evaluate context quality before model execution.",
+                instructions=instructions,
+                output_schema=ContextEvalResponse,
+            )
+
+            prompt = f"""<system_message>
+{system_message}
+</system_message>
+
+<user_input>
+{user_input}
+</user_input>
+
+Evaluate if this context is well-structured for the model to generate a good response."""
+
+            response = evaluator.run(prompt, stream=False)
+            eval_response = response.content
+
+            if not isinstance(eval_response, ContextEvalResponse):
+                raise EvalError(f"Invalid response: {eval_response}")
+
+            return ContextEvaluation(
+                input=user_input,
+                output="",
+                system_message=system_message[:500] + "..." if len(system_message) > 500 else system_message,
+                score=eval_response.score,
+                reason=eval_response.reason,
+                aspect_scores=eval_response.aspect_scores,
+                aspect_feedback=eval_response.aspect_feedback,
+                passed=eval_response.score >= self.threshold,
+            )
+        except Exception as e:
+            logger.exception(f"Context quality evaluation failed: {e}")
+            return None
+
+    async def _aevaluate_context_quality(
+        self,
+        system_message: str,
+        user_input: str,
+    ) -> Optional[ContextEvaluation]:
+        """Evaluate context quality asynchronously (for model hooks)."""
+        try:
+            instructions = """## Your Task
+Evaluate the quality of the context/system message BEFORE the model generates a response.
+
+## How to Identify Aspects
+Analyze the system message and evaluate ONLY the parts that are present.
+Look for these sections in the system message:
+
+- **description**: Text at the beginning describing the agent's persona (evaluate if present)
+- **role**: Content inside `<your_role>` tags (evaluate if present)
+- **instructions**: Content inside `<instructions>` tags (evaluate if present)
+- **expected_output**: Content inside `<expected_output>` tags (evaluate if present)
+- **memories**: Content inside `<memories_from_previous_interactions>` tags (evaluate if present)
+- **session_summary**: Content inside `<summary_of_previous_interactions>` tags (evaluate if present)
+- **knowledge**: If `<knowledge>` section is present, evaluate if it's relevant to the user input
+- **tools**: If `<tools>` section is present, evaluate if appropriate tools are available
+
+## Important
+- Only create aspects for sections that EXIST in the system message
+- If `<memories_from_previous_interactions>` is NOT in the system message, do NOT include 'memories' aspect
+- If `<your_role>` is NOT in the system message, do NOT include 'role' aspect
+
+## Scoring (1-10) - Is this section well-structured?
+- 1-2: Section is confusing or contradictory
+- 3-4: Major issues - vague or incomplete
+- 5-6: Adequate but could be clearer
+- 7-8: Well-structured with minor issues
+- 9-10: Excellent, clear, and actionable
+
+Be objective. Only evaluate aspects that are present."""
+
+            evaluator = Agent(
+                model=self._get_model(),
+                description="You evaluate context quality before model execution.",
+                instructions=instructions,
+                output_schema=ContextEvalResponse,
+            )
+
+            prompt = f"""<system_message>
+{system_message}
+</system_message>
+
+<user_input>
+{user_input}
+</user_input>
+
+Evaluate if this context is well-structured for the model to generate a good response."""
+
+            response = await evaluator.arun(prompt, stream=False)
+            eval_response = response.content
+
+            if not isinstance(eval_response, ContextEvalResponse):
+                raise EvalError(f"Invalid response: {eval_response}")
+
+            return ContextEvaluation(
+                input=user_input,
+                output="",
+                system_message=system_message[:500] + "..." if len(system_message) > 500 else system_message,
+                score=eval_response.score,
+                reason=eval_response.reason,
+                aspect_scores=eval_response.aspect_scores,
+                aspect_feedback=eval_response.aspect_feedback,
+                passed=eval_response.score >= self.threshold,
+            )
+        except Exception as e:
+            logger.exception(f"Async context quality evaluation failed: {e}")
             return None
 
     def run(
@@ -941,3 +1094,80 @@ class ContextEval(BaseEval):
                 model_provider=model_provider,
                 team_id=team_id,
             )
+
+    def model_check(self, run_messages: RunMessages, **kwargs) -> Optional[ContextResult]:
+        """Evaluate context quality before model call."""
+        run_id = str(uuid4())
+
+        system_message = ""
+        if run_messages.system_message and isinstance(run_messages.system_message.content, str):
+            system_message = run_messages.system_message.content
+
+        user_input = ""
+        if run_messages.user_message and isinstance(run_messages.user_message.content, str):
+            user_input = run_messages.user_message.content
+
+        if not system_message:
+            logger.warning("No system message found in run_messages, skipping model_check")
+            return None
+
+        result = ContextResult(run_id=run_id)
+
+        evaluation = self._evaluate_context_quality(
+            system_message=system_message,
+            user_input=user_input,
+        )
+
+        if evaluation:
+            result.results.append(evaluation)
+            result.compute_stats()
+
+            if not evaluation.passed and self.on_fail:
+                self.on_fail(evaluation)
+
+        if self.print_results:
+            result.print_results()
+        if self.print_summary:
+            result.print_summary()
+
+        return result
+
+    async def async_model_check(self, run_messages: RunMessages, **kwargs) -> Optional[ContextResult]:
+        """Evaluate context quality before model call asynchronously."""
+        run_id = str(uuid4())
+
+        system_message = ""
+        if run_messages.system_message and isinstance(run_messages.system_message.content, str):
+            system_message = run_messages.system_message.content
+
+        user_input = ""
+        if run_messages.user_message and isinstance(run_messages.user_message.content, str):
+            user_input = run_messages.user_message.content
+
+        if not system_message:
+            logger.warning("No system message found in run_messages, skipping async_model_check")
+            return None
+
+        result = ContextResult(run_id=run_id)
+
+        evaluation = await self._aevaluate_context_quality(
+            system_message=system_message,
+            user_input=user_input,
+        )
+
+        if evaluation:
+            result.results.append(evaluation)
+            result.compute_stats()
+
+            if not evaluation.passed and self.on_fail:
+                if iscoroutinefunction(self.on_fail):
+                    await self.on_fail(evaluation)
+                else:
+                    self.on_fail(evaluation)
+
+        if self.print_results:
+            result.print_results()
+        if self.print_summary:
+            result.print_summary()
+
+        return result

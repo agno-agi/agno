@@ -151,6 +151,9 @@ class RunEvent(str, Enum):
     post_hook_started = "PostHookStarted"
     post_hook_completed = "PostHookCompleted"
 
+    model_hook_started = "ModelHookStarted"
+    model_hook_completed = "ModelHookCompleted"
+
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
 
@@ -338,6 +341,18 @@ class PostHookStartedEvent(BaseAgentRunEvent):
 class PostHookCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.post_hook_completed.value
     post_hook_name: Optional[str] = None
+
+
+@dataclass
+class ModelHookStartedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.model_hook_started.value
+    model_hook_name: Optional[str] = None
+
+
+@dataclass
+class ModelHookCompletedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.model_hook_completed.value
+    model_hook_name: Optional[str] = None
 
 
 @dataclass

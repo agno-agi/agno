@@ -7,6 +7,8 @@ from agno.reasoning.step import ReasoningStep
 from agno.run.agent import (
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
+    ModelHookCompletedEvent,
+    ModelHookStartedEvent,
     OutputModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
@@ -308,6 +310,30 @@ def create_team_post_hook_completed_event(
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
         post_hook_name=post_hook_name,
+    )
+
+
+def create_model_hook_started_event(
+    from_run_response: RunOutput, model_hook_name: Optional[str] = None
+) -> ModelHookStartedEvent:
+    return ModelHookStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model_hook_name=model_hook_name,
+    )
+
+
+def create_model_hook_completed_event(
+    from_run_response: RunOutput, model_hook_name: Optional[str] = None
+) -> ModelHookCompletedEvent:
+    return ModelHookCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model_hook_name=model_hook_name,
     )
 
 
