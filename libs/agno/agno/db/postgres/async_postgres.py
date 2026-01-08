@@ -31,7 +31,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
 
 try:
-    from sqlalchemy import Index, String, Table, UniqueConstraint, and_, case, func, or_, update
+    from sqlalchemy import ForeignKey, Index, String, Table, UniqueConstraint, and_, case, func, or_, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.dialects.postgresql import TIMESTAMP
     from sqlalchemy.exc import ProgrammingError
@@ -192,7 +192,10 @@ class AsyncPostgresDb(AsyncBaseDb):
             Table: SQLAlchemy Table object
         """
         try:
-            table_schema = get_table_schema_definition(table_type).copy()
+            # Pass traces_table_name and db_schema for spans table foreign key resolution
+            table_schema = get_table_schema_definition(
+                table_type, traces_table_name=self.trace_table_name, db_schema=self.db_schema
+            ).copy()
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -212,6 +215,11 @@ class AsyncPostgresDb(AsyncBaseDb):
                 if col_config.get("unique", False):
                     column_kwargs["unique"] = True
                     unique_constraints.append(col_name)
+
+                # Handle foreign key constraint
+                if "foreign_key" in col_config:
+                    column_args.append(ForeignKey(col_config["foreign_key"]))
+
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
@@ -963,22 +971,40 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="memories")
 
             async with self.async_session_factory() as sess, sess.begin():
+                # Filter out NULL topics and ensure topics is an array before extracting elements
+                # jsonb_typeof returns 'array' for JSONB arrays
+                conditions = [
+                    table.c.topics.is_not(None),
+                    func.jsonb_typeof(table.c.topics) == "array",
+                ]
+                if user_id is not None:
+                    conditions.append(table.c.user_id == user_id)
+
                 try:
-                    stmt = select(func.jsonb_array_elements_text(table.c.topics))
-                    if user_id is not None:
-                        stmt = stmt.where(table.c.user_id == user_id)
+                    # jsonb_array_elements_text is a set-returning function that must be used with select_from
+                    stmt = select(func.jsonb_array_elements_text(table.c.topics).label("topic"))
+                    stmt = stmt.select_from(table)
+                    stmt = stmt.where(and_(*conditions))
                     result = await sess.execute(stmt)
                 except ProgrammingError:
                     # Retrying with json_array_elements_text. This works in older versions,
                     # where the topics column was of type JSON instead of JSONB
-                    stmt = select(func.json_array_elements_text(table.c.topics))
+                    # For JSON (not JSONB), we use json_typeof
+                    json_conditions = [
+                        table.c.topics.is_not(None),
+                        func.json_typeof(table.c.topics) == "array",
+                    ]
                     if user_id is not None:
-                        stmt = stmt.where(table.c.user_id == user_id)
+                        json_conditions.append(table.c.user_id == user_id)
+                    stmt = select(func.json_array_elements_text(table.c.topics).label("topic"))
+                    stmt = stmt.select_from(table)
+                    stmt = stmt.where(and_(*json_conditions))
                     result = await sess.execute(stmt)
 
                 records = result.fetchall()
-
-                return list(set([record[0] for record in records]))
+                # Extract topics from records - each record is a Row with a 'topic' attribute
+                topics = [record.topic for record in records if record.topic is not None]
+                return list(set(topics))
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
