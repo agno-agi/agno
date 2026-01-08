@@ -11844,3 +11844,24 @@ def get_agent_by_id(
     except Exception as e:
         log_error(f"Error loading Agent {id} from database: {e}")
         return None
+
+
+def get_agents(
+    db: "BaseDb",
+    registry: Optional["Registry"] = None,
+) -> List["Agent"]:
+    """
+    Get all agents from the database.
+    """
+    agents: List[Agent] = []
+    configs: List[Dict[str, Any]] = []
+    entities = db.list_entities(entity_type=ConfigType.AGENT)
+    for entity in entities:
+        config = db.get_config(entity_id=entity["entity_id"])
+        if config is not None:
+            configs.append(config.get("config"))
+    for config in configs:
+        agent = Agent.from_dict(config, registry=registry)
+        agent.db = db
+        agents.append(agent)
+    return agents

@@ -590,6 +590,15 @@ def get_agent_router(
                 agent_response = await AgentResponse.from_agent(agent=agent)
                 agents.append(agent_response)
 
+        if os.db:
+            from agno.agent.agent import get_agents
+
+            db_agents = get_agents(db=os.db, registry=registry)
+
+        for db_agent in db_agents:
+            agent_response = await AgentResponse.from_agent(agent=db_agent)
+            agents.append(agent_response)
+
         return agents
 
     @router.get(
@@ -632,7 +641,7 @@ def get_agent_router(
         dependencies=[Depends(require_resource_access("agents", "read", "agent_id"))],
     )
     async def get_agent(agent_id: str, request: Request) -> AgentResponse:
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(agent_id, os.agents, os.db, registry)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
