@@ -22,7 +22,7 @@ agent = Agent(
 
 if __name__ == "__main__":
     asyncio.run(
-        knowledge.async_add_content(
+        knowledge.ainsert(
             path="cookbook/knowledge/testing_resources/cv_1.pdf",
         )
     )

@@ -39,7 +39,7 @@ vector_db = PgVector(
 knowledge = Knowledge(vector_db=vector_db)
 
 # Add some sample content
-knowledge.add_content(
+knowledge.insert(
     url="https://docs.agno.com/llms-full.txt",
 )
 

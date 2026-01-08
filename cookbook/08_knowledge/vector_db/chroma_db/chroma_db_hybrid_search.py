@@ -106,7 +106,7 @@ agent = Agent(
 if __name__ == "__main__":
     # Load Agno documentation into the knowledge base
     asyncio.run(
-        knowledge.async_add_content(
+        knowledge.ainsert(
             name="Agno Documentation",
             url="https://docs.agno.com/llms-full.txt",
         )

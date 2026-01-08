@@ -52,12 +52,12 @@ class Knowledge:
 
         self.construct_readers()
 
-    # --- Add Contents ---
+    # --- Insert Many ---
     @overload
-    async def async_add_contents(self, contents: List[ContentDict]) -> None: ...
+    async def ainsert_many(self, contents: List[ContentDict]) -> None: ...
 
     @overload
-    async def async_add_contents(
+    async def ainsert_many(
         self,
         *,
         paths: Optional[List[str]] = None,
@@ -73,13 +73,13 @@ class Knowledge:
         remote_content: Optional[RemoteContent] = None,
     ) -> None: ...
 
-    async def async_add_contents(self, *args, **kwargs) -> None:
+    async def ainsert_many(self, *args, **kwargs) -> None:
         if args and isinstance(args[0], list):
             arguments = args[0]
             upsert = kwargs.get("upsert", True)
             skip_if_exists = kwargs.get("skip_if_exists", False)
             for argument in arguments:
-                await self.async_add_content(
+                await self.ainsert(
                     name=argument.get("name"),
                     description=argument.get("description"),
                     path=argument.get("path"),
@@ -110,7 +110,7 @@ class Knowledge:
             skip_if_exists = kwargs.get("skip_if_exists", False)
             remote_content = kwargs.get("remote_content", None)
             for path in paths:
-                await self.async_add_content(
+                await self.ainsert(
                     name=name,
                     description=description,
                     path=path,
@@ -122,7 +122,7 @@ class Knowledge:
                     reader=reader,
                 )
             for url in urls:
-                await self.async_add_content(
+                await self.ainsert(
                     name=name,
                     description=description,
                     url=url,
@@ -136,7 +136,7 @@ class Knowledge:
             for i, text_content in enumerate(text_contents):
                 content_name = f"{name}_{i}" if name else f"text_content_{i}"
                 log_debug(f"Adding text content: {content_name}")
-                await self.async_add_content(
+                await self.ainsert(
                     name=content_name,
                     description=description,
                     text_content=text_content,
@@ -148,7 +148,7 @@ class Knowledge:
                     reader=reader,
                 )
             if topics:
-                await self.async_add_content(
+                await self.ainsert(
                     name=name,
                     description=description,
                     topics=topics,
@@ -161,7 +161,7 @@ class Knowledge:
                 )
 
             if remote_content:
-                await self.async_add_content(
+                await self.ainsert(
                     name=name,
                     metadata=metadata,
                     description=description,
@@ -172,13 +172,13 @@ class Knowledge:
                 )
 
         else:
-            raise ValueError("Invalid usage of add_contents.")
+            raise ValueError("Invalid usage of insert_many.")
 
     @overload
-    def add_contents(self, contents: List[ContentDict]) -> None: ...
+    def insert_many(self, contents: List[ContentDict]) -> None: ...
 
     @overload
-    def add_contents(
+    def insert_many(
         self,
         *,
         paths: Optional[List[str]] = None,
@@ -194,9 +194,9 @@ class Knowledge:
         remote_content: Optional[RemoteContent] = None,
     ) -> None: ...
 
-    def add_contents(self, *args, **kwargs) -> None:
+    def insert_many(self, *args, **kwargs) -> None:
         """
-        Synchronously add multiple content items to the knowledge base.
+        Synchronously insert multiple content items into the knowledge base.
 
         Supports two usage patterns:
         1. Pass a list of content dictionaries as first argument
@@ -207,21 +207,21 @@ class Knowledge:
             paths: Optional list of file paths to load content from
             urls: Optional list of URLs to load content from
             metadata: Optional metadata dictionary to apply to all content
-            topics: Optional list of topics to add
-            text_contents: Optional list of text content strings to add
+            topics: Optional list of topics to insert
+            text_contents: Optional list of text content strings to insert
             reader: Optional reader to use for processing content
             include: Optional list of file patterns to include
             exclude: Optional list of file patterns to exclude
             upsert: Whether to update existing content if it already exists (only used when skip_if_exists=False)
-            skip_if_exists: Whether to skip adding content if it already exists (default: True)
-            remote_content: Optional remote content (S3, GCS, etc.) to add
+            skip_if_exists: Whether to skip inserting content if it already exists (default: True)
+            remote_content: Optional remote content (S3, GCS, etc.) to insert
         """
         if args and isinstance(args[0], list):
             arguments = args[0]
             upsert = kwargs.get("upsert", True)
             skip_if_exists = kwargs.get("skip_if_exists", False)
             for argument in arguments:
-                self.add_content(
+                self.insert(
                     name=argument.get("name"),
                     description=argument.get("description"),
                     path=argument.get("path"),
@@ -252,7 +252,7 @@ class Knowledge:
             skip_if_exists = kwargs.get("skip_if_exists", False)
             remote_content = kwargs.get("remote_content", None)
             for path in paths:
-                self.add_content(
+                self.insert(
                     name=name,
                     description=description,
                     path=path,
@@ -264,7 +264,7 @@ class Knowledge:
                     reader=reader,
                 )
             for url in urls:
-                self.add_content(
+                self.insert(
                     name=name,
                     description=description,
                     url=url,
@@ -278,7 +278,7 @@ class Knowledge:
             for i, text_content in enumerate(text_contents):
                 content_name = f"{name}_{i}" if name else f"text_content_{i}"
                 log_debug(f"Adding text content: {content_name}")
-                self.add_content(
+                self.insert(
                     name=content_name,
                     description=description,
                     text_content=text_content,
@@ -290,7 +290,7 @@ class Knowledge:
                     reader=reader,
                 )
             if topics:
-                self.add_content(
+                self.insert(
                     name=name,
                     description=description,
                     topics=topics,
@@ -303,7 +303,7 @@ class Knowledge:
                 )
 
             if remote_content:
-                self.add_content(
+                self.insert(
                     name=name,
                     metadata=metadata,
                     description=description,
@@ -314,12 +314,12 @@ class Knowledge:
                 )
 
         else:
-            raise ValueError("Invalid usage of add_contents.")
+            raise ValueError("Invalid usage of insert_many.")
 
-    # --- Add Content ---
+    # --- Insert ---
 
     @overload
-    async def async_add_content(
+    async def ainsert(
         self,
         *,
         path: Optional[str] = None,
@@ -335,9 +335,9 @@ class Knowledge:
     ) -> None: ...
 
     @overload
-    async def async_add_content(self, *args, **kwargs) -> None: ...
+    async def ainsert(self, *args, **kwargs) -> None: ...
 
-    async def async_add_content(
+    async def ainsert(
         self,
         name: Optional[str] = None,
         description: Optional[str] = None,
@@ -384,7 +384,7 @@ class Knowledge:
         await self._aload_content(content, upsert, skip_if_exists, include, exclude)
 
     @overload
-    def add_content(
+    def insert(
         self,
         *,
         path: Optional[str] = None,
@@ -400,9 +400,9 @@ class Knowledge:
     ) -> None: ...
 
     @overload
-    def add_content(self, *args, **kwargs) -> None: ...
+    def insert(self, *args, **kwargs) -> None: ...
 
-    def add_content(
+    def insert(
         self,
         name: Optional[str] = None,
         description: Optional[str] = None,
@@ -420,14 +420,14 @@ class Knowledge:
         auth: Optional[ContentAuth] = None,
     ) -> None:
         """
-        Synchronously add content to the knowledge base.
+        Synchronously insert content into the knowledge base.
 
         Args:
             name: Optional name for the content
             description: Optional description for the content
             path: Optional file path to load content from
             url: Optional URL to load content from
-            text_content: Optional text content to add directly
+            text_content: Optional text content to insert directly
             metadata: Optional metadata dictionary
             topics: Optional list of topics
             remote_content: Optional cloud storage configuration
@@ -435,7 +435,7 @@ class Knowledge:
             include: Optional list of file patterns to include
             exclude: Optional list of file patterns to exclude
             upsert: Whether to update existing content if it already exists (only used when skip_if_exists=False)
-            skip_if_exists: Whether to skip adding content if it already exists (default: False)
+            skip_if_exists: Whether to skip inserting content if it already exists (default: False)
         """
         # Validation: At least one of the parameters must be provided
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):

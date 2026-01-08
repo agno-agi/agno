@@ -18,7 +18,7 @@ knowledge_base = Knowledge(
     ),
 )
 
-knowledge_base.add_content(
+knowledge_base.insert(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 )
 

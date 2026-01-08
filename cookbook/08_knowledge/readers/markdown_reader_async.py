@@ -23,7 +23,7 @@ agent = Agent(
 
 if __name__ == "__main__":
     asyncio.run(
-        knowledge.async_add_content(
+        knowledge.ainsert(
             path=Path("README.md"),
         )
     )

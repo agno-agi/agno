@@ -25,7 +25,7 @@ knowledge = Knowledge(
 
 # Add from S3 bucket
 asyncio.run(
-    knowledge.async_add_content(
+    knowledge.ainsert(
         name="S3 PDF",
         remote_content=S3Content(
             bucket_name="agno-public", key="recipes/ThaiRecipes.pdf"

@@ -146,5 +146,5 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    agno_docs.add_content(name="Agno Docs", url="https://www.paulgraham.com/read.html")
+    agno_docs.insert(name="Agno Docs", url="https://www.paulgraham.com/read.html")
     agent_os.serve(app="reasoning_demo:app", reload=True)

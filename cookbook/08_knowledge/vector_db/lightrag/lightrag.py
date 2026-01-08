@@ -18,7 +18,7 @@ knowledge = Knowledge(
 
 
 asyncio.run(
-    knowledge.async_add_content(
+    knowledge.ainsert(
         name="Recipes",
         path="cookbook/knowledge/testing_resources/cv_1.pdf",
         metadata={"doc_type": "recipe_book"},
@@ -26,7 +26,7 @@ asyncio.run(
 )
 
 asyncio.run(
-    knowledge.async_add_content(
+    knowledge.ainsert(
         name="Recipes",
         topics=["Manchester United"],
         reader=WikipediaReader(),
@@ -34,7 +34,7 @@ asyncio.run(
 )
 
 asyncio.run(
-    knowledge.async_add_content(
+    knowledge.ainsert(
         name="Recipes",
         url="https://en.wikipedia.org/wiki/Manchester_United_F.C.",
     )

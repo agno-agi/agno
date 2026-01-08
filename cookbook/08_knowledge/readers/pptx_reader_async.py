@@ -28,7 +28,7 @@ def main():
     # Load PPTX content from file(s) asynchronously
     # You can load multiple PPTX files by calling async_add_content multiple times
     asyncio.run(
-        knowledge.async_add_content(
+        knowledge.ainsert(
             path="path/to/your/presentation.pptx",  # Replace with actual PPTX file path
             reader=PPTXReader(),
         )

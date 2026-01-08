@@ -17,7 +17,7 @@ knowledge = Knowledge(
 )
 
 asyncio.run(
-    knowledge.async_add_content(
+    knowledge.ainsert(
         name="Agno Docs", url="https://docs.agno.com/llms-full.txt"
     )
 )

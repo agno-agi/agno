@@ -83,7 +83,7 @@ def save_learning(title: str, learning: str) -> str:
     }
 
     # Save to knowledge base
-    learnings_kb.add_content(
+    learnings_kb.insert(
         name=payload["title"],
         text_content=json.dumps(payload, ensure_ascii=False),
         reader=TextReader(),

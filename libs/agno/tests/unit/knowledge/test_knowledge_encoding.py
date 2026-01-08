@@ -133,7 +133,7 @@ def _assert_insert_contains_text(fake_db: MockVectorDb, expected: str) -> None:
 def test_add_content_sync_handles_utf8_samples(text: str) -> None:
     fake_db = MockVectorDb()
     kb = Knowledge(vector_db=fake_db)
-    kb.add_content(text_content=text)
+    kb.insert(text_content=text)
     _assert_insert_contains_text(fake_db, text)
 
 
@@ -142,7 +142,7 @@ def test_add_content_sync_handles_utf8_samples(text: str) -> None:
 async def test_async_add_content_handles_utf8_samples(text: str) -> None:
     fake_db = MockVectorDb()
     kb = Knowledge(vector_db=fake_db)
-    await kb.async_add_content(text_content=text)
+    await kb.ainsert(text_content=text)
     _assert_insert_contains_text(fake_db, text)
 
 
@@ -151,7 +151,7 @@ def test_add_content_sync_replaces_invalid_surrogates() -> None:
     bad_text = "bad\udffftext"
     fake_db = MockVectorDb()
     kb = Knowledge(vector_db=fake_db)
-    kb.add_content(text_content=bad_text)
+    kb.insert(text_content=bad_text)
     docs = fake_db.get_all_inserted_documents()
     contents = "\n".join([getattr(d, "content", "") for d in docs])
     # Some environments render replacement as '?' when logging/printing
@@ -163,7 +163,7 @@ async def test_async_add_content_replaces_invalid_surrogates() -> None:
     bad_text = "\ud800orphan"
     fake_db = MockVectorDb()
     kb = Knowledge(vector_db=fake_db)
-    await kb.async_add_content(text_content=bad_text)
+    await kb.ainsert(text_content=bad_text)
     docs = fake_db.get_all_inserted_documents()
     contents = "\n".join([getattr(d, "content", "") for d in docs])
     assert "\ufffd" in contents or "�" in contents or "?" in contents
