@@ -6,7 +6,8 @@ This example demonstrates structured outputs using Azure OpenAI Responses API.
 Required environment variables:
     AZURE_OPENAI_API_KEY: Your Azure OpenAI API key
     AZURE_OPENAI_ENDPOINT: Your Azure OpenAI endpoint (e.g., https://your-resource.openai.azure.com/)
-    AZURE_OPENAI_DEPLOYMENT: Your Azure deployment name
+
+Note: The `id` parameter should be your Azure deployment name (e.g., "gpt-4o").
 """
 
 from typing import List

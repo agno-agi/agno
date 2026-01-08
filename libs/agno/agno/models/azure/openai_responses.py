@@ -10,8 +10,7 @@ from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_warning
 
 try:
-    from openai import AsyncAzureOpenAI as AsyncAzureOpenAIClient
-    from openai import AzureOpenAI as AzureOpenAIClient
+    from openai import AsyncOpenAI, OpenAI
 except ImportError:
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
@@ -22,21 +21,20 @@ class AzureOpenAIResponses(OpenAIResponses):
     Azure OpenAI Responses API model.
 
     A class for interacting with Azure OpenAI models using the Responses API.
+    Per Microsoft's documentation, the Responses API uses the regular OpenAI client
+    with a special base_url pointing to Azure.
 
     Args:
-        id (str): The model name to use.
-        name (str): The model name to use.
-        provider (str): The provider to use.
-        api_key (Optional[str]): The API key to use.
-        api_version (str): The API version to use.
-        azure_endpoint (Optional[str]): The Azure endpoint to use.
-        azure_deployment (Optional[str]): The Azure deployment to use.
-        base_url (Optional[str]): The base URL to use.
-        azure_ad_token (Optional[str]): The Azure AD token to use.
-        azure_ad_token_provider (Optional[Any]): The Azure AD token provider to use.
-        organization (Optional[str]): The organization to use.
-        client (Optional[AzureOpenAIClient]): The Azure OpenAI client to use.
-        async_client (Optional[AsyncAzureOpenAIClient]): The async Azure OpenAI client to use.
+        id (str): The model/deployment name to use.
+        name (str): The model name for identification.
+        provider (str): The provider name.
+        api_key (Optional[str]): The Azure OpenAI API key.
+        azure_endpoint (Optional[str]): The Azure endpoint (e.g., https://your-resource.openai.azure.com/).
+        azure_deployment (Optional[str]): The Azure deployment name (used as model if id not specified).
+        azure_ad_token (Optional[str]): The Azure AD token for authentication (alternative to api_key).
+        azure_ad_token_provider (Optional[Any]): A callable that returns an Azure AD token.
+        client (Optional[OpenAI]): The OpenAI client to use.
+        async_client (Optional[AsyncOpenAI]): The async OpenAI client to use.
     """
 
     id: str = "gpt-4o"
@@ -44,23 +42,24 @@ class AzureOpenAIResponses(OpenAIResponses):
     provider: str = "Azure"
 
     # Azure-specific parameters
-    # Note: Responses API requires api-version 2025-03-01-preview or later
-    api_version: Optional[str] = "2025-03-01-preview"
     azure_endpoint: Optional[str] = None
     azure_deployment: Optional[str] = None
     azure_ad_token: Optional[str] = None
     azure_ad_token_provider: Optional[Any] = None
 
-    # Override parent's client types with Azure clients
-    client: Optional[AzureOpenAIClient] = None
-    async_client: Optional[AsyncAzureOpenAIClient] = None
+    # Override parent's client types - use regular OpenAI clients with Azure base_url
+    client: Optional[OpenAI] = None
+    async_client: Optional[AsyncOpenAI] = None
 
     def _get_client_params(self) -> Dict[str, Any]:
         """
-        Get Azure-specific client parameters for API requests.
+        Get client parameters for Azure OpenAI Responses API.
+
+        Per Microsoft's documentation, the Responses API uses the regular OpenAI client
+        with base_url set to: https://{resource}.openai.azure.com/openai/v1/
 
         Returns:
-            Dict[str, Any]: Client parameters for Azure OpenAI
+            Dict[str, Any]: Client parameters for OpenAI client
         """
         _client_params: Dict[str, Any] = {}
 
@@ -69,29 +68,38 @@ class AzureOpenAIResponses(OpenAIResponses):
         self.azure_endpoint = self.azure_endpoint or getenv("AZURE_OPENAI_ENDPOINT")
         self.azure_deployment = self.azure_deployment or getenv("AZURE_OPENAI_DEPLOYMENT")
 
-        # Validate authentication
-        if not self.api_key or not self.azure_ad_token:
-            if not self.api_key:
-                raise ModelAuthenticationError(
-                    message="AZURE_OPENAI_API_KEY not set. Please set the AZURE_OPENAI_API_KEY environment variable.",
-                    model_name=self.name,
-                )
-            if not self.azure_ad_token:
-                raise ModelAuthenticationError(
-                    message="AZURE_AD_TOKEN not set. Please set the AZURE_AD_TOKEN environment variable.",
-                    model_name=self.name,
-                )
+        # Handle Azure AD token provider
+        if self.azure_ad_token_provider is not None and self.azure_ad_token is None:
+            # Call the token provider to get the token
+            self.azure_ad_token = self.azure_ad_token_provider()
 
-        # Build params mapping
+        # Validate authentication - need EITHER api_key OR azure_ad_token
+        if not self.api_key and not self.azure_ad_token:
+            raise ModelAuthenticationError(
+                message="Authentication required. Please set either AZURE_OPENAI_API_KEY environment variable "
+                "or provide azure_ad_token/azure_ad_token_provider.",
+                model_name=self.name,
+            )
+
+        # Validate endpoint
+        if not self.azure_endpoint:
+            raise ModelAuthenticationError(
+                message="AZURE_OPENAI_ENDPOINT not set. Please set the AZURE_OPENAI_ENDPOINT environment variable.",
+                model_name=self.name,
+            )
+
+        # Build base_url from azure_endpoint
+        # Per Microsoft docs: https://{resource}.openai.azure.com/openai/v1/
+        base_url = f"{self.azure_endpoint.rstrip('/')}/openai/v1/"
+
+        # Use azure_ad_token as api_key if api_key not provided
+        api_key = self.api_key or self.azure_ad_token
+
+        # Build params for regular OpenAI client
         params_mapping = {
-            "api_key": self.api_key,
-            "api_version": self.api_version,
+            "api_key": api_key,
+            "base_url": base_url,
             "organization": self.organization,
-            "azure_endpoint": self.azure_endpoint,
-            "azure_deployment": self.azure_deployment,
-            "base_url": self.base_url,
-            "azure_ad_token": self.azure_ad_token,
-            "azure_ad_token_provider": self.azure_ad_token_provider,
             "timeout": self.timeout,
             "max_retries": self.max_retries,
         }
@@ -111,12 +119,12 @@ class AzureOpenAIResponses(OpenAIResponses):
 
         return _client_params
 
-    def get_client(self) -> AzureOpenAIClient:
+    def get_client(self) -> OpenAI:
         """
-        Get the Azure OpenAI client. Caches the client to avoid recreating it on every request.
+        Get the OpenAI client configured for Azure. Caches the client to avoid recreating it on every request.
 
         Returns:
-            AzureOpenAIClient: The Azure OpenAI client.
+            OpenAI: The OpenAI client configured with Azure base_url.
         """
         if self.client is not None and not self.client.is_closed():
             return self.client
@@ -133,16 +141,17 @@ class AzureOpenAIResponses(OpenAIResponses):
         else:
             _client_params["http_client"] = get_default_sync_client()
 
-        # Create client
-        self.client = AzureOpenAIClient(**_client_params)
+        # Create regular OpenAI client with Azure base_url
+        self.client = OpenAI(**_client_params)
         return self.client
 
-    def get_async_client(self) -> AsyncAzureOpenAIClient:
+    def get_async_client(self) -> AsyncOpenAI:
         """
-        Returns an asynchronous Azure OpenAI client. Caches the client to avoid recreating it on every request.
+        Returns an asynchronous OpenAI client configured for Azure.
+        Caches the client to avoid recreating it on every request.
 
         Returns:
-            AsyncAzureOpenAIClient: An instance of the asynchronous Azure OpenAI client.
+            AsyncOpenAI: An instance of the asynchronous OpenAI client configured with Azure base_url.
         """
         if self.async_client and not self.async_client.is_closed():
             return self.async_client
@@ -161,5 +170,6 @@ class AzureOpenAIResponses(OpenAIResponses):
         else:
             _client_params["http_client"] = get_default_async_client()
 
-        self.async_client = AsyncAzureOpenAIClient(**_client_params)
+        # Create regular AsyncOpenAI client with Azure base_url
+        self.async_client = AsyncOpenAI(**_client_params)
         return self.async_client
