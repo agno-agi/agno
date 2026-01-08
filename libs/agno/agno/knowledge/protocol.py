@@ -64,4 +64,3 @@ class KnowledgeBase(Protocol):
             List of Document objects matching the query.
         """
         ...
-

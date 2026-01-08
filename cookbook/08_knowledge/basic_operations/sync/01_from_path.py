@@ -23,6 +23,13 @@ knowledge = Knowledge(
     vector_db=vector_db,
 )
 
+knowledge.insert(
+    name="CV",
+    path="cookbook/knowledge/testing_resources/cv_1.pdf",
+    metadata={"user_tag": "Engineering Candidates"},
+)
+
+
 agent = Agent(
     name="My Agent",
     knowledge=knowledge,

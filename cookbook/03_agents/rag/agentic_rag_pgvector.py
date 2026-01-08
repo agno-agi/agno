@@ -21,9 +21,7 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.insert(
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-)
+knowledge.insert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
