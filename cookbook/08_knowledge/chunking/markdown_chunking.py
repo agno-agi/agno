@@ -10,7 +10,7 @@ knowledge = Knowledge(
     vector_db=PgVector(table_name="recipes_md_chunking", db_url=db_url),
 )
 
-knowledge.add_content(
+knowledge.insert(
     url="https://raw.githubusercontent.com/agno-agi/agno/main/README.md",
     reader=MarkdownReader(
         name="MD Chunking Reader",

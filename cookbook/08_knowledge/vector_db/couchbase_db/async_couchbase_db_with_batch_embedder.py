@@ -174,7 +174,7 @@ agent = Agent(knowledge=knowledge_base)
 
 
 async def run_agent():
-    await knowledge_base.add_content_async(
+    await knowledge_base.ainsert(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
     time.sleep(5)  # wait for the vector index to be sync with kv

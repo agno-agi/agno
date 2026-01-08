@@ -27,7 +27,7 @@ agno_docs = Knowledge(
     ),
 )
 # Add content to the knowledge
-asyncio.run(agno_docs.add_content_async(url="https://www.paulgraham.com/read.html"))
+asyncio.run(agno_docs.ainsert(url="https://www.paulgraham.com/read.html"))
 print("Knowledge ready.")
 
 

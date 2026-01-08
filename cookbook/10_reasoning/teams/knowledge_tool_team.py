@@ -15,7 +15,7 @@ agno_docs = Knowledge(
     ),
 )
 # Add content to the knowledge
-agno_docs.add_content(url="https://www.paulgraham.com/read.html")
+agno_docs.insert(url="https://www.paulgraham.com/read.html")
 
 knowledge_tools = KnowledgeTools(
     knowledge=agno_docs,
