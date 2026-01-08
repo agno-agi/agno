@@ -409,7 +409,7 @@ def get_agent_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        cancelled = agent.cancel_run(run_id=run_id)
+        cancelled = await agent.acancel_run(run_id=run_id)
         if not cancelled:
             raise HTTPException(status_code=500, detail="Failed to cancel run - run not found or already completed")
 
