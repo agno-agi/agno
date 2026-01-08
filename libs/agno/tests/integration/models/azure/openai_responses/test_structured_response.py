@@ -1,13 +1,12 @@
 """
-Integration tests for Azure OpenAI Responses API structured responses.
+Integration tests for Azure OpenAI Responses API streaming with structured responses.
 
 These tests require the following environment variables:
     AZURE_OPENAI_API_KEY: Your Azure OpenAI API key
     AZURE_OPENAI_ENDPOINT: Your Azure OpenAI endpoint
 """
 
-import enum
-from typing import Dict, List, Literal
+from typing import List, Literal
 
 import pytest
 from pydantic import BaseModel, Field
@@ -21,65 +20,6 @@ def search_web(query: str) -> str:
     return f"Search results for '{query}': Machine learning trends include transformers, LLMs, multimodal models, and edge AI deployment."
 
 
-class MovieScript(BaseModel):
-    setting: str = Field(..., description="Provide a nice setting for a blockbuster movie.")
-    ending: str = Field(
-        ...,
-        description="Ending of the movie. If not available, provide a happy ending.",
-    )
-    genre: str = Field(
-        ...,
-        description="Genre of the movie. If not available, select action, thriller or romantic comedy.",
-    )
-    name: str = Field(..., description="Give a name to this movie")
-    characters: List[str] = Field(..., description="Name of characters for this movie.")
-    storyline: str = Field(..., description="3 sentence storyline for the movie. Make it exciting!")
-    rating: Dict[str, int] = Field(
-        ...,
-        description="Your own rating of the movie. 1-10. Return a dictionary with the keys 'story' and 'acting'.",
-    )
-
-
-def test_structured_response_with_integer_field():
-    """Test structured response with integer fields."""
-    structured_output_agent = Agent(
-        model=AzureOpenAIResponses(id="gpt-4o-mini"),
-        description="You help people write movie scripts.",
-        output_schema=MovieScript,
-        telemetry=False,
-    )
-    response = structured_output_agent.run("New York")
-    assert response.content is not None
-    assert isinstance(response.content.rating, Dict)
-
-
-def test_structured_response_with_enum_fields():
-    """Test structured response with enum fields."""
-
-    class Grade(enum.Enum):
-        A_PLUS = "a+"
-        A = "a"
-        B = "b"
-        C = "c"
-        D = "d"
-        F = "f"
-
-    class Recipe(BaseModel):
-        recipe_name: str
-        rating: Grade
-
-    structured_output_agent = Agent(
-        model=AzureOpenAIResponses(id="gpt-4o-mini"),
-        description="You help generate recipe names and ratings.",
-        output_schema=Recipe,
-        telemetry=False,
-    )
-    response = structured_output_agent.run("Generate a recipe name and rating.")
-    assert response.content is not None
-    assert isinstance(response.content.rating, Grade)
-    assert isinstance(response.content.recipe_name, str)
-
-
 class ResearchSummary(BaseModel):
     topic: str = Field(..., description="Main topic researched")
     key_findings: List[str] = Field(..., description="List of key findings from the research")
@@ -87,32 +27,6 @@ class ResearchSummary(BaseModel):
     confidence_level: Literal["High", "Medium", "Low"] = Field(
         ..., description="High / Medium / Low confidence in the findings"
     )
-
-
-def test_tool_use_with_structured_output():
-    """Test basic tool use combined with structured output (non-streaming)."""
-    agent = Agent(
-        model=AzureOpenAIResponses(id="gpt-4o-mini"),
-        tools=[search_web],
-        output_schema=ResearchSummary,
-        telemetry=False,
-    )
-
-    response = agent.run("Research the latest trends in machine learning on the internet and provide a summary")
-
-    assert response.content is not None
-    assert isinstance(response.content, ResearchSummary)
-
-    assert isinstance(response.content.topic, str) and len(response.content.topic.strip()) > 0
-    assert isinstance(response.content.key_findings, list) and len(response.content.key_findings) > 0
-    assert isinstance(response.content.summary, str) and len(response.content.summary.strip()) > 0
-    assert response.content.confidence_level in ["High", "Medium", "Low"]
-
-    for finding in response.content.key_findings:
-        assert isinstance(finding, str) and len(finding.strip()) > 0
-
-    assert response.messages is not None
-    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
 
 
 def test_tool_use_with_structured_output_stream():
@@ -197,15 +111,3 @@ async def test_async_tool_use_with_structured_output_stream():
     assert isinstance(final_content.key_findings, list) and len(final_content.key_findings) > 0
     assert isinstance(final_content.summary, str) and len(final_content.summary.strip()) > 0
     assert final_content.confidence_level in ["High", "Medium", "Low"]
-
-
-def test_structured_response_strict_output_false():
-    """Test structured response with strict_output=False (guided mode)"""
-    guided_output_agent = Agent(
-        model=AzureOpenAIResponses(id="gpt-4o-mini", strict_output=False),
-        description="You write movie scripts.",
-        output_schema=MovieScript,
-        telemetry=False,
-    )
-    response = guided_output_agent.run("Create a short action movie")
-    assert response.content is not None
