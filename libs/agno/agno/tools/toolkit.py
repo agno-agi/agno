@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from inspect import iscoroutinefunction
+from inspect import isasyncgenfunction, iscoroutinefunction
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -169,12 +169,14 @@ class Toolkit:
         try:
             # Handle Function objects (from @tool decorator)
             if isinstance(function, Function):
-                # Auto-detect if this is an async function
-                is_async = function.entrypoint is not None and iscoroutinefunction(function.entrypoint)
+                # Auto-detect if this is an async function (including async generators)
+                is_async = function.entrypoint is not None and (
+                    iscoroutinefunction(function.entrypoint) or isasyncgenfunction(function.entrypoint)
+                )
                 return self._register_decorated_tool(function, name, is_async=is_async)
 
-            # Handle regular callables - auto-detect async
-            is_async = iscoroutinefunction(function)
+            # Handle regular callables - auto-detect async (including async generators)
+            is_async = iscoroutinefunction(function) or isasyncgenfunction(function)
 
             tool_name = name or function.__name__
             if self.include_tools is not None and tool_name not in self.include_tools:
