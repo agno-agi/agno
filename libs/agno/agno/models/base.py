@@ -1016,6 +1016,8 @@ class Model(ABC):
             model_response.extra.update(provider_response.extra)
         if provider_response.provider_data is not None:
             model_response.provider_data = provider_response.provider_data
+        if provider_response.response_usage is not None:
+            model_response.response_usage = provider_response.response_usage
 
     async def _aprocess_model_response(
         self,
@@ -1073,6 +1075,8 @@ class Model(ABC):
             model_response.extra.update(provider_response.extra)
         if provider_response.provider_data is not None:
             model_response.provider_data = provider_response.provider_data
+        if provider_response.response_usage is not None:
+            model_response.response_usage = provider_response.response_usage
 
     def _populate_assistant_message(
         self,
