@@ -11854,14 +11854,15 @@ def get_agents(
     Get all agents from the database.
     """
     agents: List[Agent] = []
-    configs: List[Dict[str, Any]] = []
     entities = db.list_entities(entity_type=ConfigType.AGENT)
     for entity in entities:
         config = db.get_config(entity_id=entity["entity_id"])
         if config is not None:
-            configs.append(config.get("config"))
-    for config in configs:
-        agent = Agent.from_dict(config, registry=registry)
-        agent.db = db
-        agents.append(agent)
+            agent_config = config.get("config")
+            if agent_config is not None:
+                if "id" not in agent_config:
+                    agent_config["id"] = entity["entity_id"]
+                agent = Agent.from_dict(agent_config, registry=registry)
+                agent.db = db
+                agents.append(agent)
     return agents
