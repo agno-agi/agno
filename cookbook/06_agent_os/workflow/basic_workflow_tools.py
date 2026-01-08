@@ -6,7 +6,6 @@ Here is a tool with reasoning capabilities to allow agents to run workflows.
 3. Run: `python cookbook/workflows/_06_advanced_concepts/_06_other/workflow_tools.py` to run the agent
 """
 
-import asyncio
 from textwrap import dedent
 
 from agno.agent import Agent
