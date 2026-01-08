@@ -23,7 +23,7 @@ except ImportError:
 # -- DB util methods --
 
 
-def create_collection_indexes(client: Client, collection_name: str, collection_type: str) -> None:
+def create_collection_indexes(client: Client, collection_name: str, collection_type: str, database_id: Optional[str] = None) -> None:
     """Create all required indexes for a collection including composite indexes.
 
     This function automatically creates both single-field and composite indexes.
@@ -39,14 +39,14 @@ def create_collection_indexes(client: Client, collection_name: str, collection_t
 
         # Create composite indexes programmatically
         if composite_indexes:
-            _create_composite_indexes(client, collection_name, composite_indexes)
+            _create_composite_indexes(client, collection_name, composite_indexes, database_id=database_id)
             log_debug(f"Collection '{collection_name}' initialized")
 
     except Exception as e:
         log_warning(f"Error processing indexes for {collection_type} collection: {e}")
 
 
-def _create_composite_indexes(client: Client, collection_name: str, composite_indexes: List[Dict[str, Any]]) -> None:
+def _create_composite_indexes(client: Client, collection_name: str, composite_indexes: List[Dict[str, Any]], database_id: Optional[str] = None) -> None:
     """Create composite indexes using Firestore Admin API."""
     try:
         project_id = client.project
@@ -54,6 +54,8 @@ def _create_composite_indexes(client: Client, collection_name: str, composite_in
             log_warning("Cannot create composite indexes: project_id not available from client")
             return
 
+        db_id = database_id or "(default)"
+        
         admin_client = FirestoreAdminClient()
 
         created_count = 0
@@ -84,7 +86,7 @@ def _create_composite_indexes(client: Client, collection_name: str, composite_in
                     )
 
                 # Create the index
-                parent_path = f"projects/{project_id}/databases/(default)/collectionGroups/{collection_name}"
+                parent_path = f"projects/{project_id}/databases/{db_id}/collectionGroups/{collection_name}"
                 admin_client.create_index(parent=parent_path, index=index)
                 created_count += 1
 
