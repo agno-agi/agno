@@ -10,13 +10,6 @@ try:
 except ImportError:
     raise ImportError("`browserbase` not installed. Please install using `pip install browserbase`")
 
-try:
-    from playwright.sync_api import sync_playwright
-except ImportError:
-    raise ImportError(
-        "`playwright` not installed. Please install using `pip install playwright` and run `playwright install`"
-    )
-
 
 class BrowserbaseTools(Toolkit):
     def __init__(
@@ -36,7 +29,13 @@ class BrowserbaseTools(Toolkit):
         Args:
             api_key (str, optional): Browserbase API key.
             project_id (str, optional): Browserbase project ID.
-            base_url (str, optional): Custom Browserbase API endpoint URL (NOT the target website URL). Only use this if you're using a self-hosted Browserbase instance or need to connect to a different region.
+            base_url (str, optional): Custom Browserbase API endpoint URL (NOT the target website URL).
+                Only use this if you're using a self-hosted Browserbase instance or need to connect to a different region.
+            enable_navigate_to (bool): Enable the navigate_to tool. Defaults to True.
+            enable_screenshot (bool): Enable the screenshot tool. Defaults to True.
+            enable_get_page_content (bool): Enable the get_page_content tool. Defaults to True.
+            enable_close_session (bool): Enable the close_session tool. Defaults to True.
+            all (bool): Enable all tools. Defaults to False.
         """
         self.api_key = api_key or getenv("BROWSERBASE_API_KEY")
         if not self.api_key:
@@ -59,23 +58,40 @@ class BrowserbaseTools(Toolkit):
         else:
             self.app = Browserbase(api_key=self.api_key)
 
+        # Sync playwright state
         self._playwright = None
         self._browser = None
         self._page = None
+
+        # Async playwright state
+        self._async_playwright = None
+        self._async_browser = None
+        self._async_page = None
+
+        # Shared session state
         self._session = None
         self._connect_url = None
 
+        # Build tools lists
+        # sync tools: used by agent.run() and agent.print_response()
+        # async tools: used by agent.arun() and agent.aprint_response()
         tools: List[Any] = []
+        async_tools: List[tuple] = []
+
         if all or enable_navigate_to:
             tools.append(self.navigate_to)
+            async_tools.append((self.anavigate_to, "navigate_to"))
         if all or enable_screenshot:
             tools.append(self.screenshot)
+            async_tools.append((self.ascreenshot, "screenshot"))
         if all or enable_get_page_content:
             tools.append(self.get_page_content)
+            async_tools.append((self.aget_page_content, "get_page_content"))
         if all or enable_close_session:
             tools.append(self.close_session)
+            async_tools.append((self.aclose_session, "close_session"))
 
-        super().__init__(name="browserbase_tools", tools=tools, **kwargs)
+        super().__init__(name="browserbase_tools", tools=tools, async_tools=async_tools, **kwargs)
 
     def _ensure_session(self):
         """Ensures a session exists, creating one if needed."""
@@ -91,9 +107,16 @@ class BrowserbaseTools(Toolkit):
 
     def _initialize_browser(self, connect_url: Optional[str] = None):
         """
-        Initialize browser connection if not already initialized.
+        Initialize sync browser connection if not already initialized.
         Use provided connect_url or ensure we have a session with a connect_url
         """
+        try:
+            from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
+        except ImportError:
+            raise ImportError(
+                "`playwright` not installed. Please install using `pip install playwright` and run `playwright install`"
+            )
+
         if connect_url:
             self._connect_url = connect_url if connect_url else ""  # type: ignore
         elif not self._connect_url:
@@ -107,7 +130,7 @@ class BrowserbaseTools(Toolkit):
             self._page = context.pages[0] or context.new_page()  # type: ignore
 
     def _cleanup(self):
-        """Clean up browser resources."""
+        """Clean up sync browser resources."""
         if self._browser:
             self._browser.close()
             self._browser = None
@@ -186,14 +209,128 @@ class BrowserbaseTools(Toolkit):
 
     def close_session(self) -> str:
         """Closes a browser session.
-        Args:
-            session_id (str, optional): The session ID to close. If not provided, will use the current session.
+
         Returns:
             JSON string with closure status
         """
         try:
             # First cleanup our local browser resources
             self._cleanup()
+
+            # Reset session state
+            self._session = None
+            self._connect_url = None
+
+            return json.dumps(
+                {
+                    "status": "closed",
+                    "message": "Browser resources cleaned up. Session will auto-close if not already closed.",
+                }
+            )
+        except Exception as e:
+            return json.dumps({"status": "warning", "message": f"Cleanup completed with warning: {str(e)}"})
+
+    async def _ainitialize_browser(self, connect_url: Optional[str] = None):
+        """
+        Initialize async browser connection if not already initialized.
+        Use provided connect_url or ensure we have a session with a connect_url
+        """
+        try:
+            from playwright.async_api import async_playwright  # type: ignore[import-not-found]
+        except ImportError:
+            raise ImportError(
+                "`playwright` not installed. Please install using `pip install playwright` and run `playwright install`"
+            )
+
+        if connect_url:
+            self._connect_url = connect_url if connect_url else ""  # type: ignore
+        elif not self._connect_url:
+            self._ensure_session()
+
+        if not self._async_playwright:
+            self._async_playwright = await async_playwright().start()  # type: ignore
+            if self._async_playwright:
+                self._async_browser = await self._async_playwright.chromium.connect_over_cdp(self._connect_url)
+            context = self._async_browser.contexts[0] if self._async_browser else None
+            if context:
+                self._async_page = context.pages[0] if context.pages else await context.new_page()
+
+    async def _acleanup(self):
+        """Clean up async browser resources."""
+        if self._async_browser:
+            await self._async_browser.close()
+            self._async_browser = None
+        if self._async_playwright:
+            await self._async_playwright.stop()
+            self._async_playwright = None
+        self._async_page = None
+
+    async def anavigate_to(self, url: str, connect_url: Optional[str] = None) -> str:
+        """Navigates to a URL asynchronously.
+
+        Args:
+            url (str): The URL to navigate to
+            connect_url (str, optional): The connection URL from an existing session
+
+        Returns:
+            JSON string with navigation status
+        """
+        try:
+            await self._ainitialize_browser(connect_url)
+            if self._async_page:
+                await self._async_page.goto(url, wait_until="networkidle")
+            title = await self._async_page.title() if self._async_page else ""
+            result = {"status": "complete", "title": title, "url": url}
+            return json.dumps(result)
+        except Exception as e:
+            await self._acleanup()
+            raise e
+
+    async def ascreenshot(self, path: str, full_page: bool = True, connect_url: Optional[str] = None) -> str:
+        """Takes a screenshot of the current page asynchronously.
+
+        Args:
+            path (str): Where to save the screenshot
+            full_page (bool): Whether to capture the full page
+            connect_url (str, optional): The connection URL from an existing session
+
+        Returns:
+            JSON string confirming screenshot was saved
+        """
+        try:
+            await self._ainitialize_browser(connect_url)
+            if self._async_page:
+                await self._async_page.screenshot(path=path, full_page=full_page)
+            return json.dumps({"status": "success", "path": path})
+        except Exception as e:
+            await self._acleanup()
+            raise e
+
+    async def aget_page_content(self, connect_url: Optional[str] = None) -> str:
+        """Gets the HTML content of the current page asynchronously.
+
+        Args:
+            connect_url (str, optional): The connection URL from an existing session
+
+        Returns:
+            The page HTML content
+        """
+        try:
+            await self._ainitialize_browser(connect_url)
+            return await self._async_page.content() if self._async_page else ""
+        except Exception as e:
+            await self._acleanup()
+            raise e
+
+    async def aclose_session(self) -> str:
+        """Closes a browser session asynchronously.
+
+        Returns:
+            JSON string with closure status
+        """
+        try:
+            # First cleanup our local browser resources
+            await self._acleanup()
 
             # Reset session state
             self._session = None
