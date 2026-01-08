@@ -3579,12 +3579,20 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
-        if (
+        # Handle workflow events when workflow is called as a tool
+        if isinstance(model_response_event, tuple(get_args(WorkflowRunOutputEvent))):
+            yield handle_event(  # type: ignore
+                model_response_event,  # type: ignore
+                run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
+            )  # type: ignore
+        # Handle member events (RunOutputEvent, TeamRunOutputEvent) - only surface if stream_member_events is True
+        elif (
             isinstance(model_response_event, tuple(get_args(RunOutputEvent)))
             or isinstance(model_response_event, tuple(get_args(TeamRunOutputEvent)))
-            or isinstance(model_response_event, tuple(get_args(WorkflowRunOutputEvent)))
         ):
-            if self.stream_member_events or isinstance(model_response_event, tuple(get_args(WorkflowRunOutputEvent))):
+            if self.stream_member_events:
                 if model_response_event.event == TeamRunEvent.custom_event:  # type: ignore
                     if hasattr(model_response_event, "team_id"):
                         model_response_event.team_id = self.id
