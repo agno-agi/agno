@@ -180,7 +180,10 @@ class PostgresDb(BaseDb):
             Table: SQLAlchemy Table object
         """
         try:
-            table_schema = get_table_schema_definition(table_type).copy()
+            # Pass traces_table_name and db_schema for spans table foreign key resolution
+            table_schema = get_table_schema_definition(
+                table_type, traces_table_name=self.trace_table_name, db_schema=self.db_schema
+            ).copy()
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -203,12 +206,7 @@ class PostgresDb(BaseDb):
 
                 # Handle foreign key constraint
                 if "foreign_key" in col_config:
-                    fk_ref = col_config["foreign_key"]
-                    # For spans table, dynamically replace the traces table reference
-                    # with the actual trace table name configured for this db instance
-                    if table_type == "spans" and "trace_id" in fk_ref:
-                        fk_ref = f"{self.db_schema}.{self.trace_table_name}.trace_id"
-                    column_args.append(ForeignKey(fk_ref))
+                    column_args.append(ForeignKey(col_config["foreign_key"]))
 
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
@@ -1170,16 +1168,35 @@ class PostgresDb(BaseDb):
                 return []
 
             with self.Session() as sess, sess.begin():
+                # Filter out NULL topics and ensure topics is an array before extracting elements
+                # jsonb_typeof returns 'array' for JSONB arrays
+                conditions = [
+                    table.c.topics.is_not(None),
+                    func.jsonb_typeof(table.c.topics) == "array",
+                ]
+
                 try:
-                    stmt = select(func.jsonb_array_elements_text(table.c.topics))
+                    # jsonb_array_elements_text is a set-returning function that must be used with select_from
+                    stmt = select(func.jsonb_array_elements_text(table.c.topics).label("topic"))
+                    stmt = stmt.select_from(table)
+                    stmt = stmt.where(and_(*conditions))
                     result = sess.execute(stmt).fetchall()
                 except ProgrammingError:
                     # Retrying with json_array_elements_text. This works in older versions,
                     # where the topics column was of type JSON instead of JSONB
-                    stmt = select(func.json_array_elements_text(table.c.topics))
+                    # For JSON (not JSONB), we use json_typeof
+                    json_conditions = [
+                        table.c.topics.is_not(None),
+                        func.json_typeof(table.c.topics) == "array",
+                    ]
+                    stmt = select(func.json_array_elements_text(table.c.topics).label("topic"))
+                    stmt = stmt.select_from(table)
+                    stmt = stmt.where(and_(*json_conditions))
                     result = sess.execute(stmt).fetchall()
 
-                return list(set([record[0] for record in result]))
+                # Extract topics from records - each record is a Row with a 'topic' attribute
+                topics = [record.topic for record in result if record.topic is not None]
+                return list(set(topics))
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
