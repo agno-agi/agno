@@ -33,6 +33,7 @@ from agno.run.workflow import (
 )
 from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
+from agno.utils.print_response.helpers import build_workflow_step_panel
 from agno.utils.response import build_reasoning_step_panel, create_panel, escape_markdown_tags, format_tool_calls
 from agno.utils.timer import Timer
 
@@ -493,17 +494,6 @@ def print_response_stream(
         workflow_in_progress: bool = False
         all_panels: List[Any] = []
 
-        def build_current_step_panel():
-            if current_workflow_step_name and current_workflow_step_content:
-                return create_panel(
-                    content=Markdown(current_workflow_step_content)
-                    if markdown
-                    else Text(current_workflow_step_content),
-                    title=f"Step: {current_workflow_step_name} (Running...)",
-                    border_style="orange3",
-                )
-            return None
-
         final_run_response = None
         for resp in stream_resp:
             if team_markdown is None:
@@ -627,7 +617,9 @@ def print_response_stream(
             if workflow_in_progress and isinstance(resp, (AgentRunContentEvent, TeamRunContentEvent)):
                 if resp.content is not None and isinstance(resp.content, str):
                     current_workflow_step_content += resp.content
-                    current_step_panel = build_current_step_panel()
+                    current_step_panel = build_workflow_step_panel(
+                        current_workflow_step_name, current_workflow_step_content, markdown, create_panel, running=True
+                    )
                     display_panels = panels + workflow_step_panels
                     if current_step_panel:
                         display_panels = display_panels + [current_step_panel]
@@ -1516,17 +1508,6 @@ async def aprint_response_stream(
         workflow_in_progress: bool = False
         all_panels: List[Any] = []
 
-        def build_current_step_panel():
-            if current_workflow_step_name and current_workflow_step_content:
-                return create_panel(
-                    content=Markdown(current_workflow_step_content)
-                    if markdown
-                    else Text(current_workflow_step_content),
-                    title=f"Step: {current_workflow_step_name} (Running...)",
-                    border_style="orange3",
-                )
-            return None
-
         final_run_response = None
         async for resp in team.arun(  # type: ignore
             input=input,
@@ -1671,7 +1652,9 @@ async def aprint_response_stream(
             if workflow_in_progress and isinstance(resp, (AgentRunContentEvent, TeamRunContentEvent)):
                 if resp.content is not None and isinstance(resp.content, str):
                     current_workflow_step_content += resp.content
-                    current_step_panel = build_current_step_panel()
+                    current_step_panel = build_workflow_step_panel(
+                        current_workflow_step_name, current_workflow_step_content, markdown, create_panel, running=True
+                    )
                     display_panels = panels + workflow_step_panels
                     if current_step_panel:
                         display_panels = display_panels + [current_step_panel]
