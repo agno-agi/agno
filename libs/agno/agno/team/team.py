@@ -9024,7 +9024,7 @@ class Team:
                     log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
             if invalid_keys == [] and valid_filters == {}:
-                log_warning("No valid filters provided. Search will proceed without filters.")
+                log_debug("No valid filters provided. Search will proceed without filters.")
                 filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
@@ -9100,7 +9100,7 @@ class Team:
                     log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
             if invalid_keys == [] and valid_filters == {}:
-                log_warning("No valid filters provided. Search will proceed without filters.")
+                log_debug("No valid filters provided. Search will proceed without filters.")
                 filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
