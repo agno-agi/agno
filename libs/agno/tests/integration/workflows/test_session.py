@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 import pytest
 
 from agno.agent.agent import Agent
+from agno.run import RunContext
 from agno.workflow import Step, StepInput, StepOutput, Workflow
 from agno.workflow.condition import Condition
 from agno.workflow.router import Router
@@ -114,14 +115,14 @@ def test_workflow_session_state_switch_session_id(shared_db):
 
 def test_workflow_with_state_shared_downstream(shared_db):
     # Define a tool that increments our counter and returns the new value
-    def add_item(session_state: Dict[str, Any], item: str) -> str:
+    def add_item(run_context: RunContext, item: str) -> str:
         """Add an item to the shopping list."""
-        session_state["shopping_list"].append(item)
-        return f"The shopping list is now {session_state['shopping_list']}"
+        run_context.session_state["shopping_list"].append(item)
+        return f"The shopping list is now {run_context.session_state['shopping_list']}"
 
-    def get_all_items(session_state: Dict[str, Any]) -> str:
+    def get_all_items(run_context: RunContext) -> str:
         """Get all items from the shopping list."""
-        return f"The shopping list is now {session_state['shopping_list']}"
+        return f"The shopping list is now {run_context.session_state['shopping_list']}"
 
     workflow = workflow_factory(shared_db, session_id="session_1", session_state={"shopping_list": []})
 

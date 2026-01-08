@@ -22,7 +22,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db, parse_datetime_to_utc
+from agno.os.utils import get_db, timestamp_to_datetime
 from agno.remote.base import RemoteDb
 from agno.utils.log import log_error
 
@@ -159,8 +159,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             start_time_ms = time_module.time() * 1000
 
             # Convert ISO datetime strings to UTC datetime objects
-            start_time_dt = parse_datetime_to_utc(start_time, "start_time") if start_time else None
-            end_time_dt = parse_datetime_to_utc(end_time, "end_time") if end_time else None
+            start_time_dt = timestamp_to_datetime(start_time, "start_time") if start_time else None
+            end_time_dt = timestamp_to_datetime(end_time, "end_time") if end_time else None
 
             if isinstance(db, AsyncBaseDb):
                 traces, total_count = await db.get_traces(
@@ -484,8 +484,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             start_time_ms = time_module.time() * 1000
 
             # Convert ISO datetime strings to UTC datetime objects
-            start_time_dt = parse_datetime_to_utc(start_time, "start_time") if start_time else None
-            end_time_dt = parse_datetime_to_utc(end_time, "end_time") if end_time else None
+            start_time_dt = timestamp_to_datetime(start_time, "start_time") if start_time else None
+            end_time_dt = timestamp_to_datetime(end_time, "end_time") if end_time else None
 
             if isinstance(db, AsyncBaseDb):
                 stats_list, total_count = await db.get_trace_stats(
