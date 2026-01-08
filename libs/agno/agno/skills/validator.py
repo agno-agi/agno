@@ -19,6 +19,10 @@ ALLOWED_FIELDS = {
     "compatibility",
 }
 
+# File extensions that indicate misplaced files
+REFERENCE_EXTENSIONS = {".md", ".txt", ".rst", ".html", ".json", ".yaml", ".yml"}
+SCRIPT_EXTENSIONS = {".py", ".sh", ".js", ".ts", ".rb", ".pl", ".bash", ".zsh"}
+
 
 def _validate_name(name: str, skill_dir: Optional[Path] = None) -> List[str]:
     """Validate skill name format and directory match.
@@ -163,6 +167,77 @@ def _validate_metadata_value(metadata_val) -> List[str]:
     return errors
 
 
+def _validate_misplaced_files(skill_dir: Path) -> List[str]:
+    """Validate that reference and script files are in proper subdirectories.
+
+    Args:
+        skill_dir: Path to the skill directory.
+
+    Returns:
+        List of validation error messages. Empty list means valid.
+    """
+    errors: List[str] = []
+
+    for item in skill_dir.iterdir():
+        if not item.is_file() or item.name.startswith("."):
+            continue
+
+        # Skip SKILL.md and LICENSE files
+        if item.name.upper() in {"SKILL.MD", "LICENSE", "LICENSE.TXT", "LICENSE.MD"}:
+            continue
+
+        suffix = item.suffix.lower()
+
+        if suffix in REFERENCE_EXTENSIONS:
+            errors.append(
+                f"File '{item.name}' appears to be a reference but is not in references/ subdirectory. "
+                f"Move it to references/{item.name}"
+            )
+        elif suffix in SCRIPT_EXTENSIONS:
+            errors.append(
+                f"File '{item.name}' appears to be a script but is not in scripts/ subdirectory. "
+                f"Move it to scripts/{item.name}"
+            )
+
+    return errors
+
+
+def _validate_script_shebangs(skill_dir: Path) -> List[str]:
+    """Validate that scripts have proper shebang lines.
+
+    Args:
+        skill_dir: Path to the skill directory.
+
+    Returns:
+        List of validation error messages. Empty list means valid.
+    """
+    errors: List[str] = []
+    scripts_dir = skill_dir / "scripts"
+
+    if not scripts_dir.exists() or not scripts_dir.is_dir():
+        return errors
+
+    for item in scripts_dir.iterdir():
+        if not item.is_file() or item.name.startswith("."):
+            continue
+
+        # Skip README files
+        if item.name.upper() in {"README", "README.MD", "README.TXT"}:
+            continue
+
+        try:
+            with open(item, "r", encoding="utf-8") as f:
+                first_line = f.readline()
+
+            if not first_line.startswith("#!"):
+                errors.append(f"Script '{item.name}' is missing a shebang line")
+        except (OSError, UnicodeDecodeError):
+            # Skip binary files or files that can't be read
+            pass
+
+    return errors
+
+
 def _validate_metadata_fields(metadata: Dict) -> List[str]:
     """Validate that only allowed fields are present in frontmatter.
 
@@ -274,4 +349,15 @@ def validate_skill_directory(skill_dir: Path) -> List[str]:
     except Exception as e:
         return [f"Error reading SKILL.md: {e}"]
 
-    return validate_metadata(metadata, skill_dir)
+    errors = validate_metadata(metadata, skill_dir)
+
+    # Validate file structure (warnings only, don't block loading)
+    from agno.utils.log import log_warning
+
+    for warning in _validate_misplaced_files(skill_dir):
+        log_warning(f"[{skill_dir.name}] {warning}")
+
+    for warning in _validate_script_shebangs(skill_dir):
+        log_warning(f"[{skill_dir.name}] {warning}")
+
+    return errors
