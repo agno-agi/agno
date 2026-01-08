@@ -185,6 +185,19 @@ class DummyAsyncMemoryDb(AsyncBaseDb):
     async def upsert_schema_version(self, *args, **kwargs):
         raise NotImplementedError
 
+    # --- Learnings ---
+    async def get_learning(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def upsert_learning(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def delete_learning(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def get_learnings(self, *args, **kwargs):
+        raise NotImplementedError
+
 
 @pytest.mark.asyncio
 async def test_acreate_user_memories_with_async_db():
