@@ -1,9 +1,10 @@
 """
-Going to contribute this to agno toolkits.
+Brandfetch API toolkit for retrieving brand data and searching brands.
 """
 
+import warnings
 from os import getenv
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 try:
     import httpx
@@ -31,8 +32,6 @@ class BrandfetchTools(Toolkit):
     all: bool - if True, will use all tools
     enable_search_by_identifier: bool - if True, will use search by identifier
     enable_search_by_brand: bool - if True, will use search by brand
-    enable_asearch_by_identifier: bool - if True, will use async search by identifier
-    enable_asearch_by_brand: bool - if True, will use async search by brand
     """
 
     def __init__(
@@ -44,9 +43,18 @@ class BrandfetchTools(Toolkit):
         enable_search_by_identifier: bool = True,
         enable_search_by_brand: bool = False,
         all: bool = False,
-        async_tools: bool = False,
+        async_tools: bool = False,  # Deprecated
         **kwargs,
     ):
+        # Handle deprecated async_tools parameter
+        if async_tools:
+            warnings.warn(
+                "The 'async_tools' parameter is deprecated and will be removed in a future version. "
+                "Async tools are now automatically used when calling agent.arun() or agent.aprint_response().",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         self.api_key = api_key or getenv("BRANDFETCH_API_KEY")
         self.client_id = client_id or getenv("BRANDFETCH_CLIENT_ID")
         self.base_url = base_url
@@ -54,20 +62,21 @@ class BrandfetchTools(Toolkit):
         self.search_url = f"{self.base_url}/search"
         self.brand_url = f"{self.base_url}/brands"
 
-        tools: list[Any] = []
-        # Backward-compat mapping: prefer new enable_* flags, but honor legacy toggles
-        if async_tools:
-            if all or enable_search_by_identifier:
-                tools.append(self.asearch_by_identifier)
-            if all or enable_search_by_brand:
-                tools.append(self.asearch_by_brand)
-        else:
-            if all or enable_search_by_identifier:
-                tools.append(self.search_by_identifier)
-            if all or enable_search_by_brand:
-                tools.append(self.search_by_brand)
+        # Build tools lists
+        # sync tools: used by agent.run() and agent.print_response()
+        # async tools: used by agent.arun() and agent.aprint_response()
+        tools: List[Any] = []
+        async_tools_list: List[tuple] = []
+
+        if all or enable_search_by_identifier:
+            tools.append(self.search_by_identifier)
+            async_tools_list.append((self.asearch_by_identifier, "search_by_identifier"))
+        if all or enable_search_by_brand:
+            tools.append(self.search_by_brand)
+            async_tools_list.append((self.asearch_by_brand, "search_by_brand"))
+
         name = kwargs.pop("name", "brandfetch_tools")
-        super().__init__(name=name, tools=tools, **kwargs)
+        super().__init__(name=name, tools=tools, async_tools=async_tools_list, **kwargs)
 
     async def asearch_by_identifier(self, identifier: str) -> dict[str, Any]:
         """
