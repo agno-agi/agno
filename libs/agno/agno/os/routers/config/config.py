@@ -35,6 +35,12 @@ class EntityCreate(BaseModel):
     name: str = Field(..., description="Display name")
     description: Optional[str] = Field(None, description="Optional description")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Optional metadata")
+    # Config parameters are optional, but if provided, they will be used to create the initial config
+    config: Optional[Dict[str, Any]] = Field(None, description="Optional configuration")
+    version_label: Optional[str] = Field(None, description="Optional label (e.g., 'stable')")
+    stage: str = Field("draft", description="Stage: 'draft' or 'published'")
+    notes: Optional[str] = Field(None, description="Optional notes")
+    set_current: bool = Field(True, description="Set as current version")
 
 
 class EntityResponse(BaseModel):
@@ -54,6 +60,7 @@ class ConfigCreate(BaseModel):
     stage: str = Field("draft", description="Stage: 'draft' or 'published'")
     notes: Optional[str] = Field(None, description="Optional notes")
     set_current: bool = Field(True, description="Set as current version")
+    upsert_version: bool = Field(False, description="Upsert the version if it already exists")
 
 
 class ConfigResponse(BaseModel):
@@ -160,6 +167,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 description=body.description,
                 metadata=body.metadata,
             )
+            # Create the initial config
+            config = db.upsert_config(
+                entity_id=body.entity_id,
+                config=body.config,
+                version_label=body.version_label,
+                stage=body.stage,
+                notes=body.notes,
+                set_current=body.set_current,
+            )
             return EntityResponse(**entity)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -263,9 +279,16 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db = await get_db(dbs, db_id)
 
         try:
+            # Determine version to update (if overwriting)
+            version_to_update = None
+            if body.upsert_version:
+                entity = db.get_entity(entity_id)
+                if entity and entity.get("current_version"):
+                    version_to_update = entity["current_version"]
+
             config = db.upsert_config(
                 entity_id=entity_id,
-                version=None,
+                version=version_to_update,
                 config=body.config,
                 version_label=body.version_label,
                 stage=body.stage,

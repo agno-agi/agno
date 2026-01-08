@@ -1,3 +1,7 @@
+"""
+This cookbook demonstrates how to save an agent to the database.
+"""
+
 from agno.agent.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
@@ -19,9 +23,5 @@ agent.save()
 # By default, saving an agent will create a new version of the agent
 
 # Delete the agent from the database.
-# By default, delete will delete the current version of the agent. And set the next version as the current version.
+# This function will delete the Agent entity from the database.
 # agent.delete()
-
-# Delete all versions of the agent
-# This will delete all versions of the agent
-# agent.delete(all_versions=True)

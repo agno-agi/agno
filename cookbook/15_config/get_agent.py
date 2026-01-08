@@ -1,3 +1,7 @@
+"""
+This cookbook demonstrates how to get an agent from the database.
+"""
+
 from agno.agent.agent import get_agent_by_id
 from agno.db.postgres import PostgresDb
 

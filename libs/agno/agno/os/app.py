@@ -44,6 +44,7 @@ from agno.os.routers.home import get_home_router
 from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
+from agno.os.routers.registry import get_registry_router
 from agno.os.routers.session import get_session_router
 from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
@@ -58,6 +59,7 @@ from agno.os.utils import (
     setup_tracing_for_os,
     update_cors_middleware,
 )
+from agno.registry import Registry
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -150,6 +152,7 @@ class AgentOS:
         auto_provision_dbs: bool = True,
         run_hooks_in_background: bool = False,
         telemetry: bool = True,
+        registry: Optional[Registry] = None,
     ):
         """Initialize AgentOS.
 
@@ -179,6 +182,7 @@ class AgentOS:
                        If not provided and tracing=True, the first available db from agents/teams/workflows is used.
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
             telemetry: Whether to enable telemetry
+            registry: Optional registry to use for the AgentOS
 
         """
         if not agents and not workflows and not teams and not knowledge:
@@ -222,6 +226,8 @@ class AgentOS:
 
         self.enable_mcp_server = enable_mcp_server
         self.lifespan = lifespan
+
+        self.registry = registry
 
         # RBAC
         self.authorization = authorization
@@ -310,6 +316,7 @@ class AgentOS:
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
             get_entities_router(dbs=self.dbs),
+            get_registry_router(registry=self.registry),
         ]
 
         # Clear all previously existing routes
@@ -607,6 +614,7 @@ class AgentOS:
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
             get_entities_router(dbs=self.dbs),
+            get_registry_router(registry=self.registry),
         ]
 
         for router in routers:

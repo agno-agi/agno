@@ -1,3 +1,9 @@
+"""
+This cookbook demonstrates how to convert a Postgres database to a dictionary.
+
+Note: This cookbook is temporary and will be removed in the future.
+"""
+
 from agno.agent.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
