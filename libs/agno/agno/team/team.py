@@ -1544,6 +1544,7 @@ class Team:
                         tools=_tools,
                         tool_choice=self.tool_choice,
                         tool_call_limit=self.tool_call_limit,
+                        run_response=run_response,
                         send_media_to_model=self.send_media_to_model,
                         compression_manager=self.compression_manager if self.compress_tool_results else None,
                     )
@@ -3328,6 +3329,7 @@ class Team:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
+            run_response=run_response,
             send_media_to_model=self.send_media_to_model,
             compression_manager=self.compression_manager if self.compress_tool_results else None,
         ):
@@ -8325,7 +8327,7 @@ class Team:
         gen_session_name_prompt = "Team Conversation\n"
 
         # Get team session messages for generating the name
-        messages_for_generating_session_name = self.get_session_messages()
+        messages_for_generating_session_name = session.get_messages()
 
         for message in messages_for_generating_session_name:
             gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
