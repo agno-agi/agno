@@ -344,9 +344,7 @@ class Toolkit:
         """
         pass
 
-    def _check_path(
-        self, file_name: str, base_dir: Path, restrict_to_base_dir: bool = True
-    ) -> Tuple[bool, Path]:
+    def _check_path(self, file_name: str, base_dir: Path, restrict_to_base_dir: bool = True) -> Tuple[bool, Path]:
         """Check if the file path is within the base directory.
 
         This method validates that a given file path resolves to a location
