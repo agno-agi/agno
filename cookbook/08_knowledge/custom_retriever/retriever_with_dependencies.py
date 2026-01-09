@@ -30,7 +30,7 @@ knowledge = Knowledge(
 )
 
 # Add some sample content
-knowledge.add_content(
+knowledge.insert(
     url="https://docs.agno.com/llms-full.txt",
 )
 

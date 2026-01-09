@@ -50,13 +50,10 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    documents_knowledge.add_content(
-        name="Agno Docs",
-        url="https://docs.agno.com/llms-full.txt",
-        skip_if_exists=True,
+    documents_knowledge.insert(
+        name="Agno Docs", url="https://docs.agno.com/llms-full.txt", skip_if_exists=True
     )
-
-    faq_knowledge.add_content(
+    faq_knowledge.insert(
         name="Agno FAQ",
         text_content=dedent("""
         What is Agno?

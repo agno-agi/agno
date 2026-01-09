@@ -20,7 +20,7 @@ knowledge = Knowledge(
         table_name="recipes_semantic_chunking", db_url=db_url, embedder=agno_embedder
     ),
 )
-knowledge.add_content(
+knowledge.insert(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
     reader=PDFReader(
         name="Semantic Chunking Reader",

@@ -26,7 +26,7 @@ knowledge = Knowledge(
 
 # Add from GCS
 asyncio.run(
-    knowledge.add_content_async(
+    knowledge.ainsert(
         name="GCS PDF",
         remote_content=GCSContent(
             bucket_name="thai-recepies", blob_name="ThaiRecipes.pdf"

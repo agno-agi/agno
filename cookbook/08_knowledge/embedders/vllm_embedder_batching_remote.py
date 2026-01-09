@@ -23,7 +23,7 @@ def main():
         print(f"   Embedding dimensions: {len(embeddings)}")
         print(f"   First 5 values: {embeddings[:5]}")
     except Exception as e:
-        print(f"   ✗ Error connecting to remote server: {e}")
+        print(f"   Error connecting to remote server: {e}")
         print("   Make sure vLLM server is running at http://localhost:8000")
         return
 
@@ -49,13 +49,11 @@ def main():
 
     try:
         asyncio.run(
-            knowledge.add_content_async(
-                path="cookbook/08_knowledge/testing_resources/cv_1.pdf",
-            )
+            knowledge.ainsert(path="cookbook/08_knowledge/testing_resources/cv_1.pdf")
         )
-        print("   ✓ Documents loaded with batched remote embeddings")
+        print("   Documents loaded with batched remote embeddings")
     except Exception as e:
-        print(f"   ✗ Error loading documents: {e}")
+        print(f"   Error loading documents: {e}")
         return
     query = "What are the candidate's skills?"
     try:
@@ -65,7 +63,7 @@ def main():
         for i, result in enumerate(results, 1):
             print(f"   Result {i}: {result.content[:100]}...")
     except Exception as e:
-        print(f"   ✗ Error searching: {e}")
+        print(f"   Error searching: {e}")
         return
 
 

@@ -43,7 +43,7 @@ knowledge = Knowledge(
 )
 
 # Load all documents into the vector database
-knowledge.add_contents(
+knowledge.insert_many(
     [
         {
             "path": downloaded_csv_paths[0],

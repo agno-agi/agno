@@ -25,7 +25,7 @@ from agno.knowledge.chunking.semantic import SemanticChunking
 reader = PDFReader(
     chunking_strategy=SemanticChunking()
 )
-knowledge.add_content(url="document.pdf", reader=reader)
+knowledge.insert(url="document.pdf", reader=reader)
 
 agent = Agent(
     knowledge=knowledge_base,

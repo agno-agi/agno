@@ -48,7 +48,7 @@ knowledge_base = Knowledge(
 vector_db.drop()
 set_log_level_to_debug()
 
-knowledge_base.add_content(
+knowledge_base.insert(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
 )
 
@@ -56,7 +56,7 @@ print(
     "Knowledge base loaded with PDF content. Loading the same data again will not recreate it."
 )
 
-knowledge_base.add_content(
+knowledge_base.insert(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
     skip_if_exists=True,
 )

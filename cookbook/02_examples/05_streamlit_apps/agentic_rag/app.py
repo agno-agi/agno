@@ -102,7 +102,7 @@ def main():
     if input_url and not prompt:
         alert = st.sidebar.info("Processing URL...", icon="ℹ️")
         try:
-            agentic_rag_agent.knowledge.add_content(
+            agentic_rag_agent.knowledge.insert(
                 name=f"URL: {input_url}",
                 url=input_url,
                 description=f"Content from {input_url}",
@@ -126,7 +126,7 @@ def main():
                 tmp_file.write(uploaded_file.read())
                 tmp_path = tmp_file.name
 
-            agentic_rag_agent.knowledge.add_content(
+            agentic_rag_agent.knowledge.insert(
                 name=uploaded_file.name,
                 path=tmp_path,
                 description=f"Uploaded file: {uploaded_file.name}",

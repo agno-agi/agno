@@ -42,7 +42,7 @@ vector_db = SingleStore(
 knowledge = Knowledge(name="My SingleStore Knowledge Base", vector_db=vector_db)
 
 asyncio.run(
-    knowledge.add_content_async(
+    knowledge.ainsert(
         name="Recipes",
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
         metadata={"doc_type": "recipe_book"},

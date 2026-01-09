@@ -22,7 +22,7 @@ knowledge = Knowledge(
 
 
 # Load knowledge from web search
-knowledge.add_content(
+knowledge.insert(
     topics=["agno"],
     reader=WebSearchReader(
         max_results=3,

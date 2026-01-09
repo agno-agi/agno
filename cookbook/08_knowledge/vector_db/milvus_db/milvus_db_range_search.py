@@ -18,7 +18,7 @@ knowledge = Knowledge(
 )
 
 # Add some content to the knowledge base
-knowledge.add_content(
+knowledge.insert(
     name="Recipes",
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
     metadata={"doc_type": "recipe_book"},
@@ -80,7 +80,7 @@ print("=" * 80)
 
 
 async def async_range_search():
-    results = await knowledge.vector_db.async_search(
+    results = await knowledge.vector_db.asearch(
         query="Thai desserts",
         limit=3,
         search_params={

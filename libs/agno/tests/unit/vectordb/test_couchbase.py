@@ -901,7 +901,7 @@ async def test_async_search_cluster_level(couchbase_fts, mock_embedder):
         mock_async_collection_instance.get.reset_mock()
 
         filters = {"type": "cluster_kv"}
-        results_with_filters = await couchbase_fts.async_search("cluster query filter kv", limit=3, filters=filters)
+        results_with_filters = await couchbase_fts.asearch("cluster query filter kv", limit=3, filters=filters)
 
         mock_embedder.get_embedding.assert_called_once_with("cluster query filter kv")
         mock_get_async_cluster_for_search.assert_called_once()
