@@ -2,8 +2,8 @@
 
 import json
 
-from agno.tools.function import Function
 from agno.tools.discoverable_tools import DiscoverableTools
+from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 
 
@@ -117,9 +117,7 @@ def test_agno_tool_search_with_mixed_tools():
     toolkit = SampleToolkit()
     func = Function.from_callable(sample_search)
 
-    tool_search = DiscoverableTools(
-        discoverable_tools=[toolkit, sample_multiply, func]
-    )
+    tool_search = DiscoverableTools(discoverable_tools=[toolkit, sample_multiply, func])
 
     assert len(tool_search._discoverable_functions) == 4
     assert "toolkit_add" in tool_search._discoverable_functions

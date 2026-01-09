@@ -7,8 +7,8 @@ from agno.tools.toolkit import Toolkit
 
 class DiscoverableTools(Toolkit):
     """Toolkit to dynamically search, load and run tools.
-    
-    This is useful to avoid loading all tool information into 
+
+    This is useful to avoid loading all tool information into
     the context upfront, and instead load only what is needed.
 
     With this Toolkit Agents will be able to:
