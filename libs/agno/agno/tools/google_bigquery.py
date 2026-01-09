@@ -17,7 +17,7 @@ def _clean_sql(sql: str) -> str:
     Replaces newlines with spaces (not empty strings) to prevent line comments
     from swallowing subsequent SQL statements.
     """
-    return sql.replace("\\n", " ").replace("\n", " ").replace("\\", "")
+    return sql.replace("\\n", " ").replace("\n", " ")
 
 
 class GoogleBigQueryTools(Toolkit):
@@ -120,7 +120,7 @@ class GoogleBigQueryTools(Toolkit):
             query_job = self.client.query(cleaned_query, job_config)
             results = query_job.result()
             results_str = str([dict(row) for row in results])
-            return results_str.replace("\\", "").replace("\n", "")
+            return results_str.replace("\n", " ")
         except Exception as e:
             logger.error(f"Error while executing SQL: {e}")
             return ""

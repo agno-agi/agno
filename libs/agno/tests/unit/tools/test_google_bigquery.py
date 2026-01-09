@@ -134,8 +134,8 @@ def test_clean_sql_handles_escaped_newlines():
     assert cleaned == "SELECT * FROM table"
 
 
-def test_clean_sql_removes_backslashes():
-    """Test that _clean_sql removes backslash characters."""
-    sql = "SELECT * FROM table WHERE name = 'test\\value'"
+def test_clean_sql_preserves_backslashes_in_string_literals():
+    """Test that _clean_sql preserves backslashes (e.g., regex patterns in strings)."""
+    sql = r"SELECT * FROM table WHERE regex = 'word\s+'"
     cleaned = _clean_sql(sql)
-    assert cleaned == "SELECT * FROM table WHERE name = 'testvalue'"
+    assert cleaned == r"SELECT * FROM table WHERE regex = 'word\s+'"
