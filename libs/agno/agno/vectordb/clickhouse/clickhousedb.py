@@ -71,7 +71,7 @@ class Clickhouse(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             _embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = _embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
