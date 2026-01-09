@@ -35,7 +35,7 @@ class TavilyTools(Toolkit):
 
         Args:
             api_key: Tavily API key. If not provided, will use TAVILY_API_KEY env var.
-            api_base_url: Tavily API base URL. If not provided, will use TAVILY_API_KEY env var. Defaults to None. If None - will use https://api.tavily.com.
+            api_base_url: Tavily API base URL. If not provided, will use TAVILY_API_BASE_URL env var. Defaults to None. If None - will use https://api.tavily.com.
             enable_search: Enable web search functionality. Defaults to True.
             enable_search_context: Use search context mode instead of regular search. Defaults to False.
             enable_extract: Enable URL content extraction functionality. Defaults to False.
@@ -54,7 +54,7 @@ class TavilyTools(Toolkit):
         self.api_key = api_key or getenv("TAVILY_API_KEY")
         if not self.api_key:
             logger.error("TAVILY_API_KEY not provided")
-        self.api_base_url = api_base_url or getenv("TAVILY_API_BASE_URL") 
+        self.api_base_url = api_base_url or getenv("TAVILY_API_BASE_URL")
 
         self.client: TavilyClient = TavilyClient(api_key=self.api_key, api_base_url=self.api_base_url)
         self.search_depth: Literal["basic", "advanced"] = search_depth

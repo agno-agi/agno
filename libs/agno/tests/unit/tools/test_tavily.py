@@ -38,7 +38,9 @@ def tavily_tools(mock_tavily_client):
 def test_init_with_env_vars():
     """Test initialization with environment variables."""
     with patch("agno.tools.tavily.TavilyClient"):
-        with patch.dict("os.environ", {"TAVILY_API_KEY": TEST_API_KEY, "TAVILY_API_BASE_URL": TEST_API_BASE_URL}, clear=True):
+        with patch.dict(
+            "os.environ", {"TAVILY_API_KEY": TEST_API_KEY, "TAVILY_API_BASE_URL": TEST_API_BASE_URL}, clear=True
+        ):
             tools = TavilyTools()
             assert tools.api_key == TEST_API_KEY
             assert tools.api_base_url == TEST_API_BASE_URL
