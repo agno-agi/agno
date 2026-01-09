@@ -28,11 +28,12 @@ if TYPE_CHECKING:
     from agno.os.managers import WebSocketHandler
 
 from agno.agent.agent import Agent
-from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.db.base import AsyncBaseDb, BaseDb, SessionType, PrimitiveType
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
+from agno.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunContentEvent, RunEvent, RunOutput
 from agno.run.cancel import (
@@ -253,6 +254,210 @@ class Workflow:
                 "Workflow history is enabled (add_workflow_history_to_steps=True) but no database is configured. "
                 "History won't be persisted. Add a database to persist runs across executions. "
             )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert workflow to a dictionary representation."""
+        result = {
+            "name": self.name,
+            "id": self.id,
+            "description": self.description,
+            "session_id": self.session_id,
+            "user_id": self.user_id,
+            "session_state": self.session_state,
+            "overwrite_db_session_state": self.overwrite_db_session_state,
+            "debug_mode": self.debug_mode,
+            "stream": self.stream,
+            "stream_events": self.stream_events,
+            "stream_executor_events": self.stream_executor_events,
+            "store_events": self.store_events,
+            "store_executor_outputs": self.store_executor_outputs,
+            "input_schema": self.input_schema.__name__ if self.input_schema else None,
+            "metadata": self.metadata,
+            "telemetry": self.telemetry,
+            "add_workflow_history_to_steps": self.add_workflow_history_to_steps,
+            "num_history_runs": self.num_history_runs,
+        }
+
+        # Handle steps serialization
+        # TODO: Implement steps serialization for step types other than Step
+        if self.steps and isinstance(self.steps, list):
+            result["steps"] = [step.to_dict() for step in self.steps]
+
+        return result
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        db: Optional["BaseDb"] = None,
+        refs: Optional[List[Dict[str, Any]]] = None,
+        registry: Optional[Registry] = None,
+    ) -> "Workflow":
+        """
+        Create a Workflow from a dictionary.
+
+        Args:
+            data: Dictionary containing workflow configuration
+            db: Optional database for loading agents/teams in steps
+            refs: Optional refs for this workflow version
+            registry: Optional registry for rehydrating executors
+
+        Returns:
+            Workflow: Reconstructed workflow instance
+        """
+        config = data.copy()
+
+        steps = None
+
+        # Handle steps reconstruction
+        if "steps" in config and config["steps"]:
+            steps = [
+                Step.from_dict(step_data, db=db, refs=refs, registry=registry)
+                for step_data in config["steps"]
+            ]
+
+        return cls(
+            name=config.get("name"),
+            id=config.get("id"),
+            description=config.get("description"),
+            session_id=config.get("session_id"),
+            user_id=config.get("user_id"),
+            session_state=config.get("session_state"),
+            overwrite_db_session_state=config.get("overwrite_db_session_state", False),
+            debug_mode=config.get("debug_mode", False),
+            stream=config.get("stream"),
+            stream_events=config.get("stream_events", False),
+            stream_executor_events=config.get("stream_executor_events", True),
+            store_events=config.get("store_events", False),
+            store_executor_outputs=config.get("store_executor_outputs", True),
+            metadata=config.get("metadata"),
+            telemetry=config.get("telemetry", True),
+            add_workflow_history_to_steps=config.get("add_workflow_history_to_steps", False),
+            num_history_runs=config.get("num_history_runs", 3),
+            steps=steps,
+        )
+
+    def save(        
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        stage: str = "published",
+        label: Optional[str] = None,
+        notes: Optional[str] = None,
+        set_current: bool = True,
+        publish: bool = False,
+        upsert_version: bool = False,
+    ) -> int:
+        """Save workflow with steps as refs."""
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+
+        # Track saved entity versions for pinning refs
+        saved_versions: Dict[str, int] = {}
+
+        # Collect all refs
+        all_refs = []
+        steps_config = []
+        
+        for position, step in enumerate(self.steps or []):
+            if isinstance(step, Step):
+                print(f"Step {position}: type={type(step)}, isinstance(Step)={isinstance(step, Step)}")
+                print(step.to_dict())
+                # Save agent/team if present and capture version
+                if step.agent and isinstance(step.agent, Agent):
+                    agent_version = step.agent.save(
+                        db=db_, stage=stage, label=label, notes=notes, 
+                        set_current=set_current, publish=publish, upsert_version=upsert_version
+                    )
+                    saved_versions[step.agent.id] = agent_version
+                
+                # TODO: Implement team saving
+                # if step.team and isinstance(step.team, Team):
+                #     team_version = step.team.save(...)
+                #     saved_versions[step.team.id] = team_version
+                
+                # Add step config
+                steps_config.append(step.to_dict())
+                
+                # Add refs with position and pinned version
+                for ref in step.get_refs(position=position):
+                    # Pin the version if we just saved it
+                    if ref["child_entity_id"] in saved_versions:
+                        ref["child_version"] = saved_versions[ref["child_entity_id"]]
+                    all_refs.append(ref)
+        
+        # Save workflow entity + config + refs
+        db_.upsert_entity(
+            entity_id=self.id,
+            entity_type=PrimitiveType.WORKFLOW,
+            name=self.name,
+            description=self.description,
+            metadata=self.metadata,
+        )
+        config = db_.upsert_config(
+            entity_id=self.id,
+            config=self.to_dict(),
+            refs=all_refs,
+            version_label=label,
+            stage="published" if publish else stage,
+            notes=notes,
+            set_current=set_current,
+        )
+
+        return config["version"]
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        db: Optional["BaseDb"] = None,
+        refs: Optional[List[Dict[str, Any]]] = None,
+        registry: Optional[Registry] = None,
+    ) -> "Workflow":
+        """
+        Create a Workflow from a dictionary.
+
+        Args:
+            data: Dictionary containing workflow configuration
+            db: Optional database for loading agents/teams in steps
+            refs: Optional refs for this workflow version
+            registry: Optional registry for rehydrating executors
+
+        Returns:
+            Workflow: Reconstructed workflow instance
+        """
+        config = data.copy()
+
+        steps = None
+
+        # Handle steps reconstruction
+        if "steps" in config and config["steps"]:
+            steps = [
+                Step.from_dict(step_data, db=db, refs=refs, registry=registry)
+                for step_data in config["steps"]
+            ]
+
+        return cls(
+            name=config.get("name"),
+            id=config.get("id"),
+            description=config.get("description"),
+            session_id=config.get("session_id"),
+            user_id=config.get("user_id"),
+            session_state=config.get("session_state"),
+            overwrite_db_session_state=config.get("overwrite_db_session_state", False),
+            debug_mode=config.get("debug_mode", False),
+            stream=config.get("stream"),
+            stream_events=config.get("stream_events", False),
+            stream_executor_events=config.get("stream_executor_events", True),
+            store_events=config.get("store_events", False),
+            store_executor_outputs=config.get("store_executor_outputs", True),
+            metadata=config.get("metadata"),
+            telemetry=config.get("telemetry", True),
+            add_workflow_history_to_steps=config.get("add_workflow_history_to_steps", False),
+            num_history_runs=config.get("num_history_runs", 3),
+            steps=steps,
+        )
 
     def set_id(self) -> None:
         if self.id is None:
@@ -4069,75 +4274,75 @@ class Workflow:
                 **kwargs,
             )
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert workflow to dictionary representation"""
+    # def to_dict(self) -> Dict[str, Any]:
+    #     """Convert workflow to dictionary representation"""
 
-        def serialize_step(step):
-            # Handle callable functions (not wrapped in Step objects)
-            if callable(step) and hasattr(step, "__name__"):
-                step_dict = {
-                    "name": step.__name__,
-                    "description": "User-defined callable step",
-                    "type": StepType.STEP.value,
-                }
-                return step_dict
+    #     def serialize_step(step):
+    #         # Handle callable functions (not wrapped in Step objects)
+    #         if callable(step) and hasattr(step, "__name__"):
+    #             step_dict = {
+    #                 "name": step.__name__,
+    #                 "description": "User-defined callable step",
+    #                 "type": StepType.STEP.value,
+    #             }
+    #             return step_dict
 
-            # Handle Agent and Team objects directly
-            if isinstance(step, Agent):
-                step_dict = {
-                    "name": step.name or "unnamed_agent",
-                    "description": step.description or "Agent step",
-                    "type": StepType.STEP.value,
-                    "agent": step,
-                }
-                return step_dict
+    #         # Handle Agent and Team objects directly
+    #         if isinstance(step, Agent):
+    #             step_dict = {
+    #                 "name": step.name or "unnamed_agent",
+    #                 "description": step.description or "Agent step",
+    #                 "type": StepType.STEP.value,
+    #                 "agent": step,
+    #             }
+    #             return step_dict
 
-            if isinstance(step, Team):
-                step_dict = {
-                    "name": step.name or "unnamed_team",
-                    "description": step.description or "Team step",
-                    "type": StepType.STEP.value,
-                    "team": step,
-                }
-                return step_dict
+    #         if isinstance(step, Team):
+    #             step_dict = {
+    #                 "name": step.name or "unnamed_team",
+    #                 "description": step.description or "Team step",
+    #                 "type": StepType.STEP.value,
+    #                 "team": step,
+    #             }
+    #             return step_dict
 
-            step_dict = {
-                "name": step.name if hasattr(step, "name") else f"unnamed_{type(step).__name__.lower()}",
-                "description": step.description if hasattr(step, "description") else "User-defined callable step",
-                "type": STEP_TYPE_MAPPING[type(step)].value,  # type: ignore
-            }
+    #         step_dict = {
+    #             "name": step.name if hasattr(step, "name") else f"unnamed_{type(step).__name__.lower()}",
+    #             "description": step.description if hasattr(step, "description") else "User-defined callable step",
+    #             "type": STEP_TYPE_MAPPING[type(step)].value,  # type: ignore
+    #         }
 
-            # Handle agent/team/tools
-            if hasattr(step, "agent"):
-                step_dict["agent"] = step.agent if hasattr(step, "agent") else None  # type: ignore
-            if hasattr(step, "team"):
-                step_dict["team"] = step.team if hasattr(step, "team") else None  # type: ignore
+    #         # Handle agent/team/tools
+    #         if hasattr(step, "agent"):
+    #             step_dict["agent"] = step.agent if hasattr(step, "agent") else None  # type: ignore
+    #         if hasattr(step, "team"):
+    #             step_dict["team"] = step.team if hasattr(step, "team") else None  # type: ignore
 
-            # Handle nested steps for Router/Loop
-            if isinstance(step, Router):
-                step_dict["steps"] = (
-                    [serialize_step(step) for step in step.choices] if hasattr(step, "choices") else None
-                )
+    #         # Handle nested steps for Router/Loop
+    #         if isinstance(step, Router):
+    #             step_dict["steps"] = (
+    #                 [serialize_step(step) for step in step.choices] if hasattr(step, "choices") else None
+    #             )
 
-            elif isinstance(step, (Loop, Condition, Steps, Parallel)):
-                step_dict["steps"] = [serialize_step(step) for step in step.steps] if hasattr(step, "steps") else None
+    #         elif isinstance(step, (Loop, Condition, Steps, Parallel)):
+    #             step_dict["steps"] = [serialize_step(step) for step in step.steps] if hasattr(step, "steps") else None
 
-            return step_dict
+    #         return step_dict
 
-        if self.steps is None or callable(self.steps):
-            steps_list = []
-        elif isinstance(self.steps, Steps):
-            steps_list = self.steps.steps
-        else:
-            steps_list = self.steps
+    #     if self.steps is None or callable(self.steps):
+    #         steps_list = []
+    #     elif isinstance(self.steps, Steps):
+    #         steps_list = self.steps.steps
+    #     else:
+    #         steps_list = self.steps
 
-        return {
-            "name": self.name,
-            "workflow_id": self.id,
-            "description": self.description,
-            "steps": [serialize_step(s) for s in steps_list],
-            "session_id": self.session_id,
-        }
+    #     return {
+    #         "name": self.name,
+    #         "workflow_id": self.id,
+    #         "description": self.description,
+    #         "steps": [serialize_step(s) for s in steps_list],
+    #         "session_id": self.session_id,
+    #     }
 
     def _calculate_session_metrics_from_workflow_metrics(self, workflow_metrics: WorkflowMetrics) -> Metrics:
         """Calculate session metrics by aggregating all step metrics from workflow metrics"""
@@ -4454,3 +4659,60 @@ class Workflow:
                 session_id=session_id,
                 **kwargs,
             )
+
+def get_workflow_by_id(
+    db: "BaseDb",
+    id: str,
+    version: Optional[int] = None,
+    label: Optional[str] = None,
+    registry: Optional["Registry"] = None,
+) -> Optional["Workflow"]:
+    """
+    Get a Workflow by id from the database (new entities/configs schema).
+
+    Resolution order:
+    - if version is provided: load that version
+    - elif label is provided: load that labeled version
+    - else: load entity.current_version
+
+    Args:
+        db: Database handle.
+        id: Workflow entity_id.
+        version: Optional integer config version.
+        label: Optional version_label.
+        registry: Optional Registry for reconstructing unserializable components.
+
+    Returns:
+        Workflow instance or None.
+    """
+    try:
+        row = db.get_config(entity_id=id, version=version, label=label)
+        if row is None:
+            return None
+
+        cfg = row.get("config") if isinstance(row, dict) else None
+        if cfg is None:
+            raise ValueError(f"Invalid config found for workflow {id}")
+
+        resolved_version = row.get("version")
+
+        # Get refs for this workflow version
+        refs = db.get_refs(entity_id=id, version=resolved_version) if resolved_version else []
+
+        workflow = Workflow.from_dict(cfg, db=db, refs=refs, registry=registry)
+
+        try:
+            workflow.version = int(resolved_version)
+        except Exception:
+            pass
+
+        try:
+            workflow.db = db
+        except Exception:
+            pass
+
+        return workflow
+
+    except Exception as e:
+        log_error(f"Error loading Workflow {id} from database: {e}")
+        return None

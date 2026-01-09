@@ -25,6 +25,7 @@ from agno.run.workflow import (
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
 from agno.session.workflow import WorkflowSession
+from agno.registry import Registry
 from agno.team import Team
 from agno.utils.log import log_debug, log_warning, logger, use_agent_logger, use_team_logger, use_workflow_logger
 from agno.utils.merge_dict import merge_dictionaries
@@ -112,6 +113,107 @@ class Step:
 
         # Set the active executor
         self._set_active_executor()
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert step to a dictionary representation."""
+        result = {
+            "name": self.name,
+            "step_id": self.step_id,
+            "description": self.description,
+            "max_retries": self.max_retries,
+            "skip_on_failure": self.skip_on_failure,
+            "strict_input_validation": self.strict_input_validation,
+            "add_workflow_history": self.add_workflow_history,
+            "num_history_runs": self.num_history_runs,
+        }
+
+        if self.agent is not None:
+            result["agent_id"] = self.agent.id
+        if self.team is not None:
+            result["team_id"] = self.team.id
+        #TODO: Add support for custom executors
+
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], registry: Optional[Registry] = None) -> "Step":
+        """
+        Create a Step from a dictionary.
+
+        This method reconstructs a Step instance from a dictionary representation,
+        typically created by to_dict().
+
+        Args:
+            data: Dictionary containing step configuration
+            registry: Optional registry for rehydrating non-serializable objects
+
+        Returns:
+            Step: Reconstructed step instance
+        """
+        config = data.copy()
+
+        agent = None
+        team = None
+        executor = None
+
+        # --- Handle Agent reconstruction ---
+        if "agent_id" in config and config["agent_id"] and registry:
+            agent = registry.get_agent(config["agent_id"])
+
+        # --- Handle Team reconstruction ---
+        if "team_id" in config and config["team_id"] and registry:
+            team = registry.get_team(config["team_id"])
+
+        # --- Handle Executor reconstruction ---
+        #TODO: Implement executor reconstruction
+        # if "executor_ref" in config and config["executor_ref"] and registry:
+        #     executor = registry.rehydrate_function(config["executor_ref"])
+
+        return cls(
+            name=config.get("name"),
+            step_id=config.get("step_id"),
+            description=config.get("description"),
+            max_retries=config.get("max_retries", 3),
+            skip_on_failure=config.get("skip_on_failure", False),
+            strict_input_validation=config.get("strict_input_validation", False),
+            add_workflow_history=config.get("add_workflow_history"),
+            num_history_runs=config.get("num_history_runs", 3),
+            agent=agent,
+            team=team,
+            executor=executor,
+        )
+
+    def get_refs(self, position: int = 0) -> List[Dict[str, Any]]:
+        """Get refs for this step's agent/team.
+        
+        Args:
+            position: Position of this step in the workflow.
+            
+        Returns:
+            List of ref dictionaries for the refs table.
+        """
+        refs = []
+        ref_key = self.step_id or self.name
+        
+        if self.agent is not None:
+            refs.append({
+                "ref_kind": "step_agent",
+                "ref_key": ref_key,
+                "child_entity_id": self.agent.id,
+                "child_version": None,
+                "position": position,
+            })
+        
+        if self.team is not None:
+            refs.append({
+                "ref_kind": "step_team",
+                "ref_key": ref_key,
+                "child_entity_id": self.team.id,
+                "child_version": None,
+                "position": position,
+            })
+        
+        return refs
 
     @property
     def executor_name(self) -> str:

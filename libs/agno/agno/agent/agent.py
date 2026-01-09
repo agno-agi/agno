@@ -34,7 +34,7 @@ from pydantic import BaseModel
 
 from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
-from agno.db.base import AsyncBaseDb, BaseDb, ConfigType, SessionType, UserMemory
+from agno.db.base import AsyncBaseDb, BaseDb, PrimitiveType, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.eval.base import BaseEval
 from agno.exceptions import (
@@ -7393,7 +7393,7 @@ class Agent:
             # Ensure entity exists
             db_.upsert_entity(
                 entity_id=self.id,
-                entity_type=ConfigType.AGENT,
+                entity_type=PrimitiveType.AGENT,
                 name=getattr(self, "name", self.id),
                 description=getattr(self, "description", None),
                 metadata=getattr(self, "metadata", None),
@@ -11854,7 +11854,7 @@ def get_agents(
     Get all agents from the database.
     """
     agents: List[Agent] = []
-    entities = db.list_entities(entity_type=ConfigType.AGENT)
+    entities = db.list_entities(entity_type=PrimitiveType.AGENT)
     for entity in entities:
         config = db.get_config(entity_id=entity["entity_id"])
         if config is not None:

@@ -6,7 +6,7 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
-from agno.db.base import BaseDb, ConfigType, SessionType
+from agno.db.base import BaseDb, PrimitiveType, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
@@ -3235,7 +3235,7 @@ class PostgresDb(BaseDb):
     def upsert_entity(
         self,
         entity_id: str,
-        entity_type: Optional[ConfigType] = None,
+        entity_type: Optional[PrimitiveType] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,

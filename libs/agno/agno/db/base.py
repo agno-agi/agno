@@ -20,7 +20,7 @@ class SessionType(str, Enum):
     WORKFLOW = "workflow"
 
 
-class ConfigType(str, Enum):
+class PrimitiveType(str, Enum):
     AGENT = "agent"
     TEAM = "team"
     WORKFLOW = "workflow"
