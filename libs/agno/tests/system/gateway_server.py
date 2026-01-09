@@ -17,7 +17,7 @@ from agno.os.config import AuthorizationConfig
 from agno.os.interfaces.a2a import A2A
 from agno.os.interfaces.agui import AGUI
 from agno.os.interfaces.slack import Slack
-from agno.team import RemoteTeam
+from agno.team import RemoteTeam, Team
 from agno.vectordb.pgvector.pgvector import PgVector
 from agno.workflow import RemoteWorkflow, Workflow
 from agno.workflow.step import Step
@@ -63,6 +63,19 @@ local_agent = Agent(
     instructions=["You are a helpful assistant on the gateway server."],
     enable_user_memories=True,
     markdown=True,
+)
+
+# =============================================================================
+# Local Team for Gateway
+# =============================================================================
+
+local_team = Team(
+    name="Gateway Team",
+    id="gateway-team",
+    description="A local team on the gateway for testing",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    members=[local_agent],
+    db=db,
 )
 
 # =============================================================================
@@ -174,6 +187,7 @@ agent_os = AgentOS(
         remote_a2a_researcher,
     ],
     teams=[
+        local_team,
         remote_team,
         remote_a2a_team,
     ],
