@@ -338,31 +338,11 @@ class Workflow:
 
         return session_id, user_id
 
-    def _initialize_session_state(
-        self,
-        session_state: Dict[str, Any],
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        run_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    def _initialize_session_state(self, session_state: Dict[str, Any]) -> Dict[str, Any]:
         """Initialize the session state for the workflow."""
-        if user_id:
-            session_state["current_user_id"] = user_id
-        if session_id is not None:
-            session_state["current_session_id"] = session_id
-        if run_id is not None:
-            session_state["current_run_id"] = run_id
-
-        session_state.update(
-            {
-                "workflow_id": self.id,
-                "run_id": run_id,
-                "session_id": session_id,
-            }
-        )
+        session_state["workflow_id"] = self.id
         if self.name:
             session_state["workflow_name"] = self.name
-
         return session_state
 
     def _generate_workflow_session_name(self) -> str:
@@ -3581,12 +3561,7 @@ class Workflow:
         self._update_metadata(session=workflow_session)
 
         # Initialize session state
-        session_state = self._initialize_session_state(
-            session_state=session_state if session_state is not None else {},
-            user_id=user_id,
-            session_id=session_id,
-            run_id=run_id,
-        )
+        session_state = self._initialize_session_state(session_state=session_state if session_state is not None else {})
         # Update session state from DB
         session_state = self._load_session_state(session=workflow_session, session_state=session_state)
 
