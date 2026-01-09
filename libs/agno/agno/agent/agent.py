@@ -120,6 +120,10 @@ from agno.utils.agent import (
 from agno.utils.common import is_typed_dict
 from agno.utils.events import (
     add_error_event,
+    create_compression_completed_event,
+    create_compression_started_event,
+    create_llm_request_completed_event,
+    create_llm_request_started_event,
     create_parser_model_response_completed_event,
     create_parser_model_response_started_event,
     create_post_hook_completed_event,
@@ -5475,6 +5479,19 @@ class Agent:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
+        # Emit LLMRequestStarted event
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_llm_request_started_event(
+                    from_run_response=run_response,
+                    model=self.model.id,
+                    model_provider=self.model.provider,
+                ),
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
+            )
+
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -5486,6 +5503,32 @@ class Agent:
             send_media_to_model=self.send_media_to_model,
             compression_manager=self.compression_manager if self.compress_tool_results else None,
         ):
+            # Handle compression events
+            if model_response_event.event == ModelResponseEvent.compression_started.value:
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_compression_started_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
+                continue
+            if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                if stream_events:
+                    stats = getattr(model_response_event, "compression_stats", None) or {}
+                    yield handle_event(  # type: ignore
+                        create_compression_completed_event(
+                            from_run_response=run_response,
+                            tool_results_compressed=stats.get("tool_results_compressed"),
+                            original_size=stats.get("original_size"),
+                            compressed_size=stats.get("compressed_size"),
+                        ),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
+                continue
+
             yield from self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
@@ -5496,6 +5539,32 @@ class Agent:
                 stream_events=stream_events,
                 session_state=session_state,
                 run_context=run_context,
+            )
+
+        # Update RunOutput
+        # Build a list of messages that should be added to the RunOutput
+        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        # Update the RunOutput messages
+        run_response.messages = messages_for_run_response
+        # Update the RunOutput metrics
+        run_response.metrics = self._calculate_run_metrics(
+            messages=messages_for_run_response, current_run_metrics=run_response.metrics
+        )
+
+        # Emit LLMRequestCompleted event
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_llm_request_completed_event(
+                    from_run_response=run_response,
+                    model=self.model.id,
+                    model_provider=self.model.provider,
+                    input_tokens=run_response.metrics.input_tokens if run_response.metrics else None,
+                    output_tokens=run_response.metrics.output_tokens if run_response.metrics else None,
+                    total_tokens=run_response.metrics.total_tokens if run_response.metrics else None,
+                ),
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
             )
 
         # Determine reasoning completed
@@ -5519,16 +5588,6 @@ class Agent:
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
                 )
-
-        # Update RunOutput
-        # Build a list of messages that should be added to the RunOutput
-        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
-        # Update the RunOutput messages
-        run_response.messages = messages_for_run_response
-        # Update the RunOutput metrics
-        run_response.metrics = self._calculate_run_metrics(
-            messages=messages_for_run_response, current_run_metrics=run_response.metrics
-        )
 
         # Update the run_response audio if streaming
         if model_response.audio is not None:
@@ -5562,6 +5621,19 @@ class Agent:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
+        # Emit LLMRequestStarted event
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_llm_request_started_event(
+                    from_run_response=run_response,
+                    model=self.model.id,
+                    model_provider=self.model.provider,
+                ),
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
+            )
+
         model_response_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -5575,6 +5647,32 @@ class Agent:
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
+            # Handle compression events
+            if model_response_event.event == ModelResponseEvent.compression_started.value:
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_compression_started_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
+                continue
+            if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                if stream_events:
+                    stats = getattr(model_response_event, "compression_stats", None) or {}
+                    yield handle_event(  # type: ignore
+                        create_compression_completed_event(
+                            from_run_response=run_response,
+                            tool_results_compressed=stats.get("tool_results_compressed"),
+                            original_size=stats.get("original_size"),
+                            compressed_size=stats.get("compressed_size"),
+                        ),
+                        run_response,
+                        events_to_skip=self.events_to_skip,  # type: ignore
+                        store_events=self.store_events,
+                    )
+                continue
+
             for event in self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
@@ -5587,6 +5685,32 @@ class Agent:
                 run_context=run_context,
             ):
                 yield event
+
+        # Update RunOutput
+        # Build a list of messages that should be added to the RunOutput
+        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        # Update the RunOutput messages
+        run_response.messages = messages_for_run_response
+        # Update the RunOutput metrics
+        run_response.metrics = self._calculate_run_metrics(
+            messages=messages_for_run_response, current_run_metrics=run_response.metrics
+        )
+
+        # Emit LLMRequestCompleted event
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_llm_request_completed_event(
+                    from_run_response=run_response,
+                    model=self.model.id,
+                    model_provider=self.model.provider,
+                    input_tokens=run_response.metrics.input_tokens if run_response.metrics else None,
+                    output_tokens=run_response.metrics.output_tokens if run_response.metrics else None,
+                    total_tokens=run_response.metrics.total_tokens if run_response.metrics else None,
+                ),
+                run_response,
+                events_to_skip=self.events_to_skip,  # type: ignore
+                store_events=self.store_events,
+            )
 
         if stream_events and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
@@ -5608,16 +5732,6 @@ class Agent:
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
                 )
-
-        # Update RunOutput
-        # Build a list of messages that should be added to the RunOutput
-        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
-        # Update the RunOutput messages
-        run_response.messages = messages_for_run_response
-        # Update the RunOutput metrics
-        run_response.metrics = self._calculate_run_metrics(
-            messages=messages_for_run_response, current_run_metrics=run_response.metrics
-        )
 
         # Update the run_response audio if streaming
         if model_response.audio is not None:
