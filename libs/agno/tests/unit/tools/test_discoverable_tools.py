@@ -1,9 +1,9 @@
-"""Tests for the AgnoToolSearch toolkit."""
+"""Tests for the DiscoverableTools toolkit."""
 
 import json
 
 from agno.tools.function import Function
-from agno.tools.tool_search import AgnoToolSearch
+from agno.tools.discoverable_tools import DiscoverableTools
 from agno.tools.toolkit import Toolkit
 
 
@@ -81,12 +81,12 @@ class SampleToolkit(Toolkit):
         return json.dumps({"result": a - b})
 
 
-# Tests for AgnoToolSearch initialization
+# Tests for DiscoverableTools initialization
 
 
 def test_agno_tool_search_with_callables():
-    """Test AgnoToolSearch initialization with callable functions."""
-    tool_search = AgnoToolSearch(discoverable_tools=[sample_add, sample_multiply])
+    """Test DiscoverableTools initialization with callable functions."""
+    tool_search = DiscoverableTools(discoverable_tools=[sample_add, sample_multiply])
 
     assert len(tool_search._discoverable_functions) == 2
     assert "sample_add" in tool_search._discoverable_functions
@@ -94,9 +94,9 @@ def test_agno_tool_search_with_callables():
 
 
 def test_agno_tool_search_with_toolkit():
-    """Test AgnoToolSearch initialization with a Toolkit instance."""
+    """Test DiscoverableTools initialization with a Toolkit instance."""
     toolkit = SampleToolkit()
-    tool_search = AgnoToolSearch(discoverable_tools=[toolkit])
+    tool_search = DiscoverableTools(discoverable_tools=[toolkit])
 
     assert len(tool_search._discoverable_functions) == 2
     assert "toolkit_add" in tool_search._discoverable_functions
@@ -104,20 +104,20 @@ def test_agno_tool_search_with_toolkit():
 
 
 def test_agno_tool_search_with_function_instance():
-    """Test AgnoToolSearch initialization with a Function instance."""
+    """Test DiscoverableTools initialization with a Function instance."""
     func = Function.from_callable(sample_add)
-    tool_search = AgnoToolSearch(discoverable_tools=[func])
+    tool_search = DiscoverableTools(discoverable_tools=[func])
 
     assert len(tool_search._discoverable_functions) == 1
     assert "sample_add" in tool_search._discoverable_functions
 
 
 def test_agno_tool_search_with_mixed_tools():
-    """Test AgnoToolSearch initialization with mixed tool types."""
+    """Test DiscoverableTools initialization with mixed tool types."""
     toolkit = SampleToolkit()
     func = Function.from_callable(sample_search)
 
-    tool_search = AgnoToolSearch(
+    tool_search = DiscoverableTools(
         discoverable_tools=[toolkit, sample_multiply, func]
     )
 
@@ -129,8 +129,8 @@ def test_agno_tool_search_with_mixed_tools():
 
 
 def test_agno_tool_search_empty():
-    """Test AgnoToolSearch initialization with no tools."""
-    tool_search = AgnoToolSearch()
+    """Test DiscoverableTools initialization with no tools."""
+    tool_search = DiscoverableTools()
 
     assert len(tool_search._discoverable_functions) == 0
 
@@ -140,7 +140,7 @@ def test_agno_tool_search_empty():
 
 def test_search_tools_by_name():
     """Test searching tools by name."""
-    tool_search = AgnoToolSearch(discoverable_tools=[sample_add, sample_multiply])
+    tool_search = DiscoverableTools(discoverable_tools=[sample_add, sample_multiply])
 
     result = json.loads(tool_search.search_tools("add"))
 
@@ -151,7 +151,7 @@ def test_search_tools_by_name():
 
 def test_search_tools_by_description():
     """Test searching tools by description."""
-    tool_search = AgnoToolSearch(discoverable_tools=[sample_add, sample_multiply, sample_search])
+    tool_search = DiscoverableTools(discoverable_tools=[sample_add, sample_multiply, sample_search])
 
     result = json.loads(tool_search.search_tools("multiply"))
 
@@ -162,7 +162,7 @@ def test_search_tools_by_description():
 
 def test_search_tools_multiple_matches():
     """Test searching tools with multiple matches."""
-    tool_search = AgnoToolSearch(discoverable_tools=[sample_add, sample_multiply])
+    tool_search = DiscoverableTools(discoverable_tools=[sample_add, sample_multiply])
 
     # Both tools mention "number" in description
     result = json.loads(tool_search.search_tools("number"))
@@ -172,7 +172,7 @@ def test_search_tools_multiple_matches():
 
 def test_search_tools_no_matches():
     """Test searching tools with no matches."""
-    tool_search = AgnoToolSearch(discoverable_tools=[sample_add, sample_multiply])
+    tool_search = DiscoverableTools(discoverable_tools=[sample_add, sample_multiply])
 
     result = json.loads(tool_search.search_tools("nonexistent"))
 
@@ -182,7 +182,7 @@ def test_search_tools_no_matches():
 
 def test_search_tools_case_insensitive():
     """Test that search is case insensitive."""
-    tool_search = AgnoToolSearch(discoverable_tools=[sample_add])
+    tool_search = DiscoverableTools(discoverable_tools=[sample_add])
 
     result_lower = json.loads(tool_search.search_tools("add"))
     result_upper = json.loads(tool_search.search_tools("ADD"))
@@ -195,7 +195,7 @@ def test_search_tools_case_insensitive():
 
 def test_search_tools_returns_full_schema():
     """Test that search results include full parameter schema."""
-    tool_search = AgnoToolSearch(discoverable_tools=[sample_add])
+    tool_search = DiscoverableTools(discoverable_tools=[sample_add])
 
     result = json.loads(tool_search.search_tools("add"))
 
@@ -212,7 +212,7 @@ def test_search_tools_returns_full_schema():
 
 def test_search_tools_includes_query():
     """Test that search results include the original query."""
-    tool_search = AgnoToolSearch(discoverable_tools=[sample_add])
+    tool_search = DiscoverableTools(discoverable_tools=[sample_add])
 
     result = json.loads(tool_search.search_tools("test_query"))
 
@@ -224,7 +224,7 @@ def test_search_tools_includes_query():
 
 def test_list_all_tools():
     """Test listing all discoverable tools."""
-    tool_search = AgnoToolSearch(discoverable_tools=[sample_add, sample_multiply, sample_search])
+    tool_search = DiscoverableTools(discoverable_tools=[sample_add, sample_multiply, sample_search])
 
     result = json.loads(tool_search.list_all_tools())
 
@@ -239,7 +239,7 @@ def test_list_all_tools():
 
 def test_list_all_tools_empty():
     """Test listing tools when none are registered."""
-    tool_search = AgnoToolSearch()
+    tool_search = DiscoverableTools()
 
     result = json.loads(tool_search.list_all_tools())
 
@@ -283,7 +283,7 @@ def test_toolkit_discoverable_tools_parameter():
 
 def test_use_tool_executes_callable():
     """Test executing a discovered callable tool."""
-    tool_search = AgnoToolSearch(discoverable_tools=[sample_add, sample_multiply])
+    tool_search = DiscoverableTools(discoverable_tools=[sample_add, sample_multiply])
 
     result = json.loads(tool_search.use_tool("sample_add", parameters={"a": 5, "b": 3}))
 
@@ -292,7 +292,7 @@ def test_use_tool_executes_callable():
 
 def test_use_tool_executes_multiply():
     """Test executing a multiply tool with float arguments."""
-    tool_search = AgnoToolSearch(discoverable_tools=[sample_multiply])
+    tool_search = DiscoverableTools(discoverable_tools=[sample_multiply])
 
     result = json.loads(tool_search.use_tool("sample_multiply", parameters={"x": 2.5, "y": 4.0}))
 
@@ -302,7 +302,7 @@ def test_use_tool_executes_multiply():
 def test_use_tool_with_toolkit_function():
     """Test executing a tool from a Toolkit."""
     toolkit = SampleToolkit()
-    tool_search = AgnoToolSearch(discoverable_tools=[toolkit])
+    tool_search = DiscoverableTools(discoverable_tools=[toolkit])
 
     result = json.loads(tool_search.use_tool("toolkit_add", parameters={"a": 10, "b": 20}))
 
@@ -312,7 +312,7 @@ def test_use_tool_with_toolkit_function():
 def test_use_tool_toolkit_subtract():
     """Test executing subtract tool from a Toolkit."""
     toolkit = SampleToolkit()
-    tool_search = AgnoToolSearch(discoverable_tools=[toolkit])
+    tool_search = DiscoverableTools(discoverable_tools=[toolkit])
 
     result = json.loads(tool_search.use_tool("toolkit_subtract", parameters={"a": 100, "b": 40}))
 
@@ -321,7 +321,7 @@ def test_use_tool_toolkit_subtract():
 
 def test_use_tool_not_found():
     """Test error when tool is not found."""
-    tool_search = AgnoToolSearch(discoverable_tools=[sample_add])
+    tool_search = DiscoverableTools(discoverable_tools=[sample_add])
 
     result = json.loads(tool_search.use_tool("nonexistent_tool", parameters={}))
 
@@ -332,7 +332,7 @@ def test_use_tool_not_found():
 
 def test_use_tool_with_optional_params():
     """Test executing a tool with optional parameters."""
-    tool_search = AgnoToolSearch(discoverable_tools=[sample_search])
+    tool_search = DiscoverableTools(discoverable_tools=[sample_search])
 
     # Call with only required param
     result = json.loads(tool_search.use_tool("sample_search", parameters={"query": "test"}))
@@ -347,7 +347,7 @@ def test_use_tool_with_none_input():
         """A tool that takes no arguments."""
         return json.dumps({"message": "success"})
 
-    tool_search = AgnoToolSearch(discoverable_tools=[no_args_tool])
+    tool_search = DiscoverableTools(discoverable_tools=[no_args_tool])
 
     result = json.loads(tool_search.use_tool("no_args_tool", parameters=None))
 
@@ -361,7 +361,7 @@ def test_use_tool_with_empty_dict():
         """A tool that takes no arguments."""
         return json.dumps({"message": "success"})
 
-    tool_search = AgnoToolSearch(discoverable_tools=[no_args_tool])
+    tool_search = DiscoverableTools(discoverable_tools=[no_args_tool])
 
     result = json.loads(tool_search.use_tool("no_args_tool", parameters={}))
 
@@ -375,7 +375,7 @@ def test_use_tool_returns_non_json_result():
         """A tool that returns a dict directly."""
         return {"value": value, "processed": True}
 
-    tool_search = AgnoToolSearch(discoverable_tools=[returns_dict])
+    tool_search = DiscoverableTools(discoverable_tools=[returns_dict])
 
     result = json.loads(tool_search.use_tool("returns_dict", parameters={"value": "test"}))
 
@@ -387,7 +387,7 @@ def test_use_tool_returns_non_json_result():
 
 def test_use_tool_registers_in_toolkit():
     """Test that use_tool is registered as a toolkit function."""
-    tool_search = AgnoToolSearch(discoverable_tools=[sample_add])
+    tool_search = DiscoverableTools(discoverable_tools=[sample_add])
 
     # Check that use_tool is in the toolkit's functions
     assert "use_tool" in tool_search.functions

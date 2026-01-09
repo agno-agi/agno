@@ -3,7 +3,7 @@ import json
 from agno.agent import Agent
 from agno.os import AgentOS
 from agno.models.openai import OpenAIChat
-from agno.tools import AgnoToolSearch, Toolkit
+from agno.tools import DiscoverableTools, Toolkit
 
 def send_email(to: str, subject: str, body: str) -> str:
     """Email a recipient.
@@ -72,8 +72,8 @@ def calculate_expense(amount: float, category: str, description: str) -> str:
     return json.dumps({"expense_id": "exp_456", "amount": amount, "category": category})
 
 
-# Create AgnoToolSearch with discoverable tools
-tool_search = AgnoToolSearch(
+# Create DiscoverableTools with the tools the agent can discover and use
+discoverable_tools = DiscoverableTools(
     discoverable_tools=[
         send_email,
         search_contacts,
@@ -88,7 +88,7 @@ tool_search = AgnoToolSearch(
 # It can discover and execute any of the 5 discoverable tools dynamically
 basic_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    tools=[tool_search],
+    tools=[discoverable_tools],
     instructions=[
         "You Are a very helpful assistant. You perform tasks that are asked by the user",
     ],

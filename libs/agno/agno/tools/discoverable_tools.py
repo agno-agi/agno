@@ -5,7 +5,7 @@ from agno.tools.function import Function, FunctionCall
 from agno.tools.toolkit import Toolkit
 
 
-class AgnoToolSearch(Toolkit):
+class DiscoverableTools(Toolkit):
     """Toolkit to dynamically search, load and run tools.
     
     This is useful to avoid loading all tool information into 
@@ -22,7 +22,7 @@ class AgnoToolSearch(Toolkit):
         discoverable_tools: Optional[List[Union[Toolkit, Callable, Function]]] = None,
         **kwargs: Any,
     ):
-        """Initialize the AgnoToolSearch toolkit.
+        """Initialize the DiscoverableTools toolkit.
 
         Args:
             discoverable_tools: Tools that can be discovered and executed via search.
@@ -34,7 +34,7 @@ class AgnoToolSearch(Toolkit):
         self._process_discoverable_tools()
 
         super().__init__(
-            name="agno_tool_search",
+            name="discoverable_tools",
             tools=[self.search_tools, self.list_all_tools, self.use_tool],
             **kwargs,
         )
