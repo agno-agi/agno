@@ -520,7 +520,6 @@ class WorkflowRunOutput:
     # The agent's parent_run_id will point to this workflow run's run_id to establish the relationship
     workflow_agent_run: Optional[RunOutput] = None
 
-    # The workflow agent's run_id (when workflow is executed via workflow agent)
     # This allows the FE to correlate workflow events to the workflow agent's run
     workflow_agent_run_id: Optional[str] = None
 
