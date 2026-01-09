@@ -1828,11 +1828,6 @@ class Agent:
         )
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
-        # Update stream settings if they were passed explicitly
-        if stream is not None:
-            run_context.stream = stream
-        if stream_events is not None:
-            run_context.stream_events = stream_events
 
         # Resolve dependencies
         if run_context.dependencies is not None:
@@ -2941,11 +2936,6 @@ class Agent:
         )
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
-        # Update stream settings if they were passed explicitly
-        if stream is not None:
-            run_context.stream = stream
-        if stream_events is not None:
-            run_context.stream_events = stream_events
 
         # Prepare arguments for the model (must be after run_context is fully initialized)
         response_format = self._get_response_format(run_context=run_context) if self.parser_model is None else None
@@ -3129,11 +3119,6 @@ class Agent:
             stream=stream if stream is not None else (self.stream or False),
             stream_events=stream_events if stream_events is not None else (self.stream_events or False),
         )
-        # Update stream settings if they were passed explicitly
-        if stream is not None:
-            run_context.stream = stream
-        if stream_events is not None:
-            run_context.stream_events = stream_events
 
         # Resolve dependencies
         if run_context.dependencies is not None:
@@ -3869,11 +3854,6 @@ class Agent:
             stream=stream if stream is not None else self.stream,
             stream_events=stream_events if stream_events is not None else self.stream_events,
         )
-        # Update stream settings if they were passed explicitly
-        if stream is not None:
-            run_context.stream = stream
-        if stream_events is not None:
-            run_context.stream_events = stream_events
 
         if stream:
             return self._acontinue_run_stream(

@@ -2232,11 +2232,6 @@ class Team:
         )
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
-        # Update stream settings if they were passed explicitly
-        if stream is not None:
-            run_context.stream = stream
-        if stream_events is not None:
-            run_context.stream_events = stream_events
 
         # Resolve callable dependencies if present
         if run_context.dependencies is not None:
@@ -3237,11 +3232,6 @@ class Team:
         )
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
-        # Update stream settings if they were passed explicitly
-        if stream is not None:
-            run_context.stream = stream
-        if stream_events is not None:
-            run_context.stream_events = stream_events
 
         # Configure the model for runs
         response_format: Optional[Union[Dict, Type[BaseModel]]] = (
