@@ -4,11 +4,11 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, model_serializer
 
 from agno.os.router.agents.schema import AgentMinimalResponse
-from agno.os.router.teams.schema import TeamMinimalResponse
 from agno.os.router.schema import DatabaseConfigResponse, TableNameResponse
+from agno.os.router.teams.schema import TeamMinimalResponse
 from agno.os.utils import get_workflow_input_schema_dict, remove_none_values
+from agno.workflow import RemoteWorkflow, Workflow
 from agno.workflow.agent import WorkflowAgent
-from agno.workflow import Workflow, RemoteWorkflow
 
 
 class WorkflowMinimalResponse(BaseModel):
@@ -28,9 +28,9 @@ class WorkflowMinimalResponse(BaseModel):
         )
 
 
-
 class StepTypeResponse(str, Enum):
     """The type of workflow step"""
+
     FUNCTION = "Function"
     STEP = "Step"
     STEPS = "Steps"
@@ -42,6 +42,7 @@ class StepTypeResponse(str, Enum):
 
 class StepResponse(BaseModel):
     """A workflow step definition"""
+
     name: Optional[str] = Field(None, description="The name of the step")
     description: Optional[str] = Field(None, description="The description of the step")
     type: Optional[StepTypeResponse] = Field(None, description="The type of the step")

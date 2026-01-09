@@ -23,13 +23,17 @@ if TYPE_CHECKING:
     from agno.os.router.evals.schema import EvalRunResponse
     from agno.os.router.knowledge.schema import (
         ConfigResponseSchema,
-        ContentResponseResponse,
+        ContentResponse,
         ContentStatusResponse,
         VectorSearchResult,
     )
-    from agno.os.router.memory.schema import OptimizeMemoriesResponse, UserMemoryResponse, UserStatsResponse
+    from agno.os.router.memory.schema import (
+        MemoryConfigResponse,
+        OptimizeMemoriesResponse,
+        UserMemoryResponse,
+        UserStatsResponse,
+    )
     from agno.os.router.metrics.schema import MetricsResponse
-    from agno.os.router.traces.schemas import TraceDetailResponse, TraceNodeResponse, TraceSessionStatsResponse, TraceSummaryResponse
     from agno.os.router.schema import (
         AgentSessionDetailSchema,
         ConfigResponse,
@@ -40,6 +44,12 @@ if TYPE_CHECKING:
         TeamSessionDetailSchema,
         WorkflowRunSchema,
         WorkflowSessionDetailSchema,
+    )
+    from agno.os.router.traces.schemas import (
+        TraceDetailResponse,
+        TraceNodeResponse,
+        TraceSessionStatsResponse,
+        TraceSummaryResponse,
     )
 
 
@@ -115,9 +125,10 @@ class RemoteDb:
             eval_table_name=eval_table_name,
             traces_table_name=traces_table_name,
         )
+
     def to_config(self) -> Tuple[List[Tuple[str, str]], Dict[str, Any]]:
         config = {"remote": True, "client_url": self.client.base_url}
-        
+
         table_names = [
             ("sessions", self.session_table_name),
             ("culture", self.culture_table_name),
@@ -128,7 +139,7 @@ class RemoteDb:
             ("traces", self.traces_table_name),
             ("spans", self.spans_table_name),
         ]
-        
+
         return table_names, config
 
     # SESSIONS
@@ -203,7 +214,9 @@ class RemoteDb:
     async def get_memory(self, memory_id: str, **kwargs: Any) -> "UserMemoryResponse":
         return await self.client.get_memory(memory_id, **kwargs)
 
-    async def get_memories(self, user_id: Optional[str] = None, **kwargs: Any) -> "PaginatedResponse[UserMemoryResponse]":
+    async def get_memories(
+        self, user_id: Optional[str] = None, **kwargs: Any
+    ) -> "PaginatedResponse[UserMemoryResponse]":
         return await self.client.list_memories(user_id, **kwargs)
 
     async def update_memory(self, memory_id: str, **kwargs: Any) -> "UserMemoryResponse":
@@ -215,7 +228,7 @@ class RemoteDb:
     async def optimize_memories(self, **kwargs: Any) -> "OptimizeMemoriesResponse":
         return await self.client.optimize_memories(**kwargs)
 
-    async def get_memory_config(self, **kwargs: Any) -> List[str]:
+    async def get_memory_config(self, **kwargs: Any) -> "MemoryConfigResponse":
         return await self.client.get_memory_config(**kwargs)
 
     # TRACES
@@ -294,7 +307,7 @@ class RemoteKnowledge:
         chunk_overlap: Optional[int] = None,
         db_id: Optional[str] = None,
         **kwargs: Any,
-    ) -> "ContentResponseResponse":
+    ) -> "ContentResponse":
         return await self.client.upload_knowledge_content(
             name=name,
             description=description,
@@ -319,7 +332,7 @@ class RemoteKnowledge:
         reader_id: Optional[str] = None,
         db_id: Optional[str] = None,
         **kwargs: Any,
-    ) -> "ContentResponseResponse":
+    ) -> "ContentResponse":
         return await self.client.update_knowledge_content(
             content_id=content_id,
             name=name,
@@ -338,14 +351,12 @@ class RemoteKnowledge:
         sort_order: Optional[str] = None,
         db_id: Optional[str] = None,
         **kwargs: Any,
-    ) -> "PaginatedResponse[ContentResponseResponse]":
+    ) -> "PaginatedResponse[ContentResponse]":
         return await self.client.list_knowledge_content(
             limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, db_id=db_id, **kwargs
         )
 
-    async def get_content_by_id(
-        self, content_id: str, db_id: Optional[str] = None, **kwargs: Any
-    ) -> "ContentResponseResponse":
+    async def get_content_by_id(self, content_id: str, db_id: Optional[str] = None, **kwargs: Any) -> "ContentResponse":
         return await self.client.get_knowledge_content(content_id=content_id, db_id=db_id, **kwargs)
 
     async def delete_content_by_id(self, content_id: str, db_id: Optional[str] = None, **kwargs: Any) -> None:

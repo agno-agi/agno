@@ -25,8 +25,8 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.tracing.schemas import Trace
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
+from agno.tracing.schemas import Trace
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, sanitize_postgres_string, sanitize_postgres_strings
 
@@ -627,7 +627,7 @@ class PostgresDb(BaseDb):
                     return [], 0
 
                 session = [dict(record._mapping) for record in records]
-                
+
                 if not deserialize:
                     return session, total_count
 
@@ -2740,7 +2740,6 @@ class PostgresDb(BaseDb):
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
         """
         try:
-
             table = self._get_table(table_type="traces")
             if table is None:
                 log_debug("Traces table not found")

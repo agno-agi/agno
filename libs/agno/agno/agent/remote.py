@@ -15,7 +15,7 @@ from agno.utils.log import log_warning
 from agno.utils.remote import serialize_input
 
 if TYPE_CHECKING:
-    from agno.os.routers.agents.schema import AgentResponse
+    from agno.os.router.agents.schema import AgentResponse
 
 
 @dataclass
@@ -61,7 +61,7 @@ class RemoteAgent(BaseRemote):
         For A2A protocol, returns a minimal AgentResponse since A2A servers
         don't expose the same config endpoints as AgentOS. For AgentOS, always fetches fresh config.
         """
-        from agno.os.routers.agents.schema import AgentResponse
+        from agno.os.router.agents.schema import AgentResponse
 
         if self.a2a_client:
             from agno.client.a2a.schemas import AgentCard
@@ -84,7 +84,7 @@ class RemoteAgent(BaseRemote):
         """
         import time
 
-        from agno.os.routers.agents.schema import AgentResponse
+        from agno.os.router.agents.schema import AgentResponse
 
         if self.a2a_client:
             from agno.client.a2a.schemas import AgentCard
@@ -117,7 +117,7 @@ class RemoteAgent(BaseRemote):
         """
         import time
 
-        from agno.os.routers.agents.schema import AgentResponse
+        from agno.os.router.agents.schema import AgentResponse
 
         if self.a2a_client:
             self._cached_agent_config = None

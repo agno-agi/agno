@@ -22,7 +22,7 @@ class ContentStatusResponse(BaseModel):
     status_message: str = Field("", description="Status message or error details")
 
 
-class ContentResponseResponse(BaseModel):
+class ContentResponse(BaseModel):
     id: str = Field(..., description="Unique identifier for the content")
     name: Optional[str] = Field(None, description="Name of the content")
     description: Optional[str] = Field(None, description="Description of the content")
@@ -43,7 +43,7 @@ class ContentResponseResponse(BaseModel):
         return remove_none_values(data)
 
     @classmethod
-    def from_dict(cls, content: Dict[str, Any]) -> "ContentResponseResponse":
+    def from_dict(cls, content: Dict[str, Any]) -> "ContentResponse":
         status = content.get("status")
         if isinstance(status, str):
             try:
@@ -184,7 +184,7 @@ class VectorSearchRequest(BaseModel):
     )
 
 
-class ConfigResponseResponse(BaseModel):
+class KnowledgeConfigResponse(BaseModel):
     readers: Optional[Dict[str, ReaderResponse]] = Field(None, description="Available content readers")
     readersForType: Optional[Dict[str, List[str]]] = Field(None, description="Mapping of content types to reader IDs")
     chunkers: Optional[Dict[str, ChunkerResponse]] = Field(None, description="Available chunking strategies")

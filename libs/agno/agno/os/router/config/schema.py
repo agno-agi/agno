@@ -5,10 +5,8 @@ from pydantic import BaseModel, Field
 from agno.os.config import (
     ChatConfig,
 )
-
-from agno.os.router.schema import DatabaseConfigResponse
-
 from agno.os.router.agents.schema import AgentMinimalResponse
+from agno.os.router.schema import DatabaseConfigResponse
 from agno.os.router.teams.schema import TeamMinimalResponse
 from agno.os.router.workflows.schema import WorkflowMinimalResponse
 
@@ -39,4 +37,3 @@ class AgentOSConfigResponse(BaseModel):
 class Model(BaseModel):
     id: Optional[str] = Field(None, description="Model identifier")
     provider: Optional[str] = Field(None, description="Model provider name")
-

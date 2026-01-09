@@ -2,7 +2,7 @@ import logging
 from datetime import date, datetime, timezone
 from typing import Optional, Union, cast
 
-from fastapi import Depends, HTTPException, Query, Request, Header
+from fastapi import Depends, Header, HTTPException, Query, Request
 from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
@@ -96,7 +96,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     )
     async def get_metrics(
         request: Request,
-        refresh: bool = Query(default=False, description="Trigger recalculation of metrics from raw data before returning"),
+        refresh: bool = Query(
+            default=False, description="Trigger recalculation of metrics from raw data before returning"
+        ),
         starting_date: Optional[date] = Query(
             default=None, description="Starting date for metrics range (YYYY-MM-DD format)"
         ),
@@ -126,23 +128,30 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     result = await db.calculate_metrics()
                 else:
                     result = db.calculate_metrics()
-                    
-                metrics = [DayAggregatedMetricsResponse.from_dict(metric) for metric in result or []]
-                latest_updated_at = datetime.now(timezone.utc).isoformat()
+
+                parsed_metrics = [DayAggregatedMetricsResponse.from_dict(metric) for metric in result or []]
+                updated_at = datetime.now(timezone.utc)
                 return MetricsResponse(
-                    metrics=metrics,
-                    updated_at=to_utc_datetime(latest_updated_at),
+                    metrics=parsed_metrics,
+                    updated_at=to_utc_datetime(updated_at),
                 )
             else:
                 if isinstance(db, AsyncBaseDb):
                     db = cast(AsyncBaseDb, db)
-                    metrics, latest_updated_at = await db.get_metrics(starting_date=starting_date, ending_date=ending_date)
+                    metrics, latest_updated_at = await db.get_metrics(
+                        starting_date=starting_date, ending_date=ending_date
+                    )
                 else:
                     metrics, latest_updated_at = db.get_metrics(starting_date=starting_date, ending_date=ending_date)
 
+                if latest_updated_at:
+                    updated_at = to_utc_datetime(latest_updated_at)
+                else:
+                    updated_at = None
+
                 return MetricsResponse(
                     metrics=[DayAggregatedMetricsResponse.from_dict(metric) for metric in metrics],
-                    updated_at=to_utc_datetime(latest_updated_at),
+                    updated_at=updated_at,
                 )
 
         except Exception as e:

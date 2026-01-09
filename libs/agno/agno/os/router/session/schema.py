@@ -8,7 +8,6 @@ from agno.os.utils import extract_input_media, get_run_input, get_session_name, 
 from agno.session import AgentSession, TeamSession, WorkflowSession
 
 
-
 class DeleteSessionRequest(BaseModel):
     session_ids: List[str] = Field(..., description="List of session IDs to delete", min_length=1)
     session_types: List[SessionType] = Field(..., description="Types of sessions to delete", min_length=1)
@@ -59,7 +58,7 @@ class MetricsResponse(BaseModel):
 
     provider_metrics: Optional[dict] = Field(None, description="Provider metrics used in this session")
     additional_metrics: Optional[dict] = Field(None, description="Additional metrics used in this session")
-    
+
     @classmethod
     def from_dict(cls, metrics_dict: Dict[str, Any]) -> "MetricsResponse":
         return cls(
@@ -78,6 +77,8 @@ class MetricsResponse(BaseModel):
             provider_metrics=metrics_dict.get("provider_metrics", None),
             additional_metrics=metrics_dict.get("additional_metrics", None),
         )
+
+
 class SessionMinimalResponse(BaseModel):
     session_id: str = Field(..., description="Unique identifier for the session")
     user_id: Optional[str] = Field(None, description="User ID associated with the session")
@@ -148,16 +149,16 @@ class SessionResponse(BaseModel):
     session_name: str = Field(..., description="Human-readable session name")
     session_summary: Optional[dict] = Field(None, description="Summary of session interactions")
     session_state: Optional[dict] = Field(None, description="Current state of the session")
-    
+
     agent_id: Optional[str] = Field(None, description="Agent ID used in this session")
     team_id: Optional[str] = Field(None, description="Team ID used in this session")
     workflow_id: Optional[str] = Field(None, description="Workflow ID used in this session")
-    
+
     additional_data: Optional[dict] = Field(None, description="Additional data associated with the session")
-    
+
     metrics: Optional[MetricsResponse] = Field(None, description="Session metrics")
     metadata: Optional[dict] = Field(None, description="Additional metadata")
-    
+
     chat_history: Optional[List[dict]] = Field(None, description="Complete chat history")
     created_at: Optional[datetime] = Field(None, description="Session creation timestamp")
     updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
@@ -173,35 +174,39 @@ class SessionResponse(BaseModel):
         session_name = get_session_name({**session.to_dict(), "session_type": "agent"})
         created_at = datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None
         updated_at = datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else created_at
-        
+
         additional_data = None
-        if session.agent_data:
+        if hasattr(session, "agent_data") and session.agent_data:
             additional_data = session.agent_data
             del additional_data["agent_id"]
-        elif session.team_data:
+        elif hasattr(session, "team_data") and session.team_data:
             additional_data = session.team_data
             del additional_data["team_id"]
-        elif session.workflow_data:
+        elif hasattr(session, "workflow_data") and session.workflow_data:
             additional_data = session.workflow_data
             del additional_data["workflow_id"]
-        
+
+        chat_history = None
+        if isinstance(session, AgentSession) or isinstance(session, TeamSession):
+            chat_history = [message.to_dict() for message in session.get_chat_history()]
+
         return cls(
             session_id=session.session_id,
             user_id=session.user_id,
             session_name=session_name,
-            session_summary=session.summary.to_dict() if session.summary else None,
+            session_summary=session.summary.to_dict() if hasattr(session, "summary") and session.summary else None,
             session_state=session.session_data.get("session_state", None) if session.session_data else None,
-            agent_id=session.agent_id if session.agent_id else None,
-            team_id=session.team_id if session.team_id else None,
-            workflow_id=session.workflow_id if session.workflow_id else None,
+            agent_id=session.agent_id if hasattr(session, "agent_id") and session.agent_id else None,
+            team_id=session.team_id if hasattr(session, "team_id") and session.team_id else None,
+            workflow_id=session.workflow_id if hasattr(session, "workflow_id") and session.workflow_id else None,
             additional_data=additional_data,
             total_tokens=session.session_data.get("session_metrics", {}).get("total_tokens")
             if session.session_data
             else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,  # type: ignore
             metadata=session.metadata,
-            chat_history=[message.to_dict() for message in session.get_chat_history()],
-            created_at=to_utc_datetime(created_at), 
+            chat_history=chat_history,
+            created_at=to_utc_datetime(created_at),
             updated_at=to_utc_datetime(updated_at),
         )
 
@@ -212,13 +217,21 @@ class SessionResponse(BaseModel):
         additional_data = None
         if session_dict.get("agent_data"):
             additional_data = session_dict.get("agent_data")
-            del additional_data["agent_id"]
+            if "agent_id" in additional_data and additional_data["agent_id"]:
+                del additional_data["agent_id"]
         elif session_dict.get("team_data"):
             additional_data = session_dict.get("team_data")
-            del additional_data["team_id"]
+            if "team_id" in additional_data and additional_data["team_id"]:
+                del additional_data["team_id"]
         elif session_dict.get("workflow_data"):
             additional_data = session_dict.get("workflow_data")
-            del additional_data["workflow_id"]
+            if "workflow_id" in additional_data and additional_data["workflow_id"]:
+                del additional_data["workflow_id"]
+        metrics = (
+            MetricsResponse.from_dict(session_data.get("session_metrics"))
+            if session_data.get("session_metrics")
+            else None
+        )
         return cls(
             session_id=session_dict.get("session_id", ""),
             user_id=session_dict.get("user_id"),
@@ -229,7 +242,7 @@ class SessionResponse(BaseModel):
             team_id=session_dict.get("team_id"),
             workflow_id=session_dict.get("workflow_id"),
             additional_data=additional_data,
-            metrics=MetricsResponse.from_dict(session_data.get("session_metrics")),
+            metrics=metrics,
             metadata=session_dict.get("metadata"),
             chat_history=session_dict.get("chat_history"),
             created_at=to_utc_datetime(session_dict.get("created_at")),
@@ -237,49 +250,48 @@ class SessionResponse(BaseModel):
         )
 
 
-
 class RunResponse(BaseModel):
     id: str = Field(..., description="Unique identifier for the run")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
-    
+
     status: Optional[str] = Field(None, description="Status of the run")
-    
+
     agent_id: Optional[str] = Field(None, description="Agent ID that executed this run")
     team_id: Optional[str] = Field(None, description="Team ID that executed this run")
     workflow_id: Optional[str] = Field(None, description="Workflow ID that executed this run")
-    
+
     user_id: Optional[str] = Field(None, description="User ID associated with the run")
-    
+
     run_input: Optional[str] = Field(None, description="Input provided to the run")
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the run")
     content_format: Optional[str] = Field(None, description="Format of the response (text/json)")
     tools: Optional[List[dict]] = Field(None, description="Tools used in the run")
-    
+
     messages: Optional[List[dict]] = Field(None, description="Message history for the run")
-    
+
     reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
     reasoning_steps: Optional[List[dict]] = Field(None, description="List of reasoning steps")
     reasoning_messages: Optional[List[dict]] = Field(None, description="Reasoning process messages")
-    
+
     metrics: Optional[MetricsResponse] = Field(None, description="Performance and usage metrics")
-    
+
     events: Optional[List[dict]] = Field(None, description="Events generated during the run")
-    
+
     references: Optional[List[dict]] = Field(None, description="References cited in the run")
     citations: Optional[Dict[str, Any]] = Field(
         None, description="Citations from the model (e.g., from Gemini grounding/search)"
     )
-    
+
     session_state: Optional[dict] = Field(None, description="Session state at the end of the run")
-    
+
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
     images: Optional[List[dict]] = Field(None, description="Images included in the run")
     videos: Optional[List[dict]] = Field(None, description="Videos included in the run")
     audio: Optional[List[dict]] = Field(None, description="Audio files included in the run")
     files: Optional[List[dict]] = Field(None, description="Files included in the run")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
-    
+
     # Only for workflow runs
     step_results: Optional[list[dict]] = Field(None, description="Results from each workflow step")
     step_executor_runs: Optional[list[dict]] = Field(None, description="Executor runs for each step")
@@ -294,11 +306,11 @@ class RunResponse(BaseModel):
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunResponse":
         run_input = get_run_input(run_dict)
         content_format = "text" if run_dict.get("content_type", "str") == "str" else "json"
-        
+
         agent_id = run_dict.get("agent_id", None)
         team_id = run_dict.get("team_id", None)
         workflow_id = run_dict.get("workflow_id", None)
-        
+
         step_results = run_dict.get("step_results", None)
         step_executor_runs = run_dict.get("step_executor_runs", None)
         if workflow_id:

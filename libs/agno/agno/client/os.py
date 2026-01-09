@@ -11,58 +11,50 @@ from agno.exceptions import RemoteServerUnavailableError
 from agno.media import Audio, File, Image, Video
 from agno.media import File as MediaFile
 from agno.models.response import ToolExecution
-from agno.os.routers.agents.schema import AgentResponse
-from agno.os.routers.evals.schema import (
+from agno.os.router.agents.schema import AgentMinimalResponse, AgentResponse
+from agno.os.router.config.schema import AgentOSConfigResponse
+from agno.os.router.evals.schema import (
     DeleteEvalRunsRequest,
     EvalRunRequest,
     EvalRunResponse,
     UpdateEvalRunRequest,
 )
-from agno.os.routers.knowledge.schema import (
-    ConfigResponseSchema as KnowledgeConfigResponse,
-)
-from agno.os.routers.knowledge.schema import (
+from agno.os.router.knowledge.schema import (
     ContentResponseResponse,
     ContentStatusResponse,
+    KnowledgeConfigResponse,
     VectorSearchResult,
 )
-from agno.os.routers.memory.schema import (
+from agno.os.router.memory.schema import (
     DeleteMemoriesRequest,
+    MemoryConfigResponse,
     OptimizeMemoriesRequest,
     OptimizeMemoriesResponse,
     UserMemoryCreateRequest,
     UserMemoryResponse,
     UserStatsResponse,
-    MemoryConfigResponse,
 )
-from agno.os.routers.metrics.schema import MetricsResponse
-from agno.os.routers.teams.schema import TeamResponse
-from agno.os.routers.traces.schemas import (
-    TraceDetail,
-    TraceNode,
-    TraceSessionStats,
-    TraceSummary,
-)
-from agno.os.routers.workflows.schema import WorkflowResponse
+from agno.os.router.metrics.schema import MetricsResponse
 from agno.os.router.schema import (
-    AgentSessionDetailSchema,
-    AgentMinimalResponse,
-    ConfigResponse,
-    CreateSessionRequest,
-    DeleteSessionRequest,
     Model,
     PaginatedResponse,
     PaginationInfo,
-    RunSchema,
-    SessionSchema,
-    TeamRunSchema,
-    TeamSessionDetailSchema,
-    TeamMinimalResponse,
-    UpdateSessionRequest,
-    WorkflowRunSchema,
-    WorkflowSessionDetailSchema,
-    WorkflowMinimalResponse,
 )
+from agno.os.router.session.schema import (
+    CreateSessionRequest,
+    DeleteSessionRequest,
+    RunResponse,
+    SessionResponse,
+    UpdateSessionRequest,
+)
+from agno.os.router.teams.schema import TeamMinimalResponse, TeamResponse
+from agno.os.router.traces.schemas import (
+    TraceDetailResponse,
+    TraceNodeResponse,
+    TraceSessionStatsResponse,
+    TraceSummaryResponse,
+)
+from agno.os.router.workflows.schema import WorkflowMinimalResponse, WorkflowResponse
 from agno.run.agent import RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent, team_run_output_event_from_dict
 from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent, workflow_run_output_event_from_dict
@@ -405,7 +397,7 @@ class AgentOSClient:
 
     # Discovery & Configuration Operations
 
-    def get_config(self, headers: Optional[Dict[str, str]] = None) -> ConfigResponse:
+    def get_config(self, headers: Optional[Dict[str, str]] = None) -> AgentOSConfigResponse:
         """Get AgentOS configuration and metadata.
 
         Returns comprehensive OS configuration including:
@@ -420,14 +412,14 @@ class AgentOSClient:
             headers: HTTP headers to include in the request (optional)
 
         Returns:
-            ConfigResponse: Complete OS configuration
+            AgentOSConfigResponse: Complete OS configuration
 
         We need this sync version so it can be used for other sync use-cases upstream
         """
         data = self._get("/config", headers=headers)
-        return ConfigResponse.model_validate(data)
+        return AgentOSConfigResponse.model_validate(data)
 
-    async def aget_config(self, headers: Optional[Dict[str, str]] = None) -> ConfigResponse:
+    async def aget_config(self, headers: Optional[Dict[str, str]] = None) -> AgentOSConfigResponse:
         """Get AgentOS configuration and metadata.
 
         Returns comprehensive OS configuration including:
@@ -442,13 +434,13 @@ class AgentOSClient:
             headers: HTTP headers to include in the request (optional)
 
         Returns:
-            ConfigResponse: Complete OS configuration
+            AgentOSConfigResponse: Complete OS configuration
 
         Raises:
             HTTPStatusError: On HTTP errors
         """
         data = await self._aget("/config", headers=headers)
-        return ConfigResponse.model_validate(data)
+        return AgentOSConfigResponse.model_validate(data)
 
     async def get_models(self, headers: Optional[Dict[str, str]] = None) -> List[Model]:
         """Get list of all models used by agents and teams.
@@ -1440,7 +1432,7 @@ class AgentOSClient:
         workflow_id: Optional[str] = None,
         db_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
+    ) -> SessionResponse:
         """Create a new session.
 
         Args:
@@ -1479,12 +1471,7 @@ class AgentOSClient:
 
         data = await self._apost("/sessions", payload.model_dump(), params=params, headers=headers)
 
-        if session_type == SessionType.AGENT:
-            return AgentSessionDetailSchema.model_validate(data)
-        elif session_type == SessionType.TEAM:
-            return TeamSessionDetailSchema.model_validate(data)
-        else:
-            return WorkflowSessionDetailSchema.model_validate(data)
+        return SessionResponse.model_validate(data)
 
     async def get_sessions(
         self,
@@ -1499,7 +1486,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> PaginatedResponse[SessionSchema]:
+    ) -> PaginatedResponse[SessionResponse]:
         """Get a specific session by ID.
 
         Args:
@@ -1516,7 +1503,7 @@ class AgentOSClient:
             headers: HTTP headers to include in the request (optional)
 
         Returns:
-            PaginatedResponse[SessionSchema]
+            PaginatedResponse[SessionResponse]
         """
         params: Dict[str, Any] = {
             "type": session_type.value if session_type else None,
@@ -1536,8 +1523,8 @@ class AgentOSClient:
         response = await self._aget("/sessions", params=params, headers=headers)
         data = response.get("data", [])
         pagination_info = PaginationInfo.model_validate(response.get("meta", {}))
-        return PaginatedResponse[SessionSchema](
-            data=[SessionSchema.from_dict(session) for session in data],
+        return PaginatedResponse[SessionResponse](
+            data=[SessionResponse.from_dict(session) for session in data],
             meta=pagination_info,
         )
 
@@ -1549,7 +1536,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
+    ) -> SessionResponse:
         """Get a specific session by ID.
 
         Args:
@@ -1561,7 +1548,7 @@ class AgentOSClient:
             headers: HTTP headers to include in the request (optional)
 
         Returns:
-            AgentSessionDetailSchema, TeamSessionDetailSchema, or WorkflowSessionDetailSchema
+            SessionResponse
 
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
@@ -1576,12 +1563,7 @@ class AgentOSClient:
 
         data = await self._aget(f"/sessions/{session_id}", params=params, headers=headers)
 
-        if session_type == SessionType.AGENT:
-            return AgentSessionDetailSchema.model_validate(data)
-        elif session_type == SessionType.TEAM:
-            return TeamSessionDetailSchema.model_validate(data)
-        else:
-            return WorkflowSessionDetailSchema.model_validate(data)
+        return SessionResponse.model_validate(data)
 
     async def get_session_runs(
         self,
@@ -1593,7 +1575,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
+    ) -> List[RunResponse]:
         """Get all runs for a specific session.
 
         Args:
@@ -1625,14 +1607,9 @@ class AgentOSClient:
         data = await self._aget(f"/sessions/{session_id}/runs", params=params, headers=headers)
 
         # Parse runs based on session type and run content
-        runs: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
+        runs: List[RunResponse] = []
         for run in data:
-            if run.get("workflow_id") is not None:
-                runs.append(WorkflowRunSchema.model_validate(run))
-            elif run.get("team_id") is not None:
-                runs.append(TeamRunSchema.model_validate(run))
-            else:
-                runs.append(RunSchema.model_validate(run))
+            runs.append(RunResponse.model_validate(run))
         return runs
 
     async def get_session_run(
@@ -1644,7 +1621,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> Union[RunSchema, TeamRunSchema, WorkflowRunSchema]:
+    ) -> RunResponse:
         """Get a specific run from a session.
 
         Args:
@@ -1657,7 +1634,7 @@ class AgentOSClient:
             headers: HTTP headers to include in the request (optional)
 
         Returns:
-            RunSchema, TeamRunSchema, or WorkflowRunSchema
+            RunResponse
 
         Raises:
             HTTPStatusError: On HTTP errors (404 if not found)
@@ -1673,12 +1650,7 @@ class AgentOSClient:
         data = await self._aget(f"/sessions/{session_id}/runs/{run_id}", params=params, headers=headers)
 
         # Return appropriate schema based on run type
-        if data.get("workflow_id") is not None:
-            return WorkflowRunSchema.model_validate(data)
-        elif data.get("team_id") is not None:
-            return TeamRunSchema.model_validate(data)
-        else:
-            return RunSchema.model_validate(data)
+        return RunResponse.model_validate(data)
 
     async def delete_session(
         self,
@@ -1746,7 +1718,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
+    ) -> SessionResponse:
         """Rename a session.
 
         Args:
@@ -1773,12 +1745,7 @@ class AgentOSClient:
         payload = {"session_name": session_name}
         data = await self._apost(f"/sessions/{session_id}/rename", payload, params=params, headers=headers)
 
-        if session_type == SessionType.AGENT:
-            return AgentSessionDetailSchema.model_validate(data)
-        elif session_type == SessionType.TEAM:
-            return TeamSessionDetailSchema.model_validate(data)
-        else:
-            return WorkflowSessionDetailSchema.model_validate(data)
+        return SessionResponse.model_validate(data)
 
     async def update_session(
         self,
@@ -1792,7 +1759,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
+    ) -> SessionResponse:
         """Update session properties.
 
         Args:
@@ -1833,12 +1800,7 @@ class AgentOSClient:
             f"/sessions/{session_id}", payload.model_dump(exclude_none=True), params=params, headers=headers
         )
 
-        if session_type == SessionType.AGENT:
-            return AgentSessionDetailSchema.model_validate(data)
-        elif session_type == SessionType.TEAM:
-            return TeamSessionDetailSchema.model_validate(data)
-        else:
-            return WorkflowSessionDetailSchema.model_validate(data)
+        return SessionResponse.model_validate(data)
 
     # Eval Operations
 
@@ -2463,7 +2425,7 @@ class AgentOSClient:
         limit: int = 20,
         db_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> PaginatedResponse[TraceSummary]:
+    ) -> PaginatedResponse[TraceSummaryResponse]:
         """List execution traces with filtering and pagination.
 
         Traces provide observability into agent execution flows, model invocations,
@@ -2508,7 +2470,7 @@ class AgentOSClient:
         params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget("/traces", params=params, headers=headers)
-        return PaginatedResponse[TraceSummary].model_validate(data)
+        return PaginatedResponse[TraceSummaryResponse].model_validate(data)
 
     async def get_trace(
         self,
@@ -2517,7 +2479,7 @@ class AgentOSClient:
         run_id: Optional[str] = None,
         db_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> Union[TraceDetail, TraceNode]:
+    ) -> Union[TraceDetailResponse, TraceNodeResponse]:
         """Get detailed trace information with hierarchical span tree, or a specific span.
 
         Without span_id: Returns the full trace with hierarchical span tree including
@@ -2550,8 +2512,8 @@ class AgentOSClient:
 
         # If span_id was provided, return TraceNode, otherwise TraceDetail
         if span_id:
-            return TraceNode.model_validate(data)
-        return TraceDetail.model_validate(data)
+            return TraceNodeResponse.model_validate(data)
+        return TraceDetailResponse.model_validate(data)
 
     async def get_trace_session_stats(
         self,
@@ -2565,7 +2527,7 @@ class AgentOSClient:
         limit: int = 20,
         db_id: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> PaginatedResponse[TraceSessionStats]:
+    ) -> PaginatedResponse[TraceSessionStatsResponse]:
         """Get aggregated trace statistics grouped by session ID.
 
         Provides insights into total traces per session, first and last trace
@@ -2603,7 +2565,7 @@ class AgentOSClient:
         params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget("/trace_session_stats", params=params, headers=headers)
-        return PaginatedResponse[TraceSessionStats].model_validate(data)
+        return PaginatedResponse[TraceSessionStatsResponse].model_validate(data)
 
     # Metrics Operations
     async def get_metrics(

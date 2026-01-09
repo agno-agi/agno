@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Dict, Generic, List, Optional, Tuple, TypeVar, Union
+from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -12,21 +12,25 @@ from agno.hooks.decorator import should_run_in_background
 class RunCancelledResponse(BaseModel):
     id: str
     success: bool
-    
+
+
 class ToolDefinitionResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the tool")
     description: Optional[str] = Field(None, description="Description of the tool")
     parameters: Optional[Dict[str, Any]] = Field(None, description="Parameters of the tool")
     raw: Optional[Dict[str, Any]] = Field(None, description="Raw tool definition")
 
+
 class TableNameResponse(BaseModel):
     type: str = Field(..., description="The name of the table")
     name: str = Field(..., description="The name of the table")
+
 
 class DatabaseConfigResponse(BaseModel):
     id: str = Field(..., description="The ID of the database")
     table_names: List[TableNameResponse] = Field(..., description="The table names of the database")
     config: Dict[str, Any] = Field(..., description="The configuration of the database")
+
 
 class MessageResponse(BaseModel):
     role: str = Field(..., description="The role of the message")
@@ -42,6 +46,7 @@ class ModelResponse(BaseModel):
 
 class HookType(str, Enum):
     """Type of hook"""
+
     FUNCTION = "function"
     GUARDRAIL = "guardrail"
     EVAL = "eval"
@@ -49,6 +54,7 @@ class HookType(str, Enum):
 
 class HookResponse(BaseModel):
     """Response schema for pre/post hooks"""
+
     name: str = Field(..., description="Name of the hook function or class")
     type: HookType = Field(..., description="Type of the hook (function, guardrail, or eval)")
     run_in_background: bool = Field(False, description="Whether the hook runs in background")
@@ -76,6 +82,7 @@ class HookResponse(BaseModel):
                 run_in_background=should_run_in_background(hook),
             )
 
+
 class HealthResponse(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={"example": {"status": "ok", "instantiated_at": "2025-06-10T12:00:00Z"}}
@@ -83,7 +90,6 @@ class HealthResponse(BaseModel):
 
     status: str = Field(..., description="Health status of the service")
     instantiated_at: datetime = Field(..., description="Timestamp when service was instantiated")
-
 
 
 T = TypeVar("T")
@@ -110,6 +116,7 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
 
 # ERRORS
+
 
 class BadRequestResponse(BaseModel):
     model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}})
@@ -159,4 +166,3 @@ class InternalServerErrorResponse(BaseModel):
 
     detail: str = Field(..., description="Error detail message")
     error_code: Optional[str] = Field(None, description="Error code for categorization")
-

@@ -17,9 +17,12 @@ from agno.os.router.schema import (
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
-from agno.os.router.session.schema import (SessionMinimalResponse, SessionResponse, RunResponse,
+from agno.os.router.session.schema import (
     CreateSessionRequest,
     DeleteSessionRequest,
+    RunResponse,
+    SessionMinimalResponse,
+    SessionResponse,
     UpdateSessionRequest,
 )
 from agno.os.settings import AgnoAPISettings
@@ -51,9 +54,7 @@ def get_session_router(
 def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> APIRouter:
     @router.get(
         "/sessions",
-        response_model=PaginatedResponse[
-            Union[SessionMinimalResponse, SessionResponse]
-        ],
+        response_model=PaginatedResponse[Union[SessionMinimalResponse, SessionResponse]],
         response_model_exclude_unset=True,
         status_code=200,
         operation_id="get_sessions",
@@ -116,9 +117,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
         db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="Database ID to query sessions from"),
         table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="The database table to use"),
-    ) -> PaginatedResponse[
-        Union[SessionMinimalResponse, SessionResponse]
-    ]:
+    ) -> PaginatedResponse[Union[SessionMinimalResponse, SessionResponse]]:
         try:
             db = await get_db(dbs, db_id, table)
         except Exception as e:
@@ -143,7 +142,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 table=table,
                 headers=headers,
             )
-        
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             sessions, total_count = await db.get_sessions(
@@ -175,7 +174,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             data: List[SessionMinimalResponse] = [SessionMinimalResponse.from_dict(session) for session in sessions]  # type: ignore
         else:
             data = []
-            for session in sessions:
+            for session in sessions:  # type: ignore
                 data.append(SessionResponse.from_dict(session))  # type: ignore
 
         return PaginatedResponse(
@@ -1025,7 +1024,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Header(
             default=None, alias="X-DB-ID", description="Database ID to use for update operation"
         ),
-        table: Optional[str] = Header(default=None, alias="X-TABLE-NAME", description="Table to use for update operation"),
+        table: Optional[str] = Header(
+            default=None, alias="X-TABLE-NAME", description="Table to use for update operation"
+        ),
     ) -> SessionResponse:
         db = await get_db(dbs, db_id)
 

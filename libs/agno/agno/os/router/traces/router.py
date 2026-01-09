@@ -1,17 +1,11 @@
 import logging
 from typing import Optional, Union
 
-from fastapi import Depends, HTTPException, Query, Request, Header
+from fastapi import Depends, Header, HTTPException, Query, Request
 from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
-from agno.os.router.traces.schemas import (
-    TraceDetailResponse,
-    TraceNodeResponse,
-    TraceSessionStatsResponse,
-    TraceSummaryResponse,
-)
 from agno.os.router.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -20,6 +14,12 @@ from agno.os.router.schema import (
     PaginationInfo,
     UnauthenticatedResponse,
     ValidationErrorResponse,
+)
+from agno.os.router.traces.schemas import (
+    TraceDetailResponse,
+    TraceNodeResponse,
+    TraceSessionStatsResponse,
+    TraceSummaryResponse,
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db, timestamp_to_datetime

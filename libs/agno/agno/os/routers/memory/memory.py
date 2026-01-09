@@ -10,7 +10,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
 from agno.models.utils import get_model
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
-from agno.os.routers.memory.schema import (
+from agno.os.router.memory.schema import (
     DeleteMemoriesRequest,
     MemoryConfigResponse,
     OptimizeMemoriesRequest,
@@ -181,7 +181,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             await db.delete_user_memory(memory_id=memory_id, user_id=user_id)
         else:
             db.delete_user_memory(memory_id=memory_id, user_id=user_id)
-            
+
         return None
 
     @router.delete(
@@ -223,7 +223,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             await db.delete_user_memories(memory_ids=request.memory_ids, user_id=request.user_id)
         else:
             db.delete_user_memories(memory_ids=request.memory_ids, user_id=request.user_id)
-        
+
         return None
 
     @router.get(

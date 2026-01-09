@@ -413,4 +413,3 @@ class TraceDetailResponse(BaseModel):
 
         # Build tree starting from roots
         return [build_node(root, is_root=True) for root in root_spans]
-

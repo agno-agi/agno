@@ -12,7 +12,7 @@ from agno.utils.agent import validate_input
 from agno.utils.remote import serialize_input
 
 if TYPE_CHECKING:
-    from agno.os.routers.workflows.schema import WorkflowResponse
+    from agno.os.router.workflows.schema import WorkflowResponse
 
 
 class RemoteWorkflow(BaseRemote):

@@ -5,16 +5,23 @@ from pydantic import BaseModel, Field, model_serializer
 
 from agno.agent import Agent
 from agno.os.router.agents.schema import AgentResponse
-from agno.os.router.schema import DatabaseConfigResponse, HookResponse, ModelResponse, TableNameResponse, ToolDefinitionResponse
+from agno.os.router.schema import (
+    DatabaseConfigResponse,
+    HookResponse,
+    ModelResponse,
+    TableNameResponse,
+    ToolDefinitionResponse,
+)
 from agno.os.utils import (
+    filter_meaningful_config,
     format_team_tools,
-    get_team_input_schema_dict, filter_meaningful_config,
+    get_team_input_schema_dict,
     remove_none_values,
 )
 from agno.run import RunContext
 from agno.run.team import TeamRunOutput
 from agno.session import TeamSession
-from agno.team import Team, RemoteTeam
+from agno.team import RemoteTeam, Team
 from agno.utils.agent import aexecute_instructions, aexecute_system_message
 
 
@@ -28,7 +35,6 @@ class TeamMinimalResponse(BaseModel):
     def from_team(cls, team: Union[Team, RemoteTeam]) -> "TeamMinimalResponse":
         db_id = team.db.id if team.db else None
         return cls(id=team.id, name=team.name, description=team.description, db_id=db_id)
-
 
 
 class TeamResponse(BaseModel):
@@ -129,7 +135,7 @@ class TeamResponse(BaseModel):
                 config=config,
             )
 
-        memory_info = {
+        memory_info: Dict[str, Any] = {
             "enable_agentic_memory": team.enable_agentic_memory,
             "enable_user_memories": team.enable_user_memories,
         }
@@ -140,7 +146,7 @@ class TeamResponse(BaseModel):
                 provider=team.memory_manager.model.provider,
             ).model_dump()
 
-        reasoning_info = {
+        reasoning_info: Dict[str, Any] = {
             "reasoning": team.reasoning,
             "reasoning_agent_id": team.reasoning_agent.id if team.reasoning_agent else None,
             "reasoning_min_steps": team.reasoning_min_steps,
@@ -185,7 +191,9 @@ class TeamResponse(BaseModel):
                 name=team.parser_model.name,
                 model=team.parser_model.id,
                 provider=team.parser_model.provider,
-            ).model_dump() if team.parser_model else None,
+            ).model_dump()
+            if team.parser_model
+            else None,
             "parse_response": team.parse_response,
             "use_json_mode": team.use_json_mode,
         }

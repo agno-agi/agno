@@ -12,13 +12,12 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency, require_resource_access
-from agno.os.router.teams.schema import TeamResponse, TeamMinimalResponse
 from agno.os.router.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -27,6 +26,7 @@ from agno.os.router.schema import (
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
+from agno.os.router.teams.schema import TeamMinimalResponse, TeamResponse
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     format_sse_event,
@@ -38,7 +38,7 @@ from agno.os.utils import (
     process_video,
 )
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
-from agno.team import Team, RemoteTeam
+from agno.team import RemoteTeam, Team
 from agno.utils.log import log_warning, logger
 
 if TYPE_CHECKING:
@@ -439,7 +439,7 @@ def get_team_router(
         else:
             accessible_teams = os.teams
 
-        teams: List[dict] = []
+        teams: List[Union[TeamMinimalResponse, TeamResponse]] = []
         for team in accessible_teams:
             if minimal:
                 if isinstance(team, RemoteTeam):

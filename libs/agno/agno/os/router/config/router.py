@@ -9,8 +9,7 @@ from fastapi import (
 from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import get_authentication_dependency
 from agno.os.router.agents.schema import AgentMinimalResponse
-from agno.os.router.teams.schema import TeamMinimalResponse
-from agno.os.router.workflows.schema import WorkflowMinimalResponse
+from agno.os.router.config.schema import AgentOSConfigResponse, InterfaceResponse, Model
 from agno.os.router.schema import (
     BadRequestResponse,
     DatabaseConfigResponse,
@@ -20,7 +19,8 @@ from agno.os.router.schema import (
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
-from agno.os.router.config.schema import AgentOSConfigResponse, InterfaceResponse, Model
+from agno.os.router.teams.schema import TeamMinimalResponse
+from agno.os.router.workflows.schema import WorkflowMinimalResponse
 from agno.os.settings import AgnoAPISettings
 
 if TYPE_CHECKING:
@@ -155,7 +155,7 @@ def get_config_router(
                 status_code=502,
                 detail=f"Failed to fetch config from remote AgentOS: {e}",
             )
-            
+
         databases = []
         os_database = None
         for db_id, dbs in os.dbs.items():
@@ -167,16 +167,20 @@ def get_config_router(
                     config=config,
                 )
                 databases.append(database)
-            
+
         if os.db:
             table_names, config = os.db.to_config()
-            os_database = DatabaseConfigResponse(id=os.db.id, table_names=[TableNameResponse(type=type, name=name) for type, name in table_names], config=config)
+            os_database = DatabaseConfigResponse(
+                id=os.db.id,
+                table_names=[TableNameResponse(type=type, name=name) for type, name in table_names],
+                config=config,
+            )
 
         return AgentOSConfigResponse(
             id=os.id,
             name=os.name,
             description=os.description,
-            available_models=os.config.available_models if os.config else [],   
+            available_models=os.config.available_models if os.config else [],
             os_database=os_database,
             databases=databases,
             chat=os.config.chat if os.config else None,

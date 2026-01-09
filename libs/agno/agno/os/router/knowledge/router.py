@@ -3,7 +3,19 @@ import logging
 import math
 from typing import Any, Dict, List, Optional, Union
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, Request, UploadFile, Header
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Path,
+    Query,
+    Request,
+    UploadFile,
+)
 
 from agno.db.base import AsyncBaseDb
 from agno.knowledge.content import Content, FileData
@@ -14,11 +26,11 @@ from agno.knowledge.utils import get_all_chunkers_info, get_all_readers_info, ge
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.router.knowledge.schema import (
     ChunkerResponse,
-    ConfigResponseResponse,
-    ContentResponseResponse,
+    ContentResponse,
     ContentStatus,
     ContentStatusResponse,
     ContentUpdateRequest,
+    KnowledgeConfigResponse,
     ReaderResponse,
     VectorDbResponse,
     VectorSearchRequest,
@@ -71,7 +83,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             "Upload content to the knowledge base. Supports file uploads, text content, or URLs. "
             "Content is processed asynchronously in the background. Supports custom readers and chunking strategies."
         ),
-        response_model=ContentResponseResponse,
+        response_model=ContentResponse,
         response_model_exclude_unset=True,
         responses={
             202: {
@@ -200,7 +212,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
 
         background_tasks.add_task(process_content, knowledge, content, reader_id, chunker, chunk_size, chunk_overlap)
 
-        response = ContentResponseResponse(
+        response = ContentResponse(
             id=content.id,
             name=name,
             description=description,
@@ -211,7 +223,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
 
     @router.patch(
         "/knowledge/content/{content_id}",
-        response_model=ContentResponseResponse,
+        response_model=ContentResponse,
         response_model_exclude_unset=True,
         status_code=200,
         operation_id="update_content",
@@ -257,7 +269,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         metadata: Optional[str] = Form(None, description="Content metadata as JSON string"),
         reader_id: Optional[str] = Form(None, description="ID of the reader to use for processing"),
         db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="The ID of the database to use"),
-    ) -> Optional[ContentResponseResponse]:
+    ) -> Optional[ContentResponse]:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
 
         # Parse metadata JSON string if provided
@@ -316,11 +328,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         if not updated_content_dict:
             raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
 
-        return ContentResponseResponse.from_dict(updated_content_dict)
+        return ContentResponse.from_dict(updated_content_dict)
 
     @router.get(
         "/knowledge/content",
-        response_model=PaginatedResponse[ContentResponseResponse],
+        response_model=PaginatedResponse[ContentResponse],
         status_code=200,
         operation_id="get_content",
         summary="List Content",
@@ -364,7 +376,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
         db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="The ID of the database to use"),
-    ) -> PaginatedResponse[ContentResponseResponse]:
+    ) -> PaginatedResponse[ContentResponse]:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
 
         if isinstance(knowledge, RemoteKnowledge):
@@ -383,7 +395,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
 
         return PaginatedResponse(
             data=[
-                ContentResponseResponse.from_dict(
+                ContentResponse.from_dict(
                     {
                         "id": content.id,
                         "name": content.name,
@@ -409,7 +421,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
 
     @router.get(
         "/knowledge/content/{content_id}",
-        response_model=ContentResponseResponse,
+        response_model=ContentResponse,
         response_model_exclude_unset=True,
         status_code=200,
         operation_id="get_content_by_id",
@@ -444,7 +456,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         request: Request,
         content_id: str,
         db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="The ID of the database to use"),
-    ) -> ContentResponseResponse:
+    ) -> ContentResponse:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(request)
@@ -454,7 +466,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         content = await knowledge.aget_content_by_id(content_id=content_id)
         if not content:
             raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
-        response = ContentResponseResponse.from_dict(
+        response = ContentResponse.from_dict(
             {
                 "id": content_id,
                 "name": content.name,
@@ -487,7 +499,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         request: Request,
         content_id: str,
         db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="The ID of the database to use"),
-    ) -> ContentResponseResponse:
+    ) -> None:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(request)
@@ -515,7 +527,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     async def delete_all_content(
         request: Request,
         db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="The ID of the database to use"),
-    ):
+    ) -> None:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(request)
@@ -717,7 +729,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             "Retrieve available readers, chunkers, and configuration options for content processing. "
             "This endpoint provides metadata about supported file types, processing strategies, and filters."
         ),
-        response_model=ConfigResponseResponse,
+        response_model=KnowledgeConfigResponse,
         response_model_exclude_unset=True,
         responses={
             200: {
@@ -969,7 +981,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     async def get_config(
         request: Request,
         db_id: Optional[str] = Header(default=None, alias="X-DB-ID", description="The ID of the database to use"),
-    ) -> ConfigResponseResponse:
+    ) -> KnowledgeConfigResponse:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
 
         if isinstance(knowledge, RemoteKnowledge):
@@ -1045,7 +1057,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 )
             )
         filters = await knowledge.async_get_valid_filters()
-        return ConfigResponseResponse(
+        return KnowledgeConfigResponse(
             readers=reader_schemas,
             vector_dbs=vector_dbs,
             readersForType=types_of_readers,

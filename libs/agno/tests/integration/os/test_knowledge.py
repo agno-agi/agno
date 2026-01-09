@@ -6,13 +6,13 @@ from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
 import pytest
+from agno.os.routers.knowledge.knowledge import attach_routes
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import ContentStatus, Knowledge
-from agno.os.routers.knowledge.knowledge import attach_routes
 
 
 @pytest.fixture

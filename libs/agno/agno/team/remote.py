@@ -14,7 +14,7 @@ from agno.utils.log import log_warning
 from agno.utils.remote import serialize_input
 
 if TYPE_CHECKING:
-    from agno.os.routers.teams.schema import TeamResponse
+    from agno.os.router.teams.schema import TeamResponse
 
 
 class RemoteTeam(BaseRemote):
@@ -63,7 +63,7 @@ class RemoteTeam(BaseRemote):
         Returns:
             TeamResponse: The remote team configuration.
         """
-        from agno.os.routers.teams.schema import TeamResponse
+        from agno.os.router.teams.schema import TeamResponse
 
         if self.a2a_client:
             from agno.client.a2a.schemas import AgentCard
@@ -89,7 +89,7 @@ class RemoteTeam(BaseRemote):
         """
         import time
 
-        from agno.os.routers.teams.schema import TeamResponse
+        from agno.os.router.teams.schema import TeamResponse
 
         if self.a2a_client:
             from agno.client.a2a.schemas import AgentCard
@@ -119,7 +119,7 @@ class RemoteTeam(BaseRemote):
         """
         import time
 
-        from agno.os.routers.teams.schema import TeamResponse
+        from agno.os.router.teams.schema import TeamResponse
 
         if self.a2a_client:
             return None

@@ -46,7 +46,7 @@ from agno.os.router.metrics import get_metrics_router
 from agno.os.router.session import get_session_router
 from agno.os.router.teams import get_team_router
 from agno.os.router.traces import get_traces_router
-from agno.os.router.workflows import get_workflow_router, get_websocket_router
+from agno.os.router.workflows import get_websocket_router, get_workflow_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     collect_mcp_tools_from_team,
@@ -179,7 +179,7 @@ class AgentOS:
             telemetry: Whether to enable telemetry
 
         """
-        
+
         if not agents and not workflows and not teams and not knowledge:
             raise ValueError("Either agents, teams, workflows or knowledge bases must be provided.")
 

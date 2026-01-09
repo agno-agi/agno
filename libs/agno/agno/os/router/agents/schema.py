@@ -5,13 +5,20 @@ from pydantic import BaseModel, Field, model_serializer
 
 from agno.agent import Agent, RemoteAgent
 from agno.models.message import Message
-from agno.os.router.schema import DatabaseConfigResponse, HookResponse, MessageResponse, ModelResponse, TableNameResponse, ToolDefinitionResponse
+from agno.os.router.schema import (
+    DatabaseConfigResponse,
+    HookResponse,
+    MessageResponse,
+    ModelResponse,
+    TableNameResponse,
+    ToolDefinitionResponse,
+)
 from agno.os.utils import (
+    filter_meaningful_config,
     format_tools,
     get_agent_input_schema_dict,
     remove_none_values,
     to_utc_datetime,
-    filter_meaningful_config,
 )
 from agno.run import RunContext
 from agno.run.agent import RunOutput
@@ -19,19 +26,17 @@ from agno.session import AgentSession
 from agno.utils.agent import aexecute_instructions, aexecute_system_message
 
 
-
 class AgentMinimalResponse(BaseModel):
     id: Optional[str] = Field(None, description="Unique identifier for the agent")
     name: Optional[str] = Field(None, description="Name of the agent")
     description: Optional[str] = Field(None, description="Description of the agent")
     db_id: Optional[str] = Field(None, description="Database identifier")
-    
+
     # TODO: Add more minimal fields as needed.
 
     @classmethod
     def from_agent(cls, agent: Union[Agent, RemoteAgent]) -> "AgentMinimalResponse":
         return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
-
 
 
 class AgentResponse(BaseModel):
@@ -103,7 +108,6 @@ class AgentResponse(BaseModel):
 
     @classmethod
     async def from_agent(cls, agent: Agent) -> "AgentResponse":
-
         # Define default values for filtering
         agent_defaults = cls.get_default_values()
 
@@ -130,7 +134,6 @@ class AgentResponse(BaseModel):
             _agent_model_data["provider"] = model_provider
         model = ModelResponse(**_agent_model_data) if _agent_model_data else None
 
-
         database: Optional[DatabaseConfigResponse] = None
         if agent.db:
             table_names, config = agent.db.to_config()
@@ -140,13 +143,18 @@ class AgentResponse(BaseModel):
                 config=config,
             )
 
-
         additional_input = agent.additional_input
         if additional_input and isinstance(additional_input[0], Message):
-            additional_input = [MessageResponse(role=message.role, content=message.content, created_at=to_utc_datetime(message.created_at)) for message in additional_input]  # type: ignore
+            additional_input = [
+                MessageResponse(
+                    role=message.role,  # type: ignore
+                    content=message.content,  # type: ignore
+                    created_at=to_utc_datetime(message.created_at),  # type: ignore
+                )
+                for message in additional_input
+            ]
 
-
-        memory_info = {
+        memory_info: Dict[str, Any] = {
             "enable_agentic_memory": agent.enable_agentic_memory,
             "enable_user_memories": agent.enable_user_memories,
         }
@@ -157,7 +165,7 @@ class AgentResponse(BaseModel):
                 provider=agent.memory_manager.model.provider,
             ).model_dump()
 
-        reasoning_info = {
+        reasoning_info: Dict[str, Any] = {
             "reasoning": agent.reasoning,
             "reasoning_agent_id": agent.reasoning_agent.id if agent.reasoning_agent else None,
             "reasoning_min_steps": agent.reasoning_min_steps,
@@ -169,7 +177,6 @@ class AgentResponse(BaseModel):
                 model=agent.reasoning_model.id,
                 provider=agent.reasoning_model.provider,
             ).model_dump()
-
 
         instructions = agent.instructions if agent.instructions else None
         if instructions and callable(instructions):
@@ -204,17 +211,20 @@ class AgentResponse(BaseModel):
                 name=agent.parser_model.name,
                 model=agent.parser_model.id,
                 provider=agent.parser_model.provider,
-            ).model_dump() if agent.parser_model else None,
+            ).model_dump()
+            if agent.parser_model
+            else None,
             "output_model": ModelResponse(
                 name=agent.output_model.name,
                 model=agent.output_model.id,
                 provider=agent.output_model.provider,
-            ).model_dump() if agent.output_model else None,
+            ).model_dump()
+            if agent.output_model
+            else None,
             "parse_response": agent.parse_response,
             "structured_outputs": agent.structured_outputs,
             "use_json_mode": agent.use_json_mode,
             "save_response_to_file": agent.save_response_to_file,
-
         }
 
         # Extract pre/post hooks information

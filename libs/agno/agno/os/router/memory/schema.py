@@ -120,11 +120,12 @@ class OptimizeMemoriesResponse(BaseModel):
         data = handler(self)
         return remove_none_values(data)
 
+
 class MemoryConfigResponse(BaseModel):
     """Schema for memory configuration"""
 
     topics: List[str] = Field(..., description="List of topics or tags")
-    
+
     @model_serializer(mode="wrap")
     def serialize_model(self, handler) -> Dict[str, Any]:
         """Custom serializer that recursively removes None values from nested structures."""

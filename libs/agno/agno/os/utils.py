@@ -14,6 +14,7 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
+from agno.os.router.schema import ToolDefinitionResponse
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
@@ -22,6 +23,7 @@ from agno.team import RemoteTeam, Team
 from agno.tools import Function, Toolkit
 from agno.utils.log import log_warning, logger
 from agno.workflow import RemoteWorkflow, Workflow
+
 
 def filter_meaningful_config(d: Dict[str, Any], defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Filter out fields that match their default values, keeping only meaningful user configurations"""
@@ -384,7 +386,7 @@ def get_session_name(session: Dict[str, Any]) -> str:
     return ""
 
 
-def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
+def extract_input_media(run_dict: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     input_media: Dict[str, List[Any]] = {
         "images": [],
         "videos": [],
@@ -458,8 +460,12 @@ def extract_format(file: UploadFile) -> Optional[str]:
 
     return None
 
-def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]) -> List["ToolDefinitionResponse"]:
+
+def format_tools(
+    agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]],
+) -> List["ToolDefinitionResponse"]:
     from agno.os.router.schema import ToolDefinitionResponse
+
     formatted_tools: List[ToolDefinitionResponse] = []
     if agent_tools is not None:
         for tool in agent_tools:
@@ -470,12 +476,18 @@ def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Call
                     formatted_tools.append(ToolDefinitionResponse(raw=tool))
             elif isinstance(tool, Toolkit):
                 for _, f in tool.functions.items():
-                    formatted_tools.append(ToolDefinitionResponse(name=f.name, description=f.description, parameters=f.parameters))
+                    formatted_tools.append(
+                        ToolDefinitionResponse(name=f.name, description=f.description, parameters=f.parameters)
+                    )
             elif isinstance(tool, Function):
-                formatted_tools.append(ToolDefinitionResponse(name=tool.name, description=tool.description, parameters=tool.parameters))
+                formatted_tools.append(
+                    ToolDefinitionResponse(name=tool.name, description=tool.description, parameters=tool.parameters)
+                )
             elif callable(tool):
                 func = Function.from_callable(tool)
-                formatted_tools.append(ToolDefinitionResponse(name=tool.name, description=tool.description, parameters=tool.parameters))
+                formatted_tools.append(
+                    ToolDefinitionResponse(name=func.name, description=func.description, parameters=func.parameters)
+                )
             else:
                 logger.warning(f"Unknown tool type: {type(tool)}")
     return formatted_tools
@@ -1013,36 +1025,6 @@ def timestamp_to_datetime(datetime_str: str, param_name: str = "datetime") -> "d
             status_code=400,
             detail=f"Invalid {param_name} format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z' or '2025-11-19T10:00:00+05:30'): {e}",
         )
-
-
-def format_team_tools(team_tools: List[Union[Function, dict]]):
-    formatted_tools: List[Dict] = []
-    if team_tools is not None:
-        for tool in team_tools:
-            if isinstance(tool, dict):
-                formatted_tools.append(tool)
-            elif isinstance(tool, Function):
-                formatted_tools.append(tool.to_dict())
-    return formatted_tools
-
-
-def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):
-    formatted_tools: List[Dict] = []
-    if agent_tools is not None:
-        for tool in agent_tools:
-            if isinstance(tool, dict):
-                formatted_tools.append(tool)
-            elif isinstance(tool, Toolkit):
-                for _, f in tool.functions.items():
-                    formatted_tools.append(f.to_dict())
-            elif isinstance(tool, Function):
-                formatted_tools.append(tool.to_dict())
-            elif callable(tool):
-                func = Function.from_callable(tool)
-                formatted_tools.append(func.to_dict())
-            else:
-                logger.warning(f"Unknown tool type: {type(tool)}")
-    return formatted_tools
 
 
 def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any], BaseModel]) -> str:

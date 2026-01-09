@@ -49,7 +49,7 @@ class BaseDb(ABC):
         self.trace_table_name = traces_table or "agno_traces"
         self.span_table_name = spans_table or "agno_spans"
         self.versions_table_name = versions_table or "agno_schema_versions"
-        
+
     def to_config(self) -> Tuple[List[Tuple[str, str]], Dict[str, Any]]:
         config = {}
         if hasattr(self, "db_url") and self.db_url is not None:
@@ -62,7 +62,7 @@ class BaseDb(ABC):
             config["db_path"] = self.db_path
         if hasattr(self, "db_prefix") and self.db_prefix is not None:
             config["db_prefix"] = self.db_prefix
-        
+
         table_names = [
             ("sessions", self.session_table_name),
             ("culture", self.culture_table_name),
@@ -74,7 +74,7 @@ class BaseDb(ABC):
             ("spans", self.span_table_name),
             ("versions", self.versions_table_name),
         ]
-        
+
         return table_names, config
 
     @abstractmethod
@@ -551,6 +551,33 @@ class AsyncBaseDb(ABC):
         self.span_table_name = spans_table or "agno_spans"
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
+
+    def to_config(self) -> Tuple[List[Tuple[str, str]], Dict[str, Any]]:
+        config = {}
+        if hasattr(self, "db_url") and self.db_url is not None:
+            config["db_url"] = self.db_url
+        if hasattr(self, "db_schema") and self.db_schema is not None:
+            config["db_schema"] = self.db_schema
+        if hasattr(self, "db_file") and self.db_file is not None:
+            config["db_file"] = self.db_file
+        if hasattr(self, "db_path") and self.db_path is not None:
+            config["db_path"] = self.db_path
+        if hasattr(self, "db_prefix") and self.db_prefix is not None:
+            config["db_prefix"] = self.db_prefix
+
+        table_names = [
+            ("sessions", self.session_table_name),
+            ("culture", self.culture_table_name),
+            ("memories", self.memory_table_name),
+            ("metrics", self.metrics_table_name),
+            ("evals", self.eval_table_name),
+            ("knowledge", self.knowledge_table_name),
+            ("traces", self.trace_table_name),
+            ("spans", self.span_table_name),
+            ("versions", self.versions_table_name),
+        ]
+
+        return table_names, config
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""

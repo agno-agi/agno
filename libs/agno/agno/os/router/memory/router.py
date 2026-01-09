@@ -181,7 +181,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             await db.delete_user_memory(memory_id=memory_id, user_id=user_id)
         else:
             db.delete_user_memory(memory_id=memory_id, user_id=user_id)
-            
+
         return None
 
     @router.delete(
@@ -223,7 +223,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             await db.delete_user_memories(memory_ids=request.memory_ids, user_id=request.user_id)
         else:
             db.delete_user_memories(memory_ids=request.memory_ids, user_id=request.user_id)
-        
+
         return None
 
     @router.get(

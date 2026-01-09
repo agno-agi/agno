@@ -4,6 +4,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
+from fastapi import HTTPException
 from fastmcp import FastMCP
 from fastmcp.server.http import (
     StarletteWithLifespan,
@@ -11,23 +12,16 @@ from fastmcp.server.http import (
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.schemas import UserMemory
-from agno.os.routers.memory.schema import (
+from agno.exceptions import RemoteServerUnavailableError
+from agno.os.router.agents.schema import AgentMinimalResponse
+from agno.os.router.config.schema import AgentOSConfigResponse, InterfaceResponse
+from agno.os.router.memory.schema import (
     UserMemoryResponse,
 )
-from agno.os.router.schema import (
-    AgentSessionDetailSchema,
-    AgentMinimalResponse,
-    ConfigResponse,
-    InterfaceResponse,
-    RunSchema,
-    SessionSchema,
-    TeamRunSchema,
-    TeamSessionDetailSchema,
-    TeamMinimalResponse,
-    WorkflowRunSchema,
-    WorkflowSessionDetailSchema,
-    WorkflowMinimalResponse,
-)
+from agno.os.router.schema import DatabaseConfigResponse, TableNameResponse
+from agno.os.router.session.schema import RunResponse, SessionResponse
+from agno.os.router.teams.schema import TeamMinimalResponse
+from agno.os.router.workflows.schema import WorkflowMinimalResponse
 from agno.os.utils import (
     get_agent_by_id,
     get_db,
@@ -58,24 +52,62 @@ def get_mcp_server(
         name="get_agentos_config",
         description="Get the configuration of the AgentOS",
         tags={"core"},
-        output_schema=ConfigResponse.model_json_schema(),
+        output_schema=AgentOSConfigResponse.model_json_schema(),
     )  # type: ignore
-    async def config() -> ConfigResponse:
-        return ConfigResponse(
-            os_id=os.id or "AgentOS",
+    async def config() -> AgentOSConfigResponse:
+        try:
+            agent_summaries = []
+            if os.agents:
+                for agent in os.agents:
+                    agent_summaries.append(AgentMinimalResponse.from_agent(agent))
+
+            team_summaries = []
+            if os.teams:
+                for team in os.teams:
+                    team_summaries.append(TeamMinimalResponse.from_team(team))
+
+            workflow_summaries = []
+            if os.workflows:
+                for workflow in os.workflows:
+                    workflow_summaries.append(WorkflowMinimalResponse.from_workflow(workflow))
+        except RemoteServerUnavailableError as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to fetch config from remote AgentOS: {e}",
+            )
+
+        databases = []
+        os_database = None
+        for db_id, dbs in os.dbs.items():
+            for db in dbs:
+                table_names, config = db.to_config()
+                database = DatabaseConfigResponse(
+                    id=db_id,
+                    table_names=[TableNameResponse(type=type, name=name) for type, name in table_names],
+                    config=config,
+                )
+                databases.append(database)
+
+        if os.db:
+            table_names, config = os.db.to_config()
+            os_database = DatabaseConfigResponse(
+                id=os.db.id,
+                table_names=[TableNameResponse(type=type, name=name) for type, name in table_names],
+                config=config,
+            )
+
+        return AgentOSConfigResponse(
+            id=os.id,
+            name=os.name,
             description=os.description,
             available_models=os.config.available_models if os.config else [],
-            databases=[db.id for db_list in os.dbs.values() for db in db_list],
+            os_database=os_database,
+            databases=databases,
             chat=os.config.chat if os.config else None,
-            session=os._get_session_config(),
-            memory=os._get_memory_config(),
-            knowledge=os._get_knowledge_config(),
-            evals=os._get_evals_config(),
-            metrics=os._get_metrics_config(),
+            agents=agent_summaries,
+            teams=team_summaries,
+            workflows=workflow_summaries,
             traces=os._get_traces_config(),
-            agents=[AgentMinimalResponse.from_agent(agent) for agent in os.agents] if os.agents else [],
-            teams=[TeamMinimalResponse.from_team(team) for team in os.teams] if os.teams else [],
-            workflows=[WorkflowMinimalResponse.from_workflow(w) for w in os.workflows] if os.workflows else [],
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.prefix)
                 for interface in os.interfaces
@@ -166,7 +198,7 @@ def get_mcp_server(
             )
 
         return {
-            "data": [SessionSchema.from_dict(session).model_dump() for session in sessions],  # type: ignore
+            "data": [SessionResponse.from_dict(session).model_dump() for session in sessions],  # type: ignore
             "meta": {
                 "page": page,
                 "limit": limit,
@@ -208,12 +240,7 @@ def get_mcp_server(
         if not session:
             raise Exception(f"Session {session_id} not found")
 
-        if session_type_enum == SessionType.AGENT:
-            return AgentSessionDetailSchema.from_session(session).model_dump()  # type: ignore
-        elif session_type_enum == SessionType.TEAM:
-            return TeamSessionDetailSchema.from_session(session).model_dump()  # type: ignore
-        else:
-            return WorkflowSessionDetailSchema.from_session(session).model_dump()  # type: ignore
+        return SessionResponse.from_session(session).model_dump()  # type: ignore
 
     @mcp.tool(
         name="create_session",
@@ -306,12 +333,7 @@ def get_mcp_server(
         if not created_session:
             raise Exception("Failed to create session")
 
-        if session_type_enum == SessionType.AGENT:
-            return AgentSessionDetailSchema.from_session(created_session).model_dump()  # type: ignore
-        elif session_type_enum == SessionType.TEAM:
-            return TeamSessionDetailSchema.from_session(created_session).model_dump()  # type: ignore
-        else:
-            return WorkflowSessionDetailSchema.from_session(created_session).model_dump()  # type: ignore
+        return SessionResponse.from_session(created_session).model_dump()  # type: ignore
 
     @mcp.tool(
         name="get_session_runs",
@@ -355,20 +377,7 @@ def get_mcp_server(
 
         run_responses: List[Dict[str, Any]] = []
         for run in runs:
-            if session_type_enum == SessionType.AGENT:
-                run_responses.append(RunSchema.from_dict(run).model_dump())
-            elif session_type_enum == SessionType.TEAM:
-                if run.get("agent_id") is not None:
-                    run_responses.append(RunSchema.from_dict(run).model_dump())
-                else:
-                    run_responses.append(TeamRunSchema.from_dict(run).model_dump())
-            else:
-                if run.get("workflow_id") is not None:
-                    run_responses.append(WorkflowRunSchema.from_dict(run).model_dump())
-                elif run.get("team_id") is not None:
-                    run_responses.append(TeamRunSchema.from_dict(run).model_dump())
-                else:
-                    run_responses.append(RunSchema.from_dict(run).model_dump())
+            run_responses.append(RunResponse.from_dict(run).model_dump())
 
         return run_responses
 
@@ -423,12 +432,7 @@ def get_mcp_server(
         if not target_run:
             raise Exception(f"Run {run_id} not found in session {session_id}")
 
-        if target_run.get("workflow_id") is not None:
-            return WorkflowRunSchema.from_dict(target_run).model_dump()
-        elif target_run.get("team_id") is not None:
-            return TeamRunSchema.from_dict(target_run).model_dump()
-        else:
-            return RunSchema.from_dict(target_run).model_dump()
+        return RunResponse.from_dict(target_run).model_dump()
 
     @mcp.tool(
         name="rename_session",
@@ -467,12 +471,7 @@ def get_mcp_server(
         if not session:
             raise Exception(f"Session {session_id} not found")
 
-        if session_type_enum == SessionType.AGENT:
-            return AgentSessionDetailSchema.from_session(session).model_dump()  # type: ignore
-        elif session_type_enum == SessionType.TEAM:
-            return TeamSessionDetailSchema.from_session(session).model_dump()  # type: ignore
-        else:
-            return WorkflowSessionDetailSchema.from_session(session).model_dump()  # type: ignore
+        return SessionResponse.from_session(session).model_dump()  # type: ignore
 
     @mcp.tool(
         name="update_session",
@@ -547,12 +546,7 @@ def get_mcp_server(
         if not updated_session:
             raise Exception("Failed to update session")
 
-        if session_type_enum == SessionType.AGENT:
-            return AgentSessionDetailSchema.from_session(updated_session).model_dump()  # type: ignore
-        elif session_type_enum == SessionType.TEAM:
-            return TeamSessionDetailSchema.from_session(updated_session).model_dump()  # type: ignore
-        else:
-            return WorkflowSessionDetailSchema.from_session(updated_session).model_dump()  # type: ignore
+        return SessionResponse.from_session(updated_session).model_dump()  # type: ignore
 
     @mcp.tool(
         name="delete_session",
