@@ -356,6 +356,7 @@ class Function(BaseModel):
                 "agent",
                 "team",
                 "run_context",
+                "session_state",
                 "self",
                 "images",
                 "videos",

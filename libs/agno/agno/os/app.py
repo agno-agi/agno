@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -87,11 +87,31 @@ async def http_client_lifespan(_):
 
 
 @asynccontextmanager
-async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
-    """Initializes databases in the event loop and closes them on shutdown."""
+async def agent_os_lifespan(app: FastAPI, agent_os: "AgentOS"):
+    """Lifespan orchestrating all initialization logic for AgentOS."""
+    # 1. Initialize agents, teams, and workflows
+    await agent_os._async_initialize_agents()
+    await agent_os._async_initialize_teams()
+    await agent_os._async_initialize_workflows()
+
+    # 2. Discover databases and knowledge instances
+    agent_os._auto_discover_databases()
+    agent_os._auto_discover_knowledge_instances()
+
+    # 3. Provision databases
     if agent_os.auto_provision_dbs:
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
+
+    # 4. Setup tracing
+    if agent_os.tracing:
+        agent_os._setup_tracing()
+
+    # 5. Setup telemetry
+    if agent_os.telemetry:
+        from agno.api.os import OSLaunch, log_os_telemetry
+
+        log_os_telemetry(launch=OSLaunch(os_id=agent_os.id, data=agent_os._get_telemetry_data()))
 
     yield
 
@@ -231,24 +251,28 @@ class AgentOS:
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
 
-        # List of all MCP tools used inside the AgentOS
         self.mcp_tools: List[Any] = []
         self._mcp_app: Optional[Any] = None
 
-        self._initialize_agents()
-        self._initialize_teams()
-        self._initialize_workflows()
+        self._initialized = False
 
-        # Check for duplicate IDs
+        # Ensure IDs are set for all entities and raise if duplicates.
+        self._ensure_entity_ids()
         self._raise_if_duplicate_ids()
 
-        if self.tracing:
-            self._setup_tracing()
+    def _ensure_entity_ids(self) -> None:
+        """Ensure all agents, teams, and workflows have IDs set."""
+        for agent in self.agents or []:
+            if hasattr(agent, "set_id"):
+                agent.set_id()
 
-        if self.telemetry:
-            from agno.api.os import OSLaunch, log_os_telemetry
+        for team in self.teams or []:
+            if hasattr(team, "set_id"):
+                team.set_id()
 
-            log_os_telemetry(launch=OSLaunch(os_id=self.id, data=self._get_telemetry_data()))
+        for workflow in self.workflows or []:
+            if workflow.id is None and workflow.name:
+                workflow.id = generate_id_from_name(workflow.name)
 
     def _add_agent_os_to_lifespan_function(self, lifespan):
         """
@@ -410,8 +434,110 @@ class AgentOS:
             lifespan=app_lifespan,
         )
 
+    async def _async_initialize_agents(self) -> None:
+        """Initialize and configure all agents for AgentOS usage (async version for lifespan)."""
+        if not self.agents:
+            return
+        for agent in self.agents:
+            if isinstance(agent, RemoteAgent):
+                continue
+            # Set the default db to agents without their own
+            if self.db is not None and agent.db is None:
+                agent.db = self.db
+            # Track all MCP tools to later handle their connection
+            if agent.tools:
+                for tool in agent.tools:
+                    # Checking if the tool is an instance of MCPTools, MultiMCPTools, or a subclass of those
+                    if hasattr(type(tool), "__mro__"):
+                        mro_names = {cls.__name__ for cls in type(tool).__mro__}
+                        if mro_names & {"MCPTools", "MultiMCPTools"}:
+                            if tool not in self.mcp_tools:
+                                self.mcp_tools.append(tool)
+
+            # Use async initialization if available, otherwise fall back to sync
+            async_init: Optional[Callable[[], Awaitable[None]]] = getattr(agent, "ainitialize_agent", None)
+            if async_init is not None and callable(async_init):
+                await async_init()
+            else:
+                agent.initialize_agent()
+
+            # Required for the built-in routes to work
+            agent.store_events = True
+
+            # Propagate run_hooks_in_background setting from AgentOS to agents
+            agent._run_hooks_in_background = self.run_hooks_in_background
+
+    async def _async_initialize_teams(self) -> None:
+        """Initialize and configure all teams for AgentOS usage (async version for lifespan)."""
+        if not self.teams:
+            return
+
+        for team in self.teams:
+            if isinstance(team, RemoteTeam):
+                continue
+            # Set the default db to teams without their own
+            if self.db is not None and team.db is None:
+                team.db = self.db
+            # Track all MCP tools recursively
+            collect_mcp_tools_from_team(team, self.mcp_tools)
+
+            # Use async initialization if available, otherwise fall back to sync
+            async_init: Optional[Callable[[], Awaitable[None]]] = getattr(team, "ainitialize_team", None)
+            if async_init is not None and callable(async_init):
+                await async_init()
+            else:
+                team.initialize_team()
+
+            for member in team.members:
+                if isinstance(member, Agent):
+                    member.team_id = None
+                    member_async_init: Optional[Callable[[], Awaitable[None]]] = getattr(
+                        member, "ainitialize_agent", None
+                    )
+                    if member_async_init is not None and callable(member_async_init):
+                        await member_async_init()
+                    else:
+                        member.initialize_agent()
+                elif isinstance(member, Team):
+                    member_async_init_team: Optional[Callable[[], Awaitable[None]]] = getattr(
+                        member, "ainitialize_team", None
+                    )
+                    if member_async_init_team is not None and callable(member_async_init_team):
+                        await member_async_init_team()
+                    else:
+                        member.initialize_team()
+
+            # Required for the built-in routes to work
+            team.store_events = True
+
+            # Propagate run_hooks_in_background setting to team and all nested members
+            team.propagate_run_hooks_in_background(self.run_hooks_in_background)
+
+    async def _async_initialize_workflows(self) -> None:
+        """Initialize and configure all workflows for AgentOS usage (async version for lifespan)."""
+        if not self.workflows:
+            return
+
+        for workflow in self.workflows:
+            if isinstance(workflow, RemoteWorkflow):
+                continue
+            # Set the default db to workflows without their own
+            if self.db is not None and workflow.db is None:
+                workflow.db = self.db
+            # Track MCP tools recursively in workflow members
+            collect_mcp_tools_from_workflow(workflow, self.mcp_tools)
+
+            if not workflow.id:
+                workflow.id = generate_id_from_name(workflow.name)
+
+            # Required for the built-in routes to work
+            workflow.store_events = True
+
+            # Propagate run_hooks_in_background setting to workflow and all its step agents/teams
+            workflow.propagate_run_hooks_in_background(self.run_hooks_in_background)
+
     def _initialize_agents(self) -> None:
-        """Initialize and configure all agents for AgentOS usage."""
+        """Initialize and configure all agents for AgentOS usage (sync version for resync)."""
         if not self.agents:
             return
         for agent in self.agents:
@@ -439,7 +565,7 @@ class AgentOS:
             agent._run_hooks_in_background = self.run_hooks_in_background
 
     def _initialize_teams(self) -> None:
-        """Initialize and configure all teams for AgentOS usage."""
+        """Initialize and configure all teams for AgentOS usage (sync version for resync)."""
         if not self.teams:
             return
 
@@ -470,7 +596,7 @@ class AgentOS:
             team.propagate_run_hooks_in_background(self.run_hooks_in_background)
 
     def _initialize_workflows(self) -> None:
-        """Initialize and configure all workflows for AgentOS usage."""
+        """Initialize and configure all workflows for AgentOS usage (sync version for resync)."""
         if not self.workflows:
             return
 
@@ -556,16 +682,15 @@ class AgentOS:
             if fastapi_app.router.lifespan_context:
                 lifespans.append(fastapi_app.router.lifespan_context)
 
-            # The MCP tools lifespan
-            if self.mcp_tools:
-                lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
+            # The main AgentOS initialization lifespan (agents, teams, workflows, DBs, tracing, telemetry)
+            lifespans.append(partial(agent_os_lifespan, agent_os=self))
+
+            # The MCP Tools lifespan. Runs after the main initialization lifespan where MCP discovery happens.
+            lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
 
             # The /mcp server lifespan
             if self.enable_mcp_server and self._mcp_app:
                 lifespans.append(self._mcp_app.lifespan)
-
-            # The async database lifespan
-            lifespans.append(partial(db_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
@@ -581,9 +706,11 @@ class AgentOS:
             if self.lifespan:
                 lifespans.append(self._add_agent_os_to_lifespan_function(self.lifespan))
 
-            # MCP tools lifespan
-            if self.mcp_tools:
-                lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
+            # The main AgentOS initialization lifespan. Runs before the MCP tools lifespan.
+            lifespans.append(partial(agent_os_lifespan, agent_os=self))
+
+            # MCP tools lifespan. Runs after the main initialization lifespan where MCP discovery happens.
+            lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
 
             # MCP server lifespan
             if self.enable_mcp_server:
@@ -591,9 +718,6 @@ class AgentOS:
 
                 self._mcp_app = get_mcp_server(self)
                 lifespans.append(self._mcp_app.lifespan)
-
-            # Async database initialization lifespan
-            lifespans.append(partial(db_lifespan, agent_os=self))  # type: ignore
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
@@ -603,8 +727,10 @@ class AgentOS:
 
         self._add_built_in_routes(app=fastapi_app)
 
-        self._auto_discover_databases()
-        self._auto_discover_knowledge_instances()
+        # These are populated in the main initialization lifespan.
+        self.dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]] = {}
+        self.knowledge_dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]] = {}
+        self.knowledge_instances: List[Knowledge | RemoteKnowledge] = []
 
         routers = [
             get_session_router(dbs=self.dbs),
@@ -893,8 +1019,9 @@ class AgentOS:
                 continue  # Skip sync dbs
 
             try:
-                if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
-                    await db._create_all_tables()
+                create_tables: Optional[Callable[[], Awaitable[None]]] = getattr(db, "_create_all_tables", None)
+                if create_tables is not None and callable(create_tables):
+                    await create_tables()
             except Exception as e:
                 log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {e}")
 
