@@ -18,6 +18,9 @@ class RunContext:
     session_id: str
     user_id: Optional[str] = None
 
+    workflow_id: Optional[str] = None
+    workflow_name: Optional[str] = None
+
     dependencies: Optional[Dict[str, Any]] = None
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     metadata: Optional[Dict[str, Any]] = None
