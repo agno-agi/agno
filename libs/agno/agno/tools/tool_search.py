@@ -6,15 +6,15 @@ from agno.tools.toolkit import Toolkit
 
 
 class AgnoToolSearch(Toolkit):
-    """Built-in toolkit for searching and executing discoverable tools.
+    """Toolkit to dynamically search, load and run tools.
+    
+    This is useful to avoid loading all tool information into 
+    the context upfront, and instead load only what is needed.
 
-    This toolkit allows agents to:
-    1. Search for available tools at runtime by name or description
+    With this Toolkit Agents will be able to:
+    1. Search for available tools at runtime, by name or description
     2. List all discoverable tools
-    3. Execute discovered tools dynamically
-
-    Tools passed to this toolkit are indexed and can be searched, then
-    executed using the use_tool method.
+    3. Execute discovered tools
     """
 
     def __init__(
