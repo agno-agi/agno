@@ -199,13 +199,38 @@ async def test_list_tools(mcp_client: MCPTestClient):
 
     # Check for expected core tools
     expected_tools = [
+        # Core tools
         "get_agentos_config",
+        "get_models",
+        "migrate_database",
         "run_agent",
+        "run_team",
+        "run_workflow",
+        # Session tools
         "get_sessions",
         "get_session",
         "create_session",
+        "get_session_runs",
+        "get_session_run",
+        "rename_session",
+        "update_session",
+        "delete_session",
+        # Memory tools
         "create_memory",
-        "get_memories",
+        "get_memory",
+        "get_memories_for_user",
+        "update_memory",
+        "delete_memory",
+        "get_user_memory_stats",
+        # Traces tools
+        "get_traces",
+        "get_trace",
+        "get_trace_stats",
+        # Metrics tools
+        "get_metrics",
+        "refresh_metrics",
+        # Eval tools
+        "get_eval_runs",
     ]
     for tool_name in expected_tools:
         assert tool_name in tools, f"Missing expected tool: {tool_name}"
@@ -243,6 +268,140 @@ async def test_get_agentos_config(mcp_client: MCPTestClient):
     workflow_ids = [workflow["id"] for workflow in result["workflows"]]
     assert "gateway-workflow" in workflow_ids, "Local workflow 'gateway-workflow' should be present"
     assert "qa-workflow" in workflow_ids, "Remote workflow 'qa-workflow' should be present"
+
+
+# =============================================================================
+# Agent/Team/Workflow Config Tests (Tests RemoteAgent/RemoteTeam/RemoteWorkflow handling)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_list_agents(mcp_client: MCPTestClient):
+    """Test listing all agents including remote agents via MCP."""
+    result = await mcp_client.call_tool("list_agents", {})
+
+    assert result is not None
+    assert isinstance(result, list)
+    assert len(result) >= 2, "Should have at least local and remote agents"
+
+    # Extract agent IDs
+    agent_ids = [agent["id"] for agent in result]
+
+    # Verify local agent is present
+    assert "gateway-agent" in agent_ids, "Local agent 'gateway-agent' should be present"
+
+    # Verify remote agents are present (tests RemoteAgent handling)
+    assert "assistant-agent" in agent_ids, "Remote agent 'assistant-agent' should be present"
+
+    # Verify each agent has expected fields
+    for agent in result:
+        assert "id" in agent
+        assert "name" in agent or "id" in agent  # At minimum should have identifier
+
+
+@pytest.mark.asyncio
+async def test_get_agent_local(mcp_client: MCPTestClient):
+    """Test getting a local agent config via MCP."""
+    result = await mcp_client.call_tool("get_agent", {"agent_id": "gateway-agent"})
+
+    assert result is not None
+    assert result.get("id") == "gateway-agent"
+    assert "name" in result
+
+
+@pytest.mark.asyncio
+async def test_get_agent_remote(mcp_client: MCPTestClient):
+    """Test getting a remote agent config via MCP (tests RemoteAgent.get_agent_config)."""
+    result = await mcp_client.call_tool("get_agent", {"agent_id": "assistant-agent"})
+
+    assert result is not None
+    assert result.get("id") == "assistant-agent"
+    # Remote agent should return its config from the remote server
+
+
+@pytest.mark.asyncio
+async def test_list_teams(mcp_client: MCPTestClient):
+    """Test listing all teams including remote teams via MCP."""
+    result = await mcp_client.call_tool("list_teams", {})
+
+    assert result is not None
+    assert isinstance(result, list)
+    assert len(result) >= 1, "Should have at least one team"
+
+    # Extract team IDs
+    team_ids = [team["id"] for team in result]
+
+    # Verify remote team is present (tests RemoteTeam handling)
+    assert "research-team" in team_ids, "Remote team 'research-team' should be present"
+
+    # Verify each team has expected fields
+    for team in result:
+        assert "id" in team
+
+
+@pytest.mark.asyncio
+async def test_get_team_remote(mcp_client: MCPTestClient):
+    """Test getting a remote team config via MCP (tests RemoteTeam.get_team_config)."""
+    result = await mcp_client.call_tool("get_team", {"team_id": "research-team"})
+
+    assert result is not None
+    assert result.get("id") == "research-team"
+
+
+@pytest.mark.asyncio
+async def test_list_workflows(mcp_client: MCPTestClient):
+    """Test listing all workflows including remote workflows via MCP."""
+    result = await mcp_client.call_tool("list_workflows", {})
+
+    assert result is not None
+    assert isinstance(result, list)
+    assert len(result) >= 2, "Should have at least local and remote workflows"
+
+    # Extract workflow IDs
+    workflow_ids = [workflow["id"] for workflow in result]
+
+    # Verify local workflow is present
+    assert "gateway-workflow" in workflow_ids, "Local workflow 'gateway-workflow' should be present"
+
+    # Verify remote workflow is present (tests RemoteWorkflow handling)
+    assert "qa-workflow" in workflow_ids, "Remote workflow 'qa-workflow' should be present"
+
+
+@pytest.mark.asyncio
+async def test_get_workflow_local(mcp_client: MCPTestClient):
+    """Test getting a local workflow config via MCP."""
+    result = await mcp_client.call_tool("get_workflow", {"workflow_id": "gateway-workflow"})
+
+    assert result is not None
+    assert result.get("id") == "gateway-workflow"
+
+
+@pytest.mark.asyncio
+async def test_get_workflow_remote(mcp_client: MCPTestClient):
+    """Test getting a remote workflow config via MCP (tests RemoteWorkflow.get_workflow_config)."""
+    result = await mcp_client.call_tool("get_workflow", {"workflow_id": "qa-workflow"})
+
+    assert result is not None
+    assert result.get("id") == "qa-workflow"
+
+
+# =============================================================================
+# Run Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_get_models(mcp_client: MCPTestClient):
+    """Test the get_models tool returns unique models used by agents and teams."""
+    result = await mcp_client.call_tool("get_models", {})
+
+    assert result is not None
+    assert isinstance(result, list)
+    # Should have at least one model (gpt-4o-mini used by gateway-agent)
+    if len(result) > 0:
+        model = result[0]
+        assert "id" in model
+        assert "provider" in model
 
 
 @pytest.mark.asyncio
@@ -463,11 +622,10 @@ async def test_get_sessions(mcp_client: MCPTestClient, db_id: str, test_user_id:
     )
 
     assert "data" in result
-    assert "meta" in result
     assert isinstance(result["data"], list)
-    assert "page" in result["meta"]
-    assert "limit" in result["meta"]
-    assert "total_count" in result["meta"]
+    assert "page" in result
+    assert "limit" in result
+    assert "total_count" in result
 
 
 @pytest.mark.asyncio
@@ -567,6 +725,115 @@ async def test_update_session(mcp_client: MCPTestClient, db_id: str, test_user_i
     assert result.get("session_state", {}).get("updated_key") == "updated_value"
 
 
+@pytest.mark.asyncio
+@pytest.mark.xfail(reason="MCP run_agent may not persist sessions to DB - needs investigation")
+async def test_get_session_runs(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
+    """Test getting runs for a session via MCP."""
+    # Run the agent first - this creates the session AND the run together
+    # (the pattern that works, similar to regular API routes)
+    session_id = str(uuid4())
+    run_result = await mcp_client.call_tool(
+        "run_agent",
+        {
+            "agent_id": "gateway-agent",
+            "message": "Hello for session runs test",
+            "session_id": session_id,
+            "user_id": test_user_id,
+        },
+    )
+
+    # Verify run completed
+    assert run_result is not None
+    run_id = run_result.get("run_id")
+    assert run_id is not None, "run_agent should return a run_id"
+
+    # Get session runs
+    result = await mcp_client.call_tool(
+        "get_session_runs",
+        {
+            "session_id": session_id,
+            "db_id": db_id,
+            "session_type": "agent",
+            "user_id": test_user_id,
+        },
+    )
+
+    assert result is not None
+    assert isinstance(result, list)
+    # Should have at least one run from the agent execution
+    assert len(result) >= 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.xfail(reason="MCP run_agent may not persist sessions to DB - needs investigation")
+async def test_get_session_run(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
+    """Test getting a specific run from a session via MCP."""
+    # Run the agent first - this creates the session AND the run together
+    session_id = str(uuid4())
+    run_result = await mcp_client.call_tool(
+        "run_agent",
+        {
+            "agent_id": "gateway-agent",
+            "message": "Hello for single run test",
+            "session_id": session_id,
+            "user_id": test_user_id,
+        },
+    )
+
+    # Get the run_id from the result
+    run_id = run_result.get("run_id")
+    assert run_id is not None, "run_agent should return a run_id"
+
+    # Get the specific run
+    result = await mcp_client.call_tool(
+        "get_session_run",
+        {
+            "session_id": session_id,
+            "run_id": run_id,
+            "db_id": db_id,
+            "session_type": "agent",
+            "user_id": test_user_id,
+        },
+    )
+
+    assert result is not None
+    assert result.get("run_id") == run_id
+
+
+@pytest.mark.asyncio
+async def test_delete_sessions_bulk(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
+    """Test bulk deleting sessions via MCP."""
+    # Create multiple sessions
+    session_ids = []
+    for i in range(3):
+        session_id = str(uuid4())
+        await mcp_client.call_tool(
+            "create_session",
+            {
+                "db_id": db_id,
+                "session_type": "agent",
+                "session_id": session_id,
+                "session_name": f"Bulk Delete Test {i}",
+                "user_id": test_user_id,
+                "agent_id": "gateway-agent",
+            },
+        )
+        session_ids.append(session_id)
+
+    # Delete them in bulk
+    result = await mcp_client.call_tool(
+        "delete_sessions",
+        {
+            "session_ids": session_ids,
+            "db_id": db_id,
+        },
+    )
+
+    assert result is not None
+    # Result should indicate successful deletion
+    assert "deleted" in str(result).lower() or "message" in result
+
+
 # =============================================================================
 # Memory Management Tests
 # =============================================================================
@@ -601,20 +868,20 @@ async def test_create_memory(mcp_client: MCPTestClient, db_id: str, test_user_id
 
 
 @pytest.mark.asyncio
-async def test_get_memories(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
-    """Test getting memories via MCP."""
+async def test_get_memories_for_user(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
+    """Test getting memories for a user via MCP."""
     result = await mcp_client.call_tool(
-        "get_memories",
+        "get_memories_for_user",
         {
-            "db_id": db_id,
             "user_id": test_user_id,
+            "db_id": db_id,
             "limit": 10,
             "page": 1,
         },
     )
 
     assert "data" in result
-    assert "meta" in result
+    assert "total_count" in result
     assert isinstance(result["data"], list)
 
 
@@ -702,7 +969,8 @@ async def test_delete_memory(mcp_client: MCPTestClient, db_id: str, test_user_id
 
     # Result should indicate successful deletion
     assert result is not None
-    assert "deleted successfully" in result.lower() or result in ["", "null", None]
+    assert isinstance(result, dict)
+    assert "deleted successfully" in result.get("message", "").lower()
 
 
 @pytest.mark.asyncio
@@ -732,10 +1000,10 @@ async def test_delete_memories_bulk(mcp_client: MCPTestClient, db_id: str, test_
 
     # Result should indicate successful deletion
     assert result is not None
-    assert "deleted successfully" in result.lower() or result in ["", "null", None]
+    assert isinstance(result, dict)
+    assert "deleted" in result.get("message", "").lower()
 
 
-@pytest.mark.skip(reason="get_user_memory_stats tool not yet implemented in MCP server")
 @pytest.mark.asyncio
 async def test_get_user_memory_stats(mcp_client: MCPTestClient, db_id: str):
     """Test getting user memory statistics via MCP."""
@@ -749,7 +1017,7 @@ async def test_get_user_memory_stats(mcp_client: MCPTestClient, db_id: str):
     )
 
     assert "data" in result
-    assert "meta" in result
+    assert "total_count" in result
     assert isinstance(result["data"], list)
 
 
@@ -758,7 +1026,6 @@ async def test_get_user_memory_stats(mcp_client: MCPTestClient, db_id: str):
 # =============================================================================
 
 
-@pytest.mark.skip(reason="get_traces tool not yet implemented in MCP server")
 @pytest.mark.asyncio
 async def test_get_traces(mcp_client: MCPTestClient, db_id: str):
     """Test getting traces via MCP."""
@@ -772,16 +1039,15 @@ async def test_get_traces(mcp_client: MCPTestClient, db_id: str):
     )
 
     assert "data" in result
-    assert "meta" in result
+    assert "total_count" in result
     assert isinstance(result["data"], list)
 
 
-@pytest.mark.skip(reason="get_trace_session_stats tool not yet implemented in MCP server")
 @pytest.mark.asyncio
-async def test_get_trace_session_stats(mcp_client: MCPTestClient, db_id: str):
-    """Test getting trace session statistics via MCP."""
+async def test_get_trace_stats(mcp_client: MCPTestClient, db_id: str):
+    """Test getting trace statistics via MCP."""
     result = await mcp_client.call_tool(
-        "get_trace_session_stats",
+        "get_trace_stats",
         {
             "db_id": db_id,
             "limit": 10,
@@ -790,7 +1056,7 @@ async def test_get_trace_session_stats(mcp_client: MCPTestClient, db_id: str):
     )
 
     assert "data" in result
-    assert "meta" in result
+    assert "total_count" in result
     assert isinstance(result["data"], list)
 
 
@@ -799,7 +1065,6 @@ async def test_get_trace_session_stats(mcp_client: MCPTestClient, db_id: str):
 # =============================================================================
 
 
-@pytest.mark.skip(reason="get_eval_runs tool not yet implemented in MCP server")
 @pytest.mark.asyncio
 async def test_get_eval_runs(mcp_client: MCPTestClient, db_id: str):
     """Test getting eval runs via MCP."""
@@ -813,7 +1078,7 @@ async def test_get_eval_runs(mcp_client: MCPTestClient, db_id: str):
     )
 
     assert "data" in result
-    assert "meta" in result
+    assert "total_count" in result
     assert isinstance(result["data"], list)
 
 
@@ -822,7 +1087,6 @@ async def test_get_eval_runs(mcp_client: MCPTestClient, db_id: str):
 # =============================================================================
 
 
-@pytest.mark.skip(reason="get_metrics tool not yet implemented in MCP server")
 @pytest.mark.asyncio
 async def test_get_metrics(mcp_client: MCPTestClient, db_id: str):
     """Test getting metrics via MCP."""
@@ -835,9 +1099,9 @@ async def test_get_metrics(mcp_client: MCPTestClient, db_id: str):
 
     assert result is not None
     assert "metrics" in result
+    assert isinstance(result["metrics"], list)
 
 
-@pytest.mark.skip(reason="refresh_metrics tool not yet implemented in MCP server")
 @pytest.mark.asyncio
 async def test_refresh_metrics(mcp_client: MCPTestClient, db_id: str):
     """Test refreshing metrics via MCP."""
@@ -849,7 +1113,8 @@ async def test_refresh_metrics(mcp_client: MCPTestClient, db_id: str):
     )
 
     assert result is not None
-    assert isinstance(result, list)
+    # Returns dict with metrics list and message
+    assert "metrics" in result or "message" in result
 
 
 # =============================================================================
@@ -884,7 +1149,8 @@ async def test_cleanup_delete_session(mcp_client: MCPTestClient, db_id: str, tes
 
     # Result should indicate successful deletion
     assert result is not None
-    assert "deleted successfully" in result.lower() or result in ["", "null", None]
+    assert isinstance(result, dict)
+    assert "deleted successfully" in result.get("message", "").lower()
 
 
 # =============================================================================

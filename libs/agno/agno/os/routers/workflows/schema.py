@@ -1,10 +1,11 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.routers.teams.schema import TeamResponse
 from agno.workflow.agent import WorkflowAgent
+from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
 
@@ -120,7 +121,10 @@ class WorkflowResponse(BaseModel):
         return steps
 
     @classmethod
-    async def from_workflow(cls, workflow: Workflow) -> "WorkflowResponse":
+    async def from_workflow(cls, workflow: Union[Workflow, RemoteWorkflow]) -> "WorkflowResponse":
+        if isinstance(workflow, RemoteWorkflow):
+            return await workflow.get_workflow_config()
+
         workflow_dict = workflow.to_dict()
         steps = workflow_dict.get("steps")
 
