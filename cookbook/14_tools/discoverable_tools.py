@@ -2,8 +2,7 @@ import json
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.os import AgentOS
-from agno.tools import DiscoverableTools, Toolkit
+from agno.tools import DiscoverableTools
 
 
 def send_email(to: str, subject: str, body: str) -> str:
