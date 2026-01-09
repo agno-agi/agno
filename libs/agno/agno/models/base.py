@@ -2030,10 +2030,20 @@ class Model(ABC):
                 user_input_schema = []
                 for input_field in fc.arguments.get("user_input_fields", []):
                     field_type = input_field.get("field_type")
-                    try:
-                        python_type = eval(field_type) if isinstance(field_type, str) else field_type
-                    except (NameError, SyntaxError):
-                        python_type = str  # Default to str if type is invalid
+                    if isinstance(field_type, str):
+                        type_mapping = {
+                            "str": str,
+                            "int": int,
+                            "float": float,
+                            "bool": bool,
+                            "list": list,
+                            "dict": dict,
+                        }
+                        python_type = type_mapping.get(field_type, str)
+                    elif isinstance(field_type, type):
+                        python_type = field_type
+                    else:
+                        python_type = str
                     user_input_schema.append(
                         UserInputField(
                             name=input_field.get("field_name"),
@@ -2185,10 +2195,20 @@ class Model(ABC):
                 user_input_schema = []
                 for input_field in fc.arguments.get("user_input_fields", []):
                     field_type = input_field.get("field_type")
-                    try:
-                        python_type = eval(field_type) if isinstance(field_type, str) else field_type
-                    except (NameError, SyntaxError):
-                        python_type = str  # Default to str if type is invalid
+                    if isinstance(field_type, str):
+                        type_mapping = {
+                            "str": str,
+                            "int": int,
+                            "float": float,
+                            "bool": bool,
+                            "list": list,
+                            "dict": dict,
+                        }
+                        python_type = type_mapping.get(field_type, str)
+                    elif isinstance(field_type, type):
+                        python_type = field_type
+                    else:
+                        python_type = str
                     user_input_schema.append(
                         UserInputField(
                             name=input_field.get("field_name"),
