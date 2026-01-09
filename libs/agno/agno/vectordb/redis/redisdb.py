@@ -16,7 +16,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import hash_string_sha256
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
@@ -80,7 +80,7 @@ class RedisDB(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
 
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
@@ -477,7 +477,7 @@ class RedisDB(VectorDb):
                 vector_field_name="embedding",
                 text=query,
                 text_field_name="content",
-                alpha=self.vector_score_weight,
+                linear_alpha=self.vector_score_weight,
                 return_fields=["id", "name", "content"],
                 num_results=limit,
             )

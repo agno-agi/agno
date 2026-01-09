@@ -1,5 +1,6 @@
 import time
 from datetime import date, datetime, timedelta, timezone
+from importlib import metadata
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
@@ -31,9 +32,12 @@ try:
     from pymongo import MongoClient, ReturnDocument
     from pymongo.collection import Collection
     from pymongo.database import Database
+    from pymongo.driver_info import DriverInfo
     from pymongo.errors import OperationFailure
 except ImportError:
     raise ImportError("`pymongo` not installed. Please install it using `pip install pymongo`")
+
+DRIVER_METADATA = DriverInfo(name="Agno", version=metadata.version("agno"))
 
 
 class MongoDb(BaseDb):
@@ -92,15 +96,29 @@ class MongoDb(BaseDb):
 
         _client: Optional[MongoClient] = db_client
         if _client is None and db_url is not None:
-            _client = MongoClient(db_url)
+            _client = MongoClient(db_url, driver=DRIVER_METADATA)
         if _client is None:
             raise ValueError("One of db_url or db_client must be provided")
 
+        # append_metadata was added in PyMongo 4.14.0, but is a valid database name on earlier versions
+        if callable(_client.append_metadata):
+            _client.append_metadata(DRIVER_METADATA)
+
         self.db_url: Optional[str] = db_url
         self.db_client: MongoClient = _client
+
         self.db_name: str = db_name if db_name is not None else "agno"
 
         self._database: Optional[Database] = None
+
+    def close(self) -> None:
+        """Close the MongoDB client connection.
+
+        Should be called during application shutdown to properly release
+        all database connections.
+        """
+        if self.db_client is not None:
+            self.db_client.close()
 
     @property
     def database(self) -> Database:

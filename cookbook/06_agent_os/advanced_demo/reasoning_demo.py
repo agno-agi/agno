@@ -21,7 +21,7 @@ finance_agent = Agent(
     id="finance-agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[
-        DuckDuckGoTools(
+        WebSearchTools(
             enable_news=True,
         )
     ],

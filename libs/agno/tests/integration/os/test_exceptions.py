@@ -121,7 +121,7 @@ def test_internal_server_error_response_format(test_agent: Agent, caplog):
     with caplog.at_level(logging.ERROR):
         response = client.post(
             f"/agents/{test_agent.id}/runs",
-            data={"message": "Hello, world!"},
+            data={"message": "Hello, world!", "stream": "false"},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
 
