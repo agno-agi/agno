@@ -1823,6 +1823,8 @@ class Agent:
             session_state=session_state,
             dependencies=dependencies,
             output_schema=output_schema,
+            stream=stream if stream is not None else (self.stream or False),
+            stream_events=stream_events if stream_events is not None else (self.stream_events or False),
         )
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
@@ -2929,6 +2931,8 @@ class Agent:
             knowledge_filters=knowledge_filters,
             metadata=metadata,
             output_schema=output_schema,
+            stream=stream if stream is not None else self.stream,
+            stream_events=stream_events if stream_events is not None else self.stream_events,
         )
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
@@ -3112,6 +3116,8 @@ class Agent:
             user_id=user_id,
             session_state=session_state,
             dependencies=dependencies,
+            stream=stream if stream is not None else (self.stream or False),
+            stream_events=stream_events if stream_events is not None else (self.stream_events or False),
         )
 
         # Resolve dependencies
@@ -3845,6 +3851,8 @@ class Agent:
             dependencies=dependencies,
             knowledge_filters=knowledge_filters,
             metadata=metadata,
+            stream=stream if stream is not None else self.stream,
+            stream_events=stream_events if stream_events is not None else self.stream_events,
         )
 
         if stream:
