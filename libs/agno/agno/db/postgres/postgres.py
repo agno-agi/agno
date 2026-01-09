@@ -588,9 +588,7 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.created_at <= end_timestamp)
                 if session_name is not None:
                     stmt = stmt.where(
-                        func.coalesce(func.json_extract_path_text(table.c.session_data, "session_name"), "").ilike(
-                            f"%{session_name}%"
-                        )
+                        func.coalesce(table.c.session_data["session_name"].astext, "").ilike(f"%{session_name}%")
                     )
                 if session_type is not None:
                     session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
@@ -599,9 +597,7 @@ class PostgresDb(BaseDb):
                 # Filter by workspace_id in metadata (enables proper workspace isolation with correct pagination)
                 if metadata_workspace_id is not None:
                     stmt = stmt.where(
-                        func.coalesce(
-                            func.json_extract_path_text(table.c.metadata, "workspace_id"), ""
-                        ) == metadata_workspace_id
+                        func.coalesce(table.c.metadata["workspace_id"].astext, "") == metadata_workspace_id
                     )
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
