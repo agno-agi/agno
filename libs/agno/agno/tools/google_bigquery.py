@@ -11,6 +11,15 @@ except ImportError:
     raise ImportError("`bigquery` not installed. Please install using `pip install google-cloud-bigquery`")
 
 
+def _clean_sql(sql: str) -> str:
+    """Clean SQL query by normalizing whitespace while preserving token boundaries.
+
+    Replaces newlines with spaces (not empty strings) to prevent line comments
+    from swallowing subsequent SQL statements.
+    """
+    return sql.replace("\\n", " ").replace("\n", " ").replace("\\", "")
+
+
 class GoogleBigQueryTools(Toolkit):
     def __init__(
         self,
@@ -106,7 +115,7 @@ class GoogleBigQueryTools(Toolkit):
         """
         try:
             log_debug(f"Running Google SQL |\n{sql}")
-            cleaned_query = sql.replace("\\n", " ").replace("\n", "").replace("\\", "")
+            cleaned_query = _clean_sql(sql)
             job_config = bigquery.QueryJobConfig(default_dataset=f"{self.project}.{self.dataset}")
             query_job = self.client.query(cleaned_query, job_config)
             results = query_job.result()
