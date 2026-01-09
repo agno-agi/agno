@@ -367,6 +367,10 @@ class Team:
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None
     # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
     _run_hooks_in_background: Optional[bool] = None
+    # If True, run memory creation in background task
+    _run_memory_in_background: Optional[bool] = None
+    # If True, run cultural knowledge creation in background task
+    _run_culture_in_background: Optional[bool] = None
 
     # --- Structured output ---
     # Input schema for validating input
@@ -825,6 +829,38 @@ class Team:
             # If it's a nested team, recursively propagate to its members
             if isinstance(member, Team):
                 member.propagate_run_hooks_in_background(run_in_background)
+
+    def propagate_run_memory_in_background(self, run_in_background: bool = True) -> None:
+        """
+        Propagate _run_memory_in_background setting to this team and all nested members recursively.
+
+        This method sets _run_memory_in_background on the team and all its members (agents and nested teams).
+        For nested teams, it recursively propagates the setting to their members as well.
+        """
+        self._run_memory_in_background = run_in_background
+        for member in self.members:
+            if hasattr(member, "_run_memory_in_background"):
+                member._run_memory_in_background = run_in_background
+
+            # If it's a nested team, recursively propagate to its members
+            if isinstance(member, Team):
+                member.propagate_run_memory_in_background(run_in_background)
+
+    def propagate_run_culture_in_background(self, run_in_background: bool = True) -> None:
+        """
+        Propagate _run_culture_in_background setting to this team and all nested members recursively.
+
+        This method sets _run_culture_in_background on the team and all its members (agents and nested teams).
+        For nested teams, it recursively propagates the setting to their members as well.
+        """
+        self._run_culture_in_background = run_in_background
+        for member in self.members:
+            if hasattr(member, "_run_culture_in_background"):
+                member._run_culture_in_background = run_in_background
+
+            # If it's a nested team, recursively propagate to its members
+            if isinstance(member, Team):
+                member.propagate_run_culture_in_background(run_in_background)
 
     def _set_default_model(self) -> None:
         # Set the default model
@@ -1509,6 +1545,7 @@ class Team:
                         run_messages=run_messages,
                         user_id=user_id,
                         existing_future=None,
+                        background_tasks=background_tasks,
                     )
 
                     raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3936,6 +3973,7 @@ class Team:
         run_messages: RunMessages,
         user_id: Optional[str],
         existing_task: Optional[asyncio.Task[None]],
+        background_tasks: Optional[Any] = None,
     ) -> Optional[asyncio.Task[None]]:
         """Cancel any existing memory task and start a new one if conditions are met.
 
@@ -3955,6 +3993,11 @@ class Team:
             except asyncio.CancelledError:
                 pass
 
+        # Run the memory creation as a background task if enabled
+        if self._run_memory_in_background is True and background_tasks is not None:
+            background_tasks.add_task(self._amake_memories, run_messages=run_messages, user_id=user_id)
+            return
+
         # Create new task if conditions are met
         if (
             run_messages.user_message is not None
@@ -3972,6 +4015,7 @@ class Team:
         run_messages: RunMessages,
         user_id: Optional[str],
         existing_future: Optional[Future[None]],
+        background_tasks: Optional[Any] = None,
     ) -> Optional[Future[None]]:
         """Cancel any existing memory future and start a new one if conditions are met.
 
@@ -3986,6 +4030,11 @@ class Team:
         # Cancel any existing future from a previous retry attempt
         if existing_future is not None and not existing_future.done():
             existing_future.cancel()
+
+        # Run the memory creation as a background task if enabled
+        if self._run_memory_in_background is True and background_tasks is not None:
+            background_tasks.add_task(self._make_memories, run_messages=run_messages, user_id=user_id)
+            return
 
         # Create new future if conditions are met
         if (
