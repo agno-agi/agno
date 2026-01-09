@@ -48,6 +48,7 @@ compression_prompt = """
 compression_manager = CompressionManager(
     model=OpenAIChat(id="gpt-4o"),
     compress_tool_results_limit=2,  # Keep only last 2 tool call results uncompressed
+    compress_tool_results=True,
     compress_tool_call_instructions=compression_prompt,
 )
 

@@ -3,12 +3,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Mapping, Optional, Union
 
+from agno.compression.context import CompressedContext
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_warning
 
 
 @dataclass
@@ -104,8 +105,6 @@ class AgentSession:
         else:
             self.runs.append(run)
 
-        log_debug("Added RunOutput to Agent Session")
-
     def get_run(self, run_id: str) -> Optional[Union[RunOutput, TeamRunOutput]]:
         for run in self.runs or []:
             if run.run_id == run_id:
@@ -121,6 +120,7 @@ class AgentSession:
         skip_roles: Optional[List[str]] = None,
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
+        filter_compressed: bool = False,
     ) -> List[Message]:
         """Returns the messages belonging to the session that fit the given criteria.
 
@@ -128,14 +128,21 @@ class AgentSession:
             agent_id: The id of the agent to get the messages from.
             team_id: The id of the team to get the messages from.
             last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
-            last_n_messages: The number of messages to return, counting from the latest. Defaults to all messages.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
             skip_roles: Skip messages with these roles.
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
+            filter_compressed: Filter out messages that have already been compressed.
 
         Returns:
             A list of Messages belonging to the session.
         """
+        # Get compressed message IDs once at the start (if filter_compressed)
+        compressed_msg_ids: Optional[set] = None
+        if filter_compressed:
+            compressed_ctx = self.get_compression_context()
+            if compressed_ctx and compressed_ctx.message_ids:
+                compressed_msg_ids = compressed_ctx.message_ids
 
         def _should_skip_message(
             message: Message, skip_roles: Optional[List[str]] = None, skip_history_messages: bool = True
@@ -147,6 +154,10 @@ class AgentSession:
 
             # Skip messages with specified role
             if skip_roles and message.role in skip_roles:
+                return True
+
+            # Skip already-compressed messages
+            if compressed_msg_ids and message.id in compressed_msg_ids:
                 return True
 
             return False
@@ -221,7 +232,6 @@ class AgentSession:
                     else:
                         messages_from_history.append(message)
 
-        log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
 
     def get_chat_history(self, last_n_runs: Optional[int] = None) -> List[Message]:
@@ -258,3 +268,17 @@ class AgentSession:
         if self.summary is None:
             return None
         return self.summary
+
+    def get_compression_context(self) -> Optional[CompressedContext]:
+        """Get compressed context from session_data."""
+        if self.session_data and "compression_context" in self.session_data:
+            ctx_data = self.session_data["compression_context"]
+            if isinstance(ctx_data, dict):
+                return CompressedContext.from_dict(ctx_data)
+        return None
+
+    def set_compression_context(self, ctx: CompressedContext) -> None:
+        """Store compressed context in session_data."""
+        if self.session_data is None:
+            self.session_data = {}
+        self.session_data["compression_context"] = ctx.to_dict()
