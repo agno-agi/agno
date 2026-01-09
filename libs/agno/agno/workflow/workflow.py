@@ -3560,10 +3560,11 @@ class Workflow:
         workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=workflow_session)
 
-        # Initialize session state
-        session_state = self._initialize_session_state(session_state=session_state if session_state is not None else {})
-        # Update session state from DB
-        session_state = self._load_session_state(session=workflow_session, session_state=session_state)
+        # Initialize session state. Get it from DB if relevant.
+        session_state = self._load_session_state(
+            session=workflow_session,
+            session_state=session_state if session_state is not None else {},
+        )
 
         log_debug(f"Workflow Run Start: {self.name}", center=True)
 
@@ -3601,6 +3602,8 @@ class Workflow:
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
+            workflow_id=self.id,
+            workflow_name=self.name,
         )
 
         # Execute workflow agent if configured
