@@ -127,6 +127,7 @@ class MCPTools(Toolkit):
 
         self.transport = transport
 
+        self.header_provider = None
         if self._is_valid_header_provider(header_provider):
             self.header_provider = header_provider
 
@@ -572,7 +573,6 @@ class MCPTools(Toolkit):
                         tool=tool,
                         session=self.session,  # type: ignore
                         mcp_tools_instance=self,
-                        server_name=self.name or "MCPTools",
                     )
                     # Create a Function for the tool
                     f = Function(
