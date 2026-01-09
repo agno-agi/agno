@@ -1095,6 +1095,8 @@ class Agent:
                         tool_call_limit=self.tool_call_limit,
                         response_format=response_format,
                         run_response=run_response,
+                        send_media_to_model=self.send_media_to_model,
+                        compression_manager=self.compression_manager if self.compress_tool_results else None,
                     )
 
                     # Check for cancellation after model call
