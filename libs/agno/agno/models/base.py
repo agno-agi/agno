@@ -591,6 +591,10 @@ class Model(ABC):
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
 
+            # Track tool call state for structured output finalization
+            had_tool_calls = False
+            tool_flow_incomplete = False
+
             while True:
                 # Compress tool results if compression is enabled and threshold is met
                 if _compression_manager is not None and _compression_manager.should_compress(
@@ -619,6 +623,7 @@ class Model(ABC):
 
                 # Handle tool calls if present
                 if assistant_message.tool_calls:
+                    had_tool_calls = True
                     # Prepare function calls
                     function_calls_to_run = self._prepare_function_calls(
                         assistant_message=assistant_message,
@@ -717,18 +722,22 @@ class Model(ABC):
 
                     # Check if we should stop after tool calls
                     if any(m.stop_after_tool_call for m in function_call_results):
+                        tool_flow_incomplete = True
                         break
 
                     # If we have any tool calls that require confirmation, break the loop
                     if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
+                        tool_flow_incomplete = True
                         break
 
                     # If we have any tool calls that require external execution, break the loop
                     if any(tc.external_execution_required for tc in model_response.tool_executions or []):
+                        tool_flow_incomplete = True
                         break
 
                     # If we have any tool calls that require user input, break the loop
                     if any(tc.requires_user_input for tc in model_response.tool_executions or []):
+                        tool_flow_incomplete = True
                         break
 
                     # Continue loop to get next response
@@ -736,6 +745,19 @@ class Model(ABC):
 
                 # No tool calls or finished processing them
                 break
+
+            # Finalize structured output if needed (provider-specific handling)
+            self._finalize_structured_output_if_needed(
+                messages=messages,
+                model_response=model_response,
+                response_format=response_format,
+                tools=_tool_dicts,
+                tool_choice=tool_choice or self._tool_choice,
+                run_response=run_response,
+                compress_tool_results=_compress_tool_results,
+                had_tool_calls=had_tool_calls,
+                tool_flow_incomplete=tool_flow_incomplete,
+            )
 
             log_debug(f"{self.get_provider()} Response End", center=True, symbol="-")
 
@@ -794,6 +816,10 @@ class Model(ABC):
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
 
+            # Track tool call state for structured output finalization
+            had_tool_calls = False
+            tool_flow_incomplete = False
+
             function_call_count = 0
 
             while True:
@@ -824,6 +850,7 @@ class Model(ABC):
 
                 # Handle tool calls if present
                 if assistant_message.tool_calls:
+                    had_tool_calls = True
                     # Prepare function calls
                     function_calls_to_run = self._prepare_function_calls(
                         assistant_message=assistant_message,
@@ -921,18 +948,22 @@ class Model(ABC):
 
                     # Check if we should stop after tool calls
                     if any(m.stop_after_tool_call for m in function_call_results):
+                        tool_flow_incomplete = True
                         break
 
                     # If we have any tool calls that require confirmation, break the loop
                     if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
+                        tool_flow_incomplete = True
                         break
 
                     # If we have any tool calls that require external execution, break the loop
                     if any(tc.external_execution_required for tc in model_response.tool_executions or []):
+                        tool_flow_incomplete = True
                         break
 
                     # If we have any tool calls that require user input, break the loop
                     if any(tc.requires_user_input for tc in model_response.tool_executions or []):
+                        tool_flow_incomplete = True
                         break
 
                     # Continue loop to get next response
@@ -940,6 +971,19 @@ class Model(ABC):
 
                 # No tool calls or finished processing them
                 break
+
+            # Finalize structured output if needed (provider-specific handling)
+            await self._afinalize_structured_output_if_needed(
+                messages=messages,
+                model_response=model_response,
+                response_format=response_format,
+                tools=_tool_dicts,
+                tool_choice=tool_choice or self._tool_choice,
+                run_response=run_response,
+                compress_tool_results=_compress_tool_results,
+                had_tool_calls=had_tool_calls,
+                tool_flow_incomplete=tool_flow_incomplete,
+            )
 
             log_debug(f"{self.get_provider()} Async Response End", center=True, symbol="-")
 
@@ -959,6 +1003,49 @@ class Model(ABC):
                     )
 
         return model_response
+
+    def _finalize_structured_output_if_needed(
+        self,
+        messages: List[Message],
+        model_response: ModelResponse,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compress_tool_results: bool = False,
+        had_tool_calls: bool = False,
+        tool_flow_incomplete: bool = False,
+    ) -> None:
+        """
+        Provider-specific hook for finalizing structured output after tool calls.
+
+        Some providers (e.g., Anthropic Claude) have constraints that prevent structured
+        outputs when the message list ends with an assistant message. This hook allows
+        providers to handle such cases by stripping trailing assistant messages and
+        making a final structured-output call.
+
+        Default implementation is a no-op. Override in provider subclasses as needed.
+        """
+        pass
+
+    async def _afinalize_structured_output_if_needed(
+        self,
+        messages: List[Message],
+        model_response: ModelResponse,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compress_tool_results: bool = False,
+        had_tool_calls: bool = False,
+        tool_flow_incomplete: bool = False,
+    ) -> None:
+        """
+        Async version of _finalize_structured_output_if_needed.
+
+        Default implementation is a no-op. Override in provider subclasses as needed.
+        """
+        pass
 
     def _process_model_response(
         self,
