@@ -343,6 +343,30 @@ integration-tests = [
     "fastmcp"
 ]
 
+# Dependencies for demo application
+demo = [
+    "anthropic",
+    "chromadb",
+    "ddgs",
+    "fastapi[standard]",
+    "google-genai",
+    "mcp",
+    "nest_asyncio",
+    "openai",
+    "openinference-instrumentation-agno",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    "pandas",
+    "parallel-web",
+    "pgvector",
+    "pillow",
+    "psycopg[binary]",
+    "pypdf",
+    "sqlalchemy",
+    "yfinance",
+    "youtube-transcript-api",
+]
+
 [project.urls]
 homepage = "https://agno.com"
 documentation = "https://docs.agno.com"
