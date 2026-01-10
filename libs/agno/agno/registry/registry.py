@@ -1,0 +1,47 @@
+from dataclasses import dataclass, field
+from functools import cached_property
+from typing import Any, Callable, Dict, List, Optional
+from uuid import uuid4
+
+from pydantic import BaseModel
+
+from agno.db.base import BaseDb
+from agno.models.base import Model
+from agno.tools.function import Function
+from agno.tools.toolkit import Toolkit
+from agno.vectordb.base import VectorDb
+
+
+@dataclass
+class Registry:
+    """
+    Registry is used to manage non serializable objects like tools, models, databases and vector databases.
+    """
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+    id: str = field(default_factory=lambda: str(uuid4()))
+    tools: List[Any] = field(default_factory=list)
+    models: List[Model] = field(default_factory=list)
+    dbs: List[BaseDb] = field(default_factory=list)
+    vector_dbs: List[VectorDb] = field(default_factory=list)
+    schemas: Dict[str, BaseModel] = field(default_factory=dict)
+
+    @cached_property
+    def _entrypoint_lookup(self) -> Dict[str, Callable]:
+        lookup: Dict[str, Callable] = {}
+        for tool in self.tools:
+            if isinstance(tool, Toolkit):
+                for func in tool.functions.values():
+                    lookup[func.name] = func.entrypoint
+            elif isinstance(tool, Function):
+                lookup[tool.name] = tool.entrypoint
+            elif callable(tool):
+                lookup[tool.__name__] = tool
+        return lookup
+
+    def rehydrate_function(self, func_dict: Dict[str, Any]) -> Function:
+        """Reconstruct a Function from dict, reattaching its entrypoint."""
+        func = Function.from_dict(func_dict)
+        func.entrypoint = self._entrypoint_lookup.get(func.name)
+        return func

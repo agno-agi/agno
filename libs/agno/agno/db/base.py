@@ -20,6 +20,12 @@ class SessionType(str, Enum):
     WORKFLOW = "workflow"
 
 
+class PrimitiveType(str, Enum):
+    AGENT = "agent"
+    TEAM = "team"
+    WORKFLOW = "workflow"
+
+
 class BaseDb(ABC):
     """Base abstract class for all our Database implementations."""
 
@@ -37,6 +43,9 @@ class BaseDb(ABC):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        entity_table: Optional[str] = None,
+        config_table: Optional[str] = None,
+        entity_ref_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -49,6 +58,50 @@ class BaseDb(ABC):
         self.trace_table_name = traces_table or "agno_traces"
         self.span_table_name = spans_table or "agno_spans"
         self.versions_table_name = versions_table or "agno_schema_versions"
+        self.entity_table_name = entity_table or "agno_entities"
+        self.config_table_name = config_table or "agno_configs"
+        self.entity_ref_table_name = entity_ref_table or "agno_entity_refs"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Serialize common DB fields (table names + id). Subclasses may extend this.
+        """
+        return {
+            "id": self.id,
+            "session_table": self.session_table_name,
+            "culture_table": self.culture_table_name,
+            "memory_table": self.memory_table_name,
+            "metrics_table": self.metrics_table_name,
+            "eval_table": self.eval_table_name,
+            "knowledge_table": self.knowledge_table_name,
+            "traces_table": self.trace_table_name,
+            "spans_table": self.span_table_name,
+            "versions_table": self.versions_table_name,
+            "entity_table": self.entity_table_name,
+            "config_table": self.config_table_name,
+            "entity_ref_table": self.entity_ref_table_name,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "BaseDb":
+        """
+        Reconstruct using only fields defined in BaseDb. Subclasses should override this.
+        """
+        return cls(
+            session_table=data.get("session_table"),
+            culture_table=data.get("culture_table"),
+            memory_table=data.get("memory_table"),
+            metrics_table=data.get("metrics_table"),
+            eval_table=data.get("eval_table"),
+            knowledge_table=data.get("knowledge_table"),
+            traces_table=data.get("traces_table"),
+            spans_table=data.get("spans_table"),
+            versions_table=data.get("versions_table"),
+            entity_table=data.get("entity_table"),
+            config_table=data.get("config_table"),
+            entity_ref_table=data.get("entity_ref_table"),
+            id=data.get("id"),
+        )
 
     @abstractmethod
     def table_exists(self, table_name: str) -> bool:
@@ -496,6 +549,9 @@ class BaseDb(ABC):
     @abstractmethod
     def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
+
+    # --- Config ---
+    # TODO: Add config methods
 
 
 class AsyncBaseDb(ABC):

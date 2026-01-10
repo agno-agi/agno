@@ -1,0 +1,27 @@
+"""
+This cookbook demonstrates how to save an agent to the database.
+"""
+
+from agno.agent.agent import Agent
+from agno.db.postgres import PostgresDb
+from agno.models.openai import OpenAIChat
+
+db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+
+agent = Agent(
+    id="agno-agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    name="Agno Agent",
+    db=db,
+)
+
+# agent.print_response("How many people live in Canada?")
+
+# Save the agent to the database
+agent.save()
+
+# By default, saving an agent will create a new version of the agent
+
+# Delete the agent from the database.
+# This function will delete the Agent entity from the database.
+# agent.delete()
