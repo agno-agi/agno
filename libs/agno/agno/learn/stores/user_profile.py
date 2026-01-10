@@ -194,7 +194,7 @@ class UserProfileStore(LearningStore):
         if not data:
             if self._should_expose_tools:
                 return (
-                    dedent(f"""\
+                    dedent("""\
                     <user_profile>
                     No profile information saved about this user yet.
 
@@ -216,7 +216,7 @@ class UserProfileStore(LearningStore):
         if not profile_parts:
             if self._should_expose_tools:
                 return (
-                    dedent(f"""\
+                    dedent("""\
                     <user_profile>
                     No profile information saved about this user yet.
 
@@ -242,7 +242,7 @@ class UserProfileStore(LearningStore):
 
         if self._should_expose_tools:
             context += (
-                dedent(f"""
+                dedent("""
 
             <profile_updates>
 

@@ -1095,8 +1095,6 @@ class LearnedKnowledgeStore(LearningStore):
             return
 
         try:
-            from agno.models.message import Message
-
             conversation_text = self._messages_to_text(messages=messages)
 
             # Search for existing learnings to avoid duplicates
@@ -1142,8 +1140,6 @@ class LearnedKnowledgeStore(LearningStore):
             return
 
         try:
-            from agno.models.message import Message
-
             conversation_text = self._messages_to_text(messages=messages)
 
             # Search for existing learnings to avoid duplicates

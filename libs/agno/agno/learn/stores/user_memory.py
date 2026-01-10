@@ -23,13 +23,12 @@ Supported Modes:
 - AGENTIC: Agent calls update_user_memory tool directly
 """
 
-import inspect
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, List, Optional, Union
 
 from agno.learn.config import LearningMode, UserMemoryConfig
 from agno.learn.schemas import Memories
@@ -185,7 +184,7 @@ class UserMemoryStore(LearningStore):
         if not data:
             if self._should_expose_tools:
                 return (
-                    dedent(f"""\
+                    dedent("""\
                     <user_memory>
                     No memories saved about this user yet.
 
@@ -206,7 +205,7 @@ class UserMemoryStore(LearningStore):
         if not memories_text:
             if self._should_expose_tools:
                 return (
-                    dedent(f"""\
+                    dedent("""\
                     <user_memory>
                     No memories saved about this user yet.
 
@@ -233,7 +232,7 @@ class UserMemoryStore(LearningStore):
 
         if self._should_expose_tools:
             context += (
-                dedent(f"""
+                dedent("""
 
             <memory_updates>
 

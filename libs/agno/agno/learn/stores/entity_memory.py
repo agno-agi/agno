@@ -777,7 +777,7 @@ class EntityMemoryStore(LearningStore):
             if success:
                 self.entity_updated = True
                 return f"Entity created: {entity_type}/{entity_id} ({name})"
-            return f"Failed to create entity (may already exist)"
+            return "Failed to create entity (may already exist)"
 
         return create_entity
 
@@ -847,7 +847,7 @@ class EntityMemoryStore(LearningStore):
             if success:
                 self.entity_updated = True
                 return f"Entity created: {entity_type}/{entity_id} ({name})"
-            return f"Failed to create entity (may already exist)"
+            return "Failed to create entity (may already exist)"
 
         return create_entity
 
@@ -1033,7 +1033,7 @@ class EntityMemoryStore(LearningStore):
             if fact_id:
                 self.entity_updated = True
                 return f"Fact added to {entity_type}/{entity_id} (id: {fact_id})"
-            return f"Failed to add fact (entity may not exist)"
+            return "Failed to add fact (entity may not exist)"
 
         return add_fact
 
@@ -1093,7 +1093,7 @@ class EntityMemoryStore(LearningStore):
             if fact_id:
                 self.entity_updated = True
                 return f"Fact added to {entity_type}/{entity_id} (id: {fact_id})"
-            return f"Failed to add fact (entity may not exist)"
+            return "Failed to add fact (entity may not exist)"
 
         return add_fact
 
@@ -1390,7 +1390,7 @@ class EntityMemoryStore(LearningStore):
             if event_id:
                 self.entity_updated = True
                 return f"Event added to {entity_type}/{entity_id} (id: {event_id})"
-            return f"Failed to add event (entity may not exist)"
+            return "Failed to add event (entity may not exist)"
 
         return add_event
 
@@ -1455,7 +1455,7 @@ class EntityMemoryStore(LearningStore):
             if event_id:
                 self.entity_updated = True
                 return f"Event added to {entity_type}/{entity_id} (id: {event_id})"
-            return f"Failed to add event (entity may not exist)"
+            return "Failed to add event (entity may not exist)"
 
         return add_event
 
@@ -1536,7 +1536,7 @@ class EntityMemoryStore(LearningStore):
             if rel_id:
                 self.entity_updated = True
                 return f"Relationship added: {entity_id} --[{relation}]--> {related_entity_id} (id: {rel_id})"
-            return f"Failed to add relationship (entity may not exist)"
+            return "Failed to add relationship (entity may not exist)"
 
         return add_relationship
 
@@ -1613,7 +1613,7 @@ class EntityMemoryStore(LearningStore):
             if rel_id:
                 self.entity_updated = True
                 return f"Relationship added: {entity_id} --[{relation}]--> {related_entity_id} (id: {rel_id})"
-            return f"Failed to add relationship (entity may not exist)"
+            return "Failed to add relationship (entity may not exist)"
 
         return add_relationship
 
