@@ -4,6 +4,10 @@ from agno.tools.tavily import TavilyTools
 # Example 1: default TavilyTools
 agent = Agent(tools=[TavilyTools()])
 
+# Example 1a: TavilyTools with custom API base URL
+# useful for self-hosted or alternative Tavily endpoints
+agent_custom = Agent(tools=[TavilyTools(api_base_url="https://custom.tavily.com")])
+
 # Example 2: Enable all Tavily functions (search + extract)
 agent_all = Agent(tools=[TavilyTools(all=True)])
 
