@@ -758,8 +758,7 @@ class SessionContextStore(LearningStore):
 
                 **Poor summary characteristics:**
                 - "User asked about APIs. We discussed some options. Made some decisions."
-                  (Too vague - doesn't capture what was actually decided)
-
+                  (Too vague - doesn't capture what was actually decided)\
             """)
                 + custom_instructions
                 + dedent("""
