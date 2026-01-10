@@ -4244,75 +4244,76 @@ class Workflow:
                 **kwargs,
             )
 
-    # def to_dict(self) -> Dict[str, Any]:
-    #     """Convert workflow to dictionary representation"""
+    #TODO: This is a temporary method to convert the workflow to a dictionary for steps. We need to find a better way to do this.
+    def to_dict_for_steps(self) -> Dict[str, Any]:
+        """Convert workflow to dictionary representation"""
 
-    #     def serialize_step(step):
-    #         # Handle callable functions (not wrapped in Step objects)
-    #         if callable(step) and hasattr(step, "__name__"):
-    #             step_dict = {
-    #                 "name": step.__name__,
-    #                 "description": "User-defined callable step",
-    #                 "type": StepType.STEP.value,
-    #             }
-    #             return step_dict
+        def serialize_step(step):
+            # Handle callable functions (not wrapped in Step objects)
+            if callable(step) and hasattr(step, "__name__"):
+                step_dict = {
+                    "name": step.__name__,
+                    "description": "User-defined callable step",
+                    "type": StepType.STEP.value,
+                }
+                return step_dict
 
-    #         # Handle Agent and Team objects directly
-    #         if isinstance(step, Agent):
-    #             step_dict = {
-    #                 "name": step.name or "unnamed_agent",
-    #                 "description": step.description or "Agent step",
-    #                 "type": StepType.STEP.value,
-    #                 "agent": step,
-    #             }
-    #             return step_dict
+            # Handle Agent and Team objects directly
+            if isinstance(step, Agent):
+                step_dict = {
+                    "name": step.name or "unnamed_agent",
+                    "description": step.description or "Agent step",
+                    "type": StepType.STEP.value,
+                    "agent": step,
+                }
+                return step_dict
 
-    #         if isinstance(step, Team):
-    #             step_dict = {
-    #                 "name": step.name or "unnamed_team",
-    #                 "description": step.description or "Team step",
-    #                 "type": StepType.STEP.value,
-    #                 "team": step,
-    #             }
-    #             return step_dict
+            if isinstance(step, Team):
+                step_dict = {
+                    "name": step.name or "unnamed_team",
+                    "description": step.description or "Team step",
+                    "type": StepType.STEP.value,
+                    "team": step,
+                }
+                return step_dict
 
-    #         step_dict = {
-    #             "name": step.name if hasattr(step, "name") else f"unnamed_{type(step).__name__.lower()}",
-    #             "description": step.description if hasattr(step, "description") else "User-defined callable step",
-    #             "type": STEP_TYPE_MAPPING[type(step)].value,  # type: ignore
-    #         }
+            step_dict = {
+                "name": step.name if hasattr(step, "name") else f"unnamed_{type(step).__name__.lower()}",
+                "description": step.description if hasattr(step, "description") else "User-defined callable step",
+                "type": STEP_TYPE_MAPPING[type(step)].value,  # type: ignore
+            }
 
-    #         # Handle agent/team/tools
-    #         if hasattr(step, "agent"):
-    #             step_dict["agent"] = step.agent if hasattr(step, "agent") else None  # type: ignore
-    #         if hasattr(step, "team"):
-    #             step_dict["team"] = step.team if hasattr(step, "team") else None  # type: ignore
+            # Handle agent/team/tools
+            if hasattr(step, "agent"):
+                step_dict["agent"] = step.agent if hasattr(step, "agent") else None  # type: ignore
+            if hasattr(step, "team"):
+                step_dict["team"] = step.team if hasattr(step, "team") else None  # type: ignore
 
-    #         # Handle nested steps for Router/Loop
-    #         if isinstance(step, Router):
-    #             step_dict["steps"] = (
-    #                 [serialize_step(step) for step in step.choices] if hasattr(step, "choices") else None
-    #             )
+            # Handle nested steps for Router/Loop
+            if isinstance(step, Router):
+                step_dict["steps"] = (
+                    [serialize_step(step) for step in step.choices] if hasattr(step, "choices") else None
+                )
 
-    #         elif isinstance(step, (Loop, Condition, Steps, Parallel)):
-    #             step_dict["steps"] = [serialize_step(step) for step in step.steps] if hasattr(step, "steps") else None
+            elif isinstance(step, (Loop, Condition, Steps, Parallel)):
+                step_dict["steps"] = [serialize_step(step) for step in step.steps] if hasattr(step, "steps") else None
 
-    #         return step_dict
+            return step_dict
 
-    #     if self.steps is None or callable(self.steps):
-    #         steps_list = []
-    #     elif isinstance(self.steps, Steps):
-    #         steps_list = self.steps.steps
-    #     else:
-    #         steps_list = self.steps
+        if self.steps is None or callable(self.steps):
+            steps_list = []
+        elif isinstance(self.steps, Steps):
+            steps_list = self.steps.steps
+        else:
+            steps_list = self.steps
 
-    #     return {
-    #         "name": self.name,
-    #         "workflow_id": self.id,
-    #         "description": self.description,
-    #         "steps": [serialize_step(s) for s in steps_list],
-    #         "session_id": self.session_id,
-    #     }
+        return {
+            "name": self.name,
+            "workflow_id": self.id,
+            "description": self.description,
+            "steps": [serialize_step(s) for s in steps_list],
+            "session_id": self.session_id,
+        }
 
     def _calculate_session_metrics_from_workflow_metrics(self, workflow_metrics: WorkflowMetrics) -> Metrics:
         """Calculate session metrics by aggregating all step metrics from workflow metrics"""
