@@ -1653,8 +1653,8 @@ class EntityMemoryStore(LearningStore):
                 user_id=user_id if effective_namespace == "user" else None,
             )
 
-            if result and result.get("content"):
-                return self.schema.from_dict(result["content"])
+            if result and result.get("content"):  # type: ignore[union-attr]
+                return self.schema.from_dict(result["content"])  # type: ignore[index]
 
             return None
 
@@ -1743,7 +1743,7 @@ class EntityMemoryStore(LearningStore):
             entities = []
             query_lower = query.lower()
 
-            for result in results or []:
+            for result in results or []:  # type: ignore[union-attr]
                 content = result.get("content", {})
                 if self._matches_query(content=content, query=query_lower):
                     entity = self.schema.from_dict(content)
@@ -2854,7 +2854,7 @@ class EntityMemoryStore(LearningStore):
         namespace: Optional[str] = None,
     ) -> List[Callable]:
         """Get sync extraction tools based on config."""
-        tools = []
+        tools: List[Callable[..., str]] = []
         effective_namespace = namespace or self.config.namespace
 
         if self.config.enable_create_entity:
@@ -2953,7 +2953,7 @@ class EntityMemoryStore(LearningStore):
         namespace: Optional[str] = None,
     ) -> List[Callable]:
         """Get async extraction tools based on config."""
-        tools = []
+        tools: List[Callable] = []
         effective_namespace = namespace or self.config.namespace
 
         if self.config.enable_create_entity:

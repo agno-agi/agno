@@ -48,7 +48,7 @@ def demo_user_isolation():
     """)
 
     # Create isolated machines for two users
-    alice_machine = LearningMachine(
+    _alice_machine = LearningMachine(
         user_profile=True,
         session_context=True,
         entity_memory={
@@ -58,7 +58,7 @@ def demo_user_isolation():
         session_id="alice-session-1",
     )
 
-    bob_machine = LearningMachine(
+    _bob_machine = LearningMachine(
         user_profile=True,
         session_context=True,
         entity_memory={
@@ -127,9 +127,9 @@ def demo_shared_knowledge():
         )
 
     # All team members share entity and learned knowledge
-    alice = create_team_member_machine("alice", "engineering")
-    bob = create_team_member_machine("bob", "engineering")
-    carol = create_team_member_machine("carol", "engineering")
+    _alice = create_team_member_machine("alice", "engineering")
+    _bob = create_team_member_machine("bob", "engineering")
+    _carol = create_team_member_machine("carol", "engineering")
 
     print("✅ Created 3 team members with:")
     print("   - Private: user_profile (preferences, communication style)")
@@ -190,7 +190,7 @@ def demo_hierarchical_namespaces():
         )
 
     # Example usage
-    frontend_dev = create_hierarchical_machine(
+    _frontend_dev = create_hierarchical_machine(
         user_id="alice", team="frontend", department="engineering"
     )
 
@@ -327,11 +327,11 @@ def demo_multi_tenant():
         )
 
     # Acme users
-    acme_alice = create_tenant_machine("acme", "alice")
-    acme_bob = create_tenant_machine("acme", "bob")
+    _acme_alice = create_tenant_machine("acme", "alice")
+    _acme_bob = create_tenant_machine("acme", "bob")
 
     # Globex users
-    globex_charlie = create_tenant_machine("globex", "charlie")
+    _globex_charlie = create_tenant_machine("globex", "charlie")
 
     print("✅ Multi-tenant isolation:")
     print("   - Acme users can't see Globex data")

@@ -96,7 +96,7 @@ def demo_research_session():
     print("RESEARCH SESSION DEMO")
     print("=" * 60)
 
-    agent = create_research_agent(
+    _agent = create_research_agent(
         researcher_id="researcher_123",
         session_id="lit_review_456",
         research_domain="machine_learning",

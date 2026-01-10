@@ -57,7 +57,7 @@ def demo_new_user_new_session():
     print("NEW USER, NEW SESSION")
     print("=" * 60)
 
-    agent = create_combined_agent(user_id="new_user_123", session_id="session_001")
+    _agent = create_combined_agent(user_id="new_user_123", session_id="session_001")
 
     print("""
     Scenario: First-time user, first conversation
@@ -102,14 +102,14 @@ def demo_returning_user_new_session():
     print("RETURNING USER, NEW SESSION")
     print("=" * 60)
 
-    agent = create_combined_agent(
+    _agent = create_combined_agent(
         user_id="alex_456",  # Same user
         session_id="session_002",  # New session
     )
 
     print("""
     Scenario: Alex returns for a new conversation
-    
+
     User Profile: Loaded with previously learned info
     - Name: Alex
     - Role: Data scientist at TechCorp
@@ -148,14 +148,14 @@ def demo_same_session_continuation():
     print("SAME USER, SAME SESSION (Continuation)")
     print("=" * 60)
 
-    agent = create_combined_agent(
+    _agent = create_combined_agent(
         user_id="alex_456",
         session_id="session_002",  # Same session as before
     )
 
     print("""
     Scenario: Alex continues the same conversation (after a break)
-    
+
     User Profile: Still has all learned info
     Session Context: Restored from previous messages
     - Summary: "Discussing ML model deployment"

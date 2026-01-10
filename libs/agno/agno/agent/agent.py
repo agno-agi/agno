@@ -6436,8 +6436,9 @@ class Agent:
 
         try:
             messages = run_messages.messages if run_messages else []
-
-            await self.learning.aprocess(
+            learning = self.learning
+            assert isinstance(learning, LearningMachine)  # Type narrowing
+            await learning.aprocess(
                 messages=messages,
                 user_id=user_id,
                 session_id=session.session_id if session else None,
@@ -6607,7 +6608,7 @@ class Agent:
             agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=False))
 
         # Add learning machine tools
-        if self.learning is not None:
+        if isinstance(self.learning, LearningMachine):
             learning_tools = self.learning.get_tools(
                 user_id=user_id,
                 session_id=session.session_id if session else None,
@@ -6725,7 +6726,7 @@ class Agent:
             agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=True))
 
         # Add learning machine tools (async)
-        if self.learning is not None:
+        if isinstance(self.learning, LearningMachine):
             learning_tools = await self.learning.aget_tools(
                 user_id=user_id,
                 session_id=session.session_id if session else None,
@@ -8349,7 +8350,7 @@ class Agent:
             )
 
         # 3.3.12 then add learnings to the system prompt
-        if self.learning is not None and self.add_learnings_to_context:
+        if isinstance(self.learning, LearningMachine) and self.add_learnings_to_context:
             learning_context = self.learning.build_context(
                 user_id=user_id,
                 session_id=session.session_id if session else None,
@@ -8711,7 +8712,7 @@ class Agent:
             )
 
         # 3.3.12 then add learnings to the system prompt
-        if self.learning is not None and self.add_learnings_to_context:
+        if isinstance(self.learning, LearningMachine) and self.add_learnings_to_context:
             learning_context = await self.learning.abuild_context(
                 user_id=user_id,
                 session_id=session.session_id if session else None,

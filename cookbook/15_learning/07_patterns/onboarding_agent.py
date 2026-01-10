@@ -148,7 +148,7 @@ def demo_onboarding_flow():
     # Process through learning machine
     print("\nProcessing onboarding conversation...")
 
-    result = machine.invoke({"messages": onboarding_conversation})
+    _result = machine.invoke({"messages": onboarding_conversation})
 
     # Display extracted profile
     print("\n📋 USER PROFILE CAPTURED:")
@@ -289,7 +289,7 @@ def demo_checkpoint_recovery():
     print("\n🔄 RECOVERY SCENARIO:")
     print("-" * 40)
 
-    recovery_conversation = [
+    _recovery_conversation = [
         {
             "role": "assistant",
             "content": "Welcome back, Sarah! Last time we were discussing your team setup. You mentioned you're a PM - how many people will be using this with you?",

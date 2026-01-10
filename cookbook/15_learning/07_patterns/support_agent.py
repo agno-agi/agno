@@ -98,7 +98,7 @@ def demo_support_interaction():
     print("=" * 60)
 
     # Create agent for this customer and ticket
-    agent = create_support_agent(
+    _agent = create_support_agent(
         customer_id="cust_12345",
         ticket_id="ticket_98765",
         org_id="acme_corp",

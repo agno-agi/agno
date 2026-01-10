@@ -36,7 +36,7 @@ def demo_user_namespace():
     print("=" * 60)
 
     # Each user has isolated knowledge
-    alice_agent = Agent(
+    _alice_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         db=db,
         learning=LearningMachine(
@@ -49,7 +49,7 @@ def demo_user_namespace():
         user_id="alice",
     )
 
-    bob_agent = Agent(
+    _bob_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         db=db,
         learning=LearningMachine(
@@ -84,7 +84,7 @@ def demo_team_namespace():
     print("=" * 60)
 
     # Team members share a knowledge namespace
-    team_agent = Agent(
+    _team_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         learning=LearningMachine(
             db=db,
@@ -116,7 +116,7 @@ def demo_project_namespace():
     print("PROJECT NAMESPACE - Project-Specific Knowledge")
     print("=" * 60)
 
-    project_agent = Agent(
+    _project_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         learning=LearningMachine(
             db=db,
@@ -149,7 +149,7 @@ def demo_global_namespace():
     print("GLOBAL NAMESPACE - Organization Knowledge")
     print("=" * 60)
 
-    global_agent = Agent(
+    _global_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         learning=LearningMachine(
             db=db,

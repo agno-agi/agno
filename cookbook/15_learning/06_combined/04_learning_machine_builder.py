@@ -45,14 +45,14 @@ def demo_boolean_shortcuts():
     print("=" * 60)
 
     # Simplest: just enable with True
-    simple_learning = LearningMachine(
+    _simple_learning = LearningMachine(
         db=db,
         user_profile=True,  # Enable with defaults
         session_context=True,  # Enable with defaults
     )
 
     # Or even simpler on the agent
-    simple_agent = Agent(
+    _simple_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         learning=True,  # Enable all defaults
         user_id="user_123",
@@ -88,7 +88,7 @@ def demo_configuration_objects():
     print("=" * 60)
 
     # Full control with config objects
-    configured_learning = LearningMachine(
+    _configured_learning = LearningMachine(
         db=db,
         user_profile=UserProfileConfig(
             mode=LearningMode.ALWAYS,

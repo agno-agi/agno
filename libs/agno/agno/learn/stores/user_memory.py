@@ -465,8 +465,8 @@ class UserMemoryStore(LearningStore):
                 user_id=user_id,
             )
 
-            if result and result.get("content"):  # type: ignore
-                return from_dict_safe(self.schema, result["content"])
+            if result and result.get("content"):  # type: ignore[union-attr]
+                return from_dict_safe(self.schema, result["content"])  # type: ignore[index]
 
             return None
 
@@ -597,7 +597,7 @@ class UserMemoryStore(LearningStore):
 
         try:
             memories_id = self._build_memories_id(user_id=user_id)
-            return self.db.delete_learning(id=memories_id)
+            return self.db.delete_learning(id=memories_id)  # type: ignore[return-value]
         except Exception as e:
             log_debug(f"UserMemoryStore.delete failed for user_id={user_id}: {e}")
             return False

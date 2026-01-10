@@ -407,6 +407,9 @@ class SessionContext:
 
         return "\n\n".join(parts)
 
+    def __repr__(self) -> str:
+        return f"SessionContext(session_id={self.session_id})"
+
 
 # =============================================================================
 # Learned Knowledge Schema
@@ -488,6 +491,9 @@ class LearnedKnowledge:
         if self.tags:
             parts.append(f"Tags: {', '.join(self.tags)}")
         return "\n".join(parts)
+
+    def __repr__(self) -> str:
+        return f"LearnedKnowledge(title={self.title})"
 
 
 # =============================================================================
@@ -776,6 +782,9 @@ class EntityMemory:
             }
 
         return result
+
+    def __repr__(self) -> str:
+        return f"EntityMemory(entity_id={self.entity_id})"
 
 
 # =============================================================================

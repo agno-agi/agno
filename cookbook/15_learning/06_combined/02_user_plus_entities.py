@@ -113,7 +113,7 @@ def demo_private_entities():
     print("PATTERN: Private Entity Namespace")
     print("=" * 60)
 
-    agent = create_combined_agent(user_id="sarah_123")
+    _agent = create_combined_agent(user_id="sarah_123")
 
     print("""
     Configuration:

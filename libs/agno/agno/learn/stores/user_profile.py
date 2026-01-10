@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from dataclasses import fields as dc_fields
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union, cast
 
 from agno.learn.config import LearningMode, UserProfileConfig
 from agno.learn.schemas import UserProfile
@@ -469,11 +469,13 @@ class UserProfileStore(LearningStore):
                 return f"Error: {e}"
 
         # Set the signature, docstring, and annotations
-        update_profile.__signature__ = inspect.Signature(params)
-        update_profile.__doc__ = docstring
-        update_profile.__name__ = "update_profile"
-        update_profile.__annotations__ = {field_name: Optional[str] for field_name in updateable}
-        update_profile.__annotations__["return"] = str
+        # Use cast to satisfy mypy - all Python functions have these attributes
+        func = cast(Any, update_profile)
+        func.__signature__ = inspect.Signature(params)
+        func.__doc__ = docstring
+        func.__name__ = "update_profile"
+        func.__annotations__ = {field_name: Optional[str] for field_name in updateable}
+        func.__annotations__["return"] = str
 
         return update_profile
 
@@ -544,11 +546,13 @@ class UserProfileStore(LearningStore):
                 return f"Error: {e}"
 
         # Set the signature, docstring, and annotations
-        update_profile.__signature__ = inspect.Signature(params)
-        update_profile.__doc__ = docstring
-        update_profile.__name__ = "update_profile"
-        update_profile.__annotations__ = {field_name: Optional[str] for field_name in updateable}
-        update_profile.__annotations__["return"] = str
+        # Use cast to satisfy mypy - all Python functions have these attributes
+        func = cast(Any, update_profile)
+        func.__signature__ = inspect.Signature(params)
+        func.__doc__ = docstring
+        func.__name__ = "update_profile"
+        func.__annotations__ = {field_name: Optional[str] for field_name in updateable}
+        func.__annotations__["return"] = str
 
         return update_profile
 
@@ -628,8 +632,8 @@ class UserProfileStore(LearningStore):
                 user_id=user_id,
             )
 
-            if result and result.get("content"):  # type: ignore
-                return from_dict_safe(self.schema, result["content"])
+            if result and result.get("content"):  # type: ignore[union-attr]
+                return from_dict_safe(self.schema, result["content"])  # type: ignore[index]
 
             return None
 
@@ -760,7 +764,7 @@ class UserProfileStore(LearningStore):
 
         try:
             profile_id = self._build_profile_id(user_id=user_id)
-            return self.db.delete_learning(id=profile_id)
+            return self.db.delete_learning(id=profile_id)  # type: ignore[return-value]
         except Exception as e:
             log_debug(f"UserProfileStore.delete failed for user_id={user_id}: {e}")
             return False
