@@ -14,6 +14,7 @@ from agno.cli.console import (
     print_subheading,
     success_style,
 )
+from agno.skills.validator import MAX_DESCRIPTION_LENGTH, MAX_SKILL_NAME_LENGTH
 
 
 def _validate_skill_name(name: str) -> List[str]:
@@ -36,8 +37,8 @@ def _validate_skill_name(name: str) -> List[str]:
 
     name = name.strip()
 
-    if len(name) > 64:
-        errors.append(f"Skill name exceeds 64 character limit ({len(name)} chars)")
+    if len(name) > MAX_SKILL_NAME_LENGTH:
+        errors.append(f"Skill name exceeds {MAX_SKILL_NAME_LENGTH} character limit ({len(name)} chars)")
 
     if name != name.lower():
         errors.append("Skill name must be lowercase")
@@ -107,8 +108,8 @@ def create_skill_from_template(
             console=console,
         )
 
-    if len(description) > 1024:
-        console.print(f"\n[bold red]Description too long ({len(description)} chars, max 1024)[/bold red]")
+    if len(description) > MAX_DESCRIPTION_LENGTH:
+        console.print(f"\n[bold red]Description too long ({len(description)} chars, max {MAX_DESCRIPTION_LENGTH})[/bold red]")
         return None
 
     # Create skill directory
