@@ -25,6 +25,7 @@ class Toolkit:
         external_execution_required_tools: Optional[list[str]] = None,
         stop_after_tool_call_tools: Optional[List[str]] = None,
         show_result_tools: Optional[List[str]] = None,
+        discoverable_tools: Optional[List[str]] = None,
         cache_results: bool = False,
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
@@ -50,6 +51,7 @@ class Toolkit:
             auto_register (bool): Whether to automatically register all methods in the class.
             stop_after_tool_call_tools (Optional[List[str]]): List of function names that should stop the agent after execution.
             show_result_tools (Optional[List[str]]): List of function names whose results should be shown.
+            discoverable_tools (Optional[List[str]]): List of function names that are discoverable via search but not automatically added to agent tools.
         """
         self.name: str = name
         self.tools: Sequence[Union[Callable[..., Any], Function]] = tools
@@ -66,6 +68,7 @@ class Toolkit:
 
         self.stop_after_tool_call_tools: list[str] = stop_after_tool_call_tools or []
         self.show_result_tools: list[str] = show_result_tools or []
+        self.discoverable_tools: list[str] = discoverable_tools or []
 
         self._check_tools_filters(
             available_tools=[self._get_tool_name(tool) for tool in tools],
@@ -192,6 +195,7 @@ class Toolkit:
                 external_execution=tool_name in self.external_execution_required_tools,
                 stop_after_tool_call=tool_name in self.stop_after_tool_call_tools,
                 show_result=tool_name in self.show_result_tools or tool_name in self.stop_after_tool_call_tools,
+                discoverable=tool_name in self.discoverable_tools,
             )
 
             if is_async:
