@@ -4705,6 +4705,7 @@ def get_workflows(
                     if "id" not in workflow_config:
                         workflow_config["id"] = entity["entity_id"]
                     workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
+                    workflow.db = db
                     workflows.append(workflow)
         return workflows
 
