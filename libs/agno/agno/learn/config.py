@@ -67,10 +67,15 @@ class UserProfileConfig:
 
         # Extraction operations
         enable_update_profile: Allow updating profile fields (name, etc).
+        enable_add_memory: Allow adding new memories during extraction.
+        enable_update_memory: Allow updating existing memories.
+        enable_delete_memory: Allow deleting memories.
+        enable_clear_memories: Allow clearing all memories (dangerous).
 
         # Agent tools
         enable_agent_tools: Expose tools to the agent.
         agent_can_update_profile: If agent_tools enabled, provide update_user_profile tool.
+        agent_can_update_memories: If agent_tools enabled, provide update_user_memory tool.
 
         # Prompt customization
         instructions: Custom instructions for what to capture.
@@ -88,10 +93,15 @@ class UserProfileConfig:
 
     # Extraction operations
     enable_update_profile: bool = True  # Allow updating profile fields
+    enable_add_memory: bool = True  # Allow adding new memories during extraction
+    enable_update_memory: bool = True  # Allow updating existing memories
+    enable_delete_memory: bool = True  # Allow deleting memories
+    enable_clear_memories: bool = False  # Allow clearing all memories (dangerous)
 
     # Agent tools
     enable_agent_tools: bool = False
     agent_can_update_profile: bool = True
+    agent_can_update_memories: bool = True  # If agent_tools enabled, provide update_user_memory tool
 
     # Prompt customization
     instructions: Optional[str] = None
