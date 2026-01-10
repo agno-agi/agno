@@ -246,7 +246,6 @@ class UserProfileStore(LearningStore):
             context += memories_text
 
         context += dedent("""
-
             <memory_application_guidelines>
             Apply this knowledge naturally - respond as if you inherently know this information,
             exactly as a colleague would recall shared history without narrating their thought process.

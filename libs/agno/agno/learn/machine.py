@@ -571,7 +571,10 @@ class LearningMachine:
             try:
                 result = store.recall(**context)
                 results[name] = result
-                log_debug(f"Recalled from {name}: {type(result)}")
+                try:
+                    log_debug(f"Recalled from {name}: {result}")
+                except Exception as e:
+                    pass
             except Exception as e:
                 log_warning(f"Error recalling from {name}: {e}")
 
@@ -609,7 +612,10 @@ class LearningMachine:
                 result = await store.arecall(**context)
                 if result is not None:
                     results[name] = result
-                    log_debug(f"Recalled from {name}: {type(result)}")
+                    try:
+                        log_debug(f"Recalled from {name}: {result}")
+                    except Exception:
+                        pass
             except Exception as e:
                 log_warning(f"Error recalling from {name}: {e}")
 

@@ -166,6 +166,9 @@ class UserProfile:
 
         return result
 
+    def __repr__(self) -> str:
+        return f"UserProfile(user_id={self.user_id})"
+
 
 @dataclass
 class Memories:

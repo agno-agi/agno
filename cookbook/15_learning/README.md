@@ -96,7 +96,7 @@ docker run -d \
 
 ```bash
 # Start with the basics
-python cookbook/15_learning/basics/01_hello_learning.py
+python cookbook/15_learning/01_basics/1_user_profile_always.py
 
 # Or run any specific example
 python cookbook/15_learning/user_profile/02_agentic_mode.py
