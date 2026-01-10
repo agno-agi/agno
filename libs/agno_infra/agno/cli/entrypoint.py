@@ -1,11 +1,11 @@
 """Agno cli
-
 This is the entrypoint for the `agno` cli application.
 """
 
 import typer
 
 from agno.cli.infra_cli import infra_cli as infra_subcommands
+from agno.cli.skill_cli import skill_cli as skill_subcommands
 
 agno_cli = typer.Typer(
     help="""\b
@@ -15,6 +15,8 @@ Usage:
 1. Run `ag infra create` to create a new Agentics Infrastructure project from a template
 2. Run `ag infra up` to start the infrastructure
 3. Run `ag infra down` to stop the infrastructure
+4. Run `ag skill create` to create a new Agent Skill
+5. Run `ag skill validate` to validate a skill directory
 """,
     no_args_is_help=True,
     add_completion=False,
@@ -26,3 +28,4 @@ Usage:
 
 
 agno_cli.add_typer(infra_subcommands)
+agno_cli.add_typer(skill_subcommands)
