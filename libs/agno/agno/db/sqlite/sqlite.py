@@ -55,6 +55,7 @@ class SqliteDb(BaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        learnings_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -79,6 +80,7 @@ class SqliteDb(BaseDb):
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
+            learnings_table (Optional[str]): Name of the table to store learning records.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -99,6 +101,7 @@ class SqliteDb(BaseDb):
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
+            learnings_table=learnings_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -156,6 +159,7 @@ class SqliteDb(BaseDb):
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
+            (self.learnings_table_name, "learnings"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -333,6 +337,14 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.versions_table
+
+        elif table_type == "learnings":
+            self.learnings_table = self._get_or_create_table(
+                table_name=self.learnings_table_name,
+                table_type="learnings",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.learnings_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -2912,3 +2924,230 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_error(f"Error upserting cultural knowledge: {e}")
             raise e
+
+    # -- Learning methods --
+    def get_learning(
+        self,
+        learning_type: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve a learning record.
+
+        Args:
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
+
+        Returns:
+            Dict with 'content' key containing the learning data, or None.
+        """
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.learning_type == learning_type)
+
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                row = dict(result._mapping)
+                return {"content": row.get("content")}
+
+        except Exception as e:
+            log_debug(f"Error retrieving learning: {e}")
+            return None
+
+    def upsert_learning(
+        self,
+        id: str,
+        learning_type: str,
+        content: Dict[str, Any],
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Insert or update a learning record.
+
+        Args:
+            id: Unique identifier for the learning.
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            content: The learning content as a dict.
+            user_id: Associated user ID.
+            agent_id: Associated agent ID.
+            team_id: Associated team ID.
+            workflow_id: Associated workflow ID.
+            session_id: Associated session ID.
+            namespace: Namespace for scoping ('user', 'global', or custom).
+            entity_id: Associated entity ID (for entity-specific learnings).
+            entity_type: Entity type ('person', 'company', etc.).
+            metadata: Optional metadata.
+        """
+        try:
+            table = self._get_table(table_type="learnings", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            current_time = int(time.time())
+
+            with self.Session() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(
+                    learning_id=id,
+                    learning_type=learning_type,
+                    namespace=namespace,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    workflow_id=workflow_id,
+                    session_id=session_id,
+                    entity_id=entity_id,
+                    entity_type=entity_type,
+                    content=content,
+                    metadata=metadata,
+                    created_at=current_time,
+                    updated_at=current_time,
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["learning_id"],
+                    set_=dict(
+                        content=content,
+                        metadata=metadata,
+                        updated_at=current_time,
+                    ),
+                )
+                sess.execute(stmt)
+
+            log_debug(f"Upserted learning: {id}")
+
+        except Exception as e:
+            log_debug(f"Error upserting learning: {e}")
+
+    def delete_learning(self, id: str) -> bool:
+        """Delete a learning record.
+
+        Args:
+            id: The learning ID to delete.
+
+        Returns:
+            True if deleted, False otherwise.
+        """
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.learning_id == id)
+                result = sess.execute(stmt)
+                return result.rowcount > 0
+
+        except Exception as e:
+            log_debug(f"Error deleting learning: {e}")
+            return False
+
+    def get_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get multiple learning records.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of learning records.
+        """
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table)
+
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+
+                stmt = stmt.order_by(table.c.updated_at.desc())
+
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results]
+
+        except Exception as e:
+            log_debug(f"Error getting learnings: {e}")
+            return []

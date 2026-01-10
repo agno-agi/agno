@@ -67,7 +67,6 @@ dev = [
 
 os = ["fastapi", "uvicorn", "PyJWT"]
 
-
 # Dependencies for Telemetry
 opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]
 weave = ["weave"]

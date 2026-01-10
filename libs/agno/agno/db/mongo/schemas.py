@@ -98,6 +98,21 @@ SPAN_COLLECTION_SCHEMA = [
     {"key": "created_at"},
 ]
 
+LEARNINGS_COLLECTION_SCHEMA = [
+    {"key": "learning_id", "unique": True},
+    {"key": "learning_type"},
+    {"key": "namespace"},
+    {"key": "user_id"},
+    {"key": "agent_id"},
+    {"key": "team_id"},
+    {"key": "workflow_id"},
+    {"key": "session_id"},
+    {"key": "entity_id"},
+    {"key": "entity_type"},
+    {"key": "created_at"},
+    {"key": "updated_at"},
+]
+
 
 def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
     """Get the index definitions for a specific collection type."""
@@ -110,6 +125,7 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
         "culture": CULTURAL_KNOWLEDGE_COLLECTION_SCHEMA,
         "traces": TRACE_COLLECTION_SCHEMA,
         "spans": SPAN_COLLECTION_SCHEMA,
+        "learnings": LEARNINGS_COLLECTION_SCHEMA,
     }
 
     indexes = index_definitions.get(collection_type)

@@ -149,6 +149,7 @@ class AsyncMongoDb(AsyncBaseDb):
         culture_collection: Optional[str] = None,
         traces_collection: Optional[str] = None,
         spans_collection: Optional[str] = None,
+        learnings_collection: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -172,6 +173,7 @@ class AsyncMongoDb(AsyncBaseDb):
             culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
+            learnings_collection (Optional[str]): Name of the collection to store learnings.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -194,6 +196,7 @@ class AsyncMongoDb(AsyncBaseDb):
             culture_table=culture_collection,
             traces_table=traces_collection,
             spans_table=spans_collection,
+            learnings_table=learnings_collection,
         )
 
         # Detect client type if provided
@@ -451,6 +454,17 @@ class AsyncMongoDb(AsyncBaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.spans_collection
+
+        if table_type == "learnings":
+            if reset_cache or not hasattr(self, "learnings_collection"):
+                if self.learnings_table_name is None:
+                    raise ValueError("Learnings collection was not provided on initialization")
+                self.learnings_collection = await self._get_or_create_collection(
+                    collection_name=self.learnings_table_name,
+                    collection_type="learnings",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.learnings_collection
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -2768,4 +2782,219 @@ class AsyncMongoDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Error getting spans: {e}")
+            return []
+
+    # -- Learning methods --
+    async def get_learning(
+        self,
+        learning_type: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve a learning record.
+
+        Args:
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
+
+        Returns:
+            Dict with 'content' key containing the learning data, or None.
+        """
+        try:
+            collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return None
+
+            # Build query
+            query: Dict[str, Any] = {"learning_type": learning_type}
+            if user_id is not None:
+                query["user_id"] = user_id
+            if agent_id is not None:
+                query["agent_id"] = agent_id
+            if team_id is not None:
+                query["team_id"] = team_id
+            if session_id is not None:
+                query["session_id"] = session_id
+            if namespace is not None:
+                query["namespace"] = namespace
+            if entity_id is not None:
+                query["entity_id"] = entity_id
+            if entity_type is not None:
+                query["entity_type"] = entity_type
+
+            result = await collection.find_one(query)
+            if result is None:
+                return None
+
+            # Remove MongoDB's _id field
+            result.pop("_id", None)
+            return {"content": result.get("content")}
+
+        except Exception as e:
+            log_debug(f"Error retrieving learning: {e}")
+            return None
+
+    async def upsert_learning(
+        self,
+        id: str,
+        learning_type: str,
+        content: Dict[str, Any],
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Insert or update a learning record.
+
+        Args:
+            id: Unique identifier for the learning.
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            content: The learning content as a dict.
+            user_id: Associated user ID.
+            agent_id: Associated agent ID.
+            team_id: Associated team ID.
+            session_id: Associated session ID.
+            namespace: Namespace for scoping ('user', 'global', or custom).
+            entity_id: Associated entity ID (for entity-specific learnings).
+            entity_type: Entity type ('person', 'company', etc.).
+            metadata: Optional metadata.
+        """
+        try:
+            collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=True)
+            if collection is None:
+                return
+
+            current_time = int(time.time())
+
+            document = {
+                "learning_id": id,
+                "learning_type": learning_type,
+                "namespace": namespace,
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "team_id": team_id,
+                "session_id": session_id,
+                "entity_id": entity_id,
+                "entity_type": entity_type,
+                "content": content,
+                "metadata": metadata,
+                "updated_at": current_time,
+            }
+
+            # Use upsert to insert or update
+            await collection.update_one(
+                {"learning_id": id},
+                {"$set": document, "$setOnInsert": {"created_at": current_time}},
+                upsert=True,
+            )
+
+            log_debug(f"Upserted learning: {id}")
+
+        except Exception as e:
+            log_debug(f"Error upserting learning: {e}")
+
+    async def delete_learning(self, id: str) -> bool:
+        """Delete a learning record.
+
+        Args:
+            id: The learning ID to delete.
+
+        Returns:
+            True if deleted, False otherwise.
+        """
+        try:
+            collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return False
+
+            result = await collection.delete_one({"learning_id": id})
+            return result.deleted_count > 0
+
+        except Exception as e:
+            log_debug(f"Error deleting learning: {e}")
+            return False
+
+    async def get_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get multiple learning records.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of learning records.
+        """
+        try:
+            collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return []
+
+            # Build query
+            query: Dict[str, Any] = {}
+            if learning_type is not None:
+                query["learning_type"] = learning_type
+            if user_id is not None:
+                query["user_id"] = user_id
+            if agent_id is not None:
+                query["agent_id"] = agent_id
+            if team_id is not None:
+                query["team_id"] = team_id
+            if session_id is not None:
+                query["session_id"] = session_id
+            if namespace is not None:
+                query["namespace"] = namespace
+            if entity_id is not None:
+                query["entity_id"] = entity_id
+            if entity_type is not None:
+                query["entity_type"] = entity_type
+
+            cursor = collection.find(query)
+            if limit is not None:
+                cursor = cursor.limit(limit)
+
+            results = await cursor.to_list(length=None)
+
+            learnings = []
+            for row in results:
+                # Remove MongoDB's _id field
+                row.pop("_id", None)
+                learnings.append(row)
+
+            return learnings
+
+        except Exception as e:
+            log_debug(f"Error getting learnings: {e}")
             return []

@@ -97,9 +97,29 @@ pytest libs/agno/tests/unit/test_agent.py
 
 ---
 
+## Before Submitting Code
+
+**Always run these scripts before pushing code or creating a PR:**
+
+```bash
+# Activate the virtual environment first
+source .venv/bin/activate
+
+# Format all code (ruff format)
+./scripts/format.sh
+
+# Validate all code (ruff check, mypy)
+./scripts/validate.sh
+```
+
+Both scripts must pass with no errors before code review.
+
+---
+
 ## Don't
 
 - Don't implement features without checking for a design doc first
 - Don't use f-strings for print lines where there are no variables
 - Don't use emojis in examples and print lines
 - Don't skip async variants of public methods
+- Don't push code without running `./scripts/format.sh` and `./scripts/validate.sh`

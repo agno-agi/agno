@@ -1,0 +1,15 @@
+agno
+anthropic
+chromadb
+fastapi[standard]
+google-genai
+mcp
+nest_asyncio
+openai
+openinference-instrumentation-agno
+opentelemetry-api
+opentelemetry-sdk
+pgvector
+pillow
+psycopg[binary]
+sqlalchemy
