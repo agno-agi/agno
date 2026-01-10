@@ -9,7 +9,7 @@ from typing import List
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.db.mysql import AsyncMySQLDb
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.types import WorkflowExecutionInput
 from agno.workflow.workflow import Workflow
 from pydantic import BaseModel
@@ -27,7 +27,7 @@ class ResearchTopic(BaseModel):
 # Create researcher agent
 researcher = Agent(
     name="Researcher",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="Research the given topic thoroughly and provide key insights",
     output_schema=ResearchTopic,
 )

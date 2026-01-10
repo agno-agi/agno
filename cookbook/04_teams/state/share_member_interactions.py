@@ -2,14 +2,14 @@ from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 db = SqliteDb(db_file="tmp/agents.db")
 
 web_research_agent = Agent(
     name="Web Research Agent",
     model=OpenAIChat(id="o3-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="You are a web research agent that can answer questions from the web.",
 )
 

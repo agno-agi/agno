@@ -23,7 +23,7 @@ from agno.agent import Agent
 from agno.db.surrealdb import SurrealDb
 from agno.models.anthropic import Claude
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel
 
@@ -55,7 +55,7 @@ web_searcher = Agent(
     name="Web Searcher",
     model=Claude(id="claude-sonnet-4-5-20250929"),
     role="Searches the web for information on a topic",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_datetime_to_context=True,
 )
 

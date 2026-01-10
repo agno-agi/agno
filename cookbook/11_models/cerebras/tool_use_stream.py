@@ -1,10 +1,10 @@
 from agno.agent import Agent
 from agno.models.cerebras import Cerebras
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=Cerebras(id="llama-3.3-70b"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

@@ -1,6 +1,6 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.reasoning import ReasoningTools
 
 reasoning_agent = Agent(
@@ -12,7 +12,7 @@ reasoning_agent = Agent(
             add_instructions=True,
             add_few_shot=True,
         ),
-        DuckDuckGoTools(),
+        WebSearchTools(),
     ],
     instructions="Use tables where possible",
     markdown=True,

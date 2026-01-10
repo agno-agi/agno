@@ -4,13 +4,13 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 web_agent = Agent(
     name="Web Search Agent",
     role="Handle web search requests",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="Always include sources",
     add_datetime_to_context=True,
 )
@@ -19,7 +19,7 @@ finance_agent = Agent(
     name="Finance Agent",
     role="Handle financial data requests",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools(enable_search=True)],
+    tools=[WebSearchTools(enable_news=False)],
     instructions=[
         "You are a financial data specialist. Provide concise and accurate data.",
         "Use tables to display stock prices, fundamentals (P/E, Market Cap), and recommendations.",

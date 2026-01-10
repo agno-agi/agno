@@ -1,13 +1,13 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=OpenAIChat(id="gpt-5-mini"),
     tools=[
-        DuckDuckGoTools(
-            stop_after_tool_call_tools=["duckduckgo_search"],
-            show_result_tools=["duckduckgo_search"],
+        WebSearchTools(
+            stop_after_tool_call_tools=["web_search"],
+            show_result_tools=["web_search"],
         )
     ],
 )

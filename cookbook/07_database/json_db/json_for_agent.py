@@ -7,7 +7,7 @@ Run `pip install ddgs openai` to install dependencies."""
 from agno.agent import Agent
 from agno.db.json import JsonDb
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 # Setup the JSON database
 db = JsonDb(db_path="tmp/json_db")
@@ -16,7 +16,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     db=db,
     session_id="session_storage",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
     num_history_runs=3,
 )

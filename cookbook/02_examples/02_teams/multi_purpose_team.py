@@ -6,7 +6,7 @@ from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
 from agno.tools.dalle import DalleTools
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.e2b import E2BTools
 from agno.tools.yfinance import YFinanceTools
 
@@ -14,7 +14,7 @@ web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions=["Always include sources"],
 )
 

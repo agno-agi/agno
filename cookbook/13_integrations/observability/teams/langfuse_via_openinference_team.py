@@ -5,7 +5,7 @@ from uuid import uuid4
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 from openinference.instrumentation.agno import AgnoInstrumentor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -50,7 +50,7 @@ news_agent = Agent(
     role="Research company news",
     id="news-research",
     model=OpenAIChat(id="gpt-4.1"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions=[
         "You are a financial news analyst.",
         "Focus on recent company news and developments.",

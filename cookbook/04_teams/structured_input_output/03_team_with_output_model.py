@@ -6,13 +6,13 @@ from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 itinerary_planner = Agent(
     name="Itinerary Planner",
     model=Claude(id="claude-sonnet-4-20250514"),
     description="You help people plan amazing vacations. Use the tools at your disposal to find latest information about the destination.",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
 )
 
 travel_expert = Team(

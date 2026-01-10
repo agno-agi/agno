@@ -3,7 +3,7 @@ from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.mistral import MistralChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -31,7 +31,7 @@ agent = Agent(
     model=MistralChat(
         id="mistral-small-latest",
     ),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     description="You help people write movie scripts.",
     output_schema=MovieScript,
 )

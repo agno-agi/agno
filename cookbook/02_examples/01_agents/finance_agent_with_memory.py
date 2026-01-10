@@ -20,14 +20,14 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 finance_agent_with_memory = Agent(
     name="Finance Agent with Memory",
     id="financial_agent_with_memory",
     model=OpenAIChat(id="gpt-4.1"),
-    tools=[YFinanceTools(), DuckDuckGoTools()],
+    tools=[YFinanceTools(), WebSearchTools()],
     # Let the Agent create and manage user memories
     enable_agentic_memory=True,
     # Uncomment to always create memories from the input

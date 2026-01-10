@@ -1,10 +1,10 @@
 from agno.agent import Agent
 from agno.models.nebius import Nebius
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=Nebius(id="Qwen/Qwen3-30B-A3B"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

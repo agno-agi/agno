@@ -30,7 +30,7 @@ from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 # JWT Secret (use environment variable in production)
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
@@ -44,7 +44,7 @@ web_search_agent = Agent(
     name="Web Search Agent",
     model=OpenAIChat(id="gpt-4o"),
     db=db,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
     markdown=True,
 )

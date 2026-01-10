@@ -6,7 +6,7 @@ from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
@@ -24,7 +24,7 @@ level_0_agent.print_response(
 level_1_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     description="You are an enthusiastic news reporter with a flair for storytelling!",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 level_1_agent.print_response(
@@ -54,7 +54,7 @@ level_2_agent = Agent(
         "Prefer the information in your knowledge over the web results.",
     ],
     knowledge=knowledge,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 
@@ -68,7 +68,7 @@ web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="Always include sources",
     markdown=True,
 )

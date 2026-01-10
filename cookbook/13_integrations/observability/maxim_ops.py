@@ -16,7 +16,7 @@ Steps to get started with Maxim:
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 try:
@@ -34,7 +34,7 @@ instrument_agno(Maxim().logger())
 web_search_agent = Agent(
     name="Web Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="Always include sources",
     markdown=True,
 )

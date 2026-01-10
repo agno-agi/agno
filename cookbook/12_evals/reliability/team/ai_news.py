@@ -5,13 +5,13 @@ from agno.eval.reliability import ReliabilityEval, ReliabilityResult
 from agno.models.openai import OpenAIChat
 from agno.run.team import TeamRunOutput
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 team_member = Agent(
     name="Stock Searcher",
     model=OpenAIChat("gpt-4o"),
     role="Searches the web for information on a stock.",
-    tools=[DuckDuckGoTools(enable_news=True)],
+    tools=[WebSearchTools(enable_search=False)],
 )
 
 team = Team(
@@ -24,7 +24,7 @@ team = Team(
 
 expected_tool_calls = [
     "delegate_task_to_member",  # Tool call used to delegate a task to a Team member
-    "duckduckgo_news",  # Tool call used to get the latest news
+    "search_news",  # Tool call used to get the latest news
 ]
 
 

@@ -13,7 +13,7 @@ from agno.agent.agent import Agent
 from agno.models.anthropic.claude import Claude
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.reddit import RedditTools
 from agno.utils.log import logger
 
@@ -62,7 +62,7 @@ website_agent = Agent(
     id="website-agent",
     role="Search the website for information",
     model=OpenAIChat(id="o3-mini"),
-    tools=[DuckDuckGoTools(cache_results=True)],
+    tools=[WebSearchTools()],
     instructions=[
         "Search the website for information",
     ],

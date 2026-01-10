@@ -2,7 +2,7 @@ import asyncio
 
 from agno.agent import Agent
 from agno.models.litellm import LiteLLM
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=LiteLLM(
@@ -10,7 +10,7 @@ agent = Agent(
         name="LiteLLM",
     ),
     markdown=True,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
 )
 
 # Ask a question that would likely trigger tool use

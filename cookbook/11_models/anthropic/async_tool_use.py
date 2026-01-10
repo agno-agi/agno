@@ -6,11 +6,11 @@ import asyncio
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=Claude(id="claude-haiku-4-5-20251001"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

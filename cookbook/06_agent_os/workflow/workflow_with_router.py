@@ -5,7 +5,7 @@ from agno.db.sqlite import SqliteDb
 
 # Import the workflows
 from agno.os import AgentOS
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.router import Router
 from agno.workflow.step import Step
@@ -22,7 +22,7 @@ hackernews_agent = Agent(
 web_agent = Agent(
     name="Web Researcher",
     instructions="You are a comprehensive web researcher. Search across multiple sources including news sites, blogs, and official documentation to gather detailed information.",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
 )
 
 content_agent = Agent(

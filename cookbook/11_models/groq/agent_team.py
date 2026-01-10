@@ -1,14 +1,14 @@
 from agno.agent import Agent
 from agno.models.groq import Groq
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
     model=Groq(id="llama-3.3-70b-versatile"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="Always include sources",
     markdown=True,
 )

@@ -6,11 +6,11 @@ import asyncio
 
 from agno.agent import Agent
 from agno.models.ibm import WatsonX
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=WatsonX(id="mistralai/mistral-small-3-1-24b-instruct-2503"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

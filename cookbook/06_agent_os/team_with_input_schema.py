@@ -13,7 +13,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel, Field
 
@@ -55,7 +55,7 @@ hackernews_agent = Agent(
 web_researcher = Agent(
     name="Web Researcher",
     model=OpenAIChat(id="o3-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     role="Conduct comprehensive web research",
     instructions=[
         "Search for authoritative sources and documentation",

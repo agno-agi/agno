@@ -3,7 +3,7 @@ from typing import Optional
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.utils.streamlit import get_model_with_provider
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -29,7 +29,7 @@ def get_medical_imaging_agent(
         id="medical-imaging-agent",
         user_id=user_id,
         session_id=session_id,
-        tools=[DuckDuckGoTools()],
+        tools=[WebSearchTools()],
         markdown=True,
         debug_mode=True,
         instructions=dedent("""

@@ -35,7 +35,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.utils.streamlit import get_model_from_id
 from agno.vectordb.pgvector import PgVector
 
@@ -84,14 +84,14 @@ def get_agentic_rag_agent(
         add_history_to_context=True,
         num_history_runs=5,
         session_id=session_id,
-        tools=[DuckDuckGoTools()],
+        tools=[WebSearchTools()],
         instructions=dedent("""
             1. Knowledge Base Search:
                - ALWAYS start by searching the knowledge base using search_knowledge_base tool
                - Analyze ALL returned documents thoroughly before responding
                - If multiple documents are returned, synthesize the information coherently
             2. External Search:
-               - If knowledge base search yields insufficient results, use duckduckgo_search
+               - If knowledge base search yields insufficient results, use web_search
                - Focus on reputable sources and recent information
                - Cross-reference information from multiple sources when possible
             3. Context Management:

@@ -6,14 +6,14 @@ import asyncio
 
 from agno.agent import Agent
 from agno.db.sqlite import AsyncSqliteDb
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 # Initialize AsyncSqliteDb
 db = AsyncSqliteDb(db_file="tmp/data.db")
 
 agent = Agent(
     db=db,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
     add_datetime_to_context=True,
 )

@@ -6,7 +6,7 @@ from agno.memory.manager import MemoryManager
 from agno.models.anthropic.claude import Claude
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/persistent_memory.db")
 
@@ -24,7 +24,7 @@ memory_manager = MemoryManager(
 personal_agent = Agent(
     name="Basic Agent",
     model=Claude(id="claude-sonnet-4-20250514"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
     num_history_runs=3,
     add_datetime_to_context=True,

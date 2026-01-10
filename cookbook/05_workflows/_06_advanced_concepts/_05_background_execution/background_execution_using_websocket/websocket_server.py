@@ -6,7 +6,7 @@ import uvicorn
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
@@ -26,7 +26,7 @@ hackernews_agent = Agent(
 search_agent = Agent(
     name="Search Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="Search for additional information on the web",
 )
 

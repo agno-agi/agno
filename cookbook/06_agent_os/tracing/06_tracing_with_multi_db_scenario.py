@@ -8,7 +8,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.tracing.setup import setup_tracing
 
@@ -35,7 +35,7 @@ agent = Agent(
 agent2 = Agent(
     name="Web Search Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="You are a web search agent. Answer questions concisely.",
     markdown=True,
     db=db2,

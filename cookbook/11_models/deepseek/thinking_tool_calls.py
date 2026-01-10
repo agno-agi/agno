@@ -2,7 +2,7 @@
 
 from agno.agent import Agent
 from agno.models.deepseek import DeepSeek
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 """
 DeepSeek model's thinking mode now supports tool calls. 
@@ -11,7 +11,7 @@ Before outputting the final answer, the model can engage in multiple turns of re
 
 agent = Agent(
     model=DeepSeek(id="deepseek-reasoner"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
     stream=True,
 )

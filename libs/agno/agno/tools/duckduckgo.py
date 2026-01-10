@@ -1,36 +1,26 @@
-import json
-from typing import Any, List, Optional
+from typing import Optional
 
-from agno.tools import Toolkit
-from agno.utils.log import log_debug
-
-try:
-    from ddgs import DDGS
-except ImportError:
-    raise ImportError("`ddgs` not installed. Please install using `pip install ddgs`")
+from agno.tools.websearch import WebSearchTools
 
 
-class DuckDuckGoTools(Toolkit):
+class DuckDuckGoTools(WebSearchTools):
     """
-    DuckDuckGo is a toolkit for searching using DuckDuckGo easily.
-    It uses the meta-search library DDGS, so it also has access to other backends.
+    DuckDuckGoTools is a convenience wrapper around WebSearchTools with the backend
+    defaulting to "duckduckgo".
     Args:
-        enable_search (bool): Enable DDGS search function.
-        enable_news (bool): Enable DDGS news function.
-        modifier (Optional[str]): A modifier to be used in the search request.
+        enable_search (bool): Enable web search function.
+        enable_news (bool): Enable news search function.
+        modifier (Optional[str]): A modifier to be prepended to search queries.
         fixed_max_results (Optional[int]): A fixed number of maximum results.
-        proxy (Optional[str]): Proxy to be used in the search request.
+        proxy (Optional[str]): Proxy to be used for requests.
         timeout (Optional[int]): The maximum number of seconds to wait for a response.
-        backend (Optional[str]): The backend to be used in the search request.
-
+        verify_ssl (bool): Whether to verify SSL certificates.
     """
 
     def __init__(
         self,
         enable_search: bool = True,
         enable_news: bool = True,
-        all: bool = False,
-        backend: str = "duckduckgo",
         modifier: Optional[str] = None,
         fixed_max_results: Optional[int] = None,
         proxy: Optional[str] = None,
@@ -38,54 +28,18 @@ class DuckDuckGoTools(Toolkit):
         verify_ssl: bool = True,
         **kwargs,
     ):
-        self.proxy: Optional[str] = proxy
-        self.timeout: Optional[int] = timeout
-        self.fixed_max_results: Optional[int] = fixed_max_results
-        self.modifier: Optional[str] = modifier
-        self.verify_ssl: bool = verify_ssl
-        self.backend: str = backend
+        super().__init__(
+            enable_search=enable_search,
+            enable_news=enable_news,
+            backend="duckduckgo",
+            modifier=modifier,
+            fixed_max_results=fixed_max_results,
+            proxy=proxy,
+            timeout=timeout,
+            verify_ssl=verify_ssl,
+            **kwargs,
+        )
 
-        tools: List[Any] = []
-        if all or enable_search:
-            tools.append(self.duckduckgo_search)
-        if all or enable_news:
-            tools.append(self.duckduckgo_news)
-
-        super().__init__(name="duckduckgo", tools=tools, **kwargs)
-
-    def duckduckgo_search(self, query: str, max_results: int = 5) -> str:
-        """Use this function to search DDGS for a query.
-
-        Args:
-            query(str): The query to search for.
-            max_results (optional, default=5): The maximum number of results to return.
-
-        Returns:
-            The result from DDGS.
-        """
-        actual_max_results = self.fixed_max_results or max_results
-        search_query = f"{self.modifier} {query}" if self.modifier else query
-
-        log_debug(f"Searching DDG for: {search_query} using backend: {self.backend}")
-        with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
-            results = ddgs.text(query=search_query, max_results=actual_max_results, backend=self.backend)
-
-        return json.dumps(results, indent=2)
-
-    def duckduckgo_news(self, query: str, max_results: int = 5) -> str:
-        """Use this function to get the latest news from DDGS.
-
-        Args:
-            query(str): The query to search for.
-            max_results (optional, default=5): The maximum number of results to return.
-
-        Returns:
-            The latest news from DDGS.
-        """
-        actual_max_results = self.fixed_max_results or max_results
-
-        log_debug(f"Searching DDG news for: {query} using backend: {self.backend}")
-        with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
-            results = ddgs.news(query=query, max_results=actual_max_results, backend=self.backend)
-
-        return json.dumps(results, indent=2)
+        # Backward compatibility aliases for old method names
+        self.duckduckgo_search = self.web_search
+        self.duckduckgo_news = self.search_news

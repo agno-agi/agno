@@ -14,7 +14,7 @@ docker ps
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.db.redis import RedisDb
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 # Initialize Redis db (use the right db_url for your setup)
 db = RedisDb(db_url="redis://localhost:6379")
@@ -22,7 +22,7 @@ db = RedisDb(db_url="redis://localhost:6379")
 # Create agent with Redis db
 agent = Agent(
     db=db,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
 )
 

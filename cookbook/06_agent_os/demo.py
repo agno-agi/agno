@@ -13,7 +13,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.mcp import MCPTools
 from agno.vectordb.pgvector import PgVector
 
@@ -61,7 +61,7 @@ research_agent = Agent(
     id="research_agent",
     model=OpenAIChat(id="gpt-5-mini"),
     instructions=["You are a research agent"],
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     db=db,
     enable_user_memories=True,
 )

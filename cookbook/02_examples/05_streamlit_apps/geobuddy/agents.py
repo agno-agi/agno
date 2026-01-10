@@ -3,7 +3,7 @@ from typing import Optional
 
 from agno.agent import Agent
 from agno.media import Image
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.utils.streamlit import get_model_from_id
 
 
@@ -32,7 +32,7 @@ def get_geobuddy_agent(
         id="geography-location-detective",
         user_id=user_id,
         session_id=session_id,
-        tools=[DuckDuckGoTools()],
+        tools=[WebSearchTools()],
         role="Geography Location Detective",
         instructions="""
             You are GeoBuddy, a geography expert who helps identify locations from photos.

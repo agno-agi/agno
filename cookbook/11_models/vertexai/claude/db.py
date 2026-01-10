@@ -3,7 +3,7 @@
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.vertexai.claude import Claude
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 # Setup the database
 db = SqliteDb(db_file="tmp/data.db")
@@ -11,7 +11,7 @@ db = SqliteDb(db_file="tmp/data.db")
 agent = Agent(
     model=Claude(id="claude-sonnet-4@20250514"),
     db=db,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
 )
 agent.print_response("How many people live in Canada?")

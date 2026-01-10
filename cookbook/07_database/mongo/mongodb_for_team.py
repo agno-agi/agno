@@ -23,7 +23,7 @@ from agno.agent import Agent
 from agno.db.mongo import MongoDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel
 
@@ -49,7 +49,7 @@ web_searcher = Agent(
     name="Web Searcher",
     model=OpenAIChat("gpt-4o"),
     role="Searches the web for information on a topic",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_datetime_to_context=True,
 )
 
