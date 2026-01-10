@@ -1,9 +1,11 @@
 import inspect
+import time
 import warnings
 from copy import copy
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
 from uuid import uuid4
+import asyncio
 
 from pydantic import BaseModel
 from typing_extensions import TypeGuard
@@ -30,6 +32,7 @@ from agno.team import Team
 from agno.utils.log import log_debug, log_warning, logger, use_agent_logger, use_team_logger, use_workflow_logger
 from agno.utils.merge_dict import merge_dictionaries
 from agno.workflow.types import StepInput, StepOutput, StepType
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 StepExecutor = Callable[
     [StepInput],
@@ -43,6 +46,17 @@ StepExecutor = Callable[
         AsyncIterator[Any],
     ],
 ]
+
+class StepTimeoutError(Exception):
+    """Raised when a step execution exceeds the configured timeout."""
+
+    def __init__(self, step_name: Optional[str], timeout_seconds: int):
+        self.step_name = step_name
+        self.timeout_seconds = timeout_seconds
+        super().__init__(
+            f"Step '{step_name}' timed out after {timeout_seconds} seconds"
+        )
+
 
 
 @dataclass
@@ -131,6 +145,71 @@ class Step:
     def executor_type(self) -> str:
         """Get the type of the current executor"""
         return self._executor_type
+
+    def _execute_with_timeout(
+        self,
+        func: Callable,
+        *args,
+        **kwargs
+    ) -> Any:
+        """Execute a function with timeout enforcement."""
+        if self.timeout_seconds is None:
+            return func(*args, **kwargs)
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(func, *args, **kwargs)
+                return future.result(timeout=self.timeout_seconds)
+        except FuturesTimeoutError:
+            raise StepTimeoutError(self.name, self.timeout_seconds)
+
+    def _consume_generator_with_timeout(self, iterator: Iterator, timeout_seconds: int) -> List:
+        """Consume entire generator with total timeout (non-streaming)."""
+        start_time = time.time()
+        result = []
+        executor = ThreadPoolExecutor(max_workers=1)
+
+        try:
+            while True:
+                elapsed = time.time() - start_time
+                remaining = timeout_seconds - elapsed
+                if remaining <= 0:
+                    raise StepTimeoutError(self.name, timeout_seconds)
+
+                future = executor.submit(next, iterator)
+                try:
+                    result.append(future.result(timeout=remaining))
+                except FuturesTimeoutError:
+                    future.cancel()
+                    raise StepTimeoutError(self.name, timeout_seconds)
+        except StopIteration:
+            pass
+        finally:
+            executor.shutdown(wait=False)
+
+        return result
+
+    def _iter_generator_with_timeout(self, iterator: Iterator, timeout_seconds: int) -> Iterator:
+        """Iterate generator with total timeout (streaming)."""
+        start_time = time.time()
+        executor = ThreadPoolExecutor(max_workers=1)
+
+        try:
+            while True:
+                elapsed = time.time() - start_time
+                remaining = timeout_seconds - elapsed
+                if remaining <= 0:
+                    raise StepTimeoutError(self.name, timeout_seconds)
+
+                future = executor.submit(next, iterator)
+                try:
+                    yield future.result(timeout=remaining)
+                except FuturesTimeoutError:
+                    future.cancel()
+                    raise StepTimeoutError(self.name, timeout_seconds)
+                except StopIteration:
+                    break
+        finally:
+            executor.shutdown(wait=False)
 
     def _validate_executor_config(self):
         """Validate that only one executor type is provided"""
@@ -258,12 +337,19 @@ class Step:
                         content = ""
                         final_response = None
                         try:
-                            for chunk in self._call_custom_function(
+                            iterator = self._call_custom_function(
                                 self.active_executor,
                                 step_input,
-                                session_state_copy,  # type: ignore[arg-type]
-                                run_context,
-                            ):  # type: ignore
+                                session_state_copy,
+                                run_context
+                            )
+
+                            if self.timeout_seconds is not None:
+                                chunks = self._consume_generator_with_timeout(iterator, self.timeout_seconds)
+                            else:
+                                chunks = list(iterator)
+
+                            for chunk in chunks:  # type: ignore
                                 if isinstance(chunk, (BaseRunOutputEvent)):
                                     if (
                                         isinstance(chunk, (RunContentEvent, TeamRunContentEvent))
@@ -304,7 +390,8 @@ class Step:
                             response = StepOutput(content=content)
                     else:
                         # Execute function with signature inspection for session_state support
-                        result = self._call_custom_function(
+                        result = self._execute_with_timeout(
+                            self._call_custom_function,
                             self.active_executor,  # type: ignore[arg-type]
                             step_input,
                             session_state_copy,
@@ -367,7 +454,8 @@ class Step:
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
-                        response = self.active_executor.run(  # type: ignore
+                        response = self._execute_with_timeout(  # type: ignore
+                            self.active_executor.run,
                             input=final_message,  # type: ignore
                             images=images,
                             videos=videos,
@@ -534,6 +622,10 @@ class Step:
                                 session_state_copy,
                                 run_context,
                             )
+
+                            if self.timeout_seconds is not None:
+                                iterator = self._iter_generator_with_timeout(iterator, self.timeout_seconds)
+
                             for event in iterator:  # type: ignore
                                 if isinstance(event, (BaseRunOutputEvent)):
                                     if (
@@ -571,7 +663,8 @@ class Step:
                                 final_response = e.value
 
                     else:
-                        result = self._call_custom_function(
+                        result = self._execute_with_timeout(
+                            self._call_custom_function,
                             self.active_executor,  # type: ignore[arg-type]
                             step_input,
                             session_state_copy,
@@ -632,8 +725,8 @@ class Step:
                             history_messages = workflow_session.get_workflow_history_context(num_runs=num_history_runs)
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
-
-                        response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
+                        response_stream = self._execute_with_timeout(  # type: ignore[call-overload, misc]
+                            self.active_executor.run,
                             input=final_message,
                             images=images,
                             videos=videos,
@@ -718,6 +811,68 @@ class Step:
 
         return
 
+    async def _aexecute_with_timeout(
+        self,
+        coro_or_func: Union[Awaitable, Callable],
+        *args,
+        **kwargs
+    ) -> Any:
+        """Execute an async function or coroutine with timeout enforcement."""
+        if self.timeout_seconds is None:
+            if isinstance(coro_or_func, Awaitable):
+                return await coro_or_func
+            else:
+                return await coro_or_func(*args, **kwargs)
+        try:
+            if isinstance(coro_or_func, Awaitable):
+                return await asyncio.wait_for(coro_or_func, timeout=self.timeout_seconds)
+            else:
+                return await asyncio.wait_for(
+                    coro_or_func(*args, **kwargs),
+                    timeout=self.timeout_seconds
+                )
+        except asyncio.TimeoutError:
+            raise StepTimeoutError(self.name, self.timeout_seconds)
+
+    async def _aconsume_async_generator_with_timeout(self, async_iterator: AsyncIterator, timeout_seconds: int) -> List:
+        """Consume entire async generator with total timeout (non-streaming)."""
+        start_time = time.time()
+        result = []
+
+        try:
+            while True:
+                elapsed = time.time() - start_time
+                remaining = timeout_seconds - elapsed
+                if remaining <= 0:
+                    raise StepTimeoutError(self.name, timeout_seconds)
+
+                chunk = await asyncio.wait_for(async_iterator.__anext__(), timeout=remaining)
+                result.append(chunk)
+        except StopAsyncIteration:
+            pass
+        except asyncio.TimeoutError:
+            raise StepTimeoutError(self.name, timeout_seconds)
+
+        return result
+
+    async def _aiter_async_generator_with_timeout(self, async_iterator: AsyncIterator, timeout_seconds: int) -> AsyncIterator:
+        """Iterate async generator with total timeout (streaming)."""
+        start_time = time.time()
+
+        while True:
+            elapsed = time.time() - start_time
+            remaining = timeout_seconds - elapsed
+            if remaining <= 0:
+                raise StepTimeoutError(self.name, timeout_seconds)
+
+            try:
+                chunk = await asyncio.wait_for(async_iterator.__anext__(), timeout=remaining)
+                yield chunk
+            except StopAsyncIteration:
+                break
+            except asyncio.TimeoutError:
+                raise StepTimeoutError(self.name, timeout_seconds)
+
     async def aexecute(
         self,
         step_input: StepInput,
@@ -766,7 +921,13 @@ class Step:
                                     session_state_copy,
                                     run_context,
                                 )
-                                for chunk in iterator:  # type: ignore
+
+                                if self.timeout_seconds is not None:
+                                    chunks = self._consume_generator_with_timeout(iterator, self.timeout_seconds)
+                                else:
+                                    chunks = list(iterator)
+
+                                for chunk in chunks:  # type: ignore
                                     if isinstance(chunk, (BaseRunOutputEvent)):
                                         if (
                                             isinstance(chunk, (RunContentEvent, TeamRunContentEvent))
@@ -794,7 +955,13 @@ class Step:
                                         session_state_copy,
                                         run_context,
                                     )
-                                    async for chunk in iterator:  # type: ignore
+
+                                    if self.timeout_seconds is not None:
+                                        chunks = await self._aconsume_async_generator_with_timeout(iterator, self.timeout_seconds)
+                                    else:
+                                        chunks = [chunk async for chunk in iterator]
+
+                                    for chunk in chunks:  # type: ignore
                                         if isinstance(chunk, (BaseRunOutputEvent)):
                                             if (
                                                 isinstance(chunk, (RunContentEvent, TeamRunContentEvent))
@@ -828,14 +995,16 @@ class Step:
                             response = StepOutput(content=content)
                     else:
                         if _is_async_callable(self.active_executor):
-                            result = await self._acall_custom_function(
+                            result = await self._aexecute_with_timeout(
+                                self._acall_custom_function,
                                 self.active_executor,
                                 step_input,
                                 session_state_copy,
                                 run_context,
                             )
                         else:
-                            result = self._call_custom_function(
+                            result = await self._aexecute_with_timeout(
+                                self._call_custom_function,
                                 self.active_executor,  # type: ignore[arg-type]
                                 step_input,
                                 session_state_copy,
@@ -899,7 +1068,8 @@ class Step:
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
-                        response = await self.active_executor.arun(  # type: ignore
+                        response = await self._aexecute_with_timeout( # type: ignore
+                            self.active_executor.arun,
                             input=final_message,  # type: ignore
                             images=images,
                             videos=videos,
@@ -1018,6 +1188,10 @@ class Step:
                             session_state_copy,
                             run_context,
                         )
+
+                        if self.timeout_seconds is not None:
+                            iterator = self._aiter_async_generator_with_timeout(iterator, self.timeout_seconds)
+
                         async for event in iterator:  # type: ignore
                             if isinstance(event, (BaseRunOutputEvent)):
                                 if (
@@ -1048,7 +1222,8 @@ class Step:
                             final_response = StepOutput(content=content)
                     elif _is_async_callable(self.active_executor):
                         # It's a regular async function - await it
-                        result = await self._acall_custom_function(
+                        result = await self._aexecute_with_timeout(
+                            self._acall_custom_function,
                             self.active_executor,
                             step_input,
                             session_state_copy,
@@ -1069,7 +1244,13 @@ class Step:
                             session_state_copy,
                             run_context,
                         )
-                        for event in iterator:  # type: ignore
+
+                        if self.timeout_seconds is not None:
+                            chunks = self._consume_generator_with_timeout(iterator, self.timeout_seconds)
+                        else:
+                            chunks = list(iterator)
+
+                        for event in chunks:  # type: ignore
                             if isinstance(event, (BaseRunOutputEvent)):
                                 if (
                                     isinstance(event, (RunContentEvent, TeamRunContentEvent))
@@ -1102,7 +1283,8 @@ class Step:
                             final_response = StepOutput(content=content)
                     else:
                         # It's a regular function - call it directly
-                        result = self._call_custom_function(
+                        result = self._aexecute_with_timeout(
+                            self._call_custom_function,
                             self.active_executor,  # type: ignore[arg-type]
                             step_input,
                             session_state_copy,
@@ -1162,7 +1344,8 @@ class Step:
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
-                        response_stream = self.active_executor.arun(  # type: ignore
+                        response_stream = self._aexecute_with_timeout(  # type: ignore
+                            self.active_executor.arun,
                             input=final_message,
                             images=images,
                             videos=videos,
