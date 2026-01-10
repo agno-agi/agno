@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agno.tools.google_bigquery import GoogleBigQueryTools
+from agno.tools.google_bigquery import GoogleBigQueryTools, _clean_sql
 
 
 @pytest.fixture
@@ -47,7 +47,7 @@ def test_run_sql_query_success(bq_tools_instance, mock_bq_client):
 
     assert result_json_str == expected_json_string
 
-    cleaned_query = query.replace("\\n", " ").replace("\n", "").replace("\\", "")
+    cleaned_query = _clean_sql(query)
     # Verify the call was made with cleaned query and job config
     mock_bq_client.query.assert_called_once()
     call_args = mock_bq_client.query.call_args
@@ -117,3 +117,25 @@ def test_run_sql_query_error_in_client_query(bq_tools_instance, mock_bq_client):
 
     expected_json_string = json.dumps("")
     assert result == expected_json_string
+
+
+def test_clean_sql_preserves_token_boundaries_with_line_comments():
+    """Test that _clean_sql replaces newlines with spaces to prevent line comments from swallowing queries."""
+    # This was a bug: newlines were removed entirely, causing -- comments to consume the rest of the query
+    sql = "SELECT * FROM table -- this is a comment\nWHERE id = 1"
+    cleaned = _clean_sql(sql)
+    assert cleaned == "SELECT * FROM table -- this is a comment WHERE id = 1"
+
+
+def test_clean_sql_handles_escaped_newlines():
+    """Test that _clean_sql handles escaped newline characters."""
+    sql = "SELECT *\\nFROM table"
+    cleaned = _clean_sql(sql)
+    assert cleaned == "SELECT * FROM table"
+
+
+def test_clean_sql_preserves_backslashes_in_string_literals():
+    """Test that _clean_sql preserves backslashes (e.g., regex patterns in strings)."""
+    sql = r"SELECT * FROM table WHERE regex = 'word\s+'"
+    cleaned = _clean_sql(sql)
+    assert cleaned == r"SELECT * FROM table WHERE regex = 'word\s+'"
