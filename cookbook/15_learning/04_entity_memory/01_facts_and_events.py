@@ -45,6 +45,8 @@ agent = Agent(
 # ============================================================================
 
 if __name__ == "__main__":
+    from rich.pretty import pprint
+
     user_id = "research@example.com"
     session_id = "company_research"
 
@@ -64,7 +66,8 @@ if __name__ == "__main__":
         session_id=session_id,
         stream=True,
     )
-    agent.learning.entity_memory_store.print(namespace="global")
+    print("\n--- Entities ---")
+    pprint(agent.learning.entity_memory_store.search(query="datapipe", limit=10))
 
     # Query the entity
     print("\n" + "=" * 60)
@@ -90,4 +93,5 @@ if __name__ == "__main__":
         session_id="session_3",
         stream=True,
     )
-    agent.learning.entity_memory_store.print(namespace="global")
+    print("\n--- Updated Entities ---")
+    pprint(agent.learning.entity_memory_store.search(query="datapipe", limit=10))

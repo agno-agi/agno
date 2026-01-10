@@ -35,7 +35,6 @@ agent = Agent(
     learning=LearningMachine(
         entity_memory=EntityMemoryConfig(
             mode=LearningMode.AGENTIC,
-            namespace="org_graph",
         ),
     ),
     markdown=True,
@@ -46,6 +45,8 @@ agent = Agent(
 # ============================================================================
 
 if __name__ == "__main__":
+    from rich.pretty import pprint
+
     user_id = "org@example.com"
     session_id = "org_session"
 
@@ -64,7 +65,8 @@ if __name__ == "__main__":
         session_id=session_id,
         stream=True,
     )
-    agent.learning.entity_memory_store.print(namespace="org_graph")
+    print("\n--- Entities ---")
+    pprint(agent.learning.entity_memory_store.search(query="techcorp", limit=10))
 
     # Query relationships
     print("\n" + "=" * 60)
@@ -90,4 +92,5 @@ if __name__ == "__main__":
         session_id="session_3",
         stream=True,
     )
-    agent.learning.entity_memory_store.print(namespace="org_graph")
+    print("\n--- Updated Entities ---")
+    pprint(agent.learning.entity_memory_store.search(query="techcorp", limit=10))

@@ -90,7 +90,7 @@ cd agno
 Using the setup script (requires `uv`):
 
 ```bash
-./cookbook/15_learning/venv_setup.sh
+./cookbook/15_learning/setup_venv.sh
 ```
 
 Or manually:
@@ -400,4 +400,4 @@ learning = LearningMachine(
 
 - [Agno Documentation](https://docs.agno.com)
 
-Built with love by the Agno team
+Built with 💜 by the Agno team
