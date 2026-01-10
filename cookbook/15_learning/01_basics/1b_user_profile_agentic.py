@@ -28,7 +28,6 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=db,
-    instructions="Update user profile fields when you learn their name or preferred name.",
     learning=LearningMachine(
         user_profile=UserProfileConfig(
             mode=LearningMode.AGENTIC,

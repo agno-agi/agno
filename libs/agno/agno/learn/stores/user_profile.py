@@ -245,7 +245,6 @@ class UserProfileStore(LearningStore):
                 dedent("""
 
             <profile_updates>
-
             """)
                 + tool_docs
                 + dedent("""

@@ -30,7 +30,6 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=db,
-    instructions="Remember important information about users using your memory tools.",
     learning=LearningMachine(
         memories=UserMemoryConfig(
             mode=LearningMode.AGENTIC,

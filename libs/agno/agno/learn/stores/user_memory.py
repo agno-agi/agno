@@ -217,7 +217,7 @@ class UserMemoryStore(LearningStore):
             return ""
 
         context = "<user_memory>\n"
-        context += memories_text
+        context += memories_text + "\n"
 
         context += dedent("""
             <memory_application_guidelines>
@@ -974,9 +974,7 @@ class UserMemoryStore(LearningStore):
         system_prompt = dedent("""\
             You are building a memory of this user to enable personalized, contextual interactions.
 
-            Your goal is NOT to create a database of facts, but to build working knowledge that helps
-            an AI assistant engage naturally with this person - knowing their context, adapting to their
-            preferences, and providing continuity across conversations.
+            Your goal is NOT to create a database of facts, but to build working knowledge that helps an AI assistant engage naturally with this person - knowing their context, adapting to their preferences, and providing continuity across conversations.
 
             ## Memory Philosophy
 

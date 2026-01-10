@@ -295,6 +295,9 @@ class Memories:
 
         return "\n".join(lines)
 
+    def __repr__(self) -> str:
+        return f"Memories(user_id={self.user_id})"
+
 
 # =============================================================================
 # Session Context Schema
