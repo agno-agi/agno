@@ -21,12 +21,11 @@ from agno.learn.config import (
     SessionContextConfig,
     UserProfileConfig,
 )
+from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
-from cookbook.db import db_url
 
-# =============================================================================
-# SUPPORT AGENT CONFIGURATION
-# =============================================================================
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
 
 
 def create_support_agent(
@@ -56,7 +55,7 @@ def create_support_agent(
             "Save successful solutions for future reference",
         ],
         learning=LearningMachine(
-            db_url=db_url,
+            db=db,
             # Customer profile (per-customer)
             user_profile=UserProfileConfig(
                 mode=LearningMode.BACKGROUND,
@@ -102,41 +101,41 @@ def demo_support_interaction():
 
     print("""
     Scenario: Customer contacts support about login issues
-    
+
     TURN 1:
-    Customer: "Hi, I can't log into my account. It keeps saying 
+    Customer: "Hi, I can't log into my account. It keeps saying
               'invalid credentials' even though I know my password
               is correct. I'm using the Chrome browser."
-    
+
     Agent processes:
-    
+
     1. SESSION CONTEXT captures:
        - Goal: "Resolve login issue - invalid credentials error"
        - Progress: "Customer reported Chrome browser, correct password"
-    
+
     2. USER PROFILE learns (if new customer):
        - Browser preference: Chrome
        - Technical level: (assessed from language)
-    
+
     3. ENTITY MEMORY updates:
        - Login system: "Invalid credentials error reported"
-    
+
     4. LEARNED KNOWLEDGE searched:
        - Query: "login invalid credentials Chrome"
        - May find: "Invalid credentials often caused by cached cookies"
-    
-    
+
+
     Agent responds:
-    "I'm sorry you're having trouble logging in! This 'invalid 
+    "I'm sorry you're having trouble logging in! This 'invalid
      credentials' error with Chrome is often caused by cached data.
-     
+
      Let's try clearing your browser cache:
      1. Click the three dots menu in Chrome
      2. Go to Settings > Privacy > Clear browsing data
      3. Select 'Cookies' and 'Cached images'
      4. Click 'Clear data'
      5. Try logging in again
-     
+
      Let me know if that works!"
     """)
 
@@ -149,35 +148,35 @@ def demo_knowledge_building():
 
     print("""
     After successful resolution:
-    
+
     Customer: "That worked! Thanks so much!"
-    
+
     Agent actions:
-    
+
     1. SESSION CONTEXT updated:
        - Progress: "Issue resolved - cache clearing fixed login"
-    
+
     2. LEARNED KNOWLEDGE saved:
        {
          "title": "Login invalid credentials fix",
-         "problem": "User gets 'invalid credentials' error despite 
+         "problem": "User gets 'invalid credentials' error despite
                     correct password, Chrome browser",
          "solution": "Clear browser cache and cookies",
          "success_rate": "Confirmed working",
          "tags": ["login", "Chrome", "cache", "credentials"]
        }
-    
+
     3. ENTITY MEMORY updated:
        - Customer entity: "Had login issue, resolved via cache clear"
-    
-    
+
+
     Next time similar issue occurs:
-    
+
     New Customer: "Can't log in, wrong password error in Chrome"
-    
+
     Agent immediately finds previous solution:
     "I've seen this before! Let's clear your Chrome cache..."
-    
+
     Resolution time: Minutes instead of extended troubleshooting
     """)
 
@@ -190,32 +189,32 @@ def demo_returning_customer():
 
     print("""
     Same customer returns with new issue:
-    
+
     Customer: "Hey, now I'm having trouble with the dashboard loading"
-    
+
     Agent has context:
-    
+
     FROM USER PROFILE:
     - Previous ticket about login issues
     - Uses Chrome browser
     - Technical level: intermediate
-    
+
     FROM ENTITY MEMORY:
     - Customer's past interactions
     - Dashboard component information
-    
-    
+
+
     Agent responds:
     "Hi again! Sorry to hear the dashboard is giving you trouble.
-     
+
      Since you're using Chrome, let's first check if it's another
-     cache issue (that fixed your login last time). 
-     
+     cache issue (that fixed your login last time).
+
      Can you try a hard refresh with Ctrl+Shift+R?
-     
+
      If that doesn't work, we'll dig deeper."
-    
-    
+
+
     Benefits:
     ✓ Personalized greeting (remembers customer)
     ✓ Relevant first suggestion (based on history)
@@ -237,28 +236,28 @@ def show_escalation_pattern():
 
     print("""
     When issue exceeds agent capability:
-    
+
     1. SESSION CONTEXT tracks failed attempts:
        - Progress: "Tried cache clear, hard refresh, incognito - all failed"
-    
+
     2. Agent recognizes escalation needed:
        "I've tried our standard troubleshooting steps but the issue
         persists. Let me escalate this to our technical team.
-        
+
         I'll include all the steps we've tried so you don't have
         to repeat them."
-    
+
     3. ENTITY MEMORY captures escalation:
        - Ticket event: "Escalated to L2 support"
        - Issue entity: "Unresolved by standard troubleshooting"
-    
+
     4. Handoff includes full context:
        - Customer profile
        - Session summary
        - Steps attempted
        - Error details
-    
-    
+
+
     L2 agent picks up with full context - no customer repetition.
     """)
 
@@ -271,9 +270,9 @@ def show_proactive_pattern():
 
     print("""
     Using learned knowledge proactively:
-    
+
     Scenario: Known issue affecting Chrome users this week
-    
+
     LEARNED KNOWLEDGE contains:
     {
       "title": "Chrome 120 compatibility issue",
@@ -282,21 +281,21 @@ def show_proactive_pattern():
       "permanent_fix": "Pending in v2.5.1 release",
       "status": "active"
     }
-    
-    
+
+
     When customer mentions Chrome + dashboard:
-    
+
     Agent immediately:
     "I see you're using Chrome and having dashboard issues.
-     
+
      We have a known compatibility issue with Chrome 120 that
      affects chart rendering. Our team is working on a fix
      for the next release.
-     
+
      In the meantime, Firefox works perfectly as a workaround.
      Would you like help switching?"
-    
-    
+
+
     Benefits:
     ✓ Immediate recognition of known issue
     ✓ No unnecessary troubleshooting
@@ -318,42 +317,42 @@ def show_configuration_options():
 
     print("""
     SMALL TEAM (Shared everything):
-    
+
         entity_memory=EntityMemoryConfig(
             namespace="support",  # All agents share
         ),
         learned_knowledge=LearnedKnowledgeConfig(
             namespace="support",  # All agents share
         ),
-    
-    
+
+
     MULTI-PRODUCT (Product isolation):
-    
+
         entity_memory=EntityMemoryConfig(
             namespace=f"product:{product_id}:support",
         ),
         learned_knowledge=LearnedKnowledgeConfig(
             namespace=f"product:{product_id}:kb",
         ),
-    
-    
+
+
     ENTERPRISE (Tenant isolation):
-    
+
         entity_memory=EntityMemoryConfig(
             namespace=f"org:{org_id}:support",
         ),
         learned_knowledge=LearnedKnowledgeConfig(
             namespace=f"org:{org_id}:kb",
         ),
-    
-    
+
+
     TIERED KNOWLEDGE (L1 vs L2 vs L3):
-    
+
         # L1 agents get basic KB
         learned_knowledge=LearnedKnowledgeConfig(
             namespace="kb:l1",
         ),
-        
+
         # L2 agents get advanced KB
         learned_knowledge=LearnedKnowledgeConfig(
             namespace="kb:l2",  # Includes l1 + advanced
@@ -383,27 +382,27 @@ if __name__ == "__main__":
     print("=" * 60)
     print("""
     Support Agent Learning Setup:
-    
+
     USER PROFILE
     - Customer history and preferences
     - Technical expertise level
     - Past issues and resolutions
-    
+
     SESSION CONTEXT
     - Current ticket tracking
     - Resolution progress
     - Steps attempted
-    
+
     ENTITY MEMORY
     - Products and features
     - Known issues
     - Customer interactions
-    
+
     LEARNED KNOWLEDGE
     - Successful solutions
     - Troubleshooting patterns
     - Workarounds for known issues
-    
+
     Benefits:
     ✓ Faster resolution times
     ✓ Consistent support quality

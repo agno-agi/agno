@@ -197,19 +197,19 @@ def demo_programmatic_operations():
     print(f"Added memory 3: {mem3_id}")
 
     # Save to store
-    store.upsert(profile=profile)
+    store.save(user_id=user, profile=profile)
     show_memories(user)
 
     # Update a memory
     print("\n--- Update memory programmatically ---\n")
     profile.update_memory(mem3_id, "Expert in Kubernetes now")
-    store.upsert(profile=profile)
+    store.save(user_id=user, profile=profile)
     show_memories(user)
 
     # Delete a memory
     print("\n--- Delete memory programmatically ---\n")
     profile.delete_memory(mem1_id)
-    store.upsert(profile=profile)
+    store.save(user_id=user, profile=profile)
     show_memories(user)
 
     # Get specific memory

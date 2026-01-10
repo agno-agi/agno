@@ -22,12 +22,10 @@ from agno.learn.config import (
     UserProfileConfig,
 )
 from agno.models.openai import OpenAIChat
-from cookbook.db import db_url
+from agno.db.postgres import PostgresDb
 
-# =============================================================================
-# SALES AGENT CONFIGURATION
-# =============================================================================
-
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
 
 def create_sales_agent(
     sales_rep_id: str,
@@ -55,7 +53,7 @@ def create_sales_agent(
             "Update prospect status after each interaction",
         ],
         learning=LearningMachine(
-            db_url=db_url,
+            db=db,
             # Sales rep profile
             user_profile=UserProfileConfig(
                 mode=LearningMode.BACKGROUND,
@@ -94,7 +92,7 @@ def demo_prospect_tracking():
 
     print("""
     ENTITY MEMORY tracks prospects and companies:
-    
+
     COMPANY: TechStartup Inc
     ┌─────────────────────────────────────────────────────────────┐
     │ industry: SaaS                                              │
@@ -107,7 +105,7 @@ def demo_prospect_tracking():
     │ budget_cycle: Q4                                            │
     │ decision_timeline: 30 days                                  │
     └─────────────────────────────────────────────────────────────┘
-    
+
     PROSPECT: Jennifer Lee
     ┌─────────────────────────────────────────────────────────────┐
     │ company: TechStartup Inc                                    │
@@ -121,7 +119,7 @@ def demo_prospect_tracking():
     │ objections_raised:                                          │
     │   - "Concerned about learning curve"                       │
     └─────────────────────────────────────────────────────────────┘
-    
+
     DEAL: TechStartup-Enterprise
     ┌─────────────────────────────────────────────────────────────┐
     │ company: TechStartup Inc                                    │
@@ -132,20 +130,20 @@ def demo_prospect_tracking():
     │ stakeholders: [Jennifer Lee, CTO (name unknown)]           │
     │ competition: [Competitor A mentioned]                       │
     └─────────────────────────────────────────────────────────────┘
-    
-    
+
+
     This enables context-rich conversations:
-    
+
     Sales Rep: "Prep me for the TechStartup demo"
-    
+
     Agent: "For your TechStartup demo with Jennifer:
-           
+
            Key points:
            • She's data-driven - lead with metrics
            • Main concern: Learning curve - show easy onboarding
            • They use Python/React/AWS - customize examples
            • Competitor A in play - highlight our integration speed
-           
+
            Her buying signals are strong (asked pricing, requested demo).
            Focus on addressing the learning curve objection."
     """)
@@ -159,20 +157,20 @@ def demo_sales_knowledge():
 
     print("""
     LEARNED KNOWLEDGE captures successful patterns:
-    
+
     OBJECTION HANDLING:
     {
       "objection": "Concerned about learning curve",
       "effective_responses": [
         "Show 2-hour onboarding video completion rates (95%)",
-        "Reference similar-sized company onboarding (TechCorp: 
+        "Reference similar-sized company onboarding (TechCorp:
          full team productive in 1 week)",
         "Offer dedicated onboarding specialist"
       ],
       "success_rate": "75% proceed after this handling",
       "context": "Most effective with technical decision makers"
     }
-    
+
     WINNING PATTERN:
     {
       "title": "Technical Demo to Close",
@@ -186,7 +184,7 @@ def demo_sales_knowledge():
       "avg_conversion": "45% to next stage",
       "learned_from": "Analysis of 20 successful demos"
     }
-    
+
     INDUSTRY INSIGHT:
     {
       "industry": "SaaS Series A",
@@ -195,17 +193,17 @@ def demo_sales_knowledge():
       "budget_timing": "Q4 budget planning, Q1 execution",
       "decision_process": "Typically CTO + VP Eng"
     }
-    
-    
+
+
     During calls, agent surfaces relevant knowledge:
-    
+
     Prospect: "I'm worried my team won't have time to learn this"
-    
+
     Agent (to rep): "Learning curve objection - consider:
                     • 2-hour onboarding, 95% completion rate
                     • TechCorp (similar size) was productive in 1 week
                     • Offer dedicated onboarding specialist
-                    
+
                     This response has 75% success rate."
     """)
 
@@ -218,7 +216,7 @@ def demo_deal_progression():
 
     print("""
     Session tracking maintains deal context:
-    
+
     SESSION 1 (Discovery call):
     ┌─────────────────────────────────────────────────────────────┐
     │ Goal: Qualify TechStartup opportunity                       │
@@ -229,13 +227,13 @@ def demo_deal_progression():
     │   ✓ Demo scheduled for Jan 15                              │
     │ Next: Technical demo preparation                            │
     └─────────────────────────────────────────────────────────────┘
-    
+
     ENTITY UPDATE after session:
     - Deal stage: Discovery → Demo Scheduled
     - Probability: 20% → 40%
     - New info added to prospect/company entities
-    
-    
+
+
     SESSION 2 (Demo prep):
     ┌─────────────────────────────────────────────────────────────┐
     │ Goal: Prepare for TechStartup demo                          │
@@ -246,8 +244,8 @@ def demo_deal_progression():
     │   4. Create ROI calculator with their numbers               │
     │ Progress: Demo slides customized, ROI ready                 │
     └─────────────────────────────────────────────────────────────┘
-    
-    
+
+
     SESSION 3 (Post-demo):
     ┌─────────────────────────────────────────────────────────────┐
     │ Goal: Process demo feedback, plan follow-up                 │
@@ -258,7 +256,7 @@ def demo_deal_progression():
     │   - Price discussion deferred to next call                 │
     │ Next: Pilot proposal by Jan 18                              │
     └─────────────────────────────────────────────────────────────┘
-    
+
     ENTITY UPDATE:
     - Deal stage: Demo Scheduled → Pilot Proposed
     - Probability: 40% → 60%
@@ -279,39 +277,39 @@ def show_team_benefits():
 
     print("""
     Shared namespace enables team learning:
-    
+
     SCENARIO: New sales rep joins team
-    
+
     Before LearningMachine:
     - Shadows calls for weeks
     - Learns objection handling through trial and error
     - Doesn't know what worked for similar prospects
-    
+
     With LearningMachine:
     - Instant access to winning patterns
     - Objection handling playbook with success rates
     - Similar prospect/deal history
     - Industry-specific insights
-    
-    
+
+
     CROSS-POLLINATION:
-    
+
     Rep A closes deal with SaaS startup:
     → Saves: "ROI calculator most effective closer for Series A"
-    
+
     Rep B picks up new SaaS startup lead:
     → Searches: "SaaS startup closing techniques"
     → Finds: Rep A's insight + others
     → Applies: Uses ROI calculator early
-    
-    
+
+
     KNOWLEDGE COMPOUNDING:
-    
+
     Month 1: 5 saved patterns
     Month 3: 25 saved patterns + refinements
     Month 6: 50+ patterns, success rates tracked
     Month 12: Comprehensive playbook, continuously improving
-    
+
     New reps benefit from entire team's experience immediately.
     """)
 
@@ -329,37 +327,37 @@ def show_configuration_options():
 
     print("""
     SMALL SALES TEAM:
-    
+
         entity_memory=EntityMemoryConfig(
             namespace="sales:crm",  # All reps share CRM
         ),
         learned_knowledge=LearnedKnowledgeConfig(
             namespace="sales:playbook",  # All reps share playbook
         ),
-    
-    
+
+
     TERRITORY-BASED:
-    
+
         entity_memory=EntityMemoryConfig(
             namespace=f"sales:{territory}:crm",  # Territory CRM
         ),
         learned_knowledge=LearnedKnowledgeConfig(
             namespace="sales:playbook",  # Global playbook
         ),
-    
-    
+
+
     PRODUCT-SPECIFIC:
-    
+
         entity_memory=EntityMemoryConfig(
             namespace=f"sales:{product}:crm",
         ),
         learned_knowledge=LearnedKnowledgeConfig(
             namespace=f"sales:{product}:playbook",
         ),
-    
-    
+
+
     ENTERPRISE (Multi-tenant):
-    
+
         entity_memory=EntityMemoryConfig(
             namespace=f"org:{org_id}:sales:crm",
         ),
@@ -389,28 +387,28 @@ if __name__ == "__main__":
     print("=" * 60)
     print("""
     Sales Agent Learning Setup:
-    
+
     USER PROFILE
     - Sales rep's style and strengths
     - Product expertise areas
-    
+
     SESSION CONTEXT
     - Current call/meeting context
     - Deal discussion progress
     - Action items
-    
+
     ENTITY MEMORY (CRM-like)
     - Companies and prospects
     - Deal pipeline
     - Interaction history
     - Relationships and stakeholders
-    
+
     LEARNED KNOWLEDGE (Playbook)
     - Objection handling patterns
     - Winning demo techniques
     - Industry insights
     - Competitive intelligence
-    
+
     Benefits:
     ✓ Context-rich conversations
     ✓ Team knowledge sharing

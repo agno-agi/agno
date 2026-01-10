@@ -14,6 +14,7 @@ Run: python -m cookbook.combined.03_full_learning_machine
 """
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, LearningMode
 from agno.learn.config import (
     EntityMemoryConfig,
@@ -22,7 +23,9 @@ from agno.learn.config import (
     UserProfileConfig,
 )
 from agno.models.openai import OpenAIChat
-from cookbook.db import db_url
+
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
 
 # =============================================================================
 # FULL LEARNING MACHINE SETUP
@@ -36,7 +39,7 @@ def create_full_learning_agent(
     return Agent(
         model=OpenAIChat(id="gpt-4o"),
         learning=LearningMachine(
-            db_url=db_url,
+            db=db,
             # STORE 1: User Profile
             # Learns about the individual user
             user_profile=UserProfileConfig(

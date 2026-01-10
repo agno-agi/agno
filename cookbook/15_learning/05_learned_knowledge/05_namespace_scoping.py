@@ -15,10 +15,13 @@ Run: python -m cookbook.learned_knowledge.05_namespace_scoping
 """
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, LearningMode
 from agno.learn.config import LearnedKnowledgeConfig
 from agno.models.openai import OpenAIChat
-from cookbook.db import db_url
+
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
 
 # =============================================================================
 # NAMESPACE STRATEGIES
@@ -34,8 +37,8 @@ def demo_user_namespace():
     # Each user has isolated knowledge
     alice_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
+        db=db,
         learning=LearningMachine(
-            db_url=db_url,
             learned_knowledge=LearnedKnowledgeConfig(
                 mode=LearningMode.AGENTIC,
                 namespace="user:alice",  # Alice's private namespace
@@ -46,8 +49,8 @@ def demo_user_namespace():
 
     bob_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
+        db=db,
         learning=LearningMachine(
-            db_url=db_url,
             learned_knowledge=LearnedKnowledgeConfig(
                 mode=LearningMode.AGENTIC,
                 namespace="user:bob",  # Bob's private namespace
@@ -80,8 +83,8 @@ def demo_team_namespace():
     # Team members share a knowledge namespace
     team_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
+        db=db,
         learning=LearningMachine(
-            db_url=db_url,
             learned_knowledge=LearnedKnowledgeConfig(
                 mode=LearningMode.AGENTIC,
                 namespace="team:engineering",  # Shared team namespace
@@ -112,8 +115,8 @@ def demo_project_namespace():
 
     project_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
+        db=db,
         learning=LearningMachine(
-            db_url=db_url,
             learned_knowledge=LearnedKnowledgeConfig(
                 mode=LearningMode.AGENTIC,
                 namespace="project:phoenix",  # Project-specific namespace
@@ -145,8 +148,8 @@ def demo_global_namespace():
 
     global_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
+        db=db,
         learning=LearningMachine(
-            db_url=db_url,
             learned_knowledge=LearnedKnowledgeConfig(
                 mode=LearningMode.AGENTIC,
                 namespace="global",  # Organization-wide namespace

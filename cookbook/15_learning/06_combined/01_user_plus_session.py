@@ -15,10 +15,13 @@ Run: python -m cookbook.combined.01_user_plus_session
 """
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, LearningMode
 from agno.learn.config import SessionContextConfig, UserProfileConfig
 from agno.models.openai import OpenAIChat
-from cookbook.db import db_url
+
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
 
 # =============================================================================
 # BASIC COMBINED SETUP
@@ -29,8 +32,8 @@ def create_combined_agent(user_id: str, session_id: str) -> Agent:
     """Create agent with both user profile and session context."""
     return Agent(
         model=OpenAIChat(id="gpt-4o"),
+        db=db,
         learning=LearningMachine(
-            db_url=db_url,
             # Long-term: learns about the user over time
             user_profile=UserProfileConfig(
                 mode=LearningMode.BACKGROUND,
