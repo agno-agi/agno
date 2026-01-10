@@ -14,6 +14,7 @@ Run: python -m cookbook.patterns.research_agent
 """
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, LearningMode
 from agno.learn.config import (
     EntityMemoryConfig,
@@ -22,7 +23,10 @@ from agno.learn.config import (
     UserProfileConfig,
 )
 from agno.models.openai import OpenAIChat
-from cookbook.db import db_url
+
+# Database URL - use environment variable in production
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
 
 # =============================================================================
 # RESEARCH AGENT CONFIGURATION
@@ -55,7 +59,7 @@ def create_research_agent(
             "Save useful research patterns and methodologies",
         ],
         learning=LearningMachine(
-            db_url=db_url,
+            db=db,
             # Researcher profile
             user_profile=UserProfileConfig(
                 mode=LearningMode.ALWAYS,

@@ -14,6 +14,7 @@ Run: python -m cookbook.patterns.team_knowledge_agent
 """
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, LearningMode
 from agno.learn.config import (
     EntityMemoryConfig,
@@ -21,7 +22,10 @@ from agno.learn.config import (
     SessionContextConfig,
 )
 from agno.models.openai import OpenAIChat
-from cookbook.db import db_url
+
+# Database URL - use environment variable in production
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
 
 # =============================================================================
 # TEAM KNOWLEDGE AGENT CONFIGURATION
@@ -54,7 +58,7 @@ def create_knowledge_agent(
             "Suggest when knowledge gaps should be filled",
         ],
         learning=LearningMachine(
-            db_url=db_url,
+            db=db,
             # Query session tracking
             session_context=SessionContextConfig(
                 enable_planning=False,

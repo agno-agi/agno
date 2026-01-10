@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, LearningMode
 from agno.learn.config import (
     EntityMemoryConfig,
@@ -27,7 +28,10 @@ from agno.learn.config import (
     UserProfileConfig,
 )
 from agno.models.openai import OpenAIChat
-from cookbook.db import db_url
+
+# Database URL - use environment variable in production
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
 
 # =============================================================================
 # BOOLEAN SHORTCUTS vs CONFIGURATION OBJECTS
@@ -42,7 +46,7 @@ def demo_boolean_shortcuts():
 
     # Simplest: just enable with True
     simple_learning = LearningMachine(
-        db_url=db_url,
+        db=db,
         user_profile=True,  # Enable with defaults
         session_context=True,  # Enable with defaults
     )
@@ -85,7 +89,7 @@ def demo_configuration_objects():
 
     # Full control with config objects
     configured_learning = LearningMachine(
-        db_url=db_url,
+        db=db,
         user_profile=UserProfileConfig(
             mode=LearningMode.ALWAYS,
             # custom_schema=MyCustomProfile,
@@ -138,7 +142,7 @@ def demo_configuration_objects():
 def create_personal_assistant_learning(user_id: str) -> LearningMachine:
     """Factory for personal assistant agents."""
     return LearningMachine(
-        db_url=db_url,
+        db=db,
         user_profile=UserProfileConfig(
             mode=LearningMode.ALWAYS,
         ),
@@ -155,7 +159,7 @@ def create_personal_assistant_learning(user_id: str) -> LearningMachine:
 def create_support_agent_learning(user_id: str, org_id: str) -> LearningMachine:
     """Factory for support/help desk agents."""
     return LearningMachine(
-        db_url=db_url,
+        db=db,
         user_profile=UserProfileConfig(
             mode=LearningMode.ALWAYS,
         ),
@@ -176,7 +180,7 @@ def create_support_agent_learning(user_id: str, org_id: str) -> LearningMachine:
 def create_team_knowledge_learning(team: str) -> LearningMachine:
     """Factory for team knowledge agents."""
     return LearningMachine(
-        db_url=db_url,
+        db=db,
         session_context=SessionContextConfig(
             enable_planning=False,
         ),
@@ -412,8 +416,9 @@ def demo_testing_configs():
         
         agent = Agent(
             model=OpenAIChat(id="gpt-4o"),
+            db=db,
             learning=LearningMachine(
-                db_url=db_url,
+                db=db,
                 entity_memory=EntityMemoryConfig(
                     namespace=f"test:{test_run_id}",  # Isolated
                 ),
@@ -464,37 +469,40 @@ def demo_progressive_enhancement():
     
     
     PHASE 2: Add Session Context (Conversation tracking)
-    
+
         agent = Agent(
             model=OpenAIChat(id="gpt-4o"),
+            db=db,
             learning=LearningMachine(
-                db_url=db_url,
+                db=db,
                 session_context=True,
             ),
             session_id="session_123",
         )
-    
-    
+
+
     PHASE 3: Add User Profile (Personalization)
-    
+
         agent = Agent(
             model=OpenAIChat(id="gpt-4o"),
+            db=db,
             learning=LearningMachine(
-                db_url=db_url,
+                db=db,
                 user_profile=True,
                 session_context=True,
             ),
             user_id="user_123",
             session_id="session_456",
         )
-    
-    
+
+
     PHASE 4: Add Entity Memory (Relationship tracking)
-    
+
         agent = Agent(
             model=OpenAIChat(id="gpt-4o"),
+            db=db,
             learning=LearningMachine(
-                db_url=db_url,
+                db=db,
                 user_profile=True,
                 session_context=True,
                 entity_memory=EntityMemoryConfig(

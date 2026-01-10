@@ -15,10 +15,14 @@ Run: python -m cookbook.combined.02_user_plus_entities
 """
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, LearningMode
 from agno.learn.config import EntityMemoryConfig, UserProfileConfig
 from agno.models.openai import OpenAIChat
-from cookbook.db import db_url
+
+# Database URL - use environment variable in production
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
 
 # =============================================================================
 # BASIC COMBINED SETUP
@@ -29,8 +33,9 @@ def create_combined_agent(user_id: str) -> Agent:
     """Create agent with user profile and entity memory."""
     return Agent(
         model=OpenAIChat(id="gpt-4o"),
+        db=db,
         learning=LearningMachine(
-            db_url=db_url,
+            db=db,
             # About the user
             user_profile=UserProfileConfig(
                 mode=LearningMode.ALWAYS,
@@ -137,8 +142,9 @@ def demo_shared_entities():
     def create_team_agent(user_id: str) -> Agent:
         return Agent(
             model=OpenAIChat(id="gpt-4o"),
+            db=db,
             learning=LearningMachine(
-                db_url=db_url,
+                db=db,
                 # Private user profile
                 user_profile=UserProfileConfig(
                     mode=LearningMode.ALWAYS,

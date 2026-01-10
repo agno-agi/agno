@@ -14,6 +14,7 @@ Run: python -m cookbook.patterns.personal_assistant
 """
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, LearningMode
 from agno.learn.config import (
     EntityMemoryConfig,
@@ -21,7 +22,10 @@ from agno.learn.config import (
     UserProfileConfig,
 )
 from agno.models.openai import OpenAIChat
-from cookbook.db import db_url
+
+# Database URL - use environment variable in production
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
 
 # =============================================================================
 # PERSONAL ASSISTANT CONFIGURATION
@@ -51,7 +55,7 @@ def create_personal_assistant(
             "Respect privacy and be discreet",
         ],
         learning=LearningMachine(
-            db_url=db_url,
+            db=db,
             # User preferences and patterns
             user_profile=UserProfileConfig(
                 mode=LearningMode.ALWAYS,
