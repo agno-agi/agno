@@ -5,13 +5,14 @@ Extend UserProfile with domain-specific fields.
 
 The base UserProfile has:
 - name, preferred_name (built-in)
-- memories (list of observations)
 
 You can extend it with typed fields for your domain.
 The LLM sees field descriptions and updates them appropriately.
 
+Note: For unstructured observations, use MemoriesConfig separately.
+
 Run:
-    python cookbook/15_learning/user_profile/03_custom_schema.py
+    python cookbook/15_learning/02_user_profile/03_custom_schema.py
 """
 
 from dataclasses import dataclass, field
@@ -102,7 +103,7 @@ Adjust technical depth based on their experience level.
         db=db,
         model=model,
         user_profile=UserProfileConfig(
-            mode=LearningMode.BACKGROUND,
+            mode=LearningMode.ALWAYS,
             schema=DeveloperProfile,  # Use custom schema
         ),
     ),
@@ -221,7 +222,7 @@ def demo_support_profile():
             db=db,
             model=model,
             user_profile=UserProfileConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
                 schema=SupportCustomerProfile,
             ),
         ),

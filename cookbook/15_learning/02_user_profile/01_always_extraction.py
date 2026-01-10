@@ -1,18 +1,21 @@
 """
-User Profile: Background Extraction
-===================================
+User Profile: Always Mode Extraction
+====================================
 Automatic profile extraction after conversations.
 
-In BACKGROUND mode (default), the LearningMachine automatically:
+In ALWAYS mode (default), the LearningMachine automatically:
 1. Analyzes each conversation
 2. Extracts user information
-3. Updates the profile
+3. Updates the profile fields (name, preferred_name, custom fields)
 
 This happens after the response is generated, so it doesn't
 add latency to the user experience.
 
+Note: For unstructured observations, use MemoriesConfig separately.
+See: 1b_memories_always.py for memories.
+
 Run:
-    python cookbook/15_learning/user_profile/01_background_extraction.py
+    python cookbook/15_learning/02_user_profile/01_always_extraction.py
 """
 
 from agno.agent import Agent
@@ -28,20 +31,18 @@ db = PostgresDb(db_url=db_url)
 model = OpenAIChat(id="gpt-4o")
 
 # ============================================================================
-# Agent with BACKGROUND extraction
+# Agent with ALWAYS extraction
 # ============================================================================
 agent = Agent(
-    name="Background Extraction Agent",
+    name="Always Extraction Agent",
     model=model,
     db=db,
     learning=LearningMachine(
         db=db,
         model=model,
         user_profile=UserProfileConfig(
-            mode=LearningMode.BACKGROUND,  # Automatic extraction
-            enable_add_memory=True,  # Can add new memories
-            enable_update_memory=True,  # Can update existing
-            enable_update_profile=True,  # Can update name, etc.
+            mode=LearningMode.ALWAYS,  # Automatic extraction
+            enable_update_profile=True,  # Can update name, preferred_name, etc.
         ),
     ),
     markdown=True,
@@ -194,8 +195,8 @@ if __name__ == "__main__":
     demo_extraction_types()
 
     print("\n" + "=" * 60)
-    print("✅ BACKGROUND mode extracts information automatically")
+    print("✅ ALWAYS mode extracts profile fields automatically")
     print("   - No tools needed")
     print("   - Runs after response")
-    print("   - Extracts from natural conversation")
+    print("   - Extracts structured fields from natural conversation")
     print("=" * 60)

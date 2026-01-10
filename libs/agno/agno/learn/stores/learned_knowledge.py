@@ -21,7 +21,7 @@ Key Features:
 Supported Modes:
 - AGENTIC: Agent calls save_learning directly when it discovers insights
 - PROPOSE: Agent proposes learnings, user approves before saving
-- BACKGROUND: Automatic extraction with duplicate detection
+- ALWAYS: Automatic extraction with duplicate detection
 """
 
 from copy import deepcopy
@@ -348,7 +348,7 @@ class LearnedKnowledgeStore(LearningStore):
         return instructions
 
     def _build_background_mode_context(self, data: Any) -> str:
-        """Build context for BACKGROUND mode (just show relevant learnings)."""
+        """Build context for ALWAYS mode (just show relevant learnings)."""
         if not data:
             return ""
 
@@ -1079,7 +1079,7 @@ class LearnedKnowledgeStore(LearningStore):
             return False
 
     # =========================================================================
-    # Background Extraction (BACKGROUND mode)
+    # Background Extraction (ALWAYS mode)
     # =========================================================================
 
     def extract_and_save(

@@ -58,7 +58,7 @@ def create_coding_assistant(
             db_url=db_url,
             # Developer profile
             user_profile=UserProfileConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
             ),
             # Task/debug session tracking
             session_context=SessionContextConfig(
@@ -66,7 +66,7 @@ def create_coding_assistant(
             ),
             # Codebase knowledge (project-specific)
             entity_memory=EntityMemoryConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
                 namespace=f"project:{project}",
             ),
             # Coding patterns and solutions (shared)

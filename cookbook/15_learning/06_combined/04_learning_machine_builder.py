@@ -57,16 +57,16 @@ def demo_boolean_shortcuts():
 
     print("""
     Boolean shortcuts use sensible defaults:
-    
+
     learning=True
-    ├── user_profile: enabled (BACKGROUND mode)
+    ├── user_profile: enabled (ALWAYS mode)
     ├── session_context: enabled (planning disabled)
     ├── entity_memory: disabled
     └── learned_knowledge: disabled
-    
-    
+
+
     LearningMachine(user_profile=True, session_context=True)
-    ├── user_profile: BACKGROUND mode, default schema
+    ├── user_profile: ALWAYS mode, default schema
     └── session_context: planning disabled
     
     
@@ -87,7 +87,7 @@ def demo_configuration_objects():
     configured_learning = LearningMachine(
         db_url=db_url,
         user_profile=UserProfileConfig(
-            mode=LearningMode.BACKGROUND,
+            mode=LearningMode.ALWAYS,
             # custom_schema=MyCustomProfile,
         ),
         session_context=SessionContextConfig(
@@ -107,18 +107,18 @@ def demo_configuration_objects():
     Configuration objects give full control:
     
     UserProfileConfig:
-    - mode: BACKGROUND or AGENTIC
+    - mode: ALWAYS or AGENTIC
     - custom_schema: Your dataclass (optional)
-    
+
     SessionContextConfig:
     - enable_planning: Include goal/plan/progress
-    
+
     EntityMemoryConfig:
-    - mode: BACKGROUND or AGENTIC
+    - mode: ALWAYS or AGENTIC
     - namespace: Scoping for isolation
-    
+
     LearnedKnowledgeConfig:
-    - mode: AGENTIC, PROPOSE, or BACKGROUND
+    - mode: AGENTIC, PROPOSE, or ALWAYS
     - namespace: Scoping for isolation
     
     
@@ -140,13 +140,13 @@ def create_personal_assistant_learning(user_id: str) -> LearningMachine:
     return LearningMachine(
         db_url=db_url,
         user_profile=UserProfileConfig(
-            mode=LearningMode.BACKGROUND,
+            mode=LearningMode.ALWAYS,
         ),
         session_context=SessionContextConfig(
             enable_planning=True,
         ),
         entity_memory=EntityMemoryConfig(
-            mode=LearningMode.BACKGROUND,
+            mode=LearningMode.ALWAYS,
             namespace=f"user:{user_id}",
         ),
     )
@@ -157,13 +157,13 @@ def create_support_agent_learning(user_id: str, org_id: str) -> LearningMachine:
     return LearningMachine(
         db_url=db_url,
         user_profile=UserProfileConfig(
-            mode=LearningMode.BACKGROUND,
+            mode=LearningMode.ALWAYS,
         ),
         session_context=SessionContextConfig(
             enable_planning=True,  # Track issue resolution
         ),
         entity_memory=EntityMemoryConfig(
-            mode=LearningMode.BACKGROUND,
+            mode=LearningMode.ALWAYS,
             namespace=f"org:{org_id}:support",  # Shared within org
         ),
         learned_knowledge=LearnedKnowledgeConfig(
@@ -254,7 +254,7 @@ class LearningConfig:
     @classmethod
     def from_env(cls) -> "LearningConfig":
         """Load configuration from environment variables."""
-        mode_str = os.getenv("LEARNING_MODE", "BACKGROUND")
+        mode_str = os.getenv("LEARNING_MODE", "ALWAYS")
         mode = LearningMode[mode_str.upper()]
 
         return cls(
@@ -287,12 +287,12 @@ class LearningConfig:
                 mode=self.default_mode,
             )
             if self.enable_user_profile
-            else None,
+            else False,
             session_context=SessionContextConfig(
                 enable_planning=True,
             )
             if self.enable_session_context
-            else None,
+            else False,
             entity_memory=EntityMemoryConfig(
                 mode=self.default_mode,
                 namespace=f"{self.entity_namespace_prefix}:{user_id}"
@@ -300,13 +300,13 @@ class LearningConfig:
                 else self.entity_namespace_prefix,
             )
             if self.enable_entity_memory
-            else None,
+            else False,
             learned_knowledge=LearnedKnowledgeConfig(
                 mode=self.default_mode,
                 namespace=self.knowledge_namespace_prefix,
             )
             if self.enable_learned_knowledge
-            else None,
+            else False,
         )
 
 
@@ -321,7 +321,7 @@ def demo_environment_config():
     
     # .env file
     DATABASE_URL=postgresql+psycopg://...
-    LEARNING_MODE=BACKGROUND
+    LEARNING_MODE=ALWAYS
     ENABLE_USER_PROFILE=true
     ENABLE_SESSION_CONTEXT=true
     ENABLE_ENTITY_MEMORY=true
@@ -368,7 +368,7 @@ def create_test_learning(
     return LearningMachine(
         db_url=test_db,
         user_profile=UserProfileConfig(
-            mode=LearningMode.BACKGROUND,
+            mode=LearningMode.ALWAYS,
         ),
         session_context=SessionContextConfig(
             enable_planning=True,

@@ -51,7 +51,7 @@ Quick-start examples
 
 ### 📁 02_user_profile/
 Deep dive into user memory:
-- `01_background_extraction.py` - Automatic profile extraction
+- `01_always_extraction.py` - Automatic profile extraction
 - `02_agentic_mode.py` - Agent-controlled memory
 - `03_custom_schema.py` - Extend profiles with custom fields
 - `04_memory_vs_fields.py` - When to use each
@@ -69,14 +69,14 @@ Deep dive into entity knowledge:
 - `01_facts_and_events.py` - Semantic vs episodic memory
 - `02_entity_relationships.py` - Graph edges between entities
 - `03_namespace_sharing.py` - Private vs shared entities
-- `04_background_extraction.py` - Auto-extract entities
+- `04_always_extraction.py` - Auto-extract entities
 - `05_entity_search.py` - Query the entity database
 
 ### 📁 05_learned_knowledge/
 Deep dive into knowledge capture:
 - `01_agentic_mode.py` - Agent decides what to save
 - `02_propose_mode.py` - Human approval workflow
-- `03_background_extraction.py` - Auto-extract insights
+- `03_always_extraction.py` - Auto-extract insights
 - `04_search_and_apply.py` - Use learnings in responses
 - `05_namespace_scoping.py` - Sharing boundaries
 
@@ -231,7 +231,7 @@ Each Learning Store can be configured to run in different modes:
 ```python
 from agno.learn import LearningMode
 
-# BACKGROUND (default for user_profile, session_context)
+# ALWAYS (default for user_profile, session_context)
 # - Automatic extraction after conversations
 # - No agent tools needed
 # - Extra LLM call per interaction
@@ -253,7 +253,7 @@ from agno.learn import LearningMode
 
 Captures long-term memory about users. Persists forever. Accumulates over time.
 
-**Supported modes:** BACKGROUND, AGENTIC
+**Supported modes:** ALWAYS, AGENTIC
 
 **Two types of data:**
 - **Profile fields** (structured): `name`, `preferred_name`, custom fields you define
@@ -269,7 +269,7 @@ agent = Agent(
     db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
     learning=LearningMachine(
         user_profile=UserProfileConfig(
-            mode=LearningMode.BACKGROUND, # Auto-extract from conversations
+            mode=LearningMode.ALWAYS, # Auto-extract from conversations
         ),
   ),
 )
@@ -286,7 +286,7 @@ agent.run("What do you know about me?", user_id="alice")
 
 Captures state and summary for the current session. Updated (not accumulated) on each extraction.
 
-**Supported modes:** BACKGROUND only
+**Supported modes:** ALWAYS only
 
 **Four types of data:**
 - **Summary**: A brief summary of the current session
@@ -325,7 +325,7 @@ agent = Agent(
 
 Captures reusable insights, patterns, and rules that apply across users and sessions.
 
-**Supported modes:** AGENTIC, PROPOSE, BACKGROUND
+**Supported modes:** AGENTIC, PROPOSE, ALWAYS
 
 **Requires a Knowledge base** (vector database) for semantic search.
 
@@ -376,7 +376,7 @@ agent.run("Help me compare AWS vs GCP")
 
 Captures knowledge about external entities: companies, projects, people, products, systems.
 
-**Supported modes:** BACKGROUND, AGENTIC
+**Supported modes:** ALWAYS, AGENTIC
 
 **Three types of entity data:**
 - **Facts** (semantic memory): Timeless truths — "Uses PostgreSQL"

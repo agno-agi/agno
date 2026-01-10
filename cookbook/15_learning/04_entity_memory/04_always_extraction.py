@@ -1,13 +1,13 @@
 """
-Entity Memory: Background Extraction
-====================================
+Entity Memory: Always Mode Extraction
+=====================================
 Auto-extract entities from conversations.
 
-In BACKGROUND mode, entities are automatically extracted
+In ALWAYS mode, entities are automatically extracted
 from conversations - no tools needed.
 
 Run:
-    python cookbook/15_learning/entity_memory/04_background_extraction.py
+    python cookbook/15_learning/04_entity_memory/04_always_extraction.py
 """
 
 from agno.agent import Agent
@@ -23,10 +23,10 @@ db = PostgresDb(db_url=db_url)
 model = OpenAIChat(id="gpt-4o")
 
 # ============================================================================
-# Agent with Background Entity Extraction
+# Agent with Always Entity Extraction
 # ============================================================================
 agent = Agent(
-    name="Background Entity Agent",
+    name="Always Entity Agent",
     model=model,
     db=db,
     instructions="You help users with business questions. Entities mentioned will be automatically tracked.",
@@ -34,7 +34,7 @@ agent = Agent(
         db=db,
         model=model,
         entity_memory=EntityMemoryConfig(
-            mode=LearningMode.BACKGROUND,  # Auto-extract
+            mode=LearningMode.ALWAYS,  # Auto-extract
             namespace="background_demo",
             enable_create_entity=True,
             enable_add_fact=True,
@@ -129,36 +129,36 @@ def demo_multi_turn():
 # ============================================================================
 # Background vs Agentic Comparison
 # ============================================================================
-def background_vs_agentic():
-    """Compare background and agentic modes."""
+def always_vs_agentic():
+    """Compare always and agentic modes."""
     print("\n" + "=" * 60)
-    print("Background vs Agentic Mode")
+    print("Always vs Agentic Mode")
     print("=" * 60)
     print("""
-BACKGROUND MODE:
-   EntityMemoryConfig(mode=LearningMode.BACKGROUND)
-   
+ALWAYS MODE:
+   EntityMemoryConfig(mode=LearningMode.ALWAYS)
+
    ✅ Automatic - no user action needed
    ✅ Captures everything mentioned
    ✅ Good for passive knowledge building
-   
+
    ⚠️ May extract irrelevant entities
    ⚠️ Extra LLM call per message
    ⚠️ Less control over what's saved
 
 AGENTIC MODE:
    EntityMemoryConfig(mode=LearningMode.AGENTIC)
-   
+
    ✅ Agent decides what to save
    ✅ More precise/selective
    ✅ Transparent to user
    ✅ No hidden LLM calls
-   
+
    ⚠️ Requires explicit saves
    ⚠️ May miss implicit mentions
 
 RECOMMENDATION:
-   - Use BACKGROUND for: CRM, research, knowledge graphs
+   - Use ALWAYS for: CRM, research, knowledge graphs
    - Use AGENTIC for: precision, transparency, cost control
 """)
 
@@ -169,10 +169,10 @@ RECOMMENDATION:
 if __name__ == "__main__":
     demo_auto_extraction()
     demo_multi_turn()
-    background_vs_agentic()
+    always_vs_agentic()
 
     print("\n" + "=" * 60)
-    print("✅ BACKGROUND mode extracts entities automatically")
+    print("✅ ALWAYS mode extracts entities automatically")
     print("   - No tools needed")
     print("   - Info accumulates over turns")
     print("   - Good for passive knowledge building")

@@ -473,7 +473,7 @@ class LearningMachine:
         """Extract and save learnings from a conversation.
 
         Call after a conversation to extract learnings. Each store
-        processes based on its mode (BACKGROUND stores extract automatically).
+        processes based on its mode (ALWAYS stores extract automatically).
 
         Args:
             messages: Conversation messages to analyze.

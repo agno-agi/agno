@@ -58,7 +58,7 @@ def create_research_agent(
             db_url=db_url,
             # Researcher profile
             user_profile=UserProfileConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
             ),
             # Research session tracking
             session_context=SessionContextConfig(
@@ -66,7 +66,7 @@ def create_research_agent(
             ),
             # Research entities (papers, authors, concepts)
             entity_memory=EntityMemoryConfig(
-                mode=LearningMode.BACKGROUND,  # Auto-extract from discussions
+                mode=LearningMode.ALWAYS,  # Auto-extract from discussions
                 namespace=f"research:{researcher_id}:{research_domain}",
             ),
             # Research methodologies and patterns

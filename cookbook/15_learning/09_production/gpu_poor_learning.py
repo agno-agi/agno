@@ -14,7 +14,7 @@ Key Concepts:
 Run: python -m cookbook.production.gpu_poor_learning
 """
 
-from langmem import create_learning_machine
+from agno.learn import LearningMachine, LearningMode
 
 # =============================================================================
 # COST BREAKDOWN
@@ -137,10 +137,10 @@ def demo_extraction_optimization():
     print("\n💻 IMPLEMENTATION:")
     print("-" * 40)
     print("""
-    from langmem import create_learning_machine
-    
+    from agno.learn import LearningMachine, LearningMode
+
     # Cost-optimized configuration
-    machine = create_learning_machine(
+    machine = LearningMachine(
         user_profile={
             "enabled": True,
             "model": "gpt-3.5-turbo",  # Cheaper model
@@ -282,11 +282,11 @@ def demo_minimal_config():
     print("\n💻 CONFIGURATION:")
     print("-" * 40)
     print("""
-    from langmem import create_learning_machine
-    
+    from agno.learn import LearningMachine, LearningMode
+
     # Absolute minimum cost configuration
     def create_budget_learning_machine(user_id: str):
-        return create_learning_machine(
+        return LearningMachine(
             # Only user profile - highest value, lowest cost
             user_profile={
                 "enabled": True,
@@ -311,7 +311,7 @@ def demo_minimal_config():
     
     # Step up: Add entity memory when needed
     def create_moderate_learning_machine(user_id: str):
-        return create_learning_machine(
+        return LearningMachine(
             user_profile={
                 "enabled": True,
                 "model": "gpt-3.5-turbo",
@@ -430,7 +430,7 @@ def demo_progressive_enhancement():
     ┌─────────────────────────────────────────────────────────┐
     │  LEVEL 3: ~$100/month                                   │
     ├─────────────────────────────────────────────────────────┤
-    │  • + learned_knowledge (background extraction)          │
+    │  • + learned_knowledge (always extraction)              │
     │  • + managed vector DB                                  │
     │  • + cloud embeddings                                   │
     │  • Good for: Production apps, paid products             │

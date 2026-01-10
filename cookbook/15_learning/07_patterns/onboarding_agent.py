@@ -14,7 +14,7 @@ Key Concepts:
 Run: python -m cookbook.patterns.onboarding_agent
 """
 
-from langmem import create_learning_machine
+from agno.learn import LearningMachine, LearningMode
 
 # =============================================================================
 # AGENT SETUP
@@ -24,7 +24,7 @@ from langmem import create_learning_machine
 def create_onboarding_agent(user_id: str):
     """Create an onboarding agent with progressive profiling."""
 
-    return create_learning_machine(
+    return LearningMachine(
         # Learn user facts for personalization
         user_profile=True,
         # Track onboarding progress

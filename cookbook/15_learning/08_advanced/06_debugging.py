@@ -15,7 +15,7 @@ Run: python -m cookbook.advanced.06_debugging
 
 from datetime import datetime
 
-from langmem import create_learning_machine
+from agno.learn import LearningMachine, LearningMode
 
 # =============================================================================
 # INSPECTING STORED DATA
@@ -278,10 +278,10 @@ def demo_debug_config():
     
     # Enable detailed logging
     logging.basicConfig(level=logging.DEBUG)
-    logging.getLogger("langmem").setLevel(logging.DEBUG)
+    logging.getLogger("agno.learn").setLevel(logging.DEBUG)
     
     # Create machine with debug options
-    machine = create_learning_machine(
+    machine = LearningMachine(
         user_profile={
             "enabled": True,
             "debug": True,  # Log all extractions
@@ -347,7 +347,7 @@ def demo_testing():
     @pytest.fixture
     def test_machine(mock_store):
         '''Create machine with mock stores.'''
-        return create_learning_machine(
+        return LearningMachine(
             user_profile={"store": mock_store},
             entity_memory={"store": mock_store},
             user_id="test_user"
@@ -372,7 +372,7 @@ def demo_testing():
     @pytest.mark.asyncio
     async def test_user_profile_extraction():
         '''Test actual extraction with real store.'''
-        machine = create_learning_machine(
+        machine = LearningMachine(
             user_profile=True,
             user_id="integration_test_user"
         )
@@ -479,7 +479,7 @@ def demo_logging():
         cache_logger_on_first_use=True,
     )
     
-    logger = structlog.get_logger("langmem")
+    logger = structlog.get_logger("agno.learn")
     
     # Log extraction events
     logger.info(

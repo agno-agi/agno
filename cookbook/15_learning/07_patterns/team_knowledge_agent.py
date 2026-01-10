@@ -405,7 +405,7 @@ def show_configuration_options():
     READ-HEAVY (Mostly retrieval):
     
         entity_memory=EntityMemoryConfig(
-            mode=LearningMode.BACKGROUND,  # Auto-extract
+            mode=LearningMode.ALWAYS,  # Auto-extract
         ),
         learned_knowledge=LearnedKnowledgeConfig(
             mode=LearningMode.PROPOSE,  # Review before saving

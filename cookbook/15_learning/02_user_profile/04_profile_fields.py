@@ -1,24 +1,22 @@
 """
-User Profile: Memory vs Fields
-==============================
-When to use profile fields vs. unstructured memories.
+User Profile: Working with Profile Fields
+=========================================
+UserProfile stores structured fields about users.
 
-UserProfile has two types of data:
+Profile Fields (structured):
+- name, preferred_name (built-in)
+- Custom fields from extended schemas
 
-1. **Profile Fields** (structured)
-   - name, preferred_name, custom fields
-   - Single, canonical values
-   - Updated via update_profile tool
+Profile fields are:
+- Single, canonical values
+- Updated (replaced), not accumulated
+- Queryable directly
 
-2. **Memories** (unstructured)
-   - List of observations
-   - Accumulate over time
-   - For info that doesn't fit fields
-
-This cookbook helps you choose the right approach.
+For unstructured observations that accumulate over time,
+use MemoriesConfig separately.
 
 Run:
-    python cookbook/15_learning/user_profile/04_memory_vs_fields.py
+    python cookbook/15_learning/02_user_profile/04_profile_fields.py
 """
 
 from dataclasses import dataclass, field
@@ -39,21 +37,16 @@ model = OpenAIChat(id="gpt-4o")
 
 
 # ============================================================================
-# Custom Schema with Clear Separation
+# Custom Schema with Clear Field Separation
 # ============================================================================
 @dataclass
 class WellDesignedProfile(UserProfile):
-    """Profile that demonstrates good field vs memory separation.
+    """Profile that demonstrates good field design.
 
-    FIELDS (single canonical values):
+    FIELDS should be:
     - Things that have ONE correct answer
     - Things that change via update (not accumulate)
     - Things you'd query directly
-
-    MEMORIES (observations):
-    - Things that accumulate over time
-    - Context that doesn't fit a field
-    - One-off details
     """
 
     # Good field: Has one canonical answer
@@ -86,33 +79,21 @@ class WellDesignedProfile(UserProfile):
         metadata={"description": "Main programming languages (top 3-5)"},
     )
 
-    # Note: The following would be BAD as fields, good as memories:
-    # - "project_history": Accumulates, unbounded
-    # - "conversation_topics": Too varied
-    # - "random_facts": No structure
-
 
 # ============================================================================
 # Agent
 # ============================================================================
 agent = Agent(
-    name="Memory vs Fields Demo",
+    name="Profile Fields Demo",
     model=model,
     db=db,
     instructions="""\
-You help users understand the difference between profile fields and memories.
+You help users understand profile fields.
 
 PROFILE FIELDS: Use for structured, canonical data
 - "My name is Sarah" → update name field
 - "I work at Google" → update company field
 - "Call me Sam" → update preferred_name field
-
-MEMORIES: Use for observations and context
-- "Had a great time at the conference" → add memory
-- "Working on a machine learning project" → add memory
-- "Prefers morning meetings" → add memory
-
-When unsure, memories are safer (more flexible).
 """,
     learning=LearningMachine(
         db=db,
@@ -122,7 +103,6 @@ When unsure, memories are safer (more flexible).
             schema=WellDesignedProfile,
             enable_agent_tools=True,
             agent_can_update_profile=True,
-            agent_can_update_memories=True,
         ),
     ),
     markdown=True,
@@ -133,7 +113,7 @@ When unsure, memories are safer (more flexible).
 # Helper
 # ============================================================================
 def show_profile(user_id: str) -> None:
-    """Show profile with fields and memories separated."""
+    """Show profile fields."""
     store = agent.learning.user_profile_store
     profile = store.get(user_id=user_id) if store else None
 
@@ -151,18 +131,6 @@ def show_profile(user_id: str) -> None:
     print(f"  timezone: {getattr(profile, 'timezone', None)}")
     print(f"  expertise_level: {getattr(profile, 'expertise_level', None)}")
     print(f"  primary_languages: {getattr(profile, 'primary_languages', None)}")
-
-    print("\n" + "-" * 40)
-    print("📝 MEMORIES (unstructured):")
-    print("-" * 40)
-    if profile.memories:
-        for mem in profile.memories:
-            content = (
-                mem.get("content", str(mem)) if isinstance(mem, dict) else str(mem)
-            )
-            print(f"  - {content}")
-    else:
-        print("  (none)")
 
 
 # ============================================================================
@@ -198,80 +166,35 @@ def demo_field_updates():
 
 
 # ============================================================================
-# Demo: Memory Observations
-# ============================================================================
-def demo_memory_observations():
-    """Show information that should go in memories."""
-    print("\n" + "=" * 60)
-    print("Demo: Information → Memories")
-    print("=" * 60)
-
-    user = "memories_demo@example.com"
-
-    print("\n--- Contextual observations (should be memories) ---\n")
-    agent.print_response(
-        "I'm Jamie. I've been dealing with a really tricky performance bug "
-        "in our caching layer for the past week. We're using Redis but "
-        "considering switching to Memcached. Oh, and I have a standup "
-        "every day at 9am so I prefer calls after 10.",
-        user_id=user,
-        session_id="memories_1",
-        stream=True,
-    )
-    show_profile(user)
-
-    print("\n🔍 Notice:")
-    print("   - Name → field (canonical)")
-    print("   - Performance bug → memory (current project)")
-    print("   - Redis/Memcached → memory (current context)")
-    print("   - Meeting preference → memory (behavioral observation)")
-
-
-# ============================================================================
 # Decision Guide
 # ============================================================================
 def decision_guide():
-    """Print decision guide for fields vs memories."""
+    """Print decision guide for profile fields."""
     print("\n" + "=" * 60)
-    print("Decision Guide: Field or Memory?")
+    print("Decision Guide: What Goes in Profile Fields?")
     print("=" * 60)
     print("""
 ASK: Does this have ONE canonical answer?
-  YES → Field     "What's their name?" → name field
-  NO  → Memory    "What are they working on?" → memory
+  YES → Profile Field     "What's their name?" → name field
 
 ASK: Does this get REPLACED or ACCUMULATED?
-  REPLACED → Field    "Role changed" → update role field
-  ACCUMULATED → Memory "Another project" → add memory
+  REPLACED → Profile Field    "Role changed" → update role field
 
 ASK: Would you query this directly?
-  YES → Field     "Show users in Pacific timezone"
-  NO  → Memory    "Show users who like morning meetings"
+  YES → Profile Field     "Show users in Pacific timezone"
 
 ASK: Is this bounded and predictable?
-  YES → Field     expertise_level: beginner|intermediate|expert
-  NO  → Memory    "Prefers verbose explanations with examples"
+  YES → Profile Field     expertise_level: beginner|intermediate|expert
 
-EXAMPLES:
-
-✅ FIELDS (update):
+GOOD PROFILE FIELDS:
   - Name, preferred name
   - Current company, role
   - Timezone, location
   - Skill level (enum)
   - Top programming languages
 
-📝 MEMORIES (accumulate):
-  - Current projects
-  - Preferences and quirks
-  - Past experiences
-  - Communication style notes
-  - Random facts shared
-
-⚠️ GRAY AREA (could be either):
-  - "Uses Python" → Field if tracking top languages
-  - "Learning Python" → Memory (current activity)
-  - "Expert in Python" → Field (expertise_level)
+For unstructured observations that accumulate (like preferences,
+current projects, communication style notes), use MemoriesConfig.
 """)
 
 
@@ -280,12 +203,11 @@ EXAMPLES:
 # ============================================================================
 if __name__ == "__main__":
     demo_field_updates()
-    demo_memory_observations()
     decision_guide()
 
     print("\n" + "=" * 60)
     print("✅ Key Takeaways:")
-    print("   - Fields: canonical, replaceable, queryable")
-    print("   - Memories: contextual, accumulated, flexible")
-    print("   - When unsure, memories are safer")
+    print("   - Profile fields: canonical, replaceable, queryable")
+    print("   - Use custom schemas for domain-specific fields")
+    print("   - For unstructured observations, use MemoriesConfig")
     print("=" * 60)

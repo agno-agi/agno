@@ -1,20 +1,22 @@
 """
-User Profile: Agentic Mode
-==========================
-User Profile captures structured profile fields about users:
-- Name and preferred name
-- Custom profile fields (when using extended schemas)
+Memories: Agentic Mode
+======================
+Memories captures unstructured observations about users:
+- Work context and role
+- Communication style preferences
+- Patterns and interests
+- Any memorable facts
 
-AGENTIC mode gives the agent explicit tools to update profile fields.
+AGENTIC mode gives the agent explicit tools to save and update memories.
 The agent decides when to store information - you can see the tool calls.
 
-Compare with: 1_user_profile_always.py for automatic extraction.
-See also: 2b_memories_agentic.py for unstructured observations.
+Compare with: 1b_memories_always.py for automatic extraction.
+See also: 2_user_profile_agentic.py for structured profile fields.
 """
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.learn import LearningMachine, LearningMode, UserProfileConfig
+from agno.learn import LearningMachine, LearningMode, MemoriesConfig
 from agno.models.openai import OpenAIResponses
 
 # ============================================================================
@@ -23,14 +25,14 @@ from agno.models.openai import OpenAIResponses
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
-# AGENTIC mode: Agent gets profile tools and decides when to use them.
-# You'll see tool calls like "update_user_profile" in responses.
+# AGENTIC mode: Agent gets memory tools and decides when to use them.
+# You'll see tool calls like "update_user_memory" in responses.
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=db,
-    instructions="Update user profile fields when you learn their name or preferred name.",
+    instructions="Remember important information about users using your memory tools.",
     learning=LearningMachine(
-        user_profile=UserProfileConfig(
+        memories=MemoriesConfig(
             mode=LearningMode.AGENTIC,
         ),
     ),
@@ -44,28 +46,29 @@ agent = Agent(
 if __name__ == "__main__":
     user_id = "bob@example.com"
 
-    # Session 1: Agent explicitly updates profile
+    # Session 1: Agent explicitly saves memories
     print("\n" + "=" * 60)
     print("SESSION 1: Share information (watch for tool calls)")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Hi! I'm Robert Johnson, but everyone calls me Bob.",
+        "I'm a backend engineer at Stripe. "
+        "I specialize in distributed systems and prefer Rust over Go.",
         user_id=user_id,
         session_id="session_1",
         stream=True,
     )
-    agent.learning.user_profile_store.print(user_id=user_id)
+    agent.learning.memories_store.print(user_id=user_id)
 
-    # Session 2: Agent uses stored profile
+    # Session 2: Agent uses stored memories
     print("\n" + "=" * 60)
-    print("SESSION 2: Profile recalled in new session")
+    print("SESSION 2: Memories recalled in new session")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "What should you call me?",
+        "What programming language would you recommend for my next project?",
         user_id=user_id,
         session_id="session_2",
         stream=True,
     )
-    agent.learning.user_profile_store.print(user_id=user_id)
+    agent.learning.memories_store.print(user_id=user_id)

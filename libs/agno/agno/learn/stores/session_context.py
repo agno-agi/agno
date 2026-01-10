@@ -84,7 +84,7 @@ class SessionContextStore(LearningStore):
 
         if self.config.mode != LearningMode.ALWAYS:
             log_warning(
-                f"SessionContextStore only supports BACKGROUND mode, got {self.config.mode}. Ignoring mode setting."
+                f"SessionContextStore only supports ALWAYS mode, got {self.config.mode}. Ignoring mode setting."
             )
 
     # =========================================================================
@@ -140,7 +140,7 @@ class SessionContextStore(LearningStore):
             team_id: Team context (stored for audit).
             **kwargs: Additional context (ignored).
         """
-        # process only supported in BACKGROUND mode
+        # process only supported in ALWAYS mode
         # for programmatic extraction, use extract_and_save directly
         if self.config.mode != LearningMode.ALWAYS:
             return

@@ -1,9 +1,9 @@
 """
-Learned Knowledge: Background Extraction
+Learned Knowledge: Always Mode Extraction
 =========================================
 Automatic extraction of insights from conversations.
 
-In BACKGROUND mode:
+In ALWAYS mode:
 - LLM analyzes each conversation for insights
 - Automatically checks for duplicates
 - Saves new learnings without user intervention
@@ -14,7 +14,7 @@ Trade-offs:
 - Con: Less control over what gets saved
 
 Run:
-    python cookbook/15_learning/learned_knowledge/03_background_extraction.py
+    python cookbook/15_learning/05_learned_knowledge/03_always_extraction.py
 """
 
 from agno.agent import Agent
@@ -43,15 +43,15 @@ knowledge = Knowledge(
 )
 
 # ============================================================================
-# Agent with Background Extraction
+# Agent with Always Mode Extraction
 # ============================================================================
 agent = Agent(
-    name="Background Learning Agent",
+    name="Always Learning Agent",
     model=model,
     db=db,
     instructions="""\
 You are a helpful assistant. Just focus on helping the user -
-learning extraction happens automatically in the background.
+learning extraction happens automatically.
 """,
     learning=LearningMachine(
         db=db,
@@ -59,7 +59,7 @@ learning extraction happens automatically in the background.
         knowledge=knowledge,
         user_profile=False,
         learned_knowledge=LearnedKnowledgeConfig(
-            mode=LearningMode.BACKGROUND,  # Automatic extraction
+            mode=LearningMode.ALWAYS,  # Automatic extraction
         ),
     ),
     markdown=True,
@@ -207,7 +207,7 @@ def performance_notes():
     print("Performance Considerations")
     print("=" * 60)
     print("""
-BACKGROUND MODE COSTS:
+ALWAYS MODE COSTS:
 
 Each conversation triggers:
 1. User response (normal LLM call)
@@ -222,7 +222,7 @@ OPTIMIZATION STRATEGIES:
    learning=LearningMachine(
        model=OpenAIChat(id="gpt-4o-mini"),  # Cheaper extractor
        learned_knowledge=LearnedKnowledgeConfig(
-           mode=LearningMode.BACKGROUND,
+           mode=LearningMode.ALWAYS,
        ),
    )
    ```
@@ -246,7 +246,7 @@ LATENCY IMPACT:
 ├───────────────────┼─────────────────┼─────────────────┤
 │ No learning       │ ~1s             │ None            │
 │ AGENTIC           │ ~1s             │ None            │
-│ BACKGROUND        │ ~1s + 1-2s*     │ Extraction      │
+│ ALWAYS            │ ~1s + 1-2s*     │ Extraction      │
 │ PROPOSE           │ ~1s             │ None            │
 └───────────────────┴─────────────────┴─────────────────┘
 * Background extraction runs async, may not block response
@@ -263,7 +263,7 @@ if __name__ == "__main__":
     performance_notes()
 
     print("\n" + "=" * 60)
-    print("✅ BACKGROUND mode: Automatic learning extraction")
+    print("✅ ALWAYS mode: Automatic learning extraction")
     print("   - Zero user friction")
     print("   - Extra LLM call per conversation")
     print("   - Built-in duplicate detection")

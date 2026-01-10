@@ -17,7 +17,7 @@ Run: python -m cookbook.production.plan_and_learn
 from datetime import datetime
 from typing import Any, Dict, List
 
-from langmem import create_learning_machine
+from agno.learn import LearningMachine, LearningMode
 
 # =============================================================================
 # ARCHITECTURE OVERVIEW
@@ -617,7 +617,7 @@ def demo_full_integration():
             self.tools = tools
             
             # Initialize learning machine
-            self.machine = create_learning_machine(
+            self.machine = LearningMachine(
                 user_profile=False,  # Agent doesn't need user profile
                 session_context=True,  # Track current execution
                 entity_memory={

@@ -36,9 +36,9 @@ def demo_basic_async():
     print("\n💻 SYNC VS ASYNC:")
     print("-" * 40)
     print("""
-    from langmem import create_learning_machine
+    from agno.learn import LearningMachine, LearningMode
     
-    machine = create_learning_machine(
+    machine = LearningMachine(
         user_profile=True,
         entity_memory=True,
         user_id="user123"
@@ -488,7 +488,7 @@ def demo_context_managers():
             )
             
             # Create machine
-            self.machine = create_learning_machine(
+            self.machine = LearningMachine(
                 user_profile={"store": self.stores["user_profile"]},
                 entity_memory={"store": self.stores["entity"]},
                 **self.config.base

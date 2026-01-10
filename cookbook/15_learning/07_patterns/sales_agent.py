@@ -58,7 +58,7 @@ def create_sales_agent(
             db_url=db_url,
             # Sales rep profile
             user_profile=UserProfileConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
             ),
             # Current sales conversation
             session_context=SessionContextConfig(

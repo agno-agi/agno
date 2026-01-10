@@ -217,7 +217,7 @@ def demo_redis_store():
     class RedisStore(BaseStore):
         '''Redis store for fast access.'''
         
-        def __init__(self, url: str, prefix: str = "langmem"):
+        def __init__(self, url: str, prefix: str = "agno"):
             self.url = url
             self.prefix = prefix
             self.client = None
@@ -365,8 +365,8 @@ def demo_store_configs():
     print("\n💻 CONFIGURATION:")
     print("-" * 40)
     print("""
-    from langmem import create_learning_machine
-    from langmem.config import (
+    from agno.learn import LearningMachine, LearningMode
+    from agno.learn.config import (
         UserProfileConfig,
         EntityMemoryConfig,
         LearnedKnowledgeConfig
@@ -392,7 +392,7 @@ def demo_store_configs():
     )
     
     # Configure machine with custom stores
-    machine = create_learning_machine(
+    machine = LearningMachine(
         user_profile=UserProfileConfig(
             store=user_store
         ),

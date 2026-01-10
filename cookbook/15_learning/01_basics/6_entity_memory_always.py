@@ -1,12 +1,12 @@
 """
-Entity Memory: Background Mode
-==============================
+Entity Memory: Always Mode
+==========================
 Entity Memory stores knowledge about external things:
 - Companies, people, projects
 - Facts, events, relationships
 - Shared context across users
 
-BACKGROUND mode automatically extracts entity information from conversations.
+ALWAYS mode automatically extracts entity information from conversations.
 No explicit tool calls - entities are discovered and saved behind the scenes.
 
 Compare with: 7_entity_memory_agentic.py for explicit tool-based management.
@@ -23,7 +23,7 @@ from agno.models.openai import OpenAIResponses
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
-# BACKGROUND mode: Entities are extracted automatically after responses.
+# ALWAYS mode: Entities are extracted automatically after responses.
 # The agent doesn't see memory tools - extraction happens invisibly.
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
@@ -31,7 +31,7 @@ agent = Agent(
     instructions="You're a sales assistant. Acknowledge notes briefly.",
     learning=LearningMachine(
         entity_memory=EntityMemoryConfig(
-            mode=LearningMode.BACKGROUND,
+            mode=LearningMode.ALWAYS,
         ),
     ),
     markdown=True,

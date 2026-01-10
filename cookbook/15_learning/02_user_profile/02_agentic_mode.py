@@ -4,7 +4,7 @@ User Profile: Agentic Mode
 Agent-driven profile updates via tools.
 
 In AGENTIC mode, the agent decides when to save information using
-tools. This gives the agent control over what gets remembered.
+tools. This gives the agent control over what gets saved.
 
 Advantages:
 - Agent is selective (less noise)
@@ -13,11 +13,13 @@ Advantages:
 - More transparent
 
 The agent gets tools:
-- `update_user_memory`: Add/update memories
-- `update_user_profile`: Update profile fields (name, etc.)
+- `update_user_profile`: Update profile fields (name, preferred_name, custom fields)
+
+Note: For unstructured memories, use MemoriesConfig with AGENTIC mode.
+See: 2b_memories_agentic.py for memories.
 
 Run:
-    python cookbook/15_learning/user_profile/02_agentic_mode.py
+    python cookbook/15_learning/02_user_profile/02_agentic_mode.py
 """
 
 from agno.agent import Agent
@@ -36,27 +38,21 @@ model = OpenAIChat(id="gpt-4o")
 # Agent with AGENTIC mode
 # ============================================================================
 agent = Agent(
-    name="Agentic Memory Agent",
+    name="Agentic Profile Agent",
     model=model,
     db=db,
     instructions="""\
-You are a helpful assistant with the ability to remember things about users.
+You are a helpful assistant with the ability to update user profiles.
 
-When a user shares something that seems important for future interactions,
-use the `update_user_memory` tool to save it. Be selective - only save
-things that will genuinely help you assist them better in the future.
+When a user shares their name or how they prefer to be addressed,
+use the `update_user_profile` tool to save it.
 
-Examples of what to save:
+What to save in profile:
 - Name and how they prefer to be addressed
-- Job role and company
-- Technical preferences (languages, frameworks)
-- Communication style preferences
-- Recurring topics or projects
+- Other structured profile fields
 
-Don't save:
-- Trivial small talk
-- One-off questions
-- Information that wouldn't help future interactions
+Note: This agent only handles structured profile fields.
+For unstructured observations, use MemoriesConfig separately.
 """,
     learning=LearningMachine(
         db=db,
@@ -64,7 +60,6 @@ Don't save:
         user_profile=UserProfileConfig(
             mode=LearningMode.AGENTIC,
             enable_agent_tools=True,
-            agent_can_update_memories=True,
             agent_can_update_profile=True,
         ),
     ),
@@ -73,70 +68,49 @@ Don't save:
 
 
 # ============================================================================
-# Demo: Agent Decides What to Remember
+# Demo: Agent Updates Profile
 # ============================================================================
-def demo_selective_memory():
-    """Show agent being selective about what it saves."""
+def demo_profile_update():
+    """Show agent updating profile fields."""
     print("=" * 60)
-    print("Demo: Agent Decides What to Remember")
+    print("Demo: Agent Updates Profile Fields")
     print("=" * 60)
 
     user = "agentic_demo@example.com"
 
-    # Important info - should be saved
-    print("\n--- Important info (should save) ---\n")
+    # Share name info - should update profile
+    print("\n--- Share name (should update profile) ---\n")
     agent.print_response(
-        "I'm Jordan, I'm a DevOps engineer at Netflix. I mostly work with "
-        "Kubernetes and Terraform. Please remember this for our future chats.",
+        "Hi! I'm Jordan Chen, but everyone calls me JC.",
         user_id=user,
         session_id="agentic_1",
         stream=True,
     )
 
-    # Trivial question - should NOT be saved
-    print("\n--- Trivial question (should not save) ---\n")
+    # Check what was saved
+    print("\n--- Profile check ---\n")
     agent.print_response(
-        "What's 2 + 2?",
+        "What's my name and what should you call me?",
         user_id=user,
         session_id="agentic_2",
         stream=True,
     )
 
-    # Preference worth saving
-    print("\n--- Preference (should save) ---\n")
-    agent.print_response(
-        "By the way, I really prefer YAML over JSON for configuration. "
-        "And I like verbose output with clear explanations.",
-        user_id=user,
-        session_id="agentic_3",
-        stream=True,
-    )
-
-    # Check what was saved
-    print("\n--- Memory check ---\n")
-    agent.print_response(
-        "What do you remember about me?",
-        user_id=user,
-        session_id="agentic_4",
-        stream=True,
-    )
-
 
 # ============================================================================
-# Demo: Explicit Save Request
+# Demo: Explicit Profile Update
 # ============================================================================
-def demo_explicit_save():
-    """Show user explicitly asking agent to remember something."""
+def demo_explicit_update():
+    """Show user explicitly asking agent to update profile."""
     print("\n" + "=" * 60)
-    print("Demo: Explicit Save Request")
+    print("Demo: Explicit Profile Update")
     print("=" * 60)
 
-    user = "explicit_save@example.com"
+    user = "explicit_update@example.com"
 
     print("\n--- Explicit request ---\n")
     agent.print_response(
-        "Please remember: I always want you to include test examples "
-        "when you write code for me. This is very important.",
+        "My name is Alexandra Williams, but please always call me Alex.",
         user_id=user,
         session_id="explicit_1",
         stream=True,
@@ -144,48 +118,9 @@ def demo_explicit_save():
 
     print("\n--- Later conversation ---\n")
     agent.print_response(
-        "Write me a function to validate email addresses.",
+        "How should you address me?",
         user_id=user,
         session_id="explicit_2",
-        stream=True,
-    )
-
-
-# ============================================================================
-# Demo: Memory Update
-# ============================================================================
-def demo_memory_update():
-    """Show updating existing memories."""
-    print("\n" + "=" * 60)
-    print("Demo: Updating Memories")
-    print("=" * 60)
-
-    user = "update_demo@example.com"
-
-    # Initial info
-    print("\n--- Initial info ---\n")
-    agent.print_response(
-        "I work at a startup called TechCo as a junior developer.",
-        user_id=user,
-        session_id="update_1",
-        stream=True,
-    )
-
-    # Updated info
-    print("\n--- Updated info (promotion!) ---\n")
-    agent.print_response(
-        "Great news! I got promoted to senior developer. Please update your memory.",
-        user_id=user,
-        session_id="update_2",
-        stream=True,
-    )
-
-    # Verify
-    print("\n--- Verify update ---\n")
-    agent.print_response(
-        "What's my current role?",
-        user_id=user,
-        session_id="update_3",
         stream=True,
     )
 
@@ -194,13 +129,12 @@ def demo_memory_update():
 # Main
 # ============================================================================
 if __name__ == "__main__":
-    demo_selective_memory()
-    demo_explicit_save()
-    demo_memory_update()
+    demo_profile_update()
+    demo_explicit_update()
 
     print("\n" + "=" * 60)
-    print("✅ AGENTIC mode: Agent controls what gets remembered")
-    print("   - update_user_memory tool for memories")
-    print("   - update_user_profile tool for profile fields")
+    print("✅ AGENTIC mode: Agent controls profile updates")
+    print("   - update_user_profile tool for name, preferred_name, etc.")
     print("   - More transparent, no hidden LLM calls")
+    print("   - For memories, use MemoriesConfig separately")
     print("=" * 60)

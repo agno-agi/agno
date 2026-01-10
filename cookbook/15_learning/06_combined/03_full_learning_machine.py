@@ -40,7 +40,7 @@ def create_full_learning_agent(
             # STORE 1: User Profile
             # Learns about the individual user
             user_profile=UserProfileConfig(
-                mode=LearningMode.BACKGROUND,  # Auto-extract user info
+                mode=LearningMode.ALWAYS,  # Auto-extract user info
             ),
             # STORE 2: Session Context
             # Tracks conversation state
@@ -50,7 +50,7 @@ def create_full_learning_agent(
             # STORE 3: Entity Memory
             # Tracks entities in user's world
             entity_memory=EntityMemoryConfig(
-                mode=LearningMode.BACKGROUND,  # Auto-extract entities
+                mode=LearningMode.ALWAYS,  # Auto-extract entities
                 namespace=f"user:{user_id}",  # Private to user
             ),
             # STORE 4: Learned Knowledge
@@ -326,52 +326,52 @@ def show_configuration_patterns():
     print("=" * 60)
 
     print("""
-    PATTERN 1: Background Everything (Maximum auto-learning)
-    
+    PATTERN 1: Always Everything (Maximum auto-learning)
+
         learning=LearningMachine(
-            user_profile=UserProfileConfig(mode=LearningMode.BACKGROUND),
+            user_profile=UserProfileConfig(mode=LearningMode.ALWAYS),
             session_context=SessionContextConfig(enable_planning=True),
-            entity_memory=EntityMemoryConfig(mode=LearningMode.BACKGROUND),
-            learned_knowledge=LearnedKnowledgeConfig(mode=LearningMode.BACKGROUND),
+            entity_memory=EntityMemoryConfig(mode=LearningMode.ALWAYS),
+            learned_knowledge=LearnedKnowledgeConfig(mode=LearningMode.ALWAYS),
         )
-    
+
     Pros: Learns everything automatically
     Cons: May learn noise, less control
-    
-    
+
+
     PATTERN 2: Selective Agentic (Controlled learning)
-    
+
         learning=LearningMachine(
-            user_profile=UserProfileConfig(mode=LearningMode.BACKGROUND),
+            user_profile=UserProfileConfig(mode=LearningMode.ALWAYS),
             session_context=SessionContextConfig(enable_planning=True),
             entity_memory=EntityMemoryConfig(mode=LearningMode.AGENTIC),
             learned_knowledge=LearnedKnowledgeConfig(mode=LearningMode.AGENTIC),
         )
-    
-    Pros: Background for user/session, explicit for entities/knowledge
+
+    Pros: Always mode for user/session, explicit for entities/knowledge
     Cons: Requires agent to decide what to save
-    
-    
+
+
     PATTERN 3: Propose Mode for Knowledge (With review)
-    
+
         learning=LearningMachine(
-            user_profile=UserProfileConfig(mode=LearningMode.BACKGROUND),
+            user_profile=UserProfileConfig(mode=LearningMode.ALWAYS),
             session_context=SessionContextConfig(enable_planning=True),
-            entity_memory=EntityMemoryConfig(mode=LearningMode.BACKGROUND),
+            entity_memory=EntityMemoryConfig(mode=LearningMode.ALWAYS),
             learned_knowledge=LearnedKnowledgeConfig(mode=LearningMode.PROPOSE),
         )
-    
+
     Pros: Entities auto-learned, knowledge reviewed before saving
     Cons: Requires approval workflow
-    
-    
+
+
     PATTERN 4: Namespace Isolation (Multi-tenant)
-    
+
         learning=LearningMachine(
-            user_profile=UserProfileConfig(mode=LearningMode.BACKGROUND),
+            user_profile=UserProfileConfig(mode=LearningMode.ALWAYS),
             session_context=SessionContextConfig(enable_planning=True),
             entity_memory=EntityMemoryConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
                 namespace=f"org:{org_id}:user:{user_id}",
             ),
             learned_knowledge=LearnedKnowledgeConfig(

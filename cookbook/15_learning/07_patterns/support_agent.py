@@ -59,7 +59,7 @@ def create_support_agent(
             db_url=db_url,
             # Customer profile (per-customer)
             user_profile=UserProfileConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
             ),
             # Ticket tracking (per-session)
             session_context=SessionContextConfig(
@@ -67,7 +67,7 @@ def create_support_agent(
             ),
             # Product/ticket knowledge (org-wide)
             entity_memory=EntityMemoryConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
                 namespace=f"org:{org_id}:support",
             ),
             # Solution knowledge base (org-wide)

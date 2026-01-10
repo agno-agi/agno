@@ -30,7 +30,7 @@ Scoping:
     - "<custom>": Custom grouping (e.g., "sales_team")
 
 Supported Modes:
-- BACKGROUND: Automatic extraction of entity info from conversations
+- ALWAYS: Automatic extraction of entity info from conversations
 - AGENTIC: Agent calls tools directly to manage entity info
 """
 
@@ -85,9 +85,9 @@ class EntityMemoryStore(LearningStore):
         self._schema = self.config.schema or EntityMemory
 
         if self.config.mode == LearningMode.PROPOSE:
-            log_warning("EntityMemoryStore does not support PROPOSE mode. Falling back to BACKGROUND mode.")
+            log_warning("EntityMemoryStore does not support PROPOSE mode. Falling back to ALWAYS mode.")
         elif self.config.mode == LearningMode.HITL:
-            log_warning("EntityMemoryStore does not support HITL mode. Falling back to BACKGROUND mode.")
+            log_warning("EntityMemoryStore does not support HITL mode. Falling back to ALWAYS mode.")
 
     # =========================================================================
     # LearningStore Protocol Implementation

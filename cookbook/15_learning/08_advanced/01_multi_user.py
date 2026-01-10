@@ -14,8 +14,8 @@ Key Concepts:
 Run: python -m cookbook.advanced.01_multi_user
 """
 
-from langmem import create_learning_machine
-from langmem.config import EntityMemoryConfig, LearnedKnowledgeConfig, UserProfileConfig
+from agno.learn import LearningMachine, LearningMode
+from agno.learn.config import EntityMemoryConfig, LearnedKnowledgeConfig, UserProfileConfig
 
 # =============================================================================
 # USER ISOLATION
@@ -49,7 +49,7 @@ def demo_user_isolation():
     """)
 
     # Create isolated machines for two users
-    alice_machine = create_learning_machine(
+    alice_machine = LearningMachine(
         user_profile=True,
         session_context=True,
         entity_memory={
@@ -59,7 +59,7 @@ def demo_user_isolation():
         session_id="alice-session-1",
     )
 
-    bob_machine = create_learning_machine(
+    bob_machine = LearningMachine(
         user_profile=True,
         session_context=True,
         entity_memory={
@@ -117,7 +117,7 @@ def demo_shared_knowledge():
 
     def create_team_member_machine(user_id: str, team: str):
         """Create machine with private profile + shared team knowledge."""
-        return create_learning_machine(
+        return LearningMachine(
             # Private per user
             user_profile=True,
             # Shared across team
@@ -179,7 +179,7 @@ def demo_hierarchical_namespaces():
 
         # Primary namespace is team level
         # But can search across hierarchy
-        return create_learning_machine(
+        return LearningMachine(
             user_profile=True,
             entity_memory={"namespace": f"team:{team}"},
             learned_knowledge={
@@ -318,7 +318,7 @@ def demo_multi_tenant():
         # Prefix everything with tenant
         scoped_user_id = f"{tenant_id}:{user_id}"
 
-        return create_learning_machine(
+        return LearningMachine(
             user_profile=True,
             session_context=True,
             entity_memory={"namespace": f"tenant:{tenant_id}:entities"},

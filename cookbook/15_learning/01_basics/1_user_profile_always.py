@@ -1,16 +1,15 @@
 """
-User Profile: Background Mode
-=============================
-User Profile captures long-term information about users:
-- Name and preferences
-- Work context
-- Communication style
-- Any memorable facts
+User Profile: Always Mode
+=========================
+User Profile captures structured profile fields about users:
+- Name and preferred name
+- Custom profile fields (when using extended schemas)
 
-BACKGROUND mode extracts user information automatically in parallel
+ALWAYS mode extracts profile information automatically in parallel
 while the agent responds - no explicit tool calls needed.
 
 Compare with: 2_user_profile_agentic.py for explicit tool-based updates.
+See also: 1b_memories_always.py for unstructured observations.
 """
 
 from agno.agent import Agent
@@ -24,14 +23,15 @@ from agno.models.openai import OpenAIResponses
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
-# BACKGROUND mode: Extraction happens automatically after each response.
-# The agent doesn't see or call any memory tools - it's invisible.
+# ALWAYS mode: Extraction happens automatically after each response.
+# The agent doesn't see or call any profile tools - it's invisible.
+# UserProfile stores structured fields (name, preferred_name, custom fields)
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=db,
     learning=LearningMachine(
         user_profile=UserProfileConfig(
-            mode=LearningMode.BACKGROUND,
+            mode=LearningMode.ALWAYS,
         ),
     ),
     markdown=True,
@@ -50,8 +50,7 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Hi! I'm Alice, I work at Anthropic as a research scientist. "
-        "I prefer concise responses without too much explanation.",
+        "Hi! I'm Alice Chen, but please call me Ali.",
         user_id=user_id,
         session_id="session_1",
         stream=True,
@@ -64,7 +63,7 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "What's a good Python library for async HTTP requests?",
+        "What's my name again?",
         user_id=user_id,
         session_id="session_2",
         stream=True,

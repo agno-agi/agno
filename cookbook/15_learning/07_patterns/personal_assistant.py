@@ -54,7 +54,7 @@ def create_personal_assistant(
             db_url=db_url,
             # User preferences and patterns
             user_profile=UserProfileConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
             ),
             # Current conversation
             session_context=SessionContextConfig(
@@ -62,7 +62,7 @@ def create_personal_assistant(
             ),
             # People, places, events, projects
             entity_memory=EntityMemoryConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
                 namespace=f"user:{user_id}:personal",
             ),
         ),
@@ -295,7 +295,7 @@ def show_configuration_options():
     
         learning=LearningMachine(
             user_profile=UserProfileConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
             ),
             session_context=SessionContextConfig(
                 enable_planning=True,
@@ -310,7 +310,7 @@ def show_configuration_options():
     
         learning=LearningMachine(
             user_profile=UserProfileConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
             ),
             entity_memory=EntityMemoryConfig(
                 namespace=f"family:{family_id}",  # Shared

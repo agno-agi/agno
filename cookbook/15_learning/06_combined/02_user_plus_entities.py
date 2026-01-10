@@ -33,11 +33,11 @@ def create_combined_agent(user_id: str) -> Agent:
             db_url=db_url,
             # About the user
             user_profile=UserProfileConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
             ),
             # About things in the user's world
             entity_memory=EntityMemoryConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
                 namespace=f"user:{user_id}",  # User's private entity graph
             ),
         ),
@@ -141,11 +141,11 @@ def demo_shared_entities():
                 db_url=db_url,
                 # Private user profile
                 user_profile=UserProfileConfig(
-                    mode=LearningMode.BACKGROUND,
+                    mode=LearningMode.ALWAYS,
                 ),
                 # Shared entity memory
                 entity_memory=EntityMemoryConfig(
-                    mode=LearningMode.BACKGROUND,
+                    mode=LearningMode.ALWAYS,
                     namespace="team:engineering",  # Shared namespace
                 ),
             ),
@@ -368,52 +368,52 @@ def show_configuration_options():
 
     print("""
     PERSONAL ASSISTANT (Private everything):
-    
+
         learning=LearningMachine(
             user_profile=UserProfileConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
             ),
             entity_memory=EntityMemoryConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
                 namespace=f"user:{user_id}",  # Private
             ),
         )
-    
-    
+
+
     TEAM WORKSPACE (Shared entities):
-    
+
         learning=LearningMachine(
             user_profile=UserProfileConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
             ),
             entity_memory=EntityMemoryConfig(
                 mode=LearningMode.AGENTIC,  # Explicit control
                 namespace="team:engineering",  # Shared
             ),
         )
-    
-    
+
+
     CRM AGENT (Agentic entity management):
-    
+
         learning=LearningMachine(
             user_profile=UserProfileConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
             ),
             entity_memory=EntityMemoryConfig(
                 mode=LearningMode.AGENTIC,  # Agent decides what to track
                 namespace="crm:accounts",
             ),
         )
-    
-    
+
+
     RESEARCH ASSISTANT (Rich entity extraction):
-    
+
         learning=LearningMachine(
             user_profile=UserProfileConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
             ),
             entity_memory=EntityMemoryConfig(
-                mode=LearningMode.BACKGROUND,  # Auto-extract everything
+                mode=LearningMode.ALWAYS,  # Auto-extract everything
                 namespace=f"user:{user_id}:research",
             ),
         )

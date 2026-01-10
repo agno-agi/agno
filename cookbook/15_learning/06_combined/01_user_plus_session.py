@@ -33,7 +33,7 @@ def create_combined_agent(user_id: str, session_id: str) -> Agent:
             db_url=db_url,
             # Long-term: learns about the user over time
             user_profile=UserProfileConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
             ),
             # Short-term: tracks this conversation
             session_context=SessionContextConfig(
@@ -304,25 +304,25 @@ def show_configuration_options():
         )
     
     
-    BACKGROUND EXTRACTION (Automatic):
-    
+    ALWAYS EXTRACTION (Automatic):
+
         learning=LearningMachine(
             db_url=db_url,
             user_profile=UserProfileConfig(
-                mode=LearningMode.BACKGROUND,  # Auto-extract
+                mode=LearningMode.ALWAYS,  # Auto-extract
             ),
             session_context=SessionContextConfig(
                 enable_planning=False,  # Just summary
             ),
         )
-    
-    
+
+
     PLANNING ENABLED:
-    
+
         learning=LearningMachine(
             db_url=db_url,
             user_profile=UserProfileConfig(
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
             ),
             session_context=SessionContextConfig(
                 enable_planning=True,  # Track goal/plan/progress
@@ -343,8 +343,8 @@ def show_configuration_options():
         )
     
     
-    Note: Session context only supports BACKGROUND mode.
-    User profile supports both BACKGROUND and AGENTIC modes.
+    Note: Session context only supports ALWAYS mode.
+    User profile supports both ALWAYS and AGENTIC modes.
     """)
 
 
