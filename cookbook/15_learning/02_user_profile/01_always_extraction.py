@@ -11,7 +11,7 @@ In ALWAYS mode (default), the LearningMachine automatically:
 This happens after the response is generated, so it doesn't
 add latency to the user experience.
 
-Note: For unstructured observations, use MemoriesConfig separately.
+Note: For unstructured observations, use UserMemoryConfig separately.
 See: 1b_memories_always.py for memories.
 
 Run:

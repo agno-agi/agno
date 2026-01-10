@@ -9,7 +9,7 @@ Entity Memory stores knowledge about external things:
 ALWAYS mode automatically extracts entity information from conversations.
 No explicit tool calls - entities are discovered and saved behind the scenes.
 
-Compare with: 7_entity_memory_agentic.py for explicit tool-based management.
+Compare with: 5b_entity_memory_agentic.py for explicit tool-based management.
 """
 
 from agno.agent import Agent

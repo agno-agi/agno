@@ -8,8 +8,8 @@ User Profile captures structured profile fields about users:
 ALWAYS mode extracts profile information automatically in parallel
 while the agent responds - no explicit tool calls needed.
 
-Compare with: 2_user_profile_agentic.py for explicit tool-based updates.
-See also: 1b_memories_always.py for unstructured observations.
+Compare with: 1b_user_profile_agentic.py for explicit tool-based updates.
+See also: 2a_user_memory_always.py for unstructured observations.
 """
 
 from agno.agent import Agent

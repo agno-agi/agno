@@ -12,7 +12,7 @@ AGENTIC mode gives the agent explicit tools to manage entities:
 
 The agent decides when to store and retrieve information.
 
-Compare with: 6_entity_memory_always.py for automatic extraction.
+Compare with: 5a_entity_memory_always.py for automatic extraction.
 """
 
 from agno.agent import Agent

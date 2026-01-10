@@ -20,8 +20,8 @@ from agno.learn.config import (
     EntityMemoryConfig,
     LearnedKnowledgeConfig,
     LearningMode,
-    MemoriesConfig,
     SessionContextConfig,
+    UserMemoryConfig,
     UserProfileConfig,
 )
 from agno.learn.curate import Curator
@@ -41,7 +41,7 @@ except ImportError:
 
 # Type aliases for cleaner signatures
 UserProfileInput = Union[bool, UserProfileConfig, LearningStore, None]
-MemoriesInput = Union[bool, MemoriesConfig, LearningStore, None]
+UserMemoryInput = Union[bool, UserMemoryConfig, LearningStore, None]
 EntityMemoryInput = Union[bool, EntityMemoryConfig, LearningStore, None]
 SessionContextInput = Union[bool, SessionContextConfig, LearningStore, None]
 LearnedKnowledgeInput = Union[bool, LearnedKnowledgeConfig, LearningStore, None]
@@ -76,7 +76,7 @@ class LearningMachine:
 
     # Store configurations (accepts bool, Config, or Store instance)
     user_profile: UserProfileInput = False
-    memories: MemoriesInput = False
+    memories: UserMemoryInput = False
     session_context: SessionContextInput = False
     entity_memory: EntityMemoryInput = False
     learned_knowledge: LearnedKnowledgeInput = False
@@ -202,22 +202,22 @@ class LearningMachine:
         return UserProfileStore(config=config, debug_mode=self.debug_mode)
 
     def _create_memories_store(self, config: Any) -> LearningStore:
-        """Create MemoriesStore with resolved config."""
-        from agno.learn.stores import MemoriesStore
+        """Create UserMemoryStore with resolved config."""
+        from agno.learn.stores import UserMemoryStore
 
-        if isinstance(config, MemoriesConfig):
+        if isinstance(config, UserMemoryConfig):
             if config.db is None:
                 config.db = self.db
             if config.model is None:
                 config.model = self.model
         else:
-            config = MemoriesConfig(
+            config = UserMemoryConfig(
                 db=self.db,
                 model=self.model,
                 mode=LearningMode.ALWAYS,
             )
 
-        return MemoriesStore(config=config, debug_mode=self.debug_mode)
+        return UserMemoryStore(config=config, debug_mode=self.debug_mode)
 
     def _create_session_context_store(self, config: Any) -> LearningStore:
         """Create SessionContextStore with resolved config."""

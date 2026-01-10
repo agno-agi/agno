@@ -220,13 +220,13 @@ Captures unstructured observations about users that don't fit into structured pr
 ```python
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.learn import LearningMachine, MemoriesConfig, LearningMode
+from agno.learn import LearningMachine, UserMemoryConfig, LearningMode
 
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
     learning=LearningMachine(
-        memories=MemoriesConfig(
+        memories=UserMemoryConfig(
             mode=LearningMode.ALWAYS,  # Auto-extract observations
         ),
     ),

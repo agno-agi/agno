@@ -13,7 +13,7 @@ Profile fields are:
 - Queryable directly
 
 For unstructured observations that accumulate over time,
-use MemoriesConfig separately.
+use UserMemoryConfig separately.
 
 Run:
     python cookbook/15_learning/02_user_profile/04_profile_fields.py
@@ -194,7 +194,7 @@ GOOD PROFILE FIELDS:
   - Top programming languages
 
 For unstructured observations that accumulate (like preferences,
-current projects, communication style notes), use MemoriesConfig.
+current projects, communication style notes), use UserMemoryConfig.
 """)
 
 
@@ -209,5 +209,5 @@ if __name__ == "__main__":
     print("✅ Key Takeaways:")
     print("   - Profile fields: canonical, replaceable, queryable")
     print("   - Use custom schemas for domain-specific fields")
-    print("   - For unstructured observations, use MemoriesConfig")
+    print("   - For unstructured observations, use UserMemoryConfig")
     print("=" * 60)

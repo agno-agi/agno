@@ -9,7 +9,7 @@ The base UserProfile has:
 You can extend it with typed fields for your domain.
 The LLM sees field descriptions and updates them appropriately.
 
-Note: For unstructured observations, use MemoriesConfig separately.
+Note: For unstructured observations, use UserMemoryConfig separately.
 
 Run:
     python cookbook/15_learning/02_user_profile/03_custom_schema.py

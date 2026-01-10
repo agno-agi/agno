@@ -1,7 +1,7 @@
 """
-Memories: Always Mode
-=====================
-Memories captures unstructured observations about users:
+User Memory: Always Mode
+========================
+User Memory captures unstructured observations about users:
 - Work context and role
 - Communication style preferences
 - Patterns and interests
@@ -10,13 +10,13 @@ Memories captures unstructured observations about users:
 ALWAYS mode extracts memories automatically in parallel
 while the agent responds - no explicit tool calls needed.
 
-Compare with: 2b_memories_agentic.py for explicit tool-based updates.
-See also: 1_user_profile_always.py for structured profile fields.
+Compare with: 2b_user_memory_agentic.py for explicit tool-based updates.
+See also: 1a_user_profile_always.py for structured profile fields.
 """
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.learn import LearningMachine, LearningMode, MemoriesConfig
+from agno.learn import LearningMachine, LearningMode, UserMemoryConfig
 from agno.models.openai import OpenAIResponses
 
 # ============================================================================
@@ -32,7 +32,7 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=db,
     learning=LearningMachine(
-        memories=MemoriesConfig(
+        memories=UserMemoryConfig(
             mode=LearningMode.ALWAYS,
         ),
     ),

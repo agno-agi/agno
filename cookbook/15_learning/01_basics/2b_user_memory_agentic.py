@@ -1,7 +1,7 @@
 """
-Memories: Agentic Mode
-======================
-Memories captures unstructured observations about users:
+User Memory: Agentic Mode
+=========================
+User Memory captures unstructured observations about users:
 - Work context and role
 - Communication style preferences
 - Patterns and interests
@@ -10,13 +10,13 @@ Memories captures unstructured observations about users:
 AGENTIC mode gives the agent explicit tools to save and update memories.
 The agent decides when to store information - you can see the tool calls.
 
-Compare with: 1b_memories_always.py for automatic extraction.
-See also: 2_user_profile_agentic.py for structured profile fields.
+Compare with: 2a_user_memory_always.py for automatic extraction.
+See also: 1b_user_profile_agentic.py for structured profile fields.
 """
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.learn import LearningMachine, LearningMode, MemoriesConfig
+from agno.learn import LearningMachine, LearningMode, UserMemoryConfig
 from agno.models.openai import OpenAIResponses
 
 # ============================================================================
@@ -32,7 +32,7 @@ agent = Agent(
     db=db,
     instructions="Remember important information about users using your memory tools.",
     learning=LearningMachine(
-        memories=MemoriesConfig(
+        memories=UserMemoryConfig(
             mode=LearningMode.AGENTIC,
         ),
     ),

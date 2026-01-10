@@ -57,6 +57,8 @@ class UserProfileConfig:
     name, preferred_name, and custom fields from extended schemas.
     Updated via `update_profile` tool.
 
+    Note: For unstructured memories, use UserMemoryConfig instead.
+
     Scope: USER (fixed) - Retrieved and stored by user_id.
 
     Attributes:
@@ -67,15 +69,10 @@ class UserProfileConfig:
 
         # Extraction operations
         enable_update_profile: Allow updating profile fields (name, etc).
-        enable_add_memory: Allow adding new memories during extraction.
-        enable_update_memory: Allow updating existing memories.
-        enable_delete_memory: Allow deleting memories.
-        enable_clear_memories: Allow clearing all memories (dangerous).
 
         # Agent tools
         enable_agent_tools: Expose tools to the agent.
         agent_can_update_profile: If agent_tools enabled, provide update_user_profile tool.
-        agent_can_update_memories: If agent_tools enabled, provide update_user_memory tool.
 
         # Prompt customization
         instructions: Custom instructions for what to capture.
@@ -93,15 +90,10 @@ class UserProfileConfig:
 
     # Extraction operations
     enable_update_profile: bool = True  # Allow updating profile fields
-    enable_add_memory: bool = True  # Allow adding new memories during extraction
-    enable_update_memory: bool = True  # Allow updating existing memories
-    enable_delete_memory: bool = True  # Allow deleting memories
-    enable_clear_memories: bool = False  # Allow clearing all memories (dangerous)
 
     # Agent tools
     enable_agent_tools: bool = False
     agent_can_update_profile: bool = True
-    agent_can_update_memories: bool = True  # If agent_tools enabled, provide update_user_memory tool
 
     # Prompt customization
     instructions: Optional[str] = None
@@ -113,10 +105,10 @@ class UserProfileConfig:
 
 
 @dataclass
-class MemoriesConfig:
-    """Configuration for Memories learning type.
+class UserMemoryConfig:
+    """Configuration for User Memory learning type.
 
-    Memories stores unstructured observations about users that don't fit
+    User Memory stores unstructured observations about users that don't fit
     into structured profile fields. These are long-term memories that
     persist across sessions.
 
@@ -168,7 +160,11 @@ class MemoriesConfig:
     system_message: Optional[str] = None
 
     def __repr__(self) -> str:
-        return f"MemoriesConfig(mode={self.mode.value}, enable_agent_tools={self.enable_agent_tools})"
+        return f"UserMemoryConfig(mode={self.mode.value}, enable_agent_tools={self.enable_agent_tools})"
+
+
+# Backwards compatibility alias
+MemoriesConfig = UserMemoryConfig
 
 
 @dataclass

@@ -15,7 +15,7 @@ Advantages:
 The agent gets tools:
 - `update_user_profile`: Update profile fields (name, preferred_name, custom fields)
 
-Note: For unstructured memories, use MemoriesConfig with AGENTIC mode.
+Note: For unstructured memories, use UserMemoryConfig with AGENTIC mode.
 See: 2b_memories_agentic.py for memories.
 
 Run:
@@ -52,7 +52,7 @@ What to save in profile:
 - Other structured profile fields
 
 Note: This agent only handles structured profile fields.
-For unstructured observations, use MemoriesConfig separately.
+For unstructured observations, use UserMemoryConfig separately.
 """,
     learning=LearningMachine(
         db=db,
@@ -136,5 +136,5 @@ if __name__ == "__main__":
     print("✅ AGENTIC mode: Agent controls profile updates")
     print("   - update_user_profile tool for name, preferred_name, etc.")
     print("   - More transparent, no hidden LLM calls")
-    print("   - For memories, use MemoriesConfig separately")
+    print("   - For memories, use UserMemoryConfig separately")
     print("=" * 60)

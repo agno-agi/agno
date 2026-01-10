@@ -1,7 +1,7 @@
 """
-Memories Store
-==============
-Storage backend for Memories learning type.
+User Memory Store
+=================
+Storage backend for User Memory learning type.
 
 Stores unstructured observations about users that don't fit into
 structured profile fields. These are long-term memories that persist
@@ -31,7 +31,7 @@ from os import getenv
 from textwrap import dedent
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from agno.learn.config import LearningMode, MemoriesConfig
+from agno.learn.config import LearningMode, UserMemoryConfig
 from agno.learn.schemas import Memories
 from agno.learn.stores.protocol import LearningStore
 from agno.learn.utils import from_dict_safe, to_dict_safe
@@ -51,19 +51,19 @@ except ImportError:
 
 
 @dataclass
-class MemoriesStore(LearningStore):
-    """Storage backend for Memories learning type.
+class UserMemoryStore(LearningStore):
+    """Storage backend for User Memory learning type.
 
     Memories are retrieved by user_id only - all agents sharing the same DB
     will see the same memories for a given user. agent_id and team_id are
     stored for audit purposes (both at DB column level and on individual memories).
 
     Args:
-        config: MemoriesConfig with all settings including db and model.
+        config: UserMemoryConfig with all settings including db and model.
         debug_mode: Enable debug logging.
     """
 
-    config: MemoriesConfig = field(default_factory=MemoriesConfig)
+    config: UserMemoryConfig = field(default_factory=UserMemoryConfig)
     debug_mode: bool = False
 
     # State tracking (internal)
@@ -74,9 +74,9 @@ class MemoriesStore(LearningStore):
         self._schema = self.config.schema or Memories
 
         if self.config.mode == LearningMode.PROPOSE:
-            log_warning("MemoriesStore does not support PROPOSE mode.")
+            log_warning("UserMemoryStore does not support PROPOSE mode.")
         elif self.config.mode == LearningMode.HITL:
-            log_warning("MemoriesStore does not support HITL mode.")
+            log_warning("UserMemoryStore does not support HITL mode.")
 
     # =========================================================================
     # LearningStore Protocol Implementation
@@ -472,7 +472,7 @@ class MemoriesStore(LearningStore):
             return None
 
         except Exception as e:
-            log_debug(f"MemoriesStore.get failed for user_id={user_id}: {e}")
+            log_debug(f"UserMemoryStore.get failed for user_id={user_id}: {e}")
             return None
 
     async def aget(self, user_id: str) -> Optional[Any]:
@@ -498,7 +498,7 @@ class MemoriesStore(LearningStore):
             return None
 
         except Exception as e:
-            log_debug(f"MemoriesStore.aget failed for user_id={user_id}: {e}")
+            log_debug(f"UserMemoryStore.aget failed for user_id={user_id}: {e}")
             return None
 
     # =========================================================================
@@ -536,10 +536,10 @@ class MemoriesStore(LearningStore):
                 team_id=team_id,
                 content=content,
             )
-            log_debug(f"MemoriesStore.save: saved memories for user_id={user_id}")
+            log_debug(f"UserMemoryStore.save: saved memories for user_id={user_id}")
 
         except Exception as e:
-            log_debug(f"MemoriesStore.save failed for user_id={user_id}: {e}")
+            log_debug(f"UserMemoryStore.save failed for user_id={user_id}: {e}")
 
     async def asave(
         self,
@@ -575,10 +575,10 @@ class MemoriesStore(LearningStore):
                     team_id=team_id,
                     content=content,
                 )
-            log_debug(f"MemoriesStore.asave: saved memories for user_id={user_id}")
+            log_debug(f"UserMemoryStore.asave: saved memories for user_id={user_id}")
 
         except Exception as e:
-            log_debug(f"MemoriesStore.asave failed for user_id={user_id}: {e}")
+            log_debug(f"UserMemoryStore.asave failed for user_id={user_id}: {e}")
 
     # =========================================================================
     # Delete Operations
@@ -600,7 +600,7 @@ class MemoriesStore(LearningStore):
             memories_id = self._build_memories_id(user_id=user_id)
             return self.db.delete_learning(id=memories_id)
         except Exception as e:
-            log_debug(f"MemoriesStore.delete failed for user_id={user_id}: {e}")
+            log_debug(f"UserMemoryStore.delete failed for user_id={user_id}: {e}")
             return False
 
     async def adelete(self, user_id: str) -> bool:
@@ -615,7 +615,7 @@ class MemoriesStore(LearningStore):
             else:
                 return self.db.delete_learning(id=memories_id)
         except Exception as e:
-            log_debug(f"MemoriesStore.adelete failed for user_id={user_id}: {e}")
+            log_debug(f"UserMemoryStore.adelete failed for user_id={user_id}: {e}")
             return False
 
     def clear(
@@ -637,9 +637,9 @@ class MemoriesStore(LearningStore):
         try:
             empty_memories = self.schema(user_id=user_id)
             self.save(user_id=user_id, memories=empty_memories, agent_id=agent_id, team_id=team_id)
-            log_debug(f"MemoriesStore.clear: cleared memories for user_id={user_id}")
+            log_debug(f"UserMemoryStore.clear: cleared memories for user_id={user_id}")
         except Exception as e:
-            log_debug(f"MemoriesStore.clear failed for user_id={user_id}: {e}")
+            log_debug(f"UserMemoryStore.clear failed for user_id={user_id}: {e}")
 
     async def aclear(
         self,
@@ -654,9 +654,9 @@ class MemoriesStore(LearningStore):
         try:
             empty_memories = self.schema(user_id=user_id)
             await self.asave(user_id=user_id, memories=empty_memories, agent_id=agent_id, team_id=team_id)
-            log_debug(f"MemoriesStore.aclear: cleared memories for user_id={user_id}")
+            log_debug(f"UserMemoryStore.aclear: cleared memories for user_id={user_id}")
         except Exception as e:
-            log_debug(f"MemoriesStore.aclear failed for user_id={user_id}: {e}")
+            log_debug(f"UserMemoryStore.aclear failed for user_id={user_id}: {e}")
 
     # =========================================================================
     # Memory Operations
@@ -700,7 +700,7 @@ class MemoriesStore(LearningStore):
             memories_data.memories.append(memory_entry)
 
         self.save(user_id=user_id, memories=memories_data, agent_id=agent_id, team_id=team_id)
-        log_debug(f"MemoriesStore.add_memory: added memory for user_id={user_id}")
+        log_debug(f"UserMemoryStore.add_memory: added memory for user_id={user_id}")
 
         return memory_id
 
@@ -731,7 +731,7 @@ class MemoriesStore(LearningStore):
             memories_data.memories.append(memory_entry)
 
         await self.asave(user_id=user_id, memories=memories_data, agent_id=agent_id, team_id=team_id)
-        log_debug(f"MemoriesStore.aadd_memory: added memory for user_id={user_id}")
+        log_debug(f"UserMemoryStore.aadd_memory: added memory for user_id={user_id}")
 
         return memory_id
 
@@ -758,14 +758,14 @@ class MemoriesStore(LearningStore):
             Response from model.
         """
         if self.model is None:
-            log_warning("MemoriesStore.extract_and_save: no model provided")
+            log_warning("UserMemoryStore.extract_and_save: no model provided")
             return "No model provided for memories extraction"
 
         if not self.db:
-            log_warning("MemoriesStore.extract_and_save: no database provided")
+            log_warning("UserMemoryStore.extract_and_save: no database provided")
             return "No DB provided for memories store"
 
-        log_debug("MemoriesStore: Extracting memories", center=True)
+        log_debug("UserMemoryStore: Extracting memories", center=True)
 
         self.memories_updated = False
 
@@ -798,7 +798,7 @@ class MemoriesStore(LearningStore):
         if response.tool_executions:
             self.memories_updated = True
 
-        log_debug("MemoriesStore: Extraction complete", center=True)
+        log_debug("UserMemoryStore: Extraction complete", center=True)
 
         return response.content or ("Memories updated" if self.memories_updated else "No updates needed")
 
@@ -811,14 +811,14 @@ class MemoriesStore(LearningStore):
     ) -> str:
         """Async version of extract_and_save."""
         if self.model is None:
-            log_warning("MemoriesStore.aextract_and_save: no model provided")
+            log_warning("UserMemoryStore.aextract_and_save: no model provided")
             return "No model provided for memories extraction"
 
         if not self.db:
-            log_warning("MemoriesStore.aextract_and_save: no database provided")
+            log_warning("UserMemoryStore.aextract_and_save: no database provided")
             return "No DB provided for memories store"
 
-        log_debug("MemoriesStore: Extracting memories (async)", center=True)
+        log_debug("UserMemoryStore: Extracting memories (async)", center=True)
 
         self.memories_updated = False
 
@@ -851,7 +851,7 @@ class MemoriesStore(LearningStore):
         if response.tool_executions:
             self.memories_updated = True
 
-        log_debug("MemoriesStore: Extraction complete", center=True)
+        log_debug("UserMemoryStore: Extraction complete", center=True)
 
         return response.content or ("Memories updated" if self.memories_updated else "No updates needed")
 
@@ -1444,7 +1444,7 @@ class MemoriesStore(LearningStore):
         has_db = self.db is not None
         has_model = self.model is not None
         return (
-            f"MemoriesStore("
+            f"UserMemoryStore("
             f"mode={self.config.mode.value}, "
             f"db={has_db}, "
             f"model={has_model}, "
@@ -1492,3 +1492,7 @@ class MemoriesStore(LearningStore):
             raw_data=memories_data,
             raw=raw,
         )
+
+
+# Backwards compatibility alias
+MemoriesStore = UserMemoryStore

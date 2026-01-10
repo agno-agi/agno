@@ -8,8 +8,8 @@ User Profile captures structured profile fields about users:
 AGENTIC mode gives the agent explicit tools to update profile fields.
 The agent decides when to store information - you can see the tool calls.
 
-Compare with: 1_user_profile_always.py for automatic extraction.
-See also: 2b_memories_agentic.py for unstructured observations.
+Compare with: 1a_user_profile_always.py for automatic extraction.
+See also: 2b_user_memory_agentic.py for unstructured observations.
 """
 
 from agno.agent import Agent

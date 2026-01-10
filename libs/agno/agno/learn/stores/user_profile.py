@@ -16,7 +16,7 @@ Profile Fields (structured):
 - Updated via `update_profile` tool
 - For concrete facts that fit defined schema fields
 
-Note: Unstructured memories are handled by the separate MemoriesStore.
+Note: For unstructured memories, use UserMemoryStore instead.
 
 Scope:
 - Profiles are retrieved by user_id only
@@ -28,7 +28,6 @@ Supported Modes:
 """
 
 import inspect
-import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
 from dataclasses import fields as dc_fields
@@ -66,7 +65,7 @@ class UserProfileStore(LearningStore):
     Profile Fields (structured): name, preferred_name, and any custom
     fields added when extending the schema. Updated via `update_profile` tool.
 
-    Note: Unstructured memories are now handled by the separate MemoriesStore.
+    Note: For unstructured memories, use UserMemoryStore instead.
 
     Args:
         config: UserProfileConfig with all settings including db and model.
@@ -196,13 +195,13 @@ class UserProfileStore(LearningStore):
             if self._should_expose_tools:
                 return (
                     dedent(f"""\
-                    <user_memory>
-                    No information saved about this user yet.
+                    <user_profile>
+                    No profile information saved about this user yet.
 
                     """)
                     + tool_docs
                     + dedent("""
-                    </user_memory>""")
+                    </user_profile>""")
                 )
             return ""
 
@@ -214,77 +213,56 @@ class UserProfileStore(LearningStore):
             if value:
                 profile_parts.append(f"{field_name.replace('_', ' ').title()}: {value}")
 
-        # Build memories section
-        memories_text = None
-        if hasattr(data, "get_memories_text"):
-            memories_text = data.get_memories_text()
-        elif hasattr(data, "memories") and data.memories:
-            memories_text = "\n".join(f"- {m.get('content', str(m))}" for m in data.memories)
-
-        if not profile_parts and not memories_text:
+        if not profile_parts:
             if self._should_expose_tools:
                 return (
                     dedent(f"""\
-                    <user_memory>
-                    No information saved about this user yet.
+                    <user_profile>
+                    No profile information saved about this user yet.
 
                     """)
                     + tool_docs
                     + dedent("""
-                    </user_memory>""")
+                    </user_profile>""")
                 )
             return ""
 
-        context = "<user_memory>\n"
-
-        if profile_parts:
-            context += "\n".join(profile_parts) + "\n"
-
-        if memories_text:
-            if profile_parts:
-                context += "\n"
-            context += memories_text
+        context = "<user_profile>\n"
+        context += "\n".join(profile_parts) + "\n"
 
         context += dedent("""
-            <memory_application_guidelines>
+            <profile_application_guidelines>
             Apply this knowledge naturally - respond as if you inherently know this information,
             exactly as a colleague would recall shared history without narrating their thought process.
 
-            - Selectively apply memories based on relevance to the current query
-            - Never say "based on my memory" or "I remember that" - just use the information naturally
-            - Current conversation always takes precedence over stored memories
-            - Use memories to calibrate tone, depth, and examples without announcing it
-            </memory_application_guidelines>""")
+            - Use profile information to personalize responses appropriately
+            - Never say "based on your profile" or "I see that" - just use the information naturally
+            - Current conversation always takes precedence over stored profile data
+            </profile_application_guidelines>""")
 
         if self._should_expose_tools:
             context += (
                 dedent(f"""
 
-            <memory_updates>
+            <profile_updates>
 
             """)
                 + tool_docs
                 + dedent("""
-            </memory_updates>""")
+            </profile_updates>""")
             )
 
-        context += "\n</user_memory>"
+        context += "\n</user_profile>"
 
         return context
 
     def _build_tool_documentation(self) -> str:
-        """Build documentation for available memory tools.
+        """Build documentation for available profile tools.
 
         Returns:
             String documenting which tools are available and when to use them.
         """
         docs = []
-
-        if self.config.agent_can_update_memories:
-            docs.append(
-                "Use `update_user_memory` to save observations, preferences, and context about this user "
-                "that would help personalize future conversations or avoid asking the same questions."
-            )
 
         if self.config.agent_can_update_profile:
             # Get the actual field names to document
@@ -314,7 +292,7 @@ class UserProfileStore(LearningStore):
             **kwargs: Additional context (ignored).
 
         Returns:
-            List containing update_user_memory tool if enabled.
+            List containing update_profile tool if enabled.
         """
         if not user_id or not self._should_expose_tools:
             return []
@@ -597,38 +575,6 @@ class UserProfileStore(LearningStore):
         """
         tools = []
 
-        # Memory update tool (delegates to extraction)
-        if self.config.agent_can_update_memories:
-
-            def update_user_memory(task: str) -> str:
-                """Save or update information about this user for future conversations.
-
-                Use this when you learn something worth remembering - information that would
-                help personalize future interactions or provide continuity across sessions.
-
-                Args:
-                    task: What to save, update, or remove. Be specific and factual.
-                          Good examples:
-                          - "User is a senior engineer at Stripe working on payments"
-                          - "Prefers concise responses without lengthy explanations"
-                          - "Update: User moved from NYC to London"
-                          - "Remove the memory about their old job at Acme"
-                          Bad examples:
-                          - "User seems nice" (too vague)
-                          - "Had a meeting today" (not durable)
-
-                Returns:
-                    Confirmation of what was saved/updated.
-                """
-                return self.run_user_profile_update(
-                    task=task,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                )
-
-            tools.append(update_user_memory)
-
         # Profile field update tool
         if self.config.agent_can_update_profile:
             update_profile = self._build_update_profile_tool(
@@ -649,37 +595,6 @@ class UserProfileStore(LearningStore):
     ) -> List[Callable]:
         """Get the async tools to expose to the agent."""
         tools = []
-
-        if self.config.agent_can_update_memories:
-
-            async def update_user_memory(task: str) -> str:
-                """Save or update information about this user for future conversations.
-
-                Use this when you learn something worth remembering - information that would
-                help personalize future interactions or provide continuity across sessions.
-
-                Args:
-                    task: What to save, update, or remove. Be specific and factual.
-                          Good examples:
-                          - "User is a senior engineer at Stripe working on payments"
-                          - "Prefers concise responses without lengthy explanations"
-                          - "Update: User moved from NYC to London"
-                          - "Remove the memory about their old job at Acme"
-                          Bad examples:
-                          - "User seems nice" (too vague)
-                          - "Had a meeting today" (not durable)
-
-                Returns:
-                    Confirmation of what was saved/updated.
-                """
-                return await self.arun_user_profile_update(
-                    task=task,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                )
-
-            tools.append(update_user_memory)
 
         if self.config.agent_can_update_profile:
             update_profile = await self._abuild_update_profile_tool(
@@ -907,83 +822,6 @@ class UserProfileStore(LearningStore):
             log_debug(f"UserProfileStore.aclear failed for user_id={user_id}: {e}")
 
     # =========================================================================
-    # Memory Operations
-    # =========================================================================
-
-    def add_memory(
-        self,
-        user_id: str,
-        memory: str,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        **kwargs,
-    ) -> Optional[str]:
-        """Add a single memory to the user's profile.
-
-        Args:
-            user_id: The unique user identifier.
-            memory: The memory text to add.
-            agent_id: Agent that added this (stored for audit).
-            team_id: Team context (stored for audit).
-            **kwargs: Additional fields for the memory.
-
-        Returns:
-            The memory ID if added, None otherwise.
-        """
-        profile = self.get(user_id=user_id)
-
-        if profile is None:
-            profile = self.schema(user_id=user_id)
-
-        memory_id = None
-        if hasattr(profile, "add_memory"):
-            memory_id = profile.add_memory(memory, **kwargs)
-        elif hasattr(profile, "memories"):
-            memory_id = str(uuid.uuid4())[:8]
-            memory_entry = {"id": memory_id, "content": memory, **kwargs}
-            if agent_id:
-                memory_entry["added_by_agent"] = agent_id
-            if team_id:
-                memory_entry["added_by_team"] = team_id
-            profile.memories.append(memory_entry)
-
-        self.save(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
-        log_debug(f"UserProfileStore.add_memory: added memory for user_id={user_id}")
-
-        return memory_id
-
-    async def aadd_memory(
-        self,
-        user_id: str,
-        memory: str,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        **kwargs,
-    ) -> Optional[str]:
-        """Async version of add_memory."""
-        profile = await self.aget(user_id=user_id)
-
-        if profile is None:
-            profile = self.schema(user_id=user_id)
-
-        memory_id = None
-        if hasattr(profile, "add_memory"):
-            memory_id = profile.add_memory(memory, **kwargs)
-        elif hasattr(profile, "memories"):
-            memory_id = str(uuid.uuid4())[:8]
-            memory_entry = {"id": memory_id, "content": memory, **kwargs}
-            if agent_id:
-                memory_entry["added_by_agent"] = agent_id
-            if team_id:
-                memory_entry["added_by_team"] = team_id
-            profile.memories.append(memory_entry)
-
-        await self.asave(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
-        log_debug(f"UserProfileStore.aadd_memory: added memory for user_id={user_id}")
-
-        return memory_id
-
-    # =========================================================================
     # Extraction Operations
     # =========================================================================
 
@@ -1018,13 +856,9 @@ class UserProfileStore(LearningStore):
         self.profile_updated = False
 
         existing_profile = self.get(user_id=user_id)
-        existing_data = self._profile_to_memory_list(profile=existing_profile)
-
-        input_string = self._messages_to_input_string(messages=messages)
 
         tools = self._get_extraction_tools(
             user_id=user_id,
-            input_string=input_string,
             existing_profile=existing_profile,
             agent_id=agent_id,
             team_id=team_id,
@@ -1033,7 +867,7 @@ class UserProfileStore(LearningStore):
         functions = self._build_functions_for_model(tools=tools)
 
         messages_for_model = [
-            self._get_system_message(existing_data=existing_data, existing_profile=existing_profile),
+            self._get_system_message(existing_profile=existing_profile),
             *messages,
         ]
 
@@ -1071,13 +905,9 @@ class UserProfileStore(LearningStore):
         self.profile_updated = False
 
         existing_profile = await self.aget(user_id=user_id)
-        existing_data = self._profile_to_memory_list(profile=existing_profile)
-
-        input_string = self._messages_to_input_string(messages=messages)
 
         tools = await self._aget_extraction_tools(
             user_id=user_id,
-            input_string=input_string,
             existing_profile=existing_profile,
             agent_id=agent_id,
             team_id=team_id,
@@ -1086,7 +916,7 @@ class UserProfileStore(LearningStore):
         functions = self._build_functions_for_model(tools=tools)
 
         messages_for_model = [
-            self._get_system_message(existing_data=existing_data, existing_profile=existing_profile),
+            self._get_system_message(existing_profile=existing_profile),
             *messages,
         ]
 
@@ -1161,25 +991,6 @@ class UserProfileStore(LearningStore):
         """Build a unique profile ID."""
         return f"user_profile_{user_id}"
 
-    def _profile_to_memory_list(self, profile: Optional[Any]) -> List[dict]:
-        """Convert profile to list of memory dicts for prompt."""
-        if not profile:
-            return []
-
-        memories = []
-
-        if hasattr(profile, "memories") and profile.memories:
-            for mem in profile.memories:
-                if isinstance(mem, dict):
-                    memory_id = mem.get("id", str(uuid.uuid4())[:8])
-                    content = mem.get("content", str(mem))
-                else:
-                    memory_id = str(uuid.uuid4())[:8]
-                    content = str(mem)
-                memories.append({"id": memory_id, "content": content})
-
-        return memories
-
     def _messages_to_input_string(self, messages: List["Message"]) -> str:
         """Convert messages to input string."""
         if len(messages) == 1:
@@ -1212,14 +1023,11 @@ class UserProfileStore(LearningStore):
 
     def _get_system_message(
         self,
-        existing_data: List[dict],
         existing_profile: Optional[Any] = None,
     ) -> "Message":
-        """Build system message for memory extraction.
+        """Build system message for profile extraction.
 
-        Guides the model to extract and organize user information in a way that
-        enables natural, personalized future interactions - not as a database,
-        but as working knowledge that informs how to engage with this person.
+        Guides the model to extract structured profile information from conversations.
         """
         from agno.models.message import Message
 
@@ -1229,21 +1037,10 @@ class UserProfileStore(LearningStore):
         profile_fields = self._get_updateable_fields()
 
         system_prompt = dedent("""\
-            You are building a memory of this user to enable personalized, contextual interactions.
+            You are extracting structured profile information about the user.
 
-            Your goal is NOT to create a database of facts, but to build working knowledge that helps
-            an AI assistant engage naturally with this person - knowing their context, adapting to their
-            preferences, and providing continuity across conversations.
-
-            ## Memory Philosophy
-
-            Think of memories as what a thoughtful colleague would remember after working with someone:
-            - Their role and what they're working on
-            - How they prefer to communicate
-            - What matters to them and what frustrates them
-            - Ongoing projects or situations worth tracking
-
-            Memories should make future interactions feel informed and personal, not robotic or surveillance-like.
+            Your goal is to identify and save key identity information that fits the defined profile fields.
+            Only save information the user explicitly states - do not make inferences.
 
         """)
 
@@ -1252,7 +1049,7 @@ class UserProfileStore(LearningStore):
             system_prompt += dedent("""\
                 ## Profile Fields
 
-                Use `update_profile` for stable identity information:
+                Use `update_profile` to save structured identity information:
             """)
 
             for field_name, field_info in profile_fields.items():
@@ -1275,89 +1072,21 @@ class UserProfileStore(LearningStore):
 
             system_prompt += "\n"
 
-        # Memories section with improved categories
-        system_prompt += dedent("""\
-            ## Memories
-
-            Use memory tools for contextual information organized by relevance:
-
-            **Work/Project Context** - What they're building, their role, current focus
-            **Personal Context** - Preferences, communication style, background that shapes interactions
-            **Top of Mind** - Active situations, ongoing challenges, time-sensitive context
-            **Patterns** - How they work, what they value, recurring themes
-
-        """)
-
         # Custom instructions or defaults
         profile_capture_instructions = self.config.instructions or dedent("""\
-            ## What To Capture
+            ## Guidelines
 
             **DO save:**
-            - Role, company, and what they're working on
-            - Communication preferences (brevity vs detail, technical depth, tone)
-            - Goals, priorities, and current challenges
-            - Preferences that affect how to help them (tools, frameworks, approaches)
-            - Context that would be awkward to ask about again
-            - Patterns in how they think and work
+            - Name and preferred name when explicitly stated
+            - Other profile fields when the user provides the information
 
             **DO NOT save:**
-            - Sensitive personal information (health conditions, financial details, relationships) unless directly relevant to helping them
-            - One-off details unlikely to matter in future conversations
-            - Information they'd find creepy to have remembered
-            - Inferences or assumptions - only save what they've actually stated
-            - Duplicates of existing memories (update instead)
-            - Trivial preferences that don't affect interactions\
+            - Information that doesn't fit the defined profile fields
+            - Inferences or assumptions - only save what's explicitly stated
+            - Duplicate information that matches existing values
         """)
 
         system_prompt += profile_capture_instructions
-
-        system_prompt += dedent("""
-
-            ## Writing Style
-
-            Write memories as concise, factual statements in third person:
-
-            **Good memories:**
-            - "Founder and CEO of Acme, a 10-person AI startup"
-            - "Prefers direct feedback without excessive caveats"
-            - "Currently preparing for Series A fundraise, targeting $50M"
-            - "Values simplicity over cleverness in code architecture"
-
-            **Bad memories:**
-            - "User mentioned they work at a company" (too vague)
-            - "User seems to like technology" (obvious/not useful)
-            - "Had a meeting yesterday" (not durable)
-            - "User is stressed about fundraising" (inference without direct statement)
-
-            ## Consolidation Over Accumulation
-
-            **Critical:** Prefer updating existing memories over adding new ones.
-
-            - If new information extends an existing memory, UPDATE it
-            - If new information contradicts an existing memory, REPLACE it
-            - If information is truly new and distinct, then add it
-            - Periodically consolidate related memories into cohesive summaries
-            - Delete memories that are no longer accurate or relevant
-
-            Think of memory maintenance like note-taking: a few well-organized notes beat many scattered fragments.
-
-        """)
-
-        # Current memories section
-        system_prompt += "## Current Memories\n\n"
-
-        if existing_data:
-            system_prompt += "Existing memories for this user:\n"
-            for entry in existing_data:
-                system_prompt += f"- [{entry['id']}] {entry['content']}\n"
-            system_prompt += dedent("""
-                Review these before adding new ones:
-                - UPDATE if new information extends or modifies an existing memory
-                - DELETE if a memory is no longer accurate
-                - Only ADD if the information is genuinely new and distinct
-            """)
-        else:
-            system_prompt += "No existing memories. Extract what's worth remembering from this conversation.\n"
 
         # Available actions
         system_prompt += "\n## Available Actions\n\n"
@@ -1365,48 +1094,23 @@ class UserProfileStore(LearningStore):
         if self.config.enable_update_profile and profile_fields:
             fields_list = ", ".join(profile_fields.keys())
             system_prompt += f"- `update_profile`: Set profile fields ({fields_list})\n"
-        if self.config.enable_add_memory:
-            system_prompt += "- `add_memory`: Add a new memory (only if genuinely new information)\n"
-        if self.config.enable_update_memory:
-            system_prompt += "- `update_memory`: Update existing memory with new/corrected information\n"
-        if self.config.enable_delete_memory:
-            system_prompt += "- `delete_memory`: Remove outdated or incorrect memory\n"
-        if self.config.enable_clear_memories:
-            system_prompt += "- `clear_all_memories`: Reset all memories (use rarely)\n"
 
         # Examples
         system_prompt += dedent("""
             ## Examples
 
-            **Example 1: New user introduction**
-            User: "I'm Sarah, I run engineering at Stripe. We're migrating to Kubernetes."
-        """)
+            **Example 1: User introduces themselves**
+            User: "I'm Sarah, but everyone calls me Saz."
+            → update_profile(name="Sarah", preferred_name="Saz")
 
-        if profile_fields and self.config.enable_update_profile and "name" in profile_fields:
-            system_prompt += '→ update_profile(name="Sarah")\n'
-
-        system_prompt += dedent("""\
-            → add_memory("Engineering lead at Stripe, currently migrating infrastructure to Kubernetes")
-
-            **Example 2: Updating existing context**
-            Existing memory: "Working on Series A fundraise"
-            User: "We closed our Series A last week! $12M from Sequoia."
-            → update_memory(id, "Closed $12M Series A from Sequoia")
-
-            **Example 3: Learning preferences**
-            User: "Can you skip the explanations and just give me the code?"
-            → add_memory("Prefers concise responses with code over lengthy explanations")
-
-            **Example 4: Nothing worth saving**
+            **Example 2: Nothing to save**
             User: "What's the weather like?"
-            → No action needed (trivial, no lasting relevance)
+            → No action needed (no profile information shared)
 
             ## Final Guidance
 
-            - Quality over quantity: 5 great memories beat 20 mediocre ones
-            - Durability matters: save information that will still be relevant next month
-            - Respect boundaries: when in doubt about whether to save something, don't
-            - It's fine to do nothing if the conversation reveals nothing worth remembering\
+            - Only call update_profile when the user explicitly shares profile information
+            - It's fine to do nothing if the conversation reveals no profile data\
         """)
 
         if self.config.additional_instructions:
@@ -1417,7 +1121,6 @@ class UserProfileStore(LearningStore):
     def _get_extraction_tools(
         self,
         user_id: str,
-        input_string: str,
         existing_profile: Optional[Any] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
@@ -1435,157 +1138,11 @@ class UserProfileStore(LearningStore):
             if update_profile:
                 functions.append(update_profile)
 
-        # Memory tools
-        if self.config.enable_add_memory:
-
-            def add_memory(memory: str) -> str:
-                """Save a new memory about this user.
-
-                Only add genuinely new information that will help personalize future interactions.
-                Before adding, check if this extends an existing memory (use update_memory instead).
-
-                Args:
-                    memory: Concise, factual statement in third person.
-                           Good: "Senior engineer at Stripe, working on payment infrastructure"
-                           Bad: "User works at a company" (too vague)
-
-                Returns:
-                    Confirmation message.
-                """
-                try:
-                    profile = self.get(user_id=user_id)
-                    if profile is None:
-                        profile = self.schema(user_id=user_id)
-
-                    if hasattr(profile, "memories"):
-                        memory_id = str(uuid.uuid4())[:8]
-                        memory_entry = {
-                            "id": memory_id,
-                            "content": memory,
-                            "source": input_string[:200] if input_string else None,
-                        }
-                        if agent_id:
-                            memory_entry["added_by_agent"] = agent_id
-                        if team_id:
-                            memory_entry["added_by_team"] = team_id
-                        profile.memories.append(memory_entry)
-
-                    self.save(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
-                    log_debug(f"Memory added: {memory[:50]}...")
-                    return f"Memory saved: {memory}"
-                except Exception as e:
-                    log_warning(f"Error adding memory: {e}")
-                    return f"Error: {e}"
-
-            functions.append(add_memory)
-
-        if self.config.enable_update_memory:
-
-            def update_memory(memory_id: str, memory: str) -> str:
-                """Update an existing memory with new or corrected information.
-
-                Prefer updating over adding when new information extends or modifies
-                something already stored. This keeps memories consolidated and accurate.
-
-                Args:
-                    memory_id: The ID of the memory to update (shown in brackets like [abc123]).
-                    memory: The updated memory content. Should be a complete replacement,
-                           not a diff or addition.
-
-                Returns:
-                    Confirmation message.
-                """
-                try:
-                    profile = self.get(user_id=user_id)
-                    if profile is None:
-                        return "No profile found"
-
-                    if hasattr(profile, "memories"):
-                        for mem in profile.memories:
-                            if isinstance(mem, dict) and mem.get("id") == memory_id:
-                                mem["content"] = memory
-                                mem["source"] = input_string[:200] if input_string else None
-                                if agent_id:
-                                    mem["updated_by_agent"] = agent_id
-                                if team_id:
-                                    mem["updated_by_team"] = team_id
-                                self.save(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
-                                log_debug(f"Memory updated: {memory_id}")
-                                return f"Memory updated: {memory}"
-                        return f"Memory {memory_id} not found"
-
-                    return "Profile has no memories field"
-                except Exception as e:
-                    log_warning(f"Error updating memory: {e}")
-                    return f"Error: {e}"
-
-            functions.append(update_memory)
-
-        if self.config.enable_delete_memory:
-
-            def delete_memory(memory_id: str) -> str:
-                """Remove a memory that is outdated, incorrect, or no longer relevant.
-
-                Delete when:
-                - Information is no longer accurate (e.g., they changed jobs)
-                - The memory was a misunderstanding
-                - It's been superseded by a more complete memory
-
-                Args:
-                    memory_id: The ID of the memory to delete (shown in brackets like [abc123]).
-
-                Returns:
-                    Confirmation message.
-                """
-                try:
-                    profile = self.get(user_id=user_id)
-                    if profile is None:
-                        return "No profile found"
-
-                    if hasattr(profile, "memories"):
-                        original_len = len(profile.memories)
-                        profile.memories = [
-                            mem
-                            for mem in profile.memories
-                            if not (isinstance(mem, dict) and mem.get("id") == memory_id)
-                        ]
-                        if len(profile.memories) < original_len:
-                            self.save(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
-                            log_debug(f"Memory deleted: {memory_id}")
-                            return f"Memory {memory_id} deleted"
-                        return f"Memory {memory_id} not found"
-
-                    return "Profile has no memories field"
-                except Exception as e:
-                    log_warning(f"Error deleting memory: {e}")
-                    return f"Error: {e}"
-
-            functions.append(delete_memory)
-
-        if self.config.enable_clear_memories:
-
-            def clear_all_memories() -> str:
-                """Clear all memories for this user. Use sparingly.
-
-                Returns:
-                    Confirmation message.
-                """
-                try:
-                    self.clear(user_id=user_id, agent_id=agent_id, team_id=team_id)
-                    log_debug("All memories cleared")
-                    return "All memories cleared"
-                except Exception as e:
-                    log_warning(f"Error clearing memories: {e}")
-                    return f"Error: {e}"
-
-            functions.append(clear_all_memories)
-
         return functions
 
     async def _aget_extraction_tools(
         self,
         user_id: str,
-        input_string: str,
         existing_profile: Optional[Any] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
@@ -1602,151 +1159,6 @@ class UserProfileStore(LearningStore):
             )
             if update_profile:
                 functions.append(update_profile)
-
-        # Memory tools
-        if self.config.enable_add_memory:
-
-            async def add_memory(memory: str) -> str:
-                """Save a new memory about this user.
-
-                Only add genuinely new information that will help personalize future interactions.
-                Before adding, check if this extends an existing memory (use update_memory instead).
-
-                Args:
-                    memory: Concise, factual statement in third person.
-                           Good: "Senior engineer at Stripe, working on payment infrastructure"
-                           Bad: "User works at a company" (too vague)
-
-                Returns:
-                    Confirmation message.
-                """
-                try:
-                    profile = await self.aget(user_id=user_id)
-                    if profile is None:
-                        profile = self.schema(user_id=user_id)
-
-                    if hasattr(profile, "memories"):
-                        memory_id = str(uuid.uuid4())[:8]
-                        memory_entry = {
-                            "id": memory_id,
-                            "content": memory,
-                            "source": input_string[:200] if input_string else None,
-                        }
-                        if agent_id:
-                            memory_entry["added_by_agent"] = agent_id
-                        if team_id:
-                            memory_entry["added_by_team"] = team_id
-                        profile.memories.append(memory_entry)
-
-                    await self.asave(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
-                    log_debug(f"Memory added: {memory[:50]}...")
-                    return f"Memory saved: {memory}"
-                except Exception as e:
-                    log_warning(f"Error adding memory: {e}")
-                    return f"Error: {e}"
-
-            functions.append(add_memory)
-
-        if self.config.enable_update_memory:
-
-            async def update_memory(memory_id: str, memory: str) -> str:
-                """Update an existing memory with new or corrected information.
-
-                Prefer updating over adding when new information extends or modifies
-                something already stored. This keeps memories consolidated and accurate.
-
-                Args:
-                    memory_id: The ID of the memory to update (shown in brackets like [abc123]).
-                    memory: The updated memory content. Should be a complete replacement,
-                           not a diff or addition.
-
-                Returns:
-                    Confirmation message.
-                """
-                try:
-                    profile = await self.aget(user_id=user_id)
-                    if profile is None:
-                        return "No profile found"
-
-                    if hasattr(profile, "memories"):
-                        for mem in profile.memories:
-                            if isinstance(mem, dict) and mem.get("id") == memory_id:
-                                mem["content"] = memory
-                                mem["source"] = input_string[:200] if input_string else None
-                                if agent_id:
-                                    mem["updated_by_agent"] = agent_id
-                                if team_id:
-                                    mem["updated_by_team"] = team_id
-                                await self.asave(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
-                                log_debug(f"Memory updated: {memory_id}")
-                                return f"Memory updated: {memory}"
-                        return f"Memory {memory_id} not found"
-
-                    return "Profile has no memories field"
-                except Exception as e:
-                    log_warning(f"Error updating memory: {e}")
-                    return f"Error: {e}"
-
-            functions.append(update_memory)
-
-        if self.config.enable_delete_memory:
-
-            async def delete_memory(memory_id: str) -> str:
-                """Remove a memory that is outdated, incorrect, or no longer relevant.
-
-                Delete when:
-                - Information is no longer accurate (e.g., they changed jobs)
-                - The memory was a misunderstanding
-                - It's been superseded by a more complete memory
-
-                Args:
-                    memory_id: The ID of the memory to delete (shown in brackets like [abc123]).
-
-                Returns:
-                    Confirmation message.
-                """
-                try:
-                    profile = await self.aget(user_id=user_id)
-                    if profile is None:
-                        return "No profile found"
-
-                    if hasattr(profile, "memories"):
-                        original_len = len(profile.memories)
-                        profile.memories = [
-                            mem
-                            for mem in profile.memories
-                            if not (isinstance(mem, dict) and mem.get("id") == memory_id)
-                        ]
-                        if len(profile.memories) < original_len:
-                            await self.asave(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
-                            log_debug(f"Memory deleted: {memory_id}")
-                            return f"Memory {memory_id} deleted"
-                        return f"Memory {memory_id} not found"
-
-                    return "Profile has no memories field"
-                except Exception as e:
-                    log_warning(f"Error deleting memory: {e}")
-                    return f"Error: {e}"
-
-            functions.append(delete_memory)
-
-        if self.config.enable_clear_memories:
-
-            async def clear_all_memories() -> str:
-                """Clear all memories for this user. Use sparingly.
-
-                Returns:
-                    Confirmation message.
-                """
-                try:
-                    await self.aclear(user_id=user_id, agent_id=agent_id, team_id=team_id)
-                    log_debug("All memories cleared")
-                    return "All memories cleared"
-                except Exception as e:
-                    log_warning(f"Error clearing memories: {e}")
-                    return f"Error: {e}"
-
-            functions.append(clear_all_memories)
 
         return functions
 
@@ -1775,13 +1187,10 @@ class UserProfileStore(LearningStore):
 
         Example:
             >>> store.print(user_id="alice@example.com")
-            ╭──────────────── User Profile ─────────────────╮
-            │ Name: Alice                                   │
-            │ Preferred Name: Ali                           │
-            │ Memories:                                     │
-            │   [dim][a1b2c3d4][/dim] Loves Python          │
-            │   [dim][e5f6g7h8][/dim] Works at Anthropic    │
-            ╰─────────────── alice@example.com ─────────────╯
+            +---------------- User Profile -----------------+
+            | Name: Alice                                   |
+            | Preferred Name: Ali                           |
+            +--------------- alice@example.com -------------+
         """
         from agno.learn.utils import print_panel
 
@@ -1797,20 +1206,6 @@ class UserProfileStore(LearningStore):
                 if value:
                     display_name = field_name.replace("_", " ").title()
                     lines.append(f"{display_name}: {value}")
-
-            # Add memories
-            if hasattr(profile, "memories") and profile.memories:
-                if lines:
-                    lines.append("")  # Blank line before memories
-                lines.append("Memories:")
-                for mem in profile.memories:
-                    if isinstance(mem, dict):
-                        mem_id = mem.get("id", "?")
-                        content = mem.get("content", str(mem))
-                    else:
-                        mem_id = "?"
-                        content = str(mem)
-                    lines.append(f"  [dim]\\[{mem_id}][/dim] {content}")
 
         print_panel(
             title="User Profile",
