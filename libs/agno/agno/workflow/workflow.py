@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from agno.os.managers import WebSocketHandler
 
 from agno.agent.agent import Agent
-from agno.db.base import AsyncBaseDb, BaseDb, SessionType, PrimitiveType
+from agno.db.base import AsyncBaseDb, BaseDb, PrimitiveType, SessionType
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
@@ -257,7 +257,7 @@ class Workflow:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert workflow to a dictionary representation."""
-        result = {
+        config = {
             "name": self.name,
             "id": self.id,
             "description": self.description,
@@ -278,18 +278,22 @@ class Workflow:
             "num_history_runs": self.num_history_runs,
         }
 
+        # --- Database settings ---
+        if self.db is not None:
+            config["db"] = self.db.to_dict()
+
         # Handle steps serialization
         # TODO: Implement steps serialization for step types other than Step
         if self.steps and isinstance(self.steps, list):
-            result["steps"] = [step.to_dict() for step in self.steps]
+            config["steps"] = [step.to_dict() for step in self.steps]
 
-        return result
+        return config
 
     @classmethod
     def from_dict(
         cls,
         data: Dict[str, Any],
-        db: Optional["BaseDb"] = None,
+        db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         refs: Optional[List[Dict[str, Any]]] = None,
         registry: Optional[Registry] = None,
     ) -> "Workflow":
@@ -307,12 +311,27 @@ class Workflow:
         """
         config = data.copy()
 
+        # --- Handle DB reconstruction ---
+        if "db" in config and isinstance(config["db"], dict):
+            db_data = config["db"]
+            db_type = db_data.get("type")
+
+            if db_type == "postgres":
+                try:
+                    from agno.db.postgres import PostgresDb
+
+                    config["db"] = PostgresDb.from_dict(db_data)
+                except Exception as e:
+                    log_error(f"Error reconstructing DB from dictionary: {e}")
+                    config["db"] = None
+            # TODO: Extend support for other DB types and create a db_from_dict method.
+
         steps = None
 
         # Handle steps reconstruction
         if "steps" in config and config["steps"]:
             steps = [
-                Step.from_dict(step_data, db=db, refs=refs, registry=registry)
+                Step.from_dict(step_data, db=config.get("db"), refs=refs, registry=registry)
                 for step_data in config["steps"]
             ]
 
@@ -337,7 +356,7 @@ class Workflow:
             steps=steps,
         )
 
-    def save(        
+    def save(
         self,
         *,
         db: Optional["BaseDb"] = None,
@@ -359,34 +378,37 @@ class Workflow:
         # Collect all refs
         all_refs = []
         steps_config = []
-        
+
         for position, step in enumerate(self.steps or []):
             if isinstance(step, Step):
-                print(f"Step {position}: type={type(step)}, isinstance(Step)={isinstance(step, Step)}")
-                print(step.to_dict())
                 # Save agent/team if present and capture version
                 if step.agent and isinstance(step.agent, Agent):
                     agent_version = step.agent.save(
-                        db=db_, stage=stage, label=label, notes=notes, 
-                        set_current=set_current, publish=publish, upsert_version=upsert_version
+                        db=db_,
+                        stage=stage,
+                        label=label,
+                        notes=notes,
+                        set_current=set_current,
+                        publish=publish,
+                        upsert_version=upsert_version,
                     )
                     saved_versions[step.agent.id] = agent_version
-                
+
                 # TODO: Implement team saving
                 # if step.team and isinstance(step.team, Team):
                 #     team_version = step.team.save(...)
                 #     saved_versions[step.team.id] = team_version
-                
+
                 # Add step config
                 steps_config.append(step.to_dict())
-                
+
                 # Add refs with position and pinned version
                 for ref in step.get_refs(position=position):
                     # Pin the version if we just saved it
                     if ref["child_entity_id"] in saved_versions:
                         ref["child_version"] = saved_versions[ref["child_entity_id"]]
                     all_refs.append(ref)
-        
+
         # Save workflow entity + config + refs
         db_.upsert_entity(
             entity_id=self.id,
@@ -406,58 +428,6 @@ class Workflow:
         )
 
         return config["version"]
-
-    @classmethod
-    def from_dict(
-        cls,
-        data: Dict[str, Any],
-        db: Optional["BaseDb"] = None,
-        refs: Optional[List[Dict[str, Any]]] = None,
-        registry: Optional[Registry] = None,
-    ) -> "Workflow":
-        """
-        Create a Workflow from a dictionary.
-
-        Args:
-            data: Dictionary containing workflow configuration
-            db: Optional database for loading agents/teams in steps
-            refs: Optional refs for this workflow version
-            registry: Optional registry for rehydrating executors
-
-        Returns:
-            Workflow: Reconstructed workflow instance
-        """
-        config = data.copy()
-
-        steps = None
-
-        # Handle steps reconstruction
-        if "steps" in config and config["steps"]:
-            steps = [
-                Step.from_dict(step_data, db=db, refs=refs, registry=registry)
-                for step_data in config["steps"]
-            ]
-
-        return cls(
-            name=config.get("name"),
-            id=config.get("id"),
-            description=config.get("description"),
-            session_id=config.get("session_id"),
-            user_id=config.get("user_id"),
-            session_state=config.get("session_state"),
-            overwrite_db_session_state=config.get("overwrite_db_session_state", False),
-            debug_mode=config.get("debug_mode", False),
-            stream=config.get("stream"),
-            stream_events=config.get("stream_events", False),
-            stream_executor_events=config.get("stream_executor_events", True),
-            store_events=config.get("store_events", False),
-            store_executor_outputs=config.get("store_executor_outputs", True),
-            metadata=config.get("metadata"),
-            telemetry=config.get("telemetry", True),
-            add_workflow_history_to_steps=config.get("add_workflow_history_to_steps", False),
-            num_history_runs=config.get("num_history_runs", 3),
-            steps=steps,
-        )
 
     def set_id(self) -> None:
         if self.id is None:
@@ -4660,6 +4630,7 @@ class Workflow:
                 **kwargs,
             )
 
+
 def get_workflow_by_id(
     db: "BaseDb",
     id: str,
@@ -4716,3 +4687,27 @@ def get_workflow_by_id(
     except Exception as e:
         log_error(f"Error loading Workflow {id} from database: {e}")
         return None
+
+
+def get_workflows(
+    db: "BaseDb",
+    registry: Optional["Registry"] = None,
+) -> List["Workflow"]:
+    """Get all workflows from the database"""
+    workflows: List[Workflow] = []
+    try:
+        entities = db.list_entities(entity_type=PrimitiveType.WORKFLOW)
+        for entity in entities:
+            config = db.get_config(entity_id=entity["entity_id"])
+            if config is not None:
+                workflow_config = config.get("config")
+                if workflow_config is not None:
+                    if "id" not in workflow_config:
+                        workflow_config["id"] = entity["entity_id"]
+                    workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
+                    workflows.append(workflow)
+        return workflows
+
+    except Exception as e:
+        log_error(f"Error loading Workflows from database: {e}")
+        return []

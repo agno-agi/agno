@@ -8,9 +8,11 @@ from pydantic import BaseModel
 from typing_extensions import TypeGuard
 
 from agno.agent import Agent
+from agno.db.base import BaseDb
 from agno.media import Audio, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
+from agno.registry import Registry
 from agno.run import RunContext
 from agno.run.agent import RunContentEvent, RunOutput
 from agno.run.base import BaseRunOutputEvent
@@ -25,7 +27,6 @@ from agno.run.workflow import (
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
 from agno.session.workflow import WorkflowSession
-from agno.registry import Registry
 from agno.team import Team
 from agno.utils.log import log_debug, log_warning, logger, use_agent_logger, use_team_logger, use_workflow_logger
 from agno.utils.merge_dict import merge_dictionaries
@@ -131,12 +132,18 @@ class Step:
             result["agent_id"] = self.agent.id
         if self.team is not None:
             result["team_id"] = self.team.id
-        #TODO: Add support for custom executors
+        # TODO: Add support for custom executors
 
         return result
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], registry: Optional[Registry] = None) -> "Step":
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional[Registry] = None,
+        db: Optional["BaseDb"] = None,
+        refs: Optional[List[Dict[str, Any]]] = None,
+    ) -> "Step":
         """
         Create a Step from a dictionary.
 
@@ -157,15 +164,18 @@ class Step:
         executor = None
 
         # --- Handle Agent reconstruction ---
-        if "agent_id" in config and config["agent_id"] and registry:
-            agent = registry.get_agent(config["agent_id"])
+        if "agent_id" in config and config["agent_id"]:
+            from agno.agent.agent import get_agent_by_id
+
+            agent = get_agent_by_id(db=db, id=config.get("agent_id"))
 
         # --- Handle Team reconstruction ---
-        if "team_id" in config and config["team_id"] and registry:
-            team = registry.get_team(config["team_id"])
+        # if "team_id" in config and config["team_id"] and registry:
+        #     from agno.team.team import get_team_by_id
+        #     team = get_team_by_id(db=db, id=config["team_id"])
 
         # --- Handle Executor reconstruction ---
-        #TODO: Implement executor reconstruction
+        # TODO: Implement executor reconstruction
         # if "executor_ref" in config and config["executor_ref"] and registry:
         #     executor = registry.rehydrate_function(config["executor_ref"])
 
@@ -185,34 +195,38 @@ class Step:
 
     def get_refs(self, position: int = 0) -> List[Dict[str, Any]]:
         """Get refs for this step's agent/team.
-        
+
         Args:
             position: Position of this step in the workflow.
-            
+
         Returns:
             List of ref dictionaries for the refs table.
         """
         refs = []
         ref_key = self.step_id or self.name
-        
+
         if self.agent is not None:
-            refs.append({
-                "ref_kind": "step_agent",
-                "ref_key": ref_key,
-                "child_entity_id": self.agent.id,
-                "child_version": None,
-                "position": position,
-            })
-        
+            refs.append(
+                {
+                    "ref_kind": "step_agent",
+                    "ref_key": ref_key,
+                    "child_entity_id": self.agent.id,
+                    "child_version": None,
+                    "position": position,
+                }
+            )
+
         if self.team is not None:
-            refs.append({
-                "ref_kind": "step_team",
-                "ref_key": ref_key,
-                "child_entity_id": self.team.id,
-                "child_version": None,
-                "position": position,
-            })
-        
+            refs.append(
+                {
+                    "ref_kind": "step_team",
+                    "ref_key": ref_key,
+                    "child_entity_id": self.team.id,
+                    "child_version": None,
+                    "position": position,
+                }
+            )
+
         return refs
 
     @property

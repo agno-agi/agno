@@ -36,7 +36,6 @@ from agno.os.config import (
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
-from agno.os.routers.config import get_entities_router
 from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
@@ -44,6 +43,7 @@ from agno.os.routers.home import get_home_router
 from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
+from agno.os.routers.primitives import get_primitives_router
 from agno.os.routers.registry import get_registry_router
 from agno.os.routers.session import get_session_router
 from agno.os.routers.teams import get_team_router
@@ -314,7 +314,7 @@ class AgentOS:
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
-            get_entities_router(dbs=self.dbs),
+            get_primitives_router(dbs=self.dbs),
             get_registry_router(registry=self.registry),
         ]
 
@@ -623,7 +623,7 @@ class AgentOS:
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
-            get_entities_router(dbs=self.dbs),
+            get_primitives_router(dbs=self.dbs),
             get_registry_router(registry=self.registry),
         ]
 

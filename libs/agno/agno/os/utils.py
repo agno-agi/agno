@@ -237,7 +237,6 @@ async def get_db(
 
     # If db_id is provided, first find the database with that ID
     if db_id:
-        print(f"dbs: {dbs}")
         target_db_list = dbs.get(db_id)
         if not target_db_list:
             raise HTTPException(status_code=404, detail=f"No database found with id '{db_id}'")
@@ -471,14 +470,29 @@ def get_team_by_id(
 
 
 def get_workflow_by_id(
-    workflow_id: str, workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None
+    workflow_id: str,
+    workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    registry: Optional[Registry] = None,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
-    if workflow_id is None or workflows is None:
+    if workflow_id is None:
         return None
 
-    for workflow in workflows:
-        if workflow.id == workflow_id:
+    # Try to get the workflow from the list of workflows
+    if workflows:
+        for workflow in workflows:
+            if workflow.id == workflow_id:
+                return workflow
+
+    # Try to get the workflow from the database
+    if db:
+        from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
+
+        try:
+            workflow = get_workflow_by_id_db(db=db, id=workflow_id, registry=registry)
             return workflow
+        except Exception as e:
+            logger.error(f"Error getting workflow {workflow_id} from database: {e}")
     return None
 
 

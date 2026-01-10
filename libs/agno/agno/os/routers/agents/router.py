@@ -407,7 +407,7 @@ def get_agent_router(
         agent_id: str,
         run_id: str,
     ):
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(agent_id, os.agents, os.db, os.registry)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -466,7 +466,7 @@ def get_agent_router(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
 
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(agent_id, os.agents, os.db, os.registry)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -565,9 +565,6 @@ def get_agent_router(
     )
     async def get_agents(request: Request) -> List[AgentResponse]:
         """Return the list of all Agents present in the contextual OS"""
-        if os.agents is None:
-            return []
-
         # Filter agents based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
             from agno.os.auth import filter_resources_by_access, get_accessible_resources
@@ -583,21 +580,23 @@ def get_agent_router(
             accessible_agents = os.agents
 
         agents = []
-        for agent in accessible_agents:
-            if isinstance(agent, RemoteAgent):
-                agents.append(await agent.get_agent_config())
-            else:
-                agent_response = await AgentResponse.from_agent(agent=agent)
-                agents.append(agent_response)
+        if accessible_agents:
+            for agent in accessible_agents:
+                if isinstance(agent, RemoteAgent):
+                    agents.append(await agent.get_agent_config())
+                else:
+                    agent_response = await AgentResponse.from_agent(agent=agent)
+                    agents.append(agent_response)
 
         if os.db:
             from agno.agent.agent import get_agents
 
             db_agents = get_agents(db=os.db, registry=registry)
 
-        for db_agent in db_agents:
-            agent_response = await AgentResponse.from_agent(agent=db_agent)
-            agents.append(agent_response)
+        if db_agents:
+            for db_agent in db_agents:
+                agent_response = await AgentResponse.from_agent(agent=db_agent)
+                agents.append(agent_response)
 
         return agents
 

@@ -25,11 +25,11 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================
-# Request/Response Schemas
+# Request/PrimitiveResponse Schemas
 # ============================================
 
 
-class EntityCreate(BaseModel):
+class PrimitiveCreate(BaseModel):
     entity_id: str = Field(..., description="Unique identifier for the entity")
     entity_type: str = Field(..., description="Type of entity: agent, team, or workflow")
     name: str = Field(..., description="Display name")
@@ -43,7 +43,7 @@ class EntityCreate(BaseModel):
     set_current: bool = Field(True, description="Set as current version")
 
 
-class EntityResponse(BaseModel):
+class PrimitiveResponse(BaseModel):
     entity_id: str
     entity_type: str
     name: str
@@ -79,7 +79,7 @@ class ConfigResponse(BaseModel):
 # ============================================
 
 
-def get_entities_router(
+def get_primitives_router(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], settings: AgnoAPISettings = AgnoAPISettings()
 ) -> APIRouter:
     """Create entities and configs router."""
@@ -104,11 +104,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
     @router.get(
         "/entities",
-        response_model=PaginatedResponse[EntityResponse],
+        response_model=PaginatedResponse[PrimitiveResponse],
         response_model_exclude_none=True,
         status_code=200,
         operation_id="list_entities",
-        summary="List Entities",
+        summary="List Primitives",
         description="Retrieve a paginated list of entities with optional filtering by type.",
     )
     async def list_entities(
@@ -117,7 +117,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         page: int = Query(1, ge=1, description="Page number"),
         limit: int = Query(20, ge=1, le=100, description="Items per page"),
         db_id: Optional[str] = Query(None, description="Database ID"),
-    ) -> PaginatedResponse[EntityResponse]:
+    ) -> PaginatedResponse[PrimitiveResponse]:
         db = await get_db(dbs, db_id)
 
         try:
@@ -130,7 +130,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             paginated = entities[start_idx : start_idx + limit]
 
             return PaginatedResponse(
-                data=[EntityResponse(**e) for e in paginated],
+                data=[PrimitiveResponse(**e) for e in paginated],
                 meta=PaginationInfo(
                     page=page,
                     limit=limit,
@@ -145,7 +145,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
     @router.post(
         "/entities",
-        response_model=EntityResponse,
+        response_model=PrimitiveResponse,
         response_model_exclude_none=True,
         status_code=201,
         operation_id="create_entity",
@@ -154,9 +154,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     )
     async def create_entity(
         request: Request,
-        body: EntityCreate,
+        body: PrimitiveCreate,
         db_id: Optional[str] = Query(None, description="Database ID"),
-    ) -> EntityResponse:
+    ) -> PrimitiveResponse:
         db = await get_db(dbs, db_id)
 
         try:
@@ -176,7 +176,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 notes=body.notes,
                 set_current=body.set_current,
             )
-            return EntityResponse(**entity)
+            return PrimitiveResponse(**entity)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -185,7 +185,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
     @router.get(
         "/entities/{entity_id}",
-        response_model=EntityResponse,
+        response_model=PrimitiveResponse,
         response_model_exclude_none=True,
         status_code=200,
         operation_id="get_entity",
@@ -196,14 +196,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         request: Request,
         entity_id: str = Path(description="Entity ID"),
         db_id: Optional[str] = Query(None, description="Database ID"),
-    ) -> EntityResponse:
+    ) -> PrimitiveResponse:
         db = await get_db(dbs, db_id)
 
         try:
             entity = db.get_entity(entity_id)
             if entity is None:
                 raise HTTPException(status_code=404, detail=f"Entity {entity_id} not found")
-            return EntityResponse(**entity)
+            return PrimitiveResponse(**entity)
         except HTTPException:
             raise
         except Exception as e:
