@@ -1,140 +1,83 @@
 """
-User Profile: Agentic Mode
-==========================
-Agent-driven profile updates via tools.
+User Profile: Agentic Mode (Deep Dive)
+======================================
+Agent-controlled profile updates via explicit tools.
 
-In AGENTIC mode, the agent decides when to save information using
-tools. This gives the agent control over what gets saved.
+AGENTIC mode gives the agent a tool to update profile fields.
+You'll see tool calls in the response - more transparent than ALWAYS mode.
 
-Advantages:
-- Agent is selective (less noise)
-- User sees when info is saved
-- No hidden LLM calls
-- More transparent
-
-The agent gets tools:
-- `update_user_profile`: Update profile fields (name, preferred_name, custom fields)
-
-Note: For unstructured memories, use UserMemoryConfig with AGENTIC mode.
-See: 2b_memories_agentic.py for memories.
-
-Run:
-    python cookbook/15_learning/02_user_profile/02_agentic_mode.py
+Compare with: 01_always_extraction.py for automatic extraction.
+See also: 01_basics/1b_user_profile_agentic.py for the basics.
 """
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, LearningMode, UserProfileConfig
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 
 # ============================================================================
 # Setup
 # ============================================================================
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(db_url=db_url)
-model = OpenAIChat(id="gpt-4o")
 
-# ============================================================================
-# Agent with AGENTIC mode
-# ============================================================================
+db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+
 agent = Agent(
-    name="Agentic Profile Agent",
-    model=model,
+    model=OpenAIResponses(id="gpt-5.2"),
     db=db,
-    instructions="""\
-You are a helpful assistant with the ability to update user profiles.
-
-When a user shares their name or how they prefer to be addressed,
-use the `update_user_profile` tool to save it.
-
-What to save in profile:
-- Name and how they prefer to be addressed
-- Other structured profile fields
-
-Note: This agent only handles structured profile fields.
-For unstructured observations, use UserMemoryConfig separately.
-""",
+    instructions=(
+        "You are a helpful assistant. "
+        "When users share their name or preferences, use update_user_profile to save it."
+    ),
     learning=LearningMachine(
-        db=db,
-        model=model,
         user_profile=UserProfileConfig(
             mode=LearningMode.AGENTIC,
-            enable_agent_tools=True,
-            agent_can_update_profile=True,
         ),
     ),
     markdown=True,
 )
 
-
 # ============================================================================
-# Demo: Agent Updates Profile
+# Demo
 # ============================================================================
-def demo_profile_update():
-    """Show agent updating profile fields."""
-    print("=" * 60)
-    print("Demo: Agent Updates Profile Fields")
-    print("=" * 60)
 
-    user = "agentic_demo@example.com"
+if __name__ == "__main__":
+    user_id = "jordan@example.com"
 
-    # Share name info - should update profile
-    print("\n--- Share name (should update profile) ---\n")
+    # Session 1: Share name - watch for tool calls
+    print("\n" + "=" * 60)
+    print("SESSION 1: Share name (watch for tool calls)")
+    print("=" * 60 + "\n")
+
     agent.print_response(
         "Hi! I'm Jordan Chen, but everyone calls me JC.",
-        user_id=user,
-        session_id="agentic_1",
+        user_id=user_id,
+        session_id="session_1",
         stream=True,
     )
+    agent.learning.user_profile_store.print(user_id=user_id)
 
-    # Check what was saved
-    print("\n--- Profile check ---\n")
+    # Session 2: Recall in new session
+    print("\n" + "=" * 60)
+    print("SESSION 2: Profile recalled in new session")
+    print("=" * 60 + "\n")
+
     agent.print_response(
         "What's my name and what should you call me?",
-        user_id=user,
-        session_id="agentic_2",
+        user_id=user_id,
+        session_id="session_2",
         stream=True,
     )
+    agent.learning.user_profile_store.print(user_id=user_id)
 
-
-# ============================================================================
-# Demo: Explicit Profile Update
-# ============================================================================
-def demo_explicit_update():
-    """Show user explicitly asking agent to update profile."""
+    # Session 3: Update preferred name
     print("\n" + "=" * 60)
-    print("Demo: Explicit Profile Update")
-    print("=" * 60)
+    print("SESSION 3: Update preferred name")
+    print("=" * 60 + "\n")
 
-    user = "explicit_update@example.com"
-
-    print("\n--- Explicit request ---\n")
     agent.print_response(
-        "My name is Alexandra Williams, but please always call me Alex.",
-        user_id=user,
-        session_id="explicit_1",
+        "Actually, I'd prefer you call me Jordan from now on.",
+        user_id=user_id,
+        session_id="session_3",
         stream=True,
     )
-
-    print("\n--- Later conversation ---\n")
-    agent.print_response(
-        "How should you address me?",
-        user_id=user,
-        session_id="explicit_2",
-        stream=True,
-    )
-
-
-# ============================================================================
-# Main
-# ============================================================================
-if __name__ == "__main__":
-    demo_profile_update()
-    demo_explicit_update()
-
-    print("\n" + "=" * 60)
-    print("✅ AGENTIC mode: Agent controls profile updates")
-    print("   - update_user_profile tool for name, preferred_name, etc.")
-    print("   - More transparent, no hidden LLM calls")
-    print("   - For memories, use UserMemoryConfig separately")
-    print("=" * 60)
+    agent.learning.user_profile_store.print(user_id=user_id)
