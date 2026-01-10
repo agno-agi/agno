@@ -464,6 +464,8 @@ RunOutputEvent = Union[
     PreHookCompletedEvent,
     PostHookStartedEvent,
     PostHookCompletedEvent,
+    ModelHookStartedEvent,
+    ModelHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     ReasoningContentDeltaEvent,

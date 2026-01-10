@@ -1141,7 +1141,7 @@ class Agent:
 
             # 5.5. Execute model hooks (after context built, before model call)
             for _ in self._execute_model_hooks(
-                hooks=self.model_hooks,
+                hooks=self.model_hooks,  # type: ignore
                 run_messages=run_messages,
                 tools=_tools,
                 run_response=run_response,
@@ -1390,7 +1390,7 @@ class Agent:
 
             # 5.5. Execute model hooks (after context built, before model call)
             yield from self._execute_model_hooks(
-                hooks=self.model_hooks,
+                hooks=self.model_hooks,  # type: ignore
                 run_messages=run_messages,
                 tools=_tools,
                 run_response=run_response,
@@ -2069,7 +2069,7 @@ class Agent:
 
             # 8.5. Execute model hooks (after context built, before model call)
             async for _ in self._aexecute_model_hooks(
-                hooks=self.model_hooks,
+                hooks=self.model_hooks,  # type: ignore
                 run_messages=run_messages,
                 tools=_tools,
                 run_response=run_response,
@@ -2370,7 +2370,7 @@ class Agent:
 
             # 8.5. Execute model hooks (after context built, before model call)
             async for event in self._aexecute_model_hooks(
-                hooks=self.model_hooks,
+                hooks=self.model_hooks,  # type: ignore
                 run_messages=run_messages,
                 tools=_tools,
                 run_response=run_response,
