@@ -22,7 +22,7 @@ Key Behavior:
 - Previous context + new messages → Updated context
 
 Supported Modes:
-- BACKGROUND only. SessionContextStore does not support AGENTIC, PROPOSE, or HITL modes.
+- ALWAYS only. SessionContextStore does not support AGENTIC, PROPOSE, or HITL modes.
 """
 
 from copy import deepcopy
@@ -82,7 +82,7 @@ class SessionContextStore(LearningStore):
     def __post_init__(self):
         self._schema = self.config.schema or SessionContext
 
-        if self.config.mode != LearningMode.BACKGROUND:
+        if self.config.mode != LearningMode.ALWAYS:
             log_warning(
                 f"SessionContextStore only supports BACKGROUND mode, got {self.config.mode}. Ignoring mode setting."
             )
@@ -142,7 +142,7 @@ class SessionContextStore(LearningStore):
         """
         # process only supported in BACKGROUND mode
         # for programmatic extraction, use extract_and_save directly
-        if self.config.mode != LearningMode.BACKGROUND:
+        if self.config.mode != LearningMode.ALWAYS:
             return
 
         if not session_id or not messages:
@@ -166,7 +166,7 @@ class SessionContextStore(LearningStore):
         **kwargs,
     ) -> None:
         """Async version of process."""
-        if self.config.mode != LearningMode.BACKGROUND:
+        if self.config.mode != LearningMode.ALWAYS:
             return
 
         if not session_id or not messages:

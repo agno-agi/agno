@@ -20,6 +20,7 @@ from agno.learn.config import (
     EntityMemoryConfig,
     LearnedKnowledgeConfig,
     LearningMode,
+    MemoriesConfig,
     SessionContextConfig,
     UserProfileConfig,
 )
@@ -40,6 +41,7 @@ except ImportError:
 
 # Type aliases for cleaner signatures
 UserProfileInput = Union[bool, UserProfileConfig, LearningStore, None]
+MemoriesInput = Union[bool, MemoriesConfig, LearningStore, None]
 EntityMemoryInput = Union[bool, EntityMemoryConfig, LearningStore, None]
 SessionContextInput = Union[bool, SessionContextConfig, LearningStore, None]
 LearnedKnowledgeInput = Union[bool, LearnedKnowledgeConfig, LearningStore, None]
@@ -58,6 +60,7 @@ class LearningMachine:
         knowledge: Knowledge base for learned knowledge store.
 
         user_profile: Enable user profile. Accepts bool, Config, or Store.
+        memories: Enable memories. Accepts bool, Config, or Store.
         session_context: Enable session context. Accepts bool, Config, or Store.
         entity_memory: Enable entity memory. Accepts bool, Config, or Store.
         learned_knowledge: Enable learned knowledge. Auto-enabled when knowledge provided.
@@ -73,6 +76,7 @@ class LearningMachine:
 
     # Store configurations (accepts bool, Config, or Store instance)
     user_profile: UserProfileInput = False
+    memories: MemoriesInput = False
     session_context: SessionContextInput = False
     entity_memory: EntityMemoryInput = False
     learned_knowledge: LearnedKnowledgeInput = False
@@ -112,6 +116,13 @@ class LearningMachine:
                 store_type="user_profile",
             )
 
+        # Memories
+        if self.memories:
+            self._stores["memories"] = self._resolve_store(
+                input_value=self.memories,
+                store_type="memories",
+            )
+
         # Session Context
         if self.session_context:
             self._stores["session_context"] = self._resolve_store(
@@ -149,7 +160,7 @@ class LearningMachine:
 
         Args:
             input_value: bool, Config, or Store instance
-            store_type: One of "user_profile", "session_context", "entity_memory", "learned_knowledge"
+            store_type: One of "user_profile", "memories", "session_context", "entity_memory", "learned_knowledge"
 
         Returns:
             Initialized store instance.
@@ -161,6 +172,8 @@ class LearningMachine:
         # Create store based on type
         if store_type == "user_profile":
             return self._create_user_profile_store(config=input_value)
+        elif store_type == "memories":
+            return self._create_memories_store(config=input_value)
         elif store_type == "session_context":
             return self._create_session_context_store(config=input_value)
         elif store_type == "entity_memory":
@@ -183,10 +196,28 @@ class LearningMachine:
             config = UserProfileConfig(
                 db=self.db,
                 model=self.model,
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
             )
 
         return UserProfileStore(config=config, debug_mode=self.debug_mode)
+
+    def _create_memories_store(self, config: Any) -> LearningStore:
+        """Create MemoriesStore with resolved config."""
+        from agno.learn.stores import MemoriesStore
+
+        if isinstance(config, MemoriesConfig):
+            if config.db is None:
+                config.db = self.db
+            if config.model is None:
+                config.model = self.model
+        else:
+            config = MemoriesConfig(
+                db=self.db,
+                model=self.model,
+                mode=LearningMode.ALWAYS,
+            )
+
+        return MemoriesStore(config=config, debug_mode=self.debug_mode)
 
     def _create_session_context_store(self, config: Any) -> LearningStore:
         """Create SessionContextStore with resolved config."""
@@ -220,7 +251,7 @@ class LearningMachine:
                 db=self.db,
                 model=self.model,
                 namespace=self.namespace,
-                mode=LearningMode.BACKGROUND,
+                mode=LearningMode.ALWAYS,
             )
 
         return EntityMemoryStore(config=config, debug_mode=self.debug_mode)
@@ -251,6 +282,11 @@ class LearningMachine:
     def user_profile_store(self) -> Optional[LearningStore]:
         """Get user profile store if enabled."""
         return self.stores.get("user_profile")
+
+    @property
+    def memories_store(self) -> Optional[LearningStore]:
+        """Get memories store if enabled."""
+        return self.stores.get("memories")
 
     @property
     def session_context_store(self) -> Optional[LearningStore]:

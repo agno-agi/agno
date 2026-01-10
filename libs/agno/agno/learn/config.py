@@ -7,16 +7,15 @@ Uses dataclasses instead of Pydantic BaseModels to avoid runtime
 overhead and validation errors that could break agents mid-run.
 
 Configurations:
-- LearningMode: How learning is extracted (BACKGROUND, AGENTIC, PROPOSE, HITL)
-- ExtractionTiming: When extraction runs (BEFORE, PARALLEL, AFTER)
-- ExtractionConfig: Settings for background extraction
+- LearningMode: How learning is extracted (ALWAYS, AGENTIC, PROPOSE, HITL)
 - UserProfileConfig: Config for user profile learning
+- MemoriesConfig: Config for memories learning
 - SessionContextConfig: Config for session context learning
 - LearnedKnowledgeConfig: Config for learned knowledge
 - EntityMemoryConfig: Config for entity memory
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, Type, Union
 
@@ -33,53 +32,16 @@ if TYPE_CHECKING:
 class LearningMode(Enum):
     """How learning is extracted and saved.
 
-    BACKGROUND: Automatic extraction after each response.
+    ALWAYS: Automatic extraction after each response.
     AGENTIC: Agent decides when to learn via tools.
     PROPOSE: Agent proposes, human confirms.
     HITL (Human-in-the-Loop): Reserved for future use.
     """
 
-    BACKGROUND = "background"
+    ALWAYS = "always"
     AGENTIC = "agentic"
     PROPOSE = "propose"
     HITL = "hitl"
-
-
-class ExtractionTiming(Enum):
-    """When extraction runs relative to LLM response.
-
-    Attributes:
-        BEFORE: Runs before LLM call. Adds latency before response.
-        PARALLEL: Runs while LLM generates response. Fast, but may
-                 duplicate if agent also saves learnings.
-        AFTER: Runs after response is returned. Slower, but can
-              check what agent saved to avoid duplicates.
-    """
-
-    BEFORE = "before"
-    PARALLEL = "parallel"
-    AFTER = "after"
-
-
-# =============================================================================
-# Extraction Configuration
-# =============================================================================
-
-
-@dataclass
-class ExtractionConfig:
-    """Configuration for learning extraction.
-
-    Controls when and how often background extraction runs.
-
-    Attributes:
-        timing: When to run extraction relative to LLM response.
-        run_after_messages: Run extraction after every N messages.
-                           Set to 1 for every message, 2 for every other, etc.
-    """
-
-    timing: ExtractionTiming = ExtractionTiming.PARALLEL
-    run_after_messages: int = 1
 
 
 # =============================================================================
@@ -91,31 +53,23 @@ class ExtractionConfig:
 class UserProfileConfig:
     """Configuration for User Profile learning type.
 
-    UserProfile stores long-term memory about users. It captures two types of data:
-    1. **Profile Fields** (structured): name, preferred_name, and custom
-       fields from extended schemas. Updated via `update_profile` tool.
-    2. **Memories** (unstructured): Observations and memories that don't fit schema fields.
-       Updated via `add_memory`, `update_memory`, `delete_memory` tools.
+    UserProfile stores long-term structured profile fields about users:
+    name, preferred_name, and custom fields from extended schemas.
+    Updated via `update_profile` tool.
 
     Scope: USER (fixed) - Retrieved and stored by user_id.
 
     Attributes:
         db: Database backend for storage.
-        model: Model for extraction (required for BACKGROUND mode).
-        mode: How learning is extracted. Default: BACKGROUND.
-        extraction: Extraction timing settings.
+        model: Model for extraction (required for ALWAYS mode).
+        mode: How learning is extracted. Default: ALWAYS.
         schema: Custom schema for user profile data. Default: UserProfile.
 
         # Extraction operations
-        enable_add_memory: Allow adding new memories during extraction.
-        enable_update_memory: Allow updating existing memories.
-        enable_delete_memory: Allow deleting memories.
-        enable_clear_memories: Allow clearing all memories (dangerous).
         enable_update_profile: Allow updating profile fields (name, etc).
 
         # Agent tools
         enable_agent_tools: Expose tools to the agent.
-        agent_can_update_memories: If agent_tools enabled, provide update_user_memory tool.
         agent_can_update_profile: If agent_tools enabled, provide update_user_profile tool.
 
         # Prompt customization
@@ -129,20 +83,14 @@ class UserProfileConfig:
     model: Optional["Model"] = None
 
     # Mode and extraction
-    mode: LearningMode = LearningMode.BACKGROUND
-    extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
+    mode: LearningMode = LearningMode.ALWAYS
     schema: Optional[Type[Any]] = None
 
     # Extraction operations
-    enable_add_memory: bool = True
-    enable_update_memory: bool = True
-    enable_delete_memory: bool = True
-    enable_clear_memories: bool = False  # Dangerous - disabled by default
     enable_update_profile: bool = True  # Allow updating profile fields
 
     # Agent tools
     enable_agent_tools: bool = False
-    agent_can_update_memories: bool = True
     agent_can_update_profile: bool = True
 
     # Prompt customization
@@ -152,6 +100,65 @@ class UserProfileConfig:
 
     def __repr__(self) -> str:
         return f"UserProfileConfig(mode={self.mode.value}, enable_agent_tools={self.enable_agent_tools})"
+
+
+@dataclass
+class MemoriesConfig:
+    """Configuration for Memories learning type.
+
+    Memories stores unstructured observations about users that don't fit
+    into structured profile fields. These are long-term memories that
+    persist across sessions.
+
+    Scope: USER (fixed) - Retrieved and stored by user_id.
+
+    Attributes:
+        db: Database backend for storage.
+        model: Model for extraction (required for ALWAYS mode).
+        mode: How learning is extracted. Default: ALWAYS.
+        schema: Custom schema for memories data. Default: Memories.
+
+        # Extraction operations
+        enable_add_memory: Allow adding new memories during extraction.
+        enable_update_memory: Allow updating existing memories.
+        enable_delete_memory: Allow deleting memories.
+        enable_clear_memories: Allow clearing all memories (dangerous).
+
+        # Agent tools
+        enable_agent_tools: Expose tools to the agent.
+        agent_can_update_memories: If agent_tools enabled, provide update_user_memory tool.
+
+        # Prompt customization
+        instructions: Custom instructions for what to capture.
+        additional_instructions: Extra instructions appended to default.
+        system_message: Full override for extraction system message.
+    """
+
+    # Required fields
+    db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
+    model: Optional["Model"] = None
+
+    # Mode and extraction
+    mode: LearningMode = LearningMode.ALWAYS
+    schema: Optional[Type[Any]] = None
+
+    # Extraction operations
+    enable_add_memory: bool = True
+    enable_update_memory: bool = True
+    enable_delete_memory: bool = True
+    enable_clear_memories: bool = False  # Dangerous - disabled by default
+
+    # Agent tools
+    enable_agent_tools: bool = False
+    agent_can_update_memories: bool = True
+
+    # Prompt customization
+    instructions: Optional[str] = None
+    additional_instructions: Optional[str] = None
+    system_message: Optional[str] = None
+
+    def __repr__(self) -> str:
+        return f"MemoriesConfig(mode={self.mode.value}, enable_agent_tools={self.enable_agent_tools})"
 
 
 @dataclass
@@ -169,9 +176,8 @@ class SessionContextConfig:
 
     Attributes:
         db: Database backend for storage.
-        model: Model for extraction (required for BACKGROUND mode).
-        mode: How learning is extracted. Default: BACKGROUND.
-        extraction: Extraction timing settings.
+        model: Model for extraction (required for ALWAYS mode).
+        mode: How learning is extracted. Default: ALWAYS.
         schema: Custom schema for session context. Default: SessionContext.
 
         # Planning mode
@@ -192,8 +198,7 @@ class SessionContextConfig:
     model: Optional["Model"] = None
 
     # Mode and extraction
-    mode: LearningMode = LearningMode.BACKGROUND
-    extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
+    mode: LearningMode = LearningMode.ALWAYS
     schema: Optional[Type[Any]] = None
 
     # Planning mode
@@ -231,9 +236,8 @@ class LearnedKnowledgeConfig:
     Attributes:
         knowledge: Knowledge base instance (vector store) for storage.
                    REQUIRED - learnings cannot be saved/searched without this.
-        model: Model for extraction (if using BACKGROUND mode).
+        model: Model for extraction (if using ALWAYS mode).
         mode: How learning is extracted. Default: AGENTIC.
-        extraction: Extraction settings (only if mode=BACKGROUND).
         schema: Custom schema for learning data. Default: LearnedKnowledge.
 
         # Sharing boundary
@@ -256,7 +260,6 @@ class LearnedKnowledgeConfig:
 
     # Mode and extraction
     mode: LearningMode = LearningMode.AGENTIC
-    extraction: Optional[ExtractionConfig] = None
     schema: Optional[Type[Any]] = None
 
     # Sharing boundary
@@ -298,9 +301,8 @@ class EntityMemoryConfig:
 
     Attributes:
         db: Database backend for storage.
-        model: Model for extraction (required for BACKGROUND mode).
-        mode: How learning is extracted. Default: BACKGROUND.
-        extraction: Extraction timing settings.
+        model: Model for extraction (required for ALWAYS mode).
+        mode: How learning is extracted. Default: ALWAYS.
         schema: Custom schema for entity memory data. Default: EntityMemory.
 
         # Sharing boundary
@@ -332,8 +334,7 @@ class EntityMemoryConfig:
     model: Optional["Model"] = None
 
     # Mode and extraction
-    mode: LearningMode = LearningMode.BACKGROUND
-    extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
+    mode: LearningMode = LearningMode.ALWAYS
     schema: Optional[Type[Any]] = None
 
     # Sharing boundary
@@ -385,8 +386,7 @@ class DecisionLogConfig:
     model: Optional["Model"] = None
 
     # Mode and extraction
-    mode: LearningMode = LearningMode.BACKGROUND
-    extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
+    mode: LearningMode = LearningMode.ALWAYS
     schema: Optional[Type[Any]] = None
 
     # Agent tools
@@ -420,15 +420,14 @@ class FeedbackConfig:
     model: Optional["Model"] = None
 
     # Mode and extraction
-    mode: LearningMode = LearningMode.BACKGROUND
-    extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
+    mode: LearningMode = LearningMode.ALWAYS
     schema: Optional[Type[Any]] = None
 
     # Prompt customization
     instructions: Optional[str] = None
 
     def __repr__(self) -> str:
-        return "FeedbackConfig(mode=BACKGROUND)"
+        return "FeedbackConfig(mode=ALWAYS)"
 
 
 @dataclass
@@ -449,7 +448,6 @@ class SelfImprovementConfig:
 
     # Mode and extraction
     mode: LearningMode = LearningMode.HITL
-    extraction: Optional[ExtractionConfig] = None
     schema: Optional[Type[Any]] = None
 
     # Prompt customization

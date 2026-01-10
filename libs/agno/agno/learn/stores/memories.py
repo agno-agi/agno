@@ -1,43 +1,38 @@
 """
-User Profile Store
-==================
-Storage backend for User Profile learning type.
+Memories Store
+==============
+Storage backend for Memories learning type.
 
-Stores long-term structured profile fields about users that persist across sessions.
+Stores unstructured observations about users that don't fit into
+structured profile fields. These are long-term memories that persist
+across sessions.
 
 Key Features:
-- Structured profile fields (name, preferred_name, and custom fields)
 - Background extraction from conversations
 - Agent tools for in-conversation updates
-- Multi-user isolation (each user has their own profile)
-
-Profile Fields (structured):
-- name, preferred_name, and custom fields from extended schemas
-- Updated via `update_profile` tool
-- For concrete facts that fit defined schema fields
-
-Note: Unstructured memories are handled by the separate MemoriesStore.
+- Multi-user isolation (each user has their own memories)
+- Add, update, delete memory operations
 
 Scope:
-- Profiles are retrieved by user_id only
+- Memories are retrieved by user_id only
 - agent_id/team_id stored in DB columns for audit trail
+- agent_id/team_id stored on individual memories for granular audit
 
 Supported Modes:
 - ALWAYS: Automatic extraction after conversations
-- AGENTIC: Agent calls update_user_profile tool directly
+- AGENTIC: Agent calls update_user_memory tool directly
 """
 
 import inspect
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
-from dataclasses import fields as dc_fields
 from os import getenv
 from textwrap import dedent
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from agno.learn.config import LearningMode, UserProfileConfig
-from agno.learn.schemas import UserProfile
+from agno.learn.config import LearningMode, MemoriesConfig
+from agno.learn.schemas import Memories
 from agno.learn.stores.protocol import LearningStore
 from agno.learn.utils import from_dict_safe, to_dict_safe
 from agno.utils.log import (
@@ -56,37 +51,32 @@ except ImportError:
 
 
 @dataclass
-class UserProfileStore(LearningStore):
-    """Storage backend for User Profile learning type.
+class MemoriesStore(LearningStore):
+    """Storage backend for Memories learning type.
 
-    Profiles are retrieved by user_id only - all agents sharing the same DB
-    will see the same profile for a given user. agent_id and team_id are
-    stored for audit purposes in DB columns.
-
-    Profile Fields (structured): name, preferred_name, and any custom
-    fields added when extending the schema. Updated via `update_profile` tool.
-
-    Note: Unstructured memories are now handled by the separate MemoriesStore.
+    Memories are retrieved by user_id only - all agents sharing the same DB
+    will see the same memories for a given user. agent_id and team_id are
+    stored for audit purposes (both at DB column level and on individual memories).
 
     Args:
-        config: UserProfileConfig with all settings including db and model.
+        config: MemoriesConfig with all settings including db and model.
         debug_mode: Enable debug logging.
     """
 
-    config: UserProfileConfig = field(default_factory=UserProfileConfig)
+    config: MemoriesConfig = field(default_factory=MemoriesConfig)
     debug_mode: bool = False
 
     # State tracking (internal)
-    profile_updated: bool = field(default=False, init=False)
+    memories_updated: bool = field(default=False, init=False)
     _schema: Any = field(default=None, init=False)
 
     def __post_init__(self):
-        self._schema = self.config.schema or UserProfile
+        self._schema = self.config.schema or Memories
 
         if self.config.mode == LearningMode.PROPOSE:
-            log_warning("UserProfileStore does not support PROPOSE mode.")
+            log_warning("MemoriesStore does not support PROPOSE mode.")
         elif self.config.mode == LearningMode.HITL:
-            log_warning("UserProfileStore does not support HITL mode.")
+            log_warning("MemoriesStore does not support HITL mode.")
 
     # =========================================================================
     # LearningStore Protocol Implementation
@@ -95,22 +85,22 @@ class UserProfileStore(LearningStore):
     @property
     def learning_type(self) -> str:
         """Unique identifier for this learning type."""
-        return "user_profile"
+        return "memories"
 
     @property
     def schema(self) -> Any:
-        """Schema class used for profiles."""
+        """Schema class used for memories."""
         return self._schema
 
     def recall(self, user_id: str, **kwargs) -> Optional[Any]:
-        """Retrieve user profile from storage.
+        """Retrieve memories from storage.
 
         Args:
-            user_id: The user to retrieve profile for (required).
+            user_id: The user to retrieve memories for (required).
             **kwargs: Additional context (ignored).
 
         Returns:
-            User profile, or None if not found.
+            Memories, or None if not found.
         """
         if not user_id:
             return None
@@ -130,11 +120,11 @@ class UserProfileStore(LearningStore):
         team_id: Optional[str] = None,
         **kwargs,
     ) -> None:
-        """Extract user profile from messages.
+        """Extract memories from messages.
 
         Args:
             messages: Conversation messages to analyze.
-            user_id: The user to update profile for (required).
+            user_id: The user to update memories for (required).
             agent_id: Agent context (stored for audit).
             team_id: Team context (stored for audit).
             **kwargs: Additional context (ignored).
@@ -179,12 +169,12 @@ class UserProfileStore(LearningStore):
     def build_context(self, data: Any) -> str:
         """Build context for the agent.
 
-        Formats user profile data for injection into the agent's system prompt.
+        Formats memories data for injection into the agent's system prompt.
         Designed to enable natural, personalized responses without meta-commentary
         about memory systems.
 
         Args:
-            data: User profile data from recall().
+            data: Memories data from recall().
 
         Returns:
             Context string to inject into the agent's system prompt.
@@ -197,7 +187,7 @@ class UserProfileStore(LearningStore):
                 return (
                     dedent(f"""\
                     <user_memory>
-                    No information saved about this user yet.
+                    No memories saved about this user yet.
 
                     """)
                     + tool_docs
@@ -206,14 +196,6 @@ class UserProfileStore(LearningStore):
                 )
             return ""
 
-        # Build profile fields section
-        profile_parts = []
-        updateable_fields = self._get_updateable_fields()
-        for field_name in updateable_fields:
-            value = getattr(data, field_name, None)
-            if value:
-                profile_parts.append(f"{field_name.replace('_', ' ').title()}: {value}")
-
         # Build memories section
         memories_text = None
         if hasattr(data, "get_memories_text"):
@@ -221,12 +203,12 @@ class UserProfileStore(LearningStore):
         elif hasattr(data, "memories") and data.memories:
             memories_text = "\n".join(f"- {m.get('content', str(m))}" for m in data.memories)
 
-        if not profile_parts and not memories_text:
+        if not memories_text:
             if self._should_expose_tools:
                 return (
                     dedent(f"""\
                     <user_memory>
-                    No information saved about this user yet.
+                    No memories saved about this user yet.
 
                     """)
                     + tool_docs
@@ -236,14 +218,7 @@ class UserProfileStore(LearningStore):
             return ""
 
         context = "<user_memory>\n"
-
-        if profile_parts:
-            context += "\n".join(profile_parts) + "\n"
-
-        if memories_text:
-            if profile_parts:
-                context += "\n"
-            context += memories_text
+        context += memories_text
 
         context += dedent("""
 
@@ -286,16 +261,6 @@ class UserProfileStore(LearningStore):
                 "Use `update_user_memory` to save observations, preferences, and context about this user "
                 "that would help personalize future conversations or avoid asking the same questions."
             )
-
-        if self.config.agent_can_update_profile:
-            # Get the actual field names to document
-            updateable_fields = self._get_updateable_fields()
-            if updateable_fields:
-                field_names = ", ".join(updateable_fields.keys())
-                docs.append(
-                    f"Use `update_profile` to set structured profile fields ({field_names}) "
-                    "when the user explicitly shares this information."
-                )
 
         return "\n\n".join(docs) if docs else ""
 
@@ -343,8 +308,8 @@ class UserProfileStore(LearningStore):
 
     @property
     def was_updated(self) -> bool:
-        """Check if profile was updated in last operation."""
-        return self.profile_updated
+        """Check if memories were updated in last operation."""
+        return self.memories_updated
 
     @property
     def _should_expose_tools(self) -> bool:
@@ -381,200 +346,6 @@ class UserProfileStore(LearningStore):
             set_log_level_to_debug()
         else:
             set_log_level_to_info()
-
-    # =========================================================================
-    # Schema Field Introspection
-    # =========================================================================
-
-    def _get_updateable_fields(self) -> Dict[str, Dict[str, Any]]:
-        """Get schema fields that can be updated via update_profile tool.
-
-        Returns:
-            Dict mapping field name to field info including description.
-            Excludes internal fields (user_id, memories, timestamps, etc).
-        """
-        # Use schema method if available
-        if hasattr(self.schema, "get_updateable_fields"):
-            return self.schema.get_updateable_fields()
-
-        # Fallback: introspect dataclass fields
-        skip = {"user_id", "memories", "created_at", "updated_at", "agent_id", "team_id"}
-
-        result = {}
-        for f in dc_fields(self.schema):
-            if f.name in skip:
-                continue
-            # Skip fields marked as internal
-            if f.metadata.get("internal"):
-                continue
-
-            result[f.name] = {
-                "type": f.type,
-                "description": f.metadata.get("description", f"User's {f.name.replace('_', ' ')}"),
-            }
-
-        return result
-
-    def _build_update_profile_tool(
-        self,
-        user_id: str,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-    ) -> Optional[Callable]:
-        """Build a typed update_profile tool dynamically from schema.
-
-        Creates a function with explicit parameters for each schema field,
-        giving the LLM clear typed parameters to work with.
-        """
-        updateable = self._get_updateable_fields()
-
-        if not updateable:
-            return None
-
-        # Build parameter list for signature
-        params = [
-            inspect.Parameter(
-                name=field_name,
-                kind=inspect.Parameter.KEYWORD_ONLY,
-                default=None,
-                annotation=Optional[str],  # Simplified to str for LLM compatibility
-            )
-            for field_name in updateable
-        ]
-
-        # Build docstring with field descriptions
-        fields_doc = "\n".join(f"            {name}: {info['description']}" for name, info in updateable.items())
-
-        docstring = f"""Update user profile fields.
-
-        Use this to update structured information about the user.
-        Only provide fields you want to update.
-
-        Args:
-{fields_doc}
-
-        Returns:
-            Confirmation of updated fields.
-
-        Examples:
-            update_profile(name="Alice")
-            update_profile(name="Bob", preferred_name="Bobby")
-        """
-
-        # Capture self and IDs in closure
-        store = self
-
-        def update_profile(**kwargs) -> str:
-            try:
-                profile = store.get(user_id=user_id)
-                if profile is None:
-                    profile = store.schema(user_id=user_id)
-
-                changed = []
-                for field_name, value in kwargs.items():
-                    if value is not None and field_name in updateable:
-                        setattr(profile, field_name, value)
-                        changed.append(f"{field_name}={value}")
-
-                if changed:
-                    store.save(
-                        user_id=user_id,
-                        profile=profile,
-                        agent_id=agent_id,
-                        team_id=team_id,
-                    )
-                    log_debug(f"Profile fields updated: {', '.join(changed)}")
-                    return f"Profile updated: {', '.join(changed)}"
-
-                return "No fields provided to update"
-
-            except Exception as e:
-                log_warning(f"Error updating profile: {e}")
-                return f"Error: {e}"
-
-        # Set the signature, docstring, and annotations
-        update_profile.__signature__ = inspect.Signature(params)
-        update_profile.__doc__ = docstring
-        update_profile.__name__ = "update_profile"
-        update_profile.__annotations__ = {field_name: Optional[str] for field_name in updateable}
-        update_profile.__annotations__["return"] = str
-
-        return update_profile
-
-    async def _abuild_update_profile_tool(
-        self,
-        user_id: str,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-    ) -> Optional[Callable]:
-        """Async version of _build_update_profile_tool."""
-        updateable = self._get_updateable_fields()
-
-        if not updateable:
-            return None
-
-        params = [
-            inspect.Parameter(
-                name=field_name,
-                kind=inspect.Parameter.KEYWORD_ONLY,
-                default=None,
-                annotation=Optional[str],
-            )
-            for field_name in updateable
-        ]
-
-        fields_doc = "\n".join(f"            {name}: {info['description']}" for name, info in updateable.items())
-
-        docstring = f"""Update user profile fields.
-
-        Use this to update structured information about the user.
-        Only provide fields you want to update.
-
-        Args:
-{fields_doc}
-
-        Returns:
-            Confirmation of updated fields.
-        """
-
-        store = self
-
-        async def update_profile(**kwargs) -> str:
-            try:
-                profile = await store.aget(user_id=user_id)
-                if profile is None:
-                    profile = store.schema(user_id=user_id)
-
-                changed = []
-                for field_name, value in kwargs.items():
-                    if value is not None and field_name in updateable:
-                        setattr(profile, field_name, value)
-                        changed.append(f"{field_name}={value}")
-
-                if changed:
-                    await store.asave(
-                        user_id=user_id,
-                        profile=profile,
-                        agent_id=agent_id,
-                        team_id=team_id,
-                    )
-                    log_debug(f"Profile fields updated: {', '.join(changed)}")
-                    return f"Profile updated: {', '.join(changed)}"
-
-                return "No fields provided to update"
-
-            except Exception as e:
-                log_warning(f"Error updating profile: {e}")
-                return f"Error: {e}"
-
-        # Set the signature, docstring, and annotations
-        update_profile.__signature__ = inspect.Signature(params)
-        update_profile.__doc__ = docstring
-        update_profile.__name__ = "update_profile"
-        update_profile.__annotations__ = {field_name: Optional[str] for field_name in updateable}
-        update_profile.__annotations__["return"] = str
-
-        return update_profile
 
     # =========================================================================
     # Agent Tools
@@ -621,7 +392,7 @@ class UserProfileStore(LearningStore):
                 Returns:
                     Confirmation of what was saved/updated.
                 """
-                return self.run_user_profile_update(
+                return self.run_memories_update(
                     task=task,
                     user_id=user_id,
                     agent_id=agent_id,
@@ -629,16 +400,6 @@ class UserProfileStore(LearningStore):
                 )
 
             tools.append(update_user_memory)
-
-        # Profile field update tool
-        if self.config.agent_can_update_profile:
-            update_profile = self._build_update_profile_tool(
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-            )
-            if update_profile:
-                tools.append(update_profile)
 
         return tools
 
@@ -673,7 +434,7 @@ class UserProfileStore(LearningStore):
                 Returns:
                     Confirmation of what was saved/updated.
                 """
-                return await self.arun_user_profile_update(
+                return await self.arun_memories_update(
                     task=task,
                     user_id=user_id,
                     agent_id=agent_id,
@@ -682,15 +443,6 @@ class UserProfileStore(LearningStore):
 
             tools.append(update_user_memory)
 
-        if self.config.agent_can_update_profile:
-            update_profile = await self._abuild_update_profile_tool(
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-            )
-            if update_profile:
-                tools.append(update_profile)
-
         return tools
 
     # =========================================================================
@@ -698,13 +450,13 @@ class UserProfileStore(LearningStore):
     # =========================================================================
 
     def get(self, user_id: str) -> Optional[Any]:
-        """Retrieve user profile by user_id.
+        """Retrieve memories by user_id.
 
         Args:
             user_id: The unique user identifier.
 
         Returns:
-            User profile as schema instance, or None if not found.
+            Memories as schema instance, or None if not found.
         """
         if not self.db:
             return None
@@ -721,7 +473,7 @@ class UserProfileStore(LearningStore):
             return None
 
         except Exception as e:
-            log_debug(f"UserProfileStore.get failed for user_id={user_id}: {e}")
+            log_debug(f"MemoriesStore.get failed for user_id={user_id}: {e}")
             return None
 
     async def aget(self, user_id: str) -> Optional[Any]:
@@ -747,7 +499,7 @@ class UserProfileStore(LearningStore):
             return None
 
         except Exception as e:
-            log_debug(f"UserProfileStore.aget failed for user_id={user_id}: {e}")
+            log_debug(f"MemoriesStore.aget failed for user_id={user_id}: {e}")
             return None
 
     # =========================================================================
@@ -757,58 +509,58 @@ class UserProfileStore(LearningStore):
     def save(
         self,
         user_id: str,
-        profile: Any,
+        memories: Any,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> None:
-        """Save or update user profile.
+        """Save or update memories.
 
         Args:
             user_id: The unique user identifier.
-            profile: The profile data to save.
+            memories: The memories data to save.
             agent_id: Agent context (stored in DB column for audit).
             team_id: Team context (stored in DB column for audit).
         """
-        if not self.db or not profile:
+        if not self.db or not memories:
             return
 
         try:
-            content = to_dict_safe(profile)
+            content = to_dict_safe(memories)
             if not content:
                 return
 
             self.db.upsert_learning(
-                id=self._build_profile_id(user_id=user_id),
+                id=self._build_memories_id(user_id=user_id),
                 learning_type=self.learning_type,
                 user_id=user_id,
                 agent_id=agent_id,
                 team_id=team_id,
                 content=content,
             )
-            log_debug(f"UserProfileStore.save: saved profile for user_id={user_id}")
+            log_debug(f"MemoriesStore.save: saved memories for user_id={user_id}")
 
         except Exception as e:
-            log_debug(f"UserProfileStore.save failed for user_id={user_id}: {e}")
+            log_debug(f"MemoriesStore.save failed for user_id={user_id}: {e}")
 
     async def asave(
         self,
         user_id: str,
-        profile: Any,
+        memories: Any,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> None:
         """Async version of save."""
-        if not self.db or not profile:
+        if not self.db or not memories:
             return
 
         try:
-            content = to_dict_safe(profile)
+            content = to_dict_safe(memories)
             if not content:
                 return
 
             if isinstance(self.db, AsyncBaseDb):
                 await self.db.upsert_learning(
-                    id=self._build_profile_id(user_id=user_id),
+                    id=self._build_memories_id(user_id=user_id),
                     learning_type=self.learning_type,
                     user_id=user_id,
                     agent_id=agent_id,
@@ -817,24 +569,24 @@ class UserProfileStore(LearningStore):
                 )
             else:
                 self.db.upsert_learning(
-                    id=self._build_profile_id(user_id=user_id),
+                    id=self._build_memories_id(user_id=user_id),
                     learning_type=self.learning_type,
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
                     content=content,
                 )
-            log_debug(f"UserProfileStore.asave: saved profile for user_id={user_id}")
+            log_debug(f"MemoriesStore.asave: saved memories for user_id={user_id}")
 
         except Exception as e:
-            log_debug(f"UserProfileStore.asave failed for user_id={user_id}: {e}")
+            log_debug(f"MemoriesStore.asave failed for user_id={user_id}: {e}")
 
     # =========================================================================
     # Delete Operations
     # =========================================================================
 
     def delete(self, user_id: str) -> bool:
-        """Delete a user profile.
+        """Delete memories for a user.
 
         Args:
             user_id: The unique user identifier.
@@ -846,10 +598,10 @@ class UserProfileStore(LearningStore):
             return False
 
         try:
-            profile_id = self._build_profile_id(user_id=user_id)
-            return self.db.delete_learning(id=profile_id)
+            memories_id = self._build_memories_id(user_id=user_id)
+            return self.db.delete_learning(id=memories_id)
         except Exception as e:
-            log_debug(f"UserProfileStore.delete failed for user_id={user_id}: {e}")
+            log_debug(f"MemoriesStore.delete failed for user_id={user_id}: {e}")
             return False
 
     async def adelete(self, user_id: str) -> bool:
@@ -858,13 +610,13 @@ class UserProfileStore(LearningStore):
             return False
 
         try:
-            profile_id = self._build_profile_id(user_id=user_id)
+            memories_id = self._build_memories_id(user_id=user_id)
             if isinstance(self.db, AsyncBaseDb):
-                return await self.db.delete_learning(id=profile_id)
+                return await self.db.delete_learning(id=memories_id)
             else:
-                return self.db.delete_learning(id=profile_id)
+                return self.db.delete_learning(id=memories_id)
         except Exception as e:
-            log_debug(f"UserProfileStore.adelete failed for user_id={user_id}: {e}")
+            log_debug(f"MemoriesStore.adelete failed for user_id={user_id}: {e}")
             return False
 
     def clear(
@@ -873,7 +625,7 @@ class UserProfileStore(LearningStore):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> None:
-        """Clear user profile (reset to empty).
+        """Clear all memories for a user (reset to empty).
 
         Args:
             user_id: The unique user identifier.
@@ -884,11 +636,11 @@ class UserProfileStore(LearningStore):
             return
 
         try:
-            empty_profile = self.schema(user_id=user_id)
-            self.save(user_id=user_id, profile=empty_profile, agent_id=agent_id, team_id=team_id)
-            log_debug(f"UserProfileStore.clear: cleared profile for user_id={user_id}")
+            empty_memories = self.schema(user_id=user_id)
+            self.save(user_id=user_id, memories=empty_memories, agent_id=agent_id, team_id=team_id)
+            log_debug(f"MemoriesStore.clear: cleared memories for user_id={user_id}")
         except Exception as e:
-            log_debug(f"UserProfileStore.clear failed for user_id={user_id}: {e}")
+            log_debug(f"MemoriesStore.clear failed for user_id={user_id}: {e}")
 
     async def aclear(
         self,
@@ -901,11 +653,11 @@ class UserProfileStore(LearningStore):
             return
 
         try:
-            empty_profile = self.schema(user_id=user_id)
-            await self.asave(user_id=user_id, profile=empty_profile, agent_id=agent_id, team_id=team_id)
-            log_debug(f"UserProfileStore.aclear: cleared profile for user_id={user_id}")
+            empty_memories = self.schema(user_id=user_id)
+            await self.asave(user_id=user_id, memories=empty_memories, agent_id=agent_id, team_id=team_id)
+            log_debug(f"MemoriesStore.aclear: cleared memories for user_id={user_id}")
         except Exception as e:
-            log_debug(f"UserProfileStore.aclear failed for user_id={user_id}: {e}")
+            log_debug(f"MemoriesStore.aclear failed for user_id={user_id}: {e}")
 
     # =========================================================================
     # Memory Operations
@@ -919,7 +671,7 @@ class UserProfileStore(LearningStore):
         team_id: Optional[str] = None,
         **kwargs,
     ) -> Optional[str]:
-        """Add a single memory to the user's profile.
+        """Add a single memory.
 
         Args:
             user_id: The unique user identifier.
@@ -931,25 +683,25 @@ class UserProfileStore(LearningStore):
         Returns:
             The memory ID if added, None otherwise.
         """
-        profile = self.get(user_id=user_id)
+        memories_data = self.get(user_id=user_id)
 
-        if profile is None:
-            profile = self.schema(user_id=user_id)
+        if memories_data is None:
+            memories_data = self.schema(user_id=user_id)
 
         memory_id = None
-        if hasattr(profile, "add_memory"):
-            memory_id = profile.add_memory(memory, **kwargs)
-        elif hasattr(profile, "memories"):
+        if hasattr(memories_data, "add_memory"):
+            memory_id = memories_data.add_memory(memory, **kwargs)
+        elif hasattr(memories_data, "memories"):
             memory_id = str(uuid.uuid4())[:8]
             memory_entry = {"id": memory_id, "content": memory, **kwargs}
             if agent_id:
                 memory_entry["added_by_agent"] = agent_id
             if team_id:
                 memory_entry["added_by_team"] = team_id
-            profile.memories.append(memory_entry)
+            memories_data.memories.append(memory_entry)
 
-        self.save(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
-        log_debug(f"UserProfileStore.add_memory: added memory for user_id={user_id}")
+        self.save(user_id=user_id, memories=memories_data, agent_id=agent_id, team_id=team_id)
+        log_debug(f"MemoriesStore.add_memory: added memory for user_id={user_id}")
 
         return memory_id
 
@@ -962,25 +714,25 @@ class UserProfileStore(LearningStore):
         **kwargs,
     ) -> Optional[str]:
         """Async version of add_memory."""
-        profile = await self.aget(user_id=user_id)
+        memories_data = await self.aget(user_id=user_id)
 
-        if profile is None:
-            profile = self.schema(user_id=user_id)
+        if memories_data is None:
+            memories_data = self.schema(user_id=user_id)
 
         memory_id = None
-        if hasattr(profile, "add_memory"):
-            memory_id = profile.add_memory(memory, **kwargs)
-        elif hasattr(profile, "memories"):
+        if hasattr(memories_data, "add_memory"):
+            memory_id = memories_data.add_memory(memory, **kwargs)
+        elif hasattr(memories_data, "memories"):
             memory_id = str(uuid.uuid4())[:8]
             memory_entry = {"id": memory_id, "content": memory, **kwargs}
             if agent_id:
                 memory_entry["added_by_agent"] = agent_id
             if team_id:
                 memory_entry["added_by_team"] = team_id
-            profile.memories.append(memory_entry)
+            memories_data.memories.append(memory_entry)
 
-        await self.asave(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
-        log_debug(f"UserProfileStore.aadd_memory: added memory for user_id={user_id}")
+        await self.asave(user_id=user_id, memories=memories_data, agent_id=agent_id, team_id=team_id)
+        log_debug(f"MemoriesStore.aadd_memory: added memory for user_id={user_id}")
 
         return memory_id
 
@@ -995,7 +747,7 @@ class UserProfileStore(LearningStore):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> str:
-        """Extract user profile information from messages and save.
+        """Extract memories from messages and save.
 
         Args:
             messages: Conversation messages to analyze.
@@ -1007,26 +759,26 @@ class UserProfileStore(LearningStore):
             Response from model.
         """
         if self.model is None:
-            log_warning("UserProfileStore.extract_and_save: no model provided")
-            return "No model provided for user profile extraction"
+            log_warning("MemoriesStore.extract_and_save: no model provided")
+            return "No model provided for memories extraction"
 
         if not self.db:
-            log_warning("UserProfileStore.extract_and_save: no database provided")
-            return "No DB provided for user profile store"
+            log_warning("MemoriesStore.extract_and_save: no database provided")
+            return "No DB provided for memories store"
 
-        log_debug("UserProfileStore: Extracting user profile", center=True)
+        log_debug("MemoriesStore: Extracting memories", center=True)
 
-        self.profile_updated = False
+        self.memories_updated = False
 
-        existing_profile = self.get(user_id=user_id)
-        existing_data = self._profile_to_memory_list(profile=existing_profile)
+        existing_memories = self.get(user_id=user_id)
+        existing_data = self._memories_to_list(memories=existing_memories)
 
         input_string = self._messages_to_input_string(messages=messages)
 
         tools = self._get_extraction_tools(
             user_id=user_id,
             input_string=input_string,
-            existing_profile=existing_profile,
+            existing_memories=existing_memories,
             agent_id=agent_id,
             team_id=team_id,
         )
@@ -1034,7 +786,7 @@ class UserProfileStore(LearningStore):
         functions = self._build_functions_for_model(tools=tools)
 
         messages_for_model = [
-            self._get_system_message(existing_data=existing_data, existing_profile=existing_profile),
+            self._get_system_message(existing_data=existing_data),
             *messages,
         ]
 
@@ -1045,11 +797,11 @@ class UserProfileStore(LearningStore):
         )
 
         if response.tool_executions:
-            self.profile_updated = True
+            self.memories_updated = True
 
-        log_debug("UserProfileStore: Extraction complete", center=True)
+        log_debug("MemoriesStore: Extraction complete", center=True)
 
-        return response.content or ("Profile updated" if self.profile_updated else "No updates needed")
+        return response.content or ("Memories updated" if self.memories_updated else "No updates needed")
 
     async def aextract_and_save(
         self,
@@ -1060,26 +812,26 @@ class UserProfileStore(LearningStore):
     ) -> str:
         """Async version of extract_and_save."""
         if self.model is None:
-            log_warning("UserProfileStore.aextract_and_save: no model provided")
-            return "No model provided for user profile extraction"
+            log_warning("MemoriesStore.aextract_and_save: no model provided")
+            return "No model provided for memories extraction"
 
         if not self.db:
-            log_warning("UserProfileStore.aextract_and_save: no database provided")
-            return "No DB provided for user profile store"
+            log_warning("MemoriesStore.aextract_and_save: no database provided")
+            return "No DB provided for memories store"
 
-        log_debug("UserProfileStore: Extracting user profile (async)", center=True)
+        log_debug("MemoriesStore: Extracting memories (async)", center=True)
 
-        self.profile_updated = False
+        self.memories_updated = False
 
-        existing_profile = await self.aget(user_id=user_id)
-        existing_data = self._profile_to_memory_list(profile=existing_profile)
+        existing_memories = await self.aget(user_id=user_id)
+        existing_data = self._memories_to_list(memories=existing_memories)
 
         input_string = self._messages_to_input_string(messages=messages)
 
         tools = await self._aget_extraction_tools(
             user_id=user_id,
             input_string=input_string,
-            existing_profile=existing_profile,
+            existing_memories=existing_memories,
             agent_id=agent_id,
             team_id=team_id,
         )
@@ -1087,7 +839,7 @@ class UserProfileStore(LearningStore):
         functions = self._build_functions_for_model(tools=tools)
 
         messages_for_model = [
-            self._get_system_message(existing_data=existing_data, existing_profile=existing_profile),
+            self._get_system_message(existing_data=existing_data),
             *messages,
         ]
 
@@ -1098,24 +850,24 @@ class UserProfileStore(LearningStore):
         )
 
         if response.tool_executions:
-            self.profile_updated = True
+            self.memories_updated = True
 
-        log_debug("UserProfileStore: Extraction complete", center=True)
+        log_debug("MemoriesStore: Extraction complete", center=True)
 
-        return response.content or ("Profile updated" if self.profile_updated else "No updates needed")
+        return response.content or ("Memories updated" if self.memories_updated else "No updates needed")
 
     # =========================================================================
     # Update Operations (called by agent tool)
     # =========================================================================
 
-    def run_user_profile_update(
+    def run_memories_update(
         self,
         task: str,
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> str:
-        """Run a user profile update task.
+        """Run a memories update task.
 
         Args:
             task: The update task description.
@@ -1136,14 +888,14 @@ class UserProfileStore(LearningStore):
             team_id=team_id,
         )
 
-    async def arun_user_profile_update(
+    async def arun_memories_update(
         self,
         task: str,
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> str:
-        """Async version of run_user_profile_update."""
+        """Async version of run_memories_update."""
         from agno.models.message import Message
 
         messages = [Message(role="user", content=task)]
@@ -1158,28 +910,28 @@ class UserProfileStore(LearningStore):
     # Private Helpers
     # =========================================================================
 
-    def _build_profile_id(self, user_id: str) -> str:
-        """Build a unique profile ID."""
-        return f"user_profile_{user_id}"
+    def _build_memories_id(self, user_id: str) -> str:
+        """Build a unique memories ID."""
+        return f"memories_{user_id}"
 
-    def _profile_to_memory_list(self, profile: Optional[Any]) -> List[dict]:
-        """Convert profile to list of memory dicts for prompt."""
-        if not profile:
+    def _memories_to_list(self, memories: Optional[Any]) -> List[dict]:
+        """Convert memories to list of memory dicts for prompt."""
+        if not memories:
             return []
 
-        memories = []
+        result = []
 
-        if hasattr(profile, "memories") and profile.memories:
-            for mem in profile.memories:
+        if hasattr(memories, "memories") and memories.memories:
+            for mem in memories.memories:
                 if isinstance(mem, dict):
                     memory_id = mem.get("id", str(uuid.uuid4())[:8])
                     content = mem.get("content", str(mem))
                 else:
                     memory_id = str(uuid.uuid4())[:8]
                     content = str(mem)
-                memories.append({"id": memory_id, "content": content})
+                result.append({"id": memory_id, "content": content})
 
-        return memories
+        return result
 
     def _messages_to_input_string(self, messages: List["Message"]) -> str:
         """Convert messages to input string."""
@@ -1214,20 +966,12 @@ class UserProfileStore(LearningStore):
     def _get_system_message(
         self,
         existing_data: List[dict],
-        existing_profile: Optional[Any] = None,
     ) -> "Message":
-        """Build system message for memory extraction.
-
-        Guides the model to extract and organize user information in a way that
-        enables natural, personalized future interactions - not as a database,
-        but as working knowledge that informs how to engage with this person.
-        """
+        """Build system message for memory extraction."""
         from agno.models.message import Message
 
         if self.config.system_message is not None:
             return Message(role="system", content=self.config.system_message)
-
-        profile_fields = self._get_updateable_fields()
 
         system_prompt = dedent("""\
             You are building a memory of this user to enable personalized, contextual interactions.
@@ -1246,39 +990,7 @@ class UserProfileStore(LearningStore):
 
             Memories should make future interactions feel informed and personal, not robotic or surveillance-like.
 
-        """)
-
-        # Profile Fields section
-        if profile_fields and self.config.enable_update_profile:
-            system_prompt += dedent("""\
-                ## Profile Fields
-
-                Use `update_profile` for stable identity information:
-            """)
-
-            for field_name, field_info in profile_fields.items():
-                description = field_info.get("description", f"User's {field_name.replace('_', ' ')}")
-                system_prompt += f"- **{field_name}**: {description}\n"
-
-            if existing_profile:
-                has_values = False
-                for field_name in profile_fields:
-                    if getattr(existing_profile, field_name, None):
-                        has_values = True
-                        break
-
-                if has_values:
-                    system_prompt += "\nCurrent values:\n"
-                    for field_name in profile_fields:
-                        value = getattr(existing_profile, field_name, None)
-                        if value:
-                            system_prompt += f"- {field_name}: {value}\n"
-
-            system_prompt += "\n"
-
-        # Memories section with improved categories
-        system_prompt += dedent("""\
-            ## Memories
+            ## Memory Categories
 
             Use memory tools for contextual information organized by relevance:
 
@@ -1290,7 +1002,7 @@ class UserProfileStore(LearningStore):
         """)
 
         # Custom instructions or defaults
-        profile_capture_instructions = self.config.instructions or dedent("""\
+        capture_instructions = self.config.instructions or dedent("""\
             ## What To Capture
 
             **DO save:**
@@ -1310,7 +1022,7 @@ class UserProfileStore(LearningStore):
             - Trivial preferences that don't affect interactions\
         """)
 
-        system_prompt += profile_capture_instructions
+        system_prompt += capture_instructions
 
         system_prompt += dedent("""
 
@@ -1363,9 +1075,6 @@ class UserProfileStore(LearningStore):
         # Available actions
         system_prompt += "\n## Available Actions\n\n"
 
-        if self.config.enable_update_profile and profile_fields:
-            fields_list = ", ".join(profile_fields.keys())
-            system_prompt += f"- `update_profile`: Set profile fields ({fields_list})\n"
         if self.config.enable_add_memory:
             system_prompt += "- `add_memory`: Add a new memory (only if genuinely new information)\n"
         if self.config.enable_update_memory:
@@ -1381,12 +1090,6 @@ class UserProfileStore(LearningStore):
 
             **Example 1: New user introduction**
             User: "I'm Sarah, I run engineering at Stripe. We're migrating to Kubernetes."
-        """)
-
-        if profile_fields and self.config.enable_update_profile and "name" in profile_fields:
-            system_prompt += '→ update_profile(name="Sarah")\n'
-
-        system_prompt += dedent("""\
             → add_memory("Engineering lead at Stripe, currently migrating infrastructure to Kubernetes")
 
             **Example 2: Updating existing context**
@@ -1419,24 +1122,13 @@ class UserProfileStore(LearningStore):
         self,
         user_id: str,
         input_string: str,
-        existing_profile: Optional[Any] = None,
+        existing_memories: Optional[Any] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> List[Callable]:
         """Get sync extraction tools for the model."""
         functions: List[Callable] = []
 
-        # Profile update tool
-        if self.config.enable_update_profile:
-            update_profile = self._build_update_profile_tool(
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-            )
-            if update_profile:
-                functions.append(update_profile)
-
-        # Memory tools
         if self.config.enable_add_memory:
 
             def add_memory(memory: str) -> str:
@@ -1454,11 +1146,11 @@ class UserProfileStore(LearningStore):
                     Confirmation message.
                 """
                 try:
-                    profile = self.get(user_id=user_id)
-                    if profile is None:
-                        profile = self.schema(user_id=user_id)
+                    memories_data = self.get(user_id=user_id)
+                    if memories_data is None:
+                        memories_data = self.schema(user_id=user_id)
 
-                    if hasattr(profile, "memories"):
+                    if hasattr(memories_data, "memories"):
                         memory_id = str(uuid.uuid4())[:8]
                         memory_entry = {
                             "id": memory_id,
@@ -1469,9 +1161,9 @@ class UserProfileStore(LearningStore):
                             memory_entry["added_by_agent"] = agent_id
                         if team_id:
                             memory_entry["added_by_team"] = team_id
-                        profile.memories.append(memory_entry)
+                        memories_data.memories.append(memory_entry)
 
-                    self.save(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
+                    self.save(user_id=user_id, memories=memories_data, agent_id=agent_id, team_id=team_id)
                     log_debug(f"Memory added: {memory[:50]}...")
                     return f"Memory saved: {memory}"
                 except Exception as e:
@@ -1497,12 +1189,12 @@ class UserProfileStore(LearningStore):
                     Confirmation message.
                 """
                 try:
-                    profile = self.get(user_id=user_id)
-                    if profile is None:
-                        return "No profile found"
+                    memories_data = self.get(user_id=user_id)
+                    if memories_data is None:
+                        return "No memories found"
 
-                    if hasattr(profile, "memories"):
-                        for mem in profile.memories:
+                    if hasattr(memories_data, "memories"):
+                        for mem in memories_data.memories:
                             if isinstance(mem, dict) and mem.get("id") == memory_id:
                                 mem["content"] = memory
                                 mem["source"] = input_string[:200] if input_string else None
@@ -1510,12 +1202,12 @@ class UserProfileStore(LearningStore):
                                     mem["updated_by_agent"] = agent_id
                                 if team_id:
                                     mem["updated_by_team"] = team_id
-                                self.save(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
+                                self.save(user_id=user_id, memories=memories_data, agent_id=agent_id, team_id=team_id)
                                 log_debug(f"Memory updated: {memory_id}")
                                 return f"Memory updated: {memory}"
                         return f"Memory {memory_id} not found"
 
-                    return "Profile has no memories field"
+                    return "No memories field"
                 except Exception as e:
                     log_warning(f"Error updating memory: {e}")
                     return f"Error: {e}"
@@ -1539,24 +1231,24 @@ class UserProfileStore(LearningStore):
                     Confirmation message.
                 """
                 try:
-                    profile = self.get(user_id=user_id)
-                    if profile is None:
-                        return "No profile found"
+                    memories_data = self.get(user_id=user_id)
+                    if memories_data is None:
+                        return "No memories found"
 
-                    if hasattr(profile, "memories"):
-                        original_len = len(profile.memories)
-                        profile.memories = [
+                    if hasattr(memories_data, "memories"):
+                        original_len = len(memories_data.memories)
+                        memories_data.memories = [
                             mem
-                            for mem in profile.memories
+                            for mem in memories_data.memories
                             if not (isinstance(mem, dict) and mem.get("id") == memory_id)
                         ]
-                        if len(profile.memories) < original_len:
-                            self.save(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
+                        if len(memories_data.memories) < original_len:
+                            self.save(user_id=user_id, memories=memories_data, agent_id=agent_id, team_id=team_id)
                             log_debug(f"Memory deleted: {memory_id}")
                             return f"Memory {memory_id} deleted"
                         return f"Memory {memory_id} not found"
 
-                    return "Profile has no memories field"
+                    return "No memories field"
                 except Exception as e:
                     log_warning(f"Error deleting memory: {e}")
                     return f"Error: {e}"
@@ -1587,24 +1279,13 @@ class UserProfileStore(LearningStore):
         self,
         user_id: str,
         input_string: str,
-        existing_profile: Optional[Any] = None,
+        existing_memories: Optional[Any] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> List[Callable]:
         """Get async extraction tools for the model."""
         functions: List[Callable] = []
 
-        # Profile update tool
-        if self.config.enable_update_profile:
-            update_profile = await self._abuild_update_profile_tool(
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-            )
-            if update_profile:
-                functions.append(update_profile)
-
-        # Memory tools
         if self.config.enable_add_memory:
 
             async def add_memory(memory: str) -> str:
@@ -1622,11 +1303,11 @@ class UserProfileStore(LearningStore):
                     Confirmation message.
                 """
                 try:
-                    profile = await self.aget(user_id=user_id)
-                    if profile is None:
-                        profile = self.schema(user_id=user_id)
+                    memories_data = await self.aget(user_id=user_id)
+                    if memories_data is None:
+                        memories_data = self.schema(user_id=user_id)
 
-                    if hasattr(profile, "memories"):
+                    if hasattr(memories_data, "memories"):
                         memory_id = str(uuid.uuid4())[:8]
                         memory_entry = {
                             "id": memory_id,
@@ -1637,9 +1318,9 @@ class UserProfileStore(LearningStore):
                             memory_entry["added_by_agent"] = agent_id
                         if team_id:
                             memory_entry["added_by_team"] = team_id
-                        profile.memories.append(memory_entry)
+                        memories_data.memories.append(memory_entry)
 
-                    await self.asave(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
+                    await self.asave(user_id=user_id, memories=memories_data, agent_id=agent_id, team_id=team_id)
                     log_debug(f"Memory added: {memory[:50]}...")
                     return f"Memory saved: {memory}"
                 except Exception as e:
@@ -1665,12 +1346,12 @@ class UserProfileStore(LearningStore):
                     Confirmation message.
                 """
                 try:
-                    profile = await self.aget(user_id=user_id)
-                    if profile is None:
-                        return "No profile found"
+                    memories_data = await self.aget(user_id=user_id)
+                    if memories_data is None:
+                        return "No memories found"
 
-                    if hasattr(profile, "memories"):
-                        for mem in profile.memories:
+                    if hasattr(memories_data, "memories"):
+                        for mem in memories_data.memories:
                             if isinstance(mem, dict) and mem.get("id") == memory_id:
                                 mem["content"] = memory
                                 mem["source"] = input_string[:200] if input_string else None
@@ -1678,12 +1359,14 @@ class UserProfileStore(LearningStore):
                                     mem["updated_by_agent"] = agent_id
                                 if team_id:
                                     mem["updated_by_team"] = team_id
-                                await self.asave(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
+                                await self.asave(
+                                    user_id=user_id, memories=memories_data, agent_id=agent_id, team_id=team_id
+                                )
                                 log_debug(f"Memory updated: {memory_id}")
                                 return f"Memory updated: {memory}"
                         return f"Memory {memory_id} not found"
 
-                    return "Profile has no memories field"
+                    return "No memories field"
                 except Exception as e:
                     log_warning(f"Error updating memory: {e}")
                     return f"Error: {e}"
@@ -1707,24 +1390,26 @@ class UserProfileStore(LearningStore):
                     Confirmation message.
                 """
                 try:
-                    profile = await self.aget(user_id=user_id)
-                    if profile is None:
-                        return "No profile found"
+                    memories_data = await self.aget(user_id=user_id)
+                    if memories_data is None:
+                        return "No memories found"
 
-                    if hasattr(profile, "memories"):
-                        original_len = len(profile.memories)
-                        profile.memories = [
+                    if hasattr(memories_data, "memories"):
+                        original_len = len(memories_data.memories)
+                        memories_data.memories = [
                             mem
-                            for mem in profile.memories
+                            for mem in memories_data.memories
                             if not (isinstance(mem, dict) and mem.get("id") == memory_id)
                         ]
-                        if len(profile.memories) < original_len:
-                            await self.asave(user_id=user_id, profile=profile, agent_id=agent_id, team_id=team_id)
+                        if len(memories_data.memories) < original_len:
+                            await self.asave(
+                                user_id=user_id, memories=memories_data, agent_id=agent_id, team_id=team_id
+                            )
                             log_debug(f"Memory deleted: {memory_id}")
                             return f"Memory {memory_id} deleted"
                         return f"Memory {memory_id} not found"
 
-                    return "Profile has no memories field"
+                    return "No memories field"
                 except Exception as e:
                     log_warning(f"Error deleting memory: {e}")
                     return f"Error: {e}"
@@ -1760,7 +1445,7 @@ class UserProfileStore(LearningStore):
         has_db = self.db is not None
         has_model = self.model is not None
         return (
-            f"UserProfileStore("
+            f"MemoriesStore("
             f"mode={self.config.mode.value}, "
             f"db={has_db}, "
             f"model={has_model}, "
@@ -1768,43 +1453,30 @@ class UserProfileStore(LearningStore):
         )
 
     def print(self, user_id: str, *, raw: bool = False) -> None:
-        """Print formatted user profile.
+        """Print formatted memories.
 
         Args:
-            user_id: The user to print profile for.
+            user_id: The user to print memories for.
             raw: If True, print raw dict using pprint instead of formatted panel.
 
         Example:
             >>> store.print(user_id="alice@example.com")
-            ╭──────────────── User Profile ─────────────────╮
-            │ Name: Alice                                   │
-            │ Preferred Name: Ali                           │
-            │ Memories:                                     │
-            │   [dim][a1b2c3d4][/dim] Loves Python          │
-            │   [dim][e5f6g7h8][/dim] Works at Anthropic    │
-            ╰─────────────── alice@example.com ─────────────╯
+            ╭──────────────── Memories ─────────────────╮
+            │ Memories:                                 │
+            │   [dim][a1b2c3d4][/dim] Loves Python      │
+            │   [dim][e5f6g7h8][/dim] Works at Anthropic│
+            ╰─────────────── alice@example.com ─────────╯
         """
         from agno.learn.utils import print_panel
 
-        profile = self.get(user_id=user_id)
+        memories_data = self.get(user_id=user_id)
 
         lines = []
 
-        if profile:
-            # Add profile fields
-            updateable_fields = self._get_updateable_fields()
-            for field_name in updateable_fields:
-                value = getattr(profile, field_name, None)
-                if value:
-                    display_name = field_name.replace("_", " ").title()
-                    lines.append(f"{display_name}: {value}")
-
-            # Add memories
-            if hasattr(profile, "memories") and profile.memories:
-                if lines:
-                    lines.append("")  # Blank line before memories
+        if memories_data:
+            if hasattr(memories_data, "memories") and memories_data.memories:
                 lines.append("Memories:")
-                for mem in profile.memories:
+                for mem in memories_data.memories:
                     if isinstance(mem, dict):
                         mem_id = mem.get("id", "?")
                         content = mem.get("content", str(mem))
@@ -1814,10 +1486,10 @@ class UserProfileStore(LearningStore):
                     lines.append(f"  [dim]\\[{mem_id}][/dim] {content}")
 
         print_panel(
-            title="User Profile",
+            title="Memories",
             subtitle=user_id,
             lines=lines,
-            empty_message="No profile data",
-            raw_data=profile,
+            empty_message="No memories",
+            raw_data=memories_data,
             raw=raw,
         )

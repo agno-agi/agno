@@ -178,9 +178,9 @@ class LearnedKnowledgeStore(LearningStore):
             namespace: Namespace to save learnings to (default: "global").
             **kwargs: Additional context (ignored).
         """
-        # process only supported in BACKGROUND mode
+        # process only supported in ALWAYS mode
         # for programmatic extraction, use extract_and_save directly
-        if self.config.mode != LearningMode.BACKGROUND:
+        if self.config.mode != LearningMode.ALWAYS:
             return
 
         if not messages:
@@ -204,7 +204,7 @@ class LearnedKnowledgeStore(LearningStore):
         **kwargs,
     ) -> None:
         """Async version of process."""
-        if self.config.mode != LearningMode.BACKGROUND:
+        if self.config.mode != LearningMode.ALWAYS:
             return
 
         if not messages:
