@@ -78,18 +78,18 @@ def show_full_context(session_id: str) -> None:
     print(f"\n  🎯 Goal: {context.goal or '(not set)'}")
 
     if context.plan:
-        print(f"\n  📝 Plan:")
+        print("\n  📝 Plan:")
         for i, step in enumerate(context.plan, 1):
             print(f"     {i}. {step}")
     else:
-        print(f"\n  📝 Plan: (not set)")
+        print("\n  📝 Plan: (not set)")
 
     if context.progress:
-        print(f"\n  ✅ Progress:")
+        print("\n  ✅ Progress:")
         for item in context.progress:
             print(f"     ✓ {item}")
     else:
-        print(f"\n  ✅ Progress: (none yet)")
+        print("\n  ✅ Progress: (none yet)")
 
     print(f"\n  📄 Summary: {context.summary or '(none)'}")
 

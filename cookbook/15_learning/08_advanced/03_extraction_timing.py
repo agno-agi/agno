@@ -13,7 +13,6 @@ Key Concepts:
 Run: python -m cookbook.advanced.03_extraction_timing
 """
 
-from agno.learn import LearningMachine, LearningMode
 
 # =============================================================================
 # EXTRACTION MODES

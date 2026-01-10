@@ -13,9 +13,7 @@ Key Concepts:
 Run: python -m cookbook.advanced.06_debugging
 """
 
-from datetime import datetime
 
-from agno.learn import LearningMachine, LearningMode
 
 # =============================================================================
 # INSPECTING STORED DATA

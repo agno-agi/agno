@@ -14,7 +14,6 @@ Run: python -m cookbook.advanced.04_custom_store
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 # =============================================================================

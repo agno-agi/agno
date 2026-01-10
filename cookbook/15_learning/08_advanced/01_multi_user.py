@@ -14,12 +14,7 @@ Key Concepts:
 Run: python -m cookbook.advanced.01_multi_user
 """
 
-from agno.learn import LearningMachine, LearningMode
-from agno.learn.config import (
-    EntityMemoryConfig,
-    LearnedKnowledgeConfig,
-    UserProfileConfig,
-)
+from agno.learn import LearningMachine
 
 # =============================================================================
 # USER ISOLATION

@@ -99,7 +99,7 @@ def demo_long_conversation():
         if context.goal:
             print(f"\n🎯 Goal: {context.goal}")
         if context.progress:
-            print(f"\n✅ Progress:")
+            print("\n✅ Progress:")
             for p in context.progress:
                 print(f"   ✓ {p}")
 

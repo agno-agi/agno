@@ -13,9 +13,6 @@ Key Concepts:
 Run: python -m cookbook.advanced.05_async_patterns
 """
 
-import asyncio
-from datetime import datetime
-from typing import Any, Dict, List
 
 # =============================================================================
 # BASIC ASYNC USAGE

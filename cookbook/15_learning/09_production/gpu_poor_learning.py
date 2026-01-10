@@ -14,7 +14,6 @@ Key Concepts:
 Run: python -m cookbook.production.gpu_poor_learning
 """
 
-from agno.learn import LearningMachine, LearningMode
 
 # =============================================================================
 # COST BREAKDOWN

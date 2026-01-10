@@ -14,7 +14,7 @@ Key Concepts:
 Run: python -m cookbook.patterns.onboarding_agent
 """
 
-from agno.learn import LearningMachine, LearningMode
+from agno.learn import LearningMachine
 
 # =============================================================================
 # AGENT SETUP

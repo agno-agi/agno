@@ -14,9 +14,7 @@ Key Concepts:
 Run: python -m cookbook.advanced.02_curator_maintenance
 """
 
-from datetime import datetime, timedelta
 
-from agno.learn import LearningMachine, LearningMode
 
 # =============================================================================
 # MEMORY QUALITY MONITORING
