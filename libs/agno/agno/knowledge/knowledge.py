@@ -659,6 +659,20 @@ class Knowledge:
             if self._should_include_file(str(path), include, exclude):
                 log_debug(f"Adding file {path} due to include/exclude filters")
 
+                # Calculate file_type and size BEFORE adding to contents DB
+                # so the database record has the correct values
+                if not content.file_type:
+                    content.file_type = path.suffix
+
+                if not content.size and content.file_data:
+                    content.size = len(content.file_data.content)  # type: ignore
+                if not content.size:
+                    try:
+                        content.size = path.stat().st_size
+                    except (OSError, IOError) as e:
+                        log_warning(f"Could not get file size for {path}: {e}")
+                        content.size = 0
+
                 await self._add_to_contents_db_async(content)
                 if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
                     content.status = ContentStatus.COMPLETED
@@ -683,18 +697,6 @@ class Knowledge:
                     )
                 else:
                     read_documents = []
-
-                if not content.file_type:
-                    content.file_type = path.suffix
-
-                if not content.size and content.file_data:
-                    content.size = len(content.file_data.content)  # type: ignore
-                if not content.size:
-                    try:
-                        content.size = path.stat().st_size
-                    except (OSError, IOError) as e:
-                        log_warning(f"Could not get file size for {path}: {e}")
-                        content.size = 0
 
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
@@ -742,6 +744,20 @@ class Knowledge:
             if self._should_include_file(str(path), include, exclude):
                 log_debug(f"Adding file {path} due to include/exclude filters")
 
+                # Calculate file_type and size BEFORE adding to contents DB
+                # so the database record has the correct values
+                if not content.file_type:
+                    content.file_type = path.suffix
+
+                if not content.size and content.file_data:
+                    content.size = len(content.file_data.content)  # type: ignore
+                if not content.size:
+                    try:
+                        content.size = path.stat().st_size
+                    except (OSError, IOError) as e:
+                        log_warning(f"Could not get file size for {path}: {e}")
+                        content.size = 0
+
                 self._add_to_contents_db(content)
                 if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
                     content.status = ContentStatus.COMPLETED
@@ -779,18 +795,6 @@ class Knowledge:
                             )
                         else:
                             read_documents = reader.read(path, name=content.name or path.name)
-
-                if not content.file_type:
-                    content.file_type = path.suffix
-
-                if not content.size and content.file_data:
-                    content.size = len(content.file_data.content)  # type: ignore
-                if not content.size:
-                    try:
-                        content.size = path.stat().st_size
-                    except (OSError, IOError) as e:
-                        log_warning(f"Could not get file size for {path}: {e}")
-                        content.size = 0
 
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
