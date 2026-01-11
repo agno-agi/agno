@@ -807,7 +807,6 @@ class Knowledge:
                         )
                     else:
                         read_documents = []
-
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id)
@@ -1027,7 +1026,7 @@ class Knowledge:
                 else:
                     password = content.auth.password if content.auth and content.auth.password else None
                     source = bytes_content if bytes_content else content.url
-                    read_documents = self._read_with_reader(reader, source, name=name, password=password)
+                    read_documents = await self._read_with_reader_async(reader, source, name=name, password=password)
 
         except Exception as e:
             log_error(f"Error reading URL: {content.url} - {str(e)}")
