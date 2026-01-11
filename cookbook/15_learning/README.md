@@ -9,7 +9,7 @@ LearningMachine is a unified learning system that enables agents to learn from e
 | Store | What It Captures | Scope | Use Case |
 |-------|------------------|-------|----------|
 | **User Profile** | Structured fields (name, preferences) | Per user | Personalization |
-| **Memories** | Unstructured observations about users | Per user | Context, preferences |
+| **User Memory** | Unstructured observations about users | Per user | Context, preferences |
 | **Session Context** | Goal, plan, progress, summary | Per session | Task continuity |
 | **Entity Memory** | Facts, events, relationships | Configurable | CRM, knowledge graph |
 | **Learned Knowledge** | Insights, patterns, best practices | Configurable | Collective intelligence |
