@@ -1,6 +1,9 @@
+import mimetypes
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
+from urllib.parse import urlparse
 
 import httpx
 from pydantic import BaseModel
@@ -307,11 +310,20 @@ class OpenAIResponses(Model):
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
-    def _upload_file(self, file: File) -> Optional[str]:
-        """Upload a file to the OpenAI vector database."""
-        from pathlib import Path
-        from urllib.parse import urlparse
+    def _upload_file_with_purpose(
+        self,
+        file: File,
+        purpose: Literal["assistants", "batch", "fine-tune", "vision", "user_data", "evals"],
+    ) -> Optional[str]:
+        """Upload a file to OpenAI with the specified purpose.
 
+        Args:
+            file: File object to upload
+            purpose: Purpose for the file upload ("assistants" or "user_data")
+
+        Returns:
+            Optional[str]: The file ID if upload succeeds, None otherwise
+        """
         if file.url is not None:
             file_content_tuple = file.file_url_content
             if file_content_tuple is not None:
@@ -320,28 +332,39 @@ class OpenAIResponses(Model):
                 return None
             file_name = Path(urlparse(file.url).path).name or "file"
             file_tuple = (file_name, file_content)
-            result = self.get_client().files.create(file=file_tuple, purpose="assistants")
+            result = self.get_client().files.create(file=file_tuple, purpose=purpose)
             return result.id
         elif file.filepath is not None:
-            import mimetypes
-
             file_path = file.filepath if isinstance(file.filepath, Path) else Path(file.filepath)
             if file_path.exists() and file_path.is_file():
                 file_name = file_path.name
-                file_content = file_path.read_bytes()  # type: ignore
+                file_content = file_path.read_bytes()
                 content_type = mimetypes.guess_type(file_path)[0]
                 result = self.get_client().files.create(
                     file=(file_name, file_content, content_type),
-                    purpose="assistants",  # type: ignore
+                    purpose=purpose,
                 )
                 return result.id
             else:
                 raise ValueError(f"File not found: {file_path}")
         elif file.content is not None:
-            result = self.get_client().files.create(file=file.content, purpose="assistants")
+            result = self.get_client().files.create(file=file.content, purpose=purpose)
             return result.id
 
         return None
+
+    def _upload_file(self, file: File) -> Optional[str]:
+        """Upload a file to the OpenAI vector database."""
+        return self._upload_file_with_purpose(file, "assistants")
+
+    def _upload_file_for_input(self, file: File) -> Optional[str]:
+        """Upload a file for direct use in Responses API input (not vector store).
+
+        This uploads files with purpose="user_data" which is used when files
+        are passed directly in the input content blocks as input_file types,
+        rather than through vector stores with file_search tools.
+        """
+        return self._upload_file_with_purpose(file, "user_data")
 
     def _create_vector_store(self, file_ids: List[str]) -> str:
         """Create a vector store for the files."""
@@ -479,6 +502,26 @@ class OpenAIResponses(Model):
 
                 if message.videos is not None and len(message.videos) > 0:
                     log_warning("Video input is currently unsupported.")
+
+                # Handle files - upload and add as input_file content blocks
+                if message.files is not None and len(message.files) > 0:
+                    # Convert content to array format if it's a string
+                    if isinstance(message.content, str):
+                        message_dict["content"] = [{"type": "input_text", "text": message.content}]
+
+                    # Upload each file and add as input_file content block
+                    for file in message.files:
+                        file_id = self._upload_file_for_input(file)
+                        if file_id:
+                            # Insert at the beginning so files come before text
+                            if isinstance(message_dict["content"], list):
+                                message_dict["content"].insert(0, {"type": "input_file", "file_id": file_id})
+                            else:
+                                # If content is still a string somehow, convert it
+                                message_dict["content"] = [
+                                    {"type": "input_file", "file_id": file_id},
+                                    {"type": "input_text", "text": message_dict["content"]},
+                                ]
 
                 formatted_messages.append(message_dict)
 
