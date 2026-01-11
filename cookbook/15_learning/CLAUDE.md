@@ -1,6 +1,6 @@
-# CLAUDE.md - Learning Machine Testing
+# CLAUDE.md - Learning Machines Cookbook
 
-Instructions for Claude Code when testing the Learning Machine implementation.
+Instructions for Claude Code when testing the Learning Machine cookbooks.
 
 ---
 
