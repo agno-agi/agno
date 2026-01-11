@@ -73,7 +73,7 @@ if __name__ == "__main__":
         session_id="session_1",
         stream=True,
     )
-    agent.learning.learned_knowledge_store.print(query="cloud egress")
+    agent.get_learning_machine().learned_knowledge_store.print(query="cloud egress")
 
     # Save another learning
     print("\n" + "=" * 60)
@@ -87,7 +87,9 @@ if __name__ == "__main__":
         session_id="session_2",
         stream=True,
     )
-    agent.learning.learned_knowledge_store.print(query="database migration")
+    agent.get_learning_machine().learned_knowledge_store.print(
+        query="database migration"
+    )
 
     # Apply learnings
     print("\n" + "=" * 60)

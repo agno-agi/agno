@@ -60,7 +60,9 @@ if __name__ == "__main__":
     )
 
     print("\n--- Extracted Entities ---")
-    entities = agent.learning.entity_memory_store.search(query="acme", limit=10)
+    entities = agent.get_learning_machine().entity_memory_store.search(
+        query="acme", limit=10
+    )
     pprint(entities)
 
     # Session 2: Add more info about same entity
@@ -77,5 +79,7 @@ if __name__ == "__main__":
     )
 
     print("\n--- Updated Entities ---")
-    entities = agent.learning.entity_memory_store.search(query="acme", limit=10)
+    entities = agent.get_learning_machine().entity_memory_store.search(
+        query="acme", limit=10
+    )
     pprint(entities)

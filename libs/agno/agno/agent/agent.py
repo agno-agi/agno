@@ -365,8 +365,6 @@ class Agent:
     learning: Optional[Union[bool, LearningMachine]] = None
     # Add learnings context to system prompt
     add_learnings_to_context: bool = True
-    # Internal: resolved LearningMachine instance (use get_learning_machine() to access)
-    _learning: Optional[LearningMachine] = None
 
     # --- Extra Messages ---
     # A list of extra messages added after the system message and before the user message.
@@ -717,6 +715,10 @@ class Agent:
             debug_level = 1
         self.debug_level = debug_level
         self.telemetry = telemetry
+
+        # Internal use: _learning holds the resolved LearningMachine instance
+        # use get_learning_machine() to access it.
+        self._learning: Optional[LearningMachine] = None
 
         # If we are caching the agent session
         self._cached_session: Optional[AgentSession] = None
