@@ -149,26 +149,11 @@ class Function(BaseModel):
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Function":
         """Reconstruct a Function from a dictionary."""
-        # Normalize parameters to ensure valid JSON Schema format
-        parameters = data.get("parameters")
-        if parameters is None or parameters == {}:
-            # Empty dict or None should be normalized to proper JSON Schema
-            parameters = {"type": "object", "properties": {}, "required": []}
-        elif isinstance(parameters, dict):
-            # Make a copy to avoid modifying the original
-            parameters = parameters.copy()
-            # Ensure it has required fields for JSON Schema
-            if "type" not in parameters:
-                parameters["type"] = "object"
-            if "properties" not in parameters:
-                parameters["properties"] = {}
-            if "required" not in parameters:
-                parameters["required"] = []
         
         return cls(
             name=data.get("name"),
             description=data.get("description"),
-            parameters=parameters,
+            parameters=data.get("parameters"),
             strict=data.get("strict"),
             requires_confirmation=data.get("requires_confirmation", False),
             external_execution=data.get("external_execution", False),
