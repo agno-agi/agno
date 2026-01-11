@@ -387,11 +387,61 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 
 ---
 
+## 06_quick_tests/
+
+### 01_async_user_profile.py
+
+**Status:** PASS
+
+**Description:** Tests async path (aprint_response) for user profile learning.
+
+**Result:** Async extraction works correctly. Profile persists across async sessions.
+
+---
+
+### 02_learning_true_shorthand.py
+
+**Status:** PASS
+
+**Description:** Tests `learning=True` shorthand - the simplest way to enable learning.
+
+**Result:** Shorthand works. Default LearningMachine created with UserProfile enabled.
+
+**Note:** LearningMachine is lazily initialized - only created when agent runs, not on construction.
+
+---
+
+### 03_no_db_graceful.py
+
+**Status:** PASS
+
+**Description:** Tests graceful degradation when no database is provided.
+
+**Result:** Agent responds normally without crashing. Warning logged: "Database not provided. LearningMachine not initialized." Profile not persisted (expected).
+
+---
+
+### 04_claude_model.py
+
+**Status:** PASS
+
+**Description:** Tests learning with Claude model instead of OpenAI.
+
+**Result:** Profile extraction works with `claude-sonnet-4-5`. Name and preferred_name extracted correctly. Profile recalled in session 2.
+
+**Note:** Older Claude model IDs (e.g., `claude-sonnet-4-20250514`) may not support structured outputs. Use `claude-sonnet-4-5` or newer.
+
+---
+
+## 06_quick_tests COMPLETE - All 4 tests passed
+
+---
+
 ## TESTING COMPLETE
 
 **Summary:**
-- Total cookbooks tested: 20
-- All passed: 20/20
+- Total cookbooks tested: 24
+- All passed: 24/24
 - API change validated: `agent.get_learning_machine()` works correctly
 
 **Key Changes Validated:**
@@ -399,3 +449,11 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 2. All store accessors work: `user_profile_store`, `memories_store`, `session_context_store`, `entity_memory_store`, `learned_knowledge_store`
 3. The public `agent.learning` field is preserved (not mutated)
 4. Internal `agent._learning` field holds the resolved machine
+5. Async path works correctly
+6. `learning=True` shorthand works
+7. Graceful degradation without DB
+8. Claude models work (use `claude-sonnet-4-5` or newer)
+
+**Notes:**
+- LearningMachine is lazily initialized (only on first run)
+- Older Claude model IDs may not support structured outputs

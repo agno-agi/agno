@@ -110,6 +110,7 @@ cookbook/15_learning/
 ├── 03_session_context/  # Session context specific tests
 ├── 04_entity_memory/    # Entity memory specific tests
 ├── 05_learned_knowledge/ # Learned knowledge specific tests
+├── 06_quick_tests/      # Quick validation tests (async, shorthand, edge cases)
 ├── 07_patterns/         # Combined pattern tests
 ├── TESTING.md           # Test results log
 └── CLAUDE.md            # This file
@@ -143,6 +144,10 @@ learning_machine.learned_knowledge_store.print(query="...")
 3. **PROPOSE mode**: Only supported in LearnedKnowledgeStore.
 
 4. **Model in cookbooks**: Uses `gpt-5.2` which may not be available to all users.
+
+5. **Claude model version matters**: Use `claude-sonnet-4-5` or newer. Older model IDs (e.g., `claude-sonnet-4-20250514`) don't support structured outputs and extraction will fail. See `06_quick_tests/04_claude_model.py`.
+
+6. **Lazy initialization**: `LearningMachine` is only initialized when the agent runs, not when constructed. Calling `agent.get_learning_machine()` before the first `print_response()` will return `None`.
 
 ---
 
