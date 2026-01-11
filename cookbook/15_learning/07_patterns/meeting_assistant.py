@@ -90,17 +90,12 @@ Be thorough - every person, project, and decision should be tracked.""",
 # ============================================================================
 
 if __name__ == "__main__":
-    # =========================================================================
-    # MEETING 1: Team Standup
-    # =========================================================================
-    print("=" * 70)
+    # Team standup meeting
+    print("\n" + "=" * 60)
     print("MEETING 1: Team Standup")
-    print("=" * 70)
-    print("\nExpected: Create entities for team members and projects\n")
+    print("=" * 60 + "\n")
 
     standup = create_meeting_assistant("manager@company.com", "standup-2024-01-15")
-
-    print("--- Meeting starts ---\n")
     standup.print_response(
         "Starting our Monday standup. Present: Alice (senior engineer), "
         "Bob (junior engineer), and myself. "
@@ -108,7 +103,6 @@ if __name__ == "__main__":
         stream=True,
     )
 
-    print("\n--- Project updates ---\n")
     standup.print_response(
         "Alice: Project Atlas is on track for Q1 launch. Finished the auth module. "
         "Bob: Working on the onboarding flow for Atlas, blocked on API specs. "
@@ -117,7 +111,6 @@ if __name__ == "__main__":
         stream=True,
     )
 
-    print("\n--- Action items ---\n")
     standup.print_response(
         "Action items from this standup: "
         "1. Alice to review Bob's PR by Wednesday "
@@ -126,56 +119,43 @@ if __name__ == "__main__":
         "Please record these as events.",
         stream=True,
     )
-
-    print("\n--- Session Context (meeting notes) ---")
     standup.get_learning_machine().session_context_store.print(
         session_id="standup-2024-01-15"
     )
 
-    # =========================================================================
-    # MEETING 2: 1:1 with Alice
-    # =========================================================================
-    print("\n" + "=" * 70)
+    # 1:1 meeting with Alice
+    print("\n" + "=" * 60)
     print("MEETING 2: 1:1 with Alice")
-    print("=" * 70)
-    print("\nExpected: Retrieve Alice entity, add career-related facts\n")
+    print("=" * 60 + "\n")
 
     one_on_one = create_meeting_assistant(
         "manager@company.com", "1on1-alice-2024-01-15"
     )
 
-    print("--- 1:1 starts ---\n")
     one_on_one.print_response(
         "Starting 1:1 with Alice. First, what do we know about her from previous meetings?",
         stream=True,
     )
 
-    print("\n--- Career discussion ---\n")
     one_on_one.print_response(
         "Alice shared she's interested in moving to a tech lead role. "
         "She wants to mentor Bob more actively. Her strength is system design. "
         "Please add these as facts to Alice's entity.",
         stream=True,
     )
-
-    print("\n--- Session Context (1:1 notes) ---")
     one_on_one.get_learning_machine().session_context_store.print(
         session_id="1on1-alice-2024-01-15"
     )
 
-    # =========================================================================
-    # MEETING 3: Client Call with Acme Corp
-    # =========================================================================
-    print("\n" + "=" * 70)
+    # Client call with Acme Corp
+    print("\n" + "=" * 60)
     print("MEETING 3: Client Call with Acme Corp")
-    print("=" * 70)
-    print("\nExpected: Create company entity, track meeting decisions\n")
+    print("=" * 60 + "\n")
 
     client_call = create_meeting_assistant(
         "manager@company.com", "client-acme-2024-01-16"
     )
 
-    print("--- Client call starts ---\n")
     client_call.print_response(
         "Client call with Acme Corp. Their CTO Sarah Chen is on the call. "
         "Please create entities for Acme Corp (company) and Sarah Chen (person), "
@@ -183,7 +163,6 @@ if __name__ == "__main__":
         stream=True,
     )
 
-    print("\n--- Meeting discussion ---\n")
     client_call.print_response(
         "Acme wants to integrate Project Atlas into their platform. "
         "Timeline: Q2 launch. Budget approved for enterprise tier. "
@@ -192,7 +171,6 @@ if __name__ == "__main__":
         stream=True,
     )
 
-    print("\n--- Follow-ups ---\n")
     client_call.print_response(
         "Follow-up actions: "
         "1. Send Acme the technical specs by Friday "
@@ -202,60 +180,39 @@ if __name__ == "__main__":
         stream=True,
     )
 
-    # =========================================================================
-    # Evidence Summary
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("EVIDENCE SUMMARY")
-    print("=" * 70)
+    # Verify entities were created
+    print("\n" + "=" * 60)
+    print("VERIFICATION: Entity Tracking")
+    print("=" * 60 + "\n")
 
     em = client_call.get_learning_machine().entity_memory_store
 
-    print("\n[1] PEOPLE ENTITIES:")
+    print("People entities:")
     if em:
         for name in ["Alice", "Bob", "Sarah Chen"]:
             results = em.search(query=name, entity_type="person", limit=1)
             if results:
-                print(f"\n    {name}:")
                 entity = results[0]
-                if hasattr(entity, "facts") and entity.facts:
-                    for fact in entity.facts[:3]:
-                        print(f"      - {fact.get('content', fact)}")
+                print(f"  {name}: {len(entity.facts) if hasattr(entity, 'facts') else 0} facts")
             else:
-                print(f"\n    {name}: NOT FOUND")
+                print(f"  {name}: NOT FOUND")
 
-    print("\n[2] PROJECT ENTITIES:")
+    print("\nProject entities:")
     if em:
         results = em.search(query="Atlas", entity_type="project", limit=1)
         if results:
-            print("\n    Project Atlas: FOUND")
-            entity = results[0]
-            if hasattr(entity, "facts") and entity.facts:
-                for fact in entity.facts[:3]:
-                    print(f"      - {fact.get('content', fact)}")
+            print("  Project Atlas: FOUND")
 
-    print("\n[3] COMPANY ENTITIES:")
+    print("\nCompany entities:")
     if em:
         results = em.search(query="Acme", entity_type="company", limit=1)
         if results:
-            print("\n    Acme Corp: FOUND")
+            print("  Acme Corp: FOUND")
 
-    print("\n[4] SESSION CONTEXTS (meeting notes):")
+    print("\nSession contexts:")
     client_call.get_learning_machine().session_context_store.print(
         session_id="standup-2024-01-15"
     )
     client_call.get_learning_machine().session_context_store.print(
         session_id="client-acme-2024-01-16"
     )
-
-    print("\n" + "=" * 70)
-    print("TEST COMPLETE")
-    print("=" * 70)
-    print("""
-Review the output above to verify:
-- People, projects, and companies were created as entities
-- Facts were added (roles, skills, project status)
-- Events were logged (meetings, action items)
-- Relationships link people to projects and companies
-- Session context captured meeting notes and decisions
-""")

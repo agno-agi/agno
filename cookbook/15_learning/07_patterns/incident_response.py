@@ -87,35 +87,26 @@ Be concise and focus on actionable steps.""",
 # ============================================================================
 
 if __name__ == "__main__":
-    # =========================================================================
-    # INCIDENT 1: Sarah encounters database connection storm
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("INCIDENT INC-001: Database Connection Storm")
-    print("Engineer: Sarah")
-    print("=" * 70)
+    # Sarah encounters database connection storm
+    print("\n" + "=" * 60)
+    print("INCIDENT 1: Database Connection Storm (Sarah)")
+    print("=" * 60 + "\n")
 
     bot1 = create_oncall_bot("sarah@company.com", "INC-001")
-
-    print("\n--- Sarah reports the incident ---\n")
     bot1.print_response(
         "I'm getting paged - our API is throwing 'too many connections' errors to Postgres. "
         "Response times are spiking. What should I check first?",
         stream=True,
     )
-
-    print("\n--- Session Context (incident tracking) ---")
     bot1.get_learning_machine().session_context_store.print(session_id="INC-001")
 
-    print("\n--- Sarah investigates ---\n")
     bot1.print_response(
         "I checked pg_stat_activity - there are 500 connections! Our pool is set to 100. "
         "Most are in 'idle in transaction' state. What's causing this?",
         stream=True,
     )
 
-    # Resolution - Sarah explicitly asks bot to save the pattern
-    print("\n--- Sarah resolves and saves pattern ---\n")
+    # Sarah resolves and saves pattern
     bot1.print_response(
         "Found it! A new deployment had a missing connection.close() in a retry loop. "
         "Rolled back the deployment, connections dropping. Crisis averted! "
@@ -123,56 +114,32 @@ if __name__ == "__main__":
         "Root cause was unclosed connections in retry logic.",
         stream=True,
     )
-
-    print("\n--- Learned Knowledge (saved via save_learning) ---")
     bot1.get_learning_machine().learned_knowledge_store.print(
         query="database connections"
     )
 
-    # =========================================================================
-    # INCIDENT 2: Marcus hits similar issue - benefits from INC-001
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("INCIDENT INC-002: Similar Database Issue (Different Engineer)")
-    print("Engineer: Marcus")
-    print("=" * 70)
+    # Marcus encounters similar issue
+    print("\n" + "=" * 60)
+    print("INCIDENT 2: Similar Database Issue (Marcus)")
+    print("=" * 60 + "\n")
 
     bot2 = create_oncall_bot("marcus@company.com", "INC-002")
-
-    print("\n--- Marcus reports similar symptoms ---\n")
-    print(
-        "Expected: Bot should search_learnings and find Sarah's pattern from INC-001\n"
-    )
     bot2.print_response(
         "Seeing Postgres connection exhaustion on the payments service. "
         "Pool is maxed out. What's the fastest way to diagnose?",
         stream=True,
     )
 
-    # =========================================================================
-    # Evidence Summary
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("EVIDENCE: Cross-User Knowledge Sharing")
-    print("=" * 70)
+    # Verify cross-user knowledge sharing
+    print("\n" + "=" * 60)
+    print("VERIFICATION: Knowledge Sharing")
+    print("=" * 60 + "\n")
 
-    print("\n[1] LEARNED KNOWLEDGE:")
-    print("    Sarah's INC-001 pattern should help Marcus in INC-002")
+    print("Learned knowledge (shared across engineers):")
     bot2.get_learning_machine().learned_knowledge_store.print(
         query="connection postgres"
     )
 
-    print("\n[2] SESSION CONTEXT:")
-    print("    Each incident tracked separately")
+    print("\nSession contexts (separate per incident):")
     bot1.get_learning_machine().session_context_store.print(session_id="INC-001")
     bot2.get_learning_machine().session_context_store.print(session_id="INC-002")
-
-    print("\n" + "=" * 70)
-    print("TEST COMPLETE")
-    print("=" * 70)
-    print("""
-Review the output above to verify:
-- INC-001: Sarah resolved issue and save_learning was called
-- INC-002: Bot used search_learnings to find Sarah's pattern
-- Knowledge sharing worked across different engineers
-""")

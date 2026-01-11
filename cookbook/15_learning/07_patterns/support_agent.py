@@ -113,7 +113,7 @@ if __name__ == "__main__":
 
     # Ticket 2: Second customer with similar issue
     print("\n" + "=" * 60)
-    print("TICKET 2: Similar issue (should find prior solution)")
+    print("TICKET 2: Similar Issue")
     print("=" * 60 + "\n")
 
     agent2 = create_support_agent("customer_2@example.com", "ticket_002", org_id)

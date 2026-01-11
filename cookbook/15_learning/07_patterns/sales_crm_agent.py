@@ -110,19 +110,12 @@ so other sales reps can learn from it.""",
 # ============================================================================
 
 if __name__ == "__main__":
-    # =========================================================================
-    # PHASE 1: Alice logs a meeting and creates entities
-    # =========================================================================
-    print("=" * 70)
-    print("PHASE 1: Alice Logs Meeting - Entity Creation")
-    print("=" * 70)
-    print(
-        "\nExpected: search_entities -> create_entity -> add_fact -> add_event -> add_relationship\n"
-    )
+    # Alice logs a meeting
+    print("\n" + "=" * 60)
+    print("PHASE 1: Alice Logs Meeting")
+    print("=" * 60 + "\n")
 
     alice = create_sales_agent("alice@sales.com", "alice-session-1")
-
-    print("--- Alice logs meeting ---\n")
     alice.print_response(
         "I'm Alice, West Coast AE focusing on tech companies. "
         "I just had a meeting TODAY with Bob Chen, the CTO at Acme Corp. "
@@ -134,35 +127,23 @@ if __name__ == "__main__":
         stream=True,
     )
 
-    # =========================================================================
-    # PHASE 2: Carlos (different rep) queries shared data
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("PHASE 2: Carlos Queries Shared CRM Data")
-    print("=" * 70)
-    print("\nExpected: search_entities finds Alice's entities\n")
+    # Carlos queries shared CRM data
+    print("\n" + "=" * 60)
+    print("PHASE 2: Carlos Queries CRM")
+    print("=" * 60 + "\n")
 
     carlos = create_sales_agent("carlos@sales.com", "carlos-session-1")
-
-    print("--- Carlos queries Acme ---\n")
     carlos.print_response(
         "Carlos here, East Coast SDR. Search for what we know about Acme Corp and Bob Chen.",
         stream=True,
     )
 
-    # =========================================================================
-    # PHASE 3: Alice closes deal - adds event, saves winning pattern
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("PHASE 3: Alice Closes Deal - Add Event + Save Winning Pattern")
-    print("=" * 70)
-    print(
-        "\nExpected: add_event to record deal close, save_learning to capture pattern\n"
-    )
+    # Alice closes deal
+    print("\n" + "=" * 60)
+    print("PHASE 3: Alice Closes Deal")
+    print("=" * 60 + "\n")
 
     alice2 = create_sales_agent("alice@sales.com", "alice-session-2")
-
-    print("--- Alice closes the deal ---\n")
     alice2.print_response(
         "Great news! I closed Acme Corp for $55K ACV today! "
         "Please add this as an EVENT to the Acme Corp entity with today's date. "
@@ -172,51 +153,31 @@ if __name__ == "__main__":
         "and we moved fast on their Q1 timeline. Bob championed internally.",
         stream=True,
     )
-
-    print("\n--- Learned Pattern (saved via save_learning tool) ---")
     alice2.get_learning_machine().learned_knowledge_store.print(query="sales win")
 
-    # =========================================================================
-    # Evidence Summary
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("EVIDENCE SUMMARY")
-    print("=" * 70)
+    # Verify data was saved
+    print("\n" + "=" * 60)
+    print("VERIFICATION: Entity & Knowledge Sharing")
+    print("=" * 60 + "\n")
 
-    print("\n[1] LEARNED KNOWLEDGE (saved via save_learning):")
+    print("Learned knowledge:")
     alice2.get_learning_machine().learned_knowledge_store.print(query="sales")
 
-    print("\n[2] ENTITY MEMORY - Verify entities were created:")
+    print("\nEntity memory:")
     em = alice2.get_learning_machine().entity_memory_store
     if em:
-        print("\n    Searching for Acme Corp...")
         results = em.search(
             query="Acme Corp", entity_type="company", limit=1, namespace="sales:global"
         )
         if results:
-            print(
-                f"    Found: {results[0].name if hasattr(results[0], 'name') else results[0]}"
-            )
+            print(f"  Acme Corp: {results[0].name if hasattr(results[0], 'name') else 'FOUND'}")
         else:
-            print("    NOT FOUND - Entity creation failed!")
+            print("  Acme Corp: NOT FOUND")
 
-        print("\n    Searching for Bob Chen...")
         results = em.search(
             query="Bob Chen", entity_type="person", limit=1, namespace="sales:global"
         )
         if results:
-            print(
-                f"    Found: {results[0].name if hasattr(results[0], 'name') else results[0]}"
-            )
+            print(f"  Bob Chen: {results[0].name if hasattr(results[0], 'name') else 'FOUND'}")
         else:
-            print("    NOT FOUND - Entity creation failed!")
-
-    print("\n" + "=" * 70)
-    print("TEST COMPLETE")
-    print("=" * 70)
-    print("""
-Review the tool calls above to verify:
-- Phase 1: create_entity, add_fact, add_event, add_relationship were called
-- Phase 2: search_entities found the entities (cross-user sharing)
-- Phase 3: add_event recorded the deal close
-""")
+            print("  Bob Chen: NOT FOUND")
