@@ -12,14 +12,20 @@ from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
+from agno.utils.openai import (
+    _format_file_for_message,
+    audio_to_message,
+    images_to_message,
+)
 from agno.utils.tokens import count_schema_tokens
 
 try:
     import litellm
     from litellm import validate_environment
 except ImportError:
-    raise ImportError("`litellm` not installed. Please install it via `pip install litellm`")
+    raise ImportError(
+        "`litellm` not installed. Please install it via `pip install litellm`"
+    )
 
 
 @dataclass
@@ -34,6 +40,9 @@ class LiteLLM(Model):
     id: str = "gpt-4o"
     name: str = "LiteLLM"
     provider: str = "LiteLLM"
+
+    supports_native_structured_outputs: bool = False
+    supports_json_schema_outputs: bool = False
 
     api_key: Optional[str] = None
     api_base: Optional[str] = None
@@ -57,7 +66,9 @@ class LiteLLM(Model):
             self.api_key = getenv("LITELLM_API_KEY")
             if not self.api_key:
                 # Check for other present valid keys, e.g. OPENAI_API_KEY if self.id is an OpenAI model
-                env_validation = validate_environment(model=self.id, api_base=self.api_base)
+                env_validation = validate_environment(
+                    model=self.id, api_base=self.api_base
+                )
                 if not env_validation.get("keys_in_environment"):
                     log_error(
                         "LITELLM_API_KEY not set. Please set the LITELLM_API_KEY or other valid environment variables."
@@ -76,7 +87,9 @@ class LiteLLM(Model):
         self.client = litellm
         return self.client
 
-    def _format_messages(self, messages: List[Message], compress_tool_results: bool = False) -> List[Dict[str, Any]]:
+    def _format_messages(
+        self, messages: List[Message], compress_tool_results: bool = False
+    ) -> List[Dict[str, Any]]:
         """Format messages for LiteLLM API."""
         formatted_messages = []
         for m in messages:
@@ -89,7 +102,9 @@ class LiteLLM(Model):
             msg = {"role": m.role, "content": content}
 
             # Handle media
-            if (m.images is not None and len(m.images) > 0) or (m.audio is not None and len(m.audio) > 0):
+            if (m.images is not None and len(m.images) > 0) or (
+                m.audio is not None and len(m.audio) > 0
+            ):
                 if isinstance(m.content, str):
                     content_list = [{"type": "text", "text": m.content}]
                     if m.images is not None:
@@ -106,7 +121,9 @@ class LiteLLM(Model):
                 if isinstance(msg["content"], str):
                     content_list = [{"type": "text", "text": msg["content"]}]
                 else:
-                    content_list = msg["content"] if isinstance(msg["content"], list) else []
+                    content_list = (
+                        msg["content"] if isinstance(msg["content"], list) else []
+                    )
                 for file in m.files:
                     file_part = _format_file_for_message(file)
                     if file_part:
@@ -119,7 +136,10 @@ class LiteLLM(Model):
                     {
                         "id": tc.get("id", f"call_{i}"),
                         "type": "function",
-                        "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]},
+                        "function": {
+                            "name": tc["function"]["name"],
+                            "arguments": tc["function"]["arguments"],
+                        },
                     }
                     for i, tc in enumerate(m.tool_calls)
                 ]
@@ -141,7 +161,9 @@ class LiteLLM(Model):
 
         return formatted_messages
 
-    def get_request_params(self, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    def get_request_params(
+        self, tools: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
 
@@ -171,20 +193,121 @@ class LiteLLM(Model):
         # Handle metadata via extra_body as per LiteLLM docs
         if self.metadata:
             if self.extra_body:
-                base_params["extra_body"] = {**self.extra_body, "metadata": self.metadata}
+                base_params["extra_body"] = {
+                    **self.extra_body,
+                    "metadata": self.metadata,
+                }
             else:
                 base_params["extra_body"] = {"metadata": self.metadata}
         elif self.extra_body:
             base_params["extra_body"] = self.extra_body
 
         # Add additional request params if provided
-        request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
+        request_params: Dict[str, Any] = {
+            k: v for k, v in base_params.items() if v is not None
+        }
         if self.request_params:
             request_params.update(self.request_params)
 
         if request_params:
-            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
+            log_debug(
+                f"Calling {self.provider} with request parameters: {request_params}",
+                log_level=2,
+            )
         return request_params
+
+    def _get_response_format_param(
+        self, response_format: Optional[Union[Dict, Type[BaseModel]]]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Convert response_format to LiteLLM-compatible format.
+
+        Args:
+            response_format: Either a dict (already formatted) or a Pydantic BaseModel class.
+
+        Returns:
+            A dict suitable for the LiteLLM response_format parameter, or None.
+        """
+        if response_format is None:
+            return None
+
+        # If it's already a dict, pass it through (e.g., {"type": "json_object"})
+        if isinstance(response_format, dict):
+            return response_format
+
+        # If it's a Pydantic model class, convert to JSON schema format
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            schema = response_format.model_json_schema()
+            # Add additionalProperties: false for strict mode compliance (required by OpenAI)
+            schema = self._add_additional_properties_false(schema)
+            return {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_format.__name__,
+                    "strict": True,
+                    "schema": schema,
+                },
+            }
+
+        return None
+
+    def _add_additional_properties_false(
+        self, schema: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Recursively add 'additionalProperties: false' to all object schemas.
+
+        This is required by OpenAI's strict mode for structured outputs.
+        Without this, the API returns a 400 error.
+
+        Args:
+            schema: The JSON schema dict to modify.
+
+        Returns:
+            The modified schema with additionalProperties: false added to all objects.
+        """
+        if not isinstance(schema, dict):
+            return schema
+
+        # Create a copy to avoid modifying the original
+        schema = schema.copy()
+
+        # If this is an object type with properties, add additionalProperties: false
+        if schema.get("type") == "object" and "properties" in schema:
+            schema["additionalProperties"] = False
+
+            # Recursively process nested properties
+            for prop_name, prop_schema in schema.get("properties", {}).items():
+                schema["properties"][prop_name] = self._add_additional_properties_false(
+                    prop_schema
+                )
+
+        # Handle arrays with item schemas
+        if schema.get("type") == "array" and "items" in schema:
+            schema["items"] = self._add_additional_properties_false(schema["items"])
+
+        # Handle $defs (Pydantic v2 style for nested models)
+        if "$defs" in schema:
+            schema["$defs"] = {
+                name: self._add_additional_properties_false(def_schema)
+                for name, def_schema in schema["$defs"].items()
+            }
+
+        # Handle definitions (older JSON schema style)
+        if "definitions" in schema:
+            schema["definitions"] = {
+                name: self._add_additional_properties_false(def_schema)
+                for name, def_schema in schema["definitions"].items()
+            }
+
+        # Handle anyOf, oneOf, allOf
+        for key in ["anyOf", "oneOf", "allOf"]:
+            if key in schema:
+                schema[key] = [
+                    self._add_additional_properties_false(s) for s in schema[key]
+                ]
+
+        return schema
 
     def invoke(
         self,
@@ -198,7 +321,14 @@ class LiteLLM(Model):
     ) -> ModelResponse:
         """Sends a chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
-        completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
+        completion_kwargs["messages"] = self._format_messages(
+            messages, compress_tool_results
+        )
+
+        if self.supports_native_structured_outputs:
+            response_format_param = self._get_response_format_param(response_format)
+            if response_format_param is not None:
+                completion_kwargs["response_format"] = response_format_param
 
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
@@ -209,7 +339,9 @@ class LiteLLM(Model):
 
         assistant_message.metrics.stop_timer()
 
-        model_response = self._parse_provider_response(provider_response, response_format=response_format)
+        model_response = self._parse_provider_response(
+            provider_response, response_format=response_format
+        )
         return model_response
 
     def invoke_stream(
@@ -224,9 +356,16 @@ class LiteLLM(Model):
     ) -> Iterator[ModelResponse]:
         """Sends a streaming chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
-        completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
+        completion_kwargs["messages"] = self._format_messages(
+            messages, compress_tool_results
+        )
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
+
+        if self.supports_native_structured_outputs:
+            response_format_param = self._get_response_format_param(response_format)
+            if response_format_param is not None:
+                completion_kwargs["response_format"] = response_format_param
 
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
@@ -250,7 +389,14 @@ class LiteLLM(Model):
     ) -> ModelResponse:
         """Sends an asynchronous chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
-        completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
+        completion_kwargs["messages"] = self._format_messages(
+            messages, compress_tool_results
+        )
+
+        if self.supports_native_structured_outputs:
+            response_format_param = self._get_response_format_param(response_format)
+            if response_format_param is not None:
+                completion_kwargs["response_format"] = response_format_param
 
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
@@ -261,7 +407,9 @@ class LiteLLM(Model):
 
         assistant_message.metrics.stop_timer()
 
-        model_response = self._parse_provider_response(provider_response, response_format=response_format)
+        model_response = self._parse_provider_response(
+            provider_response, response_format=response_format
+        )
         return model_response
 
     async def ainvoke_stream(
@@ -276,9 +424,16 @@ class LiteLLM(Model):
     ) -> AsyncIterator[ModelResponse]:
         """Sends an asynchronous streaming chat request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
-        completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
+        completion_kwargs["messages"] = self._format_messages(
+            messages, compress_tool_results
+        )
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
+
+        if self.supports_native_structured_outputs:
+            response_format_param = self._get_response_format_param(response_format)
+            if response_format_param is not None:
+                completion_kwargs["response_format"] = response_format_param
 
         if run_response and run_response.metrics:
             run_response.metrics.set_time_to_first_token()
@@ -307,7 +462,10 @@ class LiteLLM(Model):
         if response_message.content is not None:
             model_response.content = response_message.content
 
-        if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
+        if (
+            hasattr(response_message, "reasoning_content")
+            and response_message.reasoning_content is not None
+        ):
             model_response.reasoning_content = response_message.reasoning_content
 
         if hasattr(response_message, "tool_calls") and response_message.tool_calls:
@@ -317,7 +475,10 @@ class LiteLLM(Model):
                     {
                         "id": tool_call.id,
                         "type": "function",
-                        "function": {"name": tool_call.function.name, "arguments": tool_call.function.arguments},
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments,
+                        },
                     }
                 )
 
@@ -334,17 +495,27 @@ class LiteLLM(Model):
             choice_delta = response_delta.choices[0].delta
 
             if choice_delta:
-                if hasattr(choice_delta, "content") and choice_delta.content is not None:
+                if (
+                    hasattr(choice_delta, "content")
+                    and choice_delta.content is not None
+                ):
                     model_response.content = choice_delta.content
 
-                if hasattr(choice_delta, "reasoning_content") and choice_delta.reasoning_content is not None:
+                if (
+                    hasattr(choice_delta, "reasoning_content")
+                    and choice_delta.reasoning_content is not None
+                ):
                     model_response.reasoning_content = choice_delta.reasoning_content
 
                 if hasattr(choice_delta, "tool_calls") and choice_delta.tool_calls:
                     processed_tool_calls = []
                     for tool_call in choice_delta.tool_calls:
                         # Get the actual index from the tool call, defaulting to 0 if not available
-                        actual_index = getattr(tool_call, "index", 0) if hasattr(tool_call, "index") else 0
+                        actual_index = (
+                            getattr(tool_call, "index", 0)
+                            if hasattr(tool_call, "index")
+                            else 0
+                        )
 
                         # Create a basic structure with the correct index
                         tool_call_dict = {"index": actual_index, "type": "function"}
@@ -356,10 +527,18 @@ class LiteLLM(Model):
                         # Extract function data
                         function_data = {}
                         if hasattr(tool_call, "function"):
-                            if hasattr(tool_call.function, "name") and tool_call.function.name is not None:
+                            if (
+                                hasattr(tool_call.function, "name")
+                                and tool_call.function.name is not None
+                            ):
                                 function_data["name"] = tool_call.function.name
-                            if hasattr(tool_call.function, "arguments") and tool_call.function.arguments is not None:
-                                function_data["arguments"] = tool_call.function.arguments
+                            if (
+                                hasattr(tool_call.function, "arguments")
+                                and tool_call.function.arguments is not None
+                            ):
+                                function_data["arguments"] = (
+                                    tool_call.function.arguments
+                                )
 
                         tool_call_dict["function"] = function_data
                         processed_tool_calls.append(tool_call_dict)
@@ -398,7 +577,11 @@ class LiteLLM(Model):
 
             # Initialize if first time seeing this index
             if index not in tool_calls_by_index:
-                tool_calls_by_index[index] = {"id": None, "type": "function", "function": {"name": "", "arguments": ""}}
+                tool_calls_by_index[index] = {
+                    "id": None,
+                    "type": "function",
+                    "function": {"name": "", "arguments": ""},
+                }
 
             # Update with new information
             if tc.get("id") is not None:
@@ -426,7 +609,9 @@ class LiteLLM(Model):
                     current_args = tool_calls_by_index[index]["function"].get("arguments", "")  # type: ignore
                     if isinstance(current_args, str) and isinstance(args, str):
                         # type: ignore
-                        tool_calls_by_index[index]["function"]["arguments"] = current_args + args
+                        tool_calls_by_index[index]["function"]["arguments"] = (
+                            current_args + args
+                        )
 
         # Process arguments - Ensure they're valid JSON for the Message.log() method
         result = []
@@ -451,7 +636,9 @@ class LiteLLM(Model):
                         parsed = json.loads(args)
                         # If it's not a dict, convert to a JSON string of a dict
                         if not isinstance(parsed, dict):
-                            tc_copy["function"]["arguments"] = json.dumps({"value": parsed})
+                            tc_copy["function"]["arguments"] = json.dumps(
+                                {"value": parsed}
+                            )
                         else:
                             tc_copy["function"]["arguments"] = args
                     except json.JSONDecodeError:
