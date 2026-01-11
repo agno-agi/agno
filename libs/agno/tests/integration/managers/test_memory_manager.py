@@ -521,3 +521,118 @@ def test_optimize_memories_persistence_across_instances(model, memory_db):
     final_memories = memory2.get_user_memories(user_id="test_user")
     assert len(final_memories) == len(optimized)
     assert final_memories[0].memory_id == optimized[0].memory_id
+
+
+def test_determine_tools_for_model_without_strict_mode_support(memory_db):
+    """Test that tools are created without strict mode when model doesn't support native structured outputs."""
+    from agno.models.base import Model
+    from unittest.mock import Mock, AsyncMock
+    from agno.models.response import ModelResponse
+    from agno.models.metrics import Metrics
+
+    # Create a mock model that doesn't support native structured outputs
+    class MockModelWithoutStrictSupport(Model):
+        """Mock model that doesn't support native structured outputs."""
+
+        def __init__(self):
+            super().__init__(id="mock-model", name="mock-model", provider="test")
+            self.supports_native_structured_outputs = False
+
+            # Mock response
+            mock_response = ModelResponse(
+                content="Test response",
+                role="assistant",
+                response_usage=Metrics(),
+            )
+            self.response = Mock(return_value=mock_response)
+            self.aresponse = AsyncMock(return_value=mock_response)
+
+        def get_instructions_for_model(self, *args, **kwargs):
+            return None
+
+        def get_system_message_for_model(self, *args, **kwargs):
+            return None
+
+        async def aget_instructions_for_model(self, *args, **kwargs):
+            return None
+
+        async def aget_system_message_for_model(self, *args, **kwargs):
+            return None
+
+    # Create memory manager with model that doesn't support strict mode
+    mock_model = MockModelWithoutStrictSupport()
+    memory_manager = MemoryManager(model=mock_model, db=memory_db)
+
+    # Create a simple test tool function
+    def test_tool_function():
+        """A test tool function."""
+        return "test"
+
+    # Determine tools for the model
+    tools = memory_manager.determine_tools_for_model([test_tool_function])
+
+    # Verify tools were created
+    assert len(tools) == 1
+    tool = tools[0]
+
+    # Verify strict mode is NOT enabled (should be False or None, not True)
+    # Since the model doesn't support native structured outputs
+    assert hasattr(tool, "strict")
+    assert tool.strict is not True, "Strict mode should not be enabled for models that don't support native structured outputs"
+
+
+def test_determine_tools_for_model_with_strict_mode_support(memory_db):
+    """Test that tools are created with strict mode when model supports native structured outputs."""
+    from agno.models.base import Model
+    from unittest.mock import Mock, AsyncMock
+    from agno.models.response import ModelResponse
+    from agno.models.metrics import Metrics
+
+    # Create a mock model that supports native structured outputs
+    class MockModelWithStrictSupport(Model):
+        """Mock model that supports native structured outputs."""
+
+        def __init__(self):
+            super().__init__(id="mock-model", name="mock-model", provider="test")
+            self.supports_native_structured_outputs = True
+
+            # Mock response
+            mock_response = ModelResponse(
+                content="Test response",
+                role="assistant",
+                response_usage=Metrics(),
+            )
+            self.response = Mock(return_value=mock_response)
+            self.aresponse = AsyncMock(return_value=mock_response)
+
+        def get_instructions_for_model(self, *args, **kwargs):
+            return None
+
+        def get_system_message_for_model(self, *args, **kwargs):
+            return None
+
+        async def aget_instructions_for_model(self, *args, **kwargs):
+            return None
+
+        async def aget_system_message_for_model(self, *args, **kwargs):
+            return None
+
+    # Create memory manager with model that supports strict mode
+    mock_model = MockModelWithStrictSupport()
+    memory_manager = MemoryManager(model=mock_model, db=memory_db)
+
+    # Create a simple test tool function
+    def test_tool_function():
+        """A test tool function."""
+        return "test"
+
+    # Determine tools for the model
+    tools = memory_manager.determine_tools_for_model([test_tool_function])
+
+    # Verify tools were created
+    assert len(tools) == 1
+    tool = tools[0]
+
+    # Verify strict mode IS enabled when model supports native structured outputs
+    assert hasattr(tool, "strict")
+    assert tool.strict is True, "Strict mode should be enabled for models that support native structured outputs"
