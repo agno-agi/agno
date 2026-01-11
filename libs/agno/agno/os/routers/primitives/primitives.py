@@ -19,7 +19,8 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db
 from agno.remote.base import RemoteDb
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
+from agno.utils.string import generate_id_from_name
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 class PrimitiveCreate(BaseModel):
-    entity_id: str = Field(..., description="Unique identifier for the entity")
+    entity_id: Optional[str] = Field(None, description="Unique identifier for the entity. Auto-generated from name if not provided.")
     entity_type: str = Field(..., description="Type of entity: agent, team, or workflow")
     name: str = Field(..., description="Display name")
     description: Optional[str] = Field(None, description="Optional description")
@@ -160,17 +161,44 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db = await get_db(dbs, db_id)
 
         try:
+            # Auto-generate entity_id if not provided
+            entity_id = body.entity_id
+            if entity_id is None:
+                entity_id = generate_id_from_name(body.name)
+            
             entity = db.upsert_entity(
-                entity_id=body.entity_id,
+                entity_id=entity_id,
                 entity_type=body.entity_type,
                 name=body.name,
                 description=body.description,
                 metadata=body.metadata,
             )
+            
+            # Prepare config - ensure it's a dict
+            config = body.config or {}
+            
+            # If config doesn't have db details, add the default db from AgentOS
+            if "db" not in config or config.get("db") is None:
+                try:
+                    # Get the default db (the one being used for this operation)
+                    db_dict = db.to_dict()
+                    # Validate that db_url exists and is valid before adding
+                    if isinstance(db_dict, dict):
+                        db_url = db_dict.get("db_url")
+                        if db_url and isinstance(db_url, str) and db_url.strip():
+                            config["db"] = db_dict
+                        else:
+                            log_warning("Default db has no valid db_url, skipping db details in config")
+                    else:
+                        config["db"] = db_dict
+                except Exception as e:
+                    log_error(f"Error adding db details to config: {e}")
+                    # Continue without db details if conversion fails
+            
             # Create the initial config
-            config = db.upsert_config(
-                entity_id=body.entity_id,
-                config=body.config,
+            config_result = db.upsert_config(
+                entity_id=entity_id,
+                config=config,
                 version_label=body.version_label,
                 stage=body.stage,
                 notes=body.notes,
