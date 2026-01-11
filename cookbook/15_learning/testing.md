@@ -8,8 +8,9 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 - Date: 2026-01-11
 
 **Changes Tested:**
-- Updated all cookbooks to use `agent.get_learning_machine()` instead of `agent.learning` for accessing stores
-- This change supports the new internal `_learning` field pattern in agent.py
+- Renamed `memories` to `user_memory` throughout (field, property, learning_type)
+- Added new `08_custom_stores/` folder with custom store examples
+- All cookbooks use `agent.get_learning_machine()` for accessing stores
 
 ---
 
@@ -21,11 +22,11 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 
 **Session 1:** User says "Hi! I'm Alice Chen, but please call me Ali."
 - Profile automatically extracted: `name=Alice Chen`, `preferred_name=Ali`
-- Agent responds: "Hi Ali - will do. What can I help you with today?"
+- Agent responds naturally using the preferred name
 
 **Session 2:** New session, user asks "What's my name again?"
 - Profile recalled from database
-- Agent responds: "Your name is Alice Chen - and you go by Ali."
+- Agent responds: "Your name is Alice Chen - you go by Ali."
 
 **Result:** User profile ALWAYS mode working correctly. Profile persists across sessions.
 
@@ -38,11 +39,10 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 **Session 1:** User says "Hi! I'm Robert Johnson, but everyone calls me Bob."
 - Agent calls `update_profile(name=Robert Johnson, preferred_name=Bob)` tool
 - Tool call visible in output
-- Agent responds appropriately
 
 **Session 2:** New session, user asks "What should you call me?"
 - Profile recalled from database
-- Agent responds: "Bob - unless you'd like me to use a different name."
+- Agent responds: "I'll call you Bob."
 
 **Result:** User profile AGENTIC mode working correctly. Tool calls visible, profile persists.
 
@@ -57,14 +57,14 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
   - "User works at Anthropic as a research scientist."
   - "User prefers concise responses without too much explanation."
   - "User is currently working on a paper about transformer architectures."
-- Agent responds appropriately
 
 **Session 2:** User asks about async HTTP libraries.
 - Memories recalled and applied
-- Response is concise (respecting user's preference)
-- Memories persist across sessions
+- Response is appropriately concise
 
 **Result:** User memory ALWAYS mode working correctly. Observations extracted and applied.
+
+**Note:** This test validates the `memories` → `user_memory` rename. The `learning_type` is now `"user_memory"` instead of `"memories"`.
 
 ---
 
@@ -73,15 +73,14 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 **Status:** PASS
 
 **Session 1:** User shares they're a backend engineer at Stripe who prefers Rust.
-- Agent calls `add_memory` tool to save observation
-- Memory saved: "Backend engineer at Stripe specializing in distributed systems; prefers Rust over Go."
+- Agent calls `update_user_memory` tool
+- Memory saved with user's preferences
 
 **Session 2:** User asks for programming language recommendation.
 - Memory recalled and applied
-- Response starts with Rust recommendation (user's preference)
-- Personalized advice based on stored context
+- Response leads with Rust recommendation (respecting user's preference)
 
-**Result:** User memory AGENTIC mode working correctly. Tool calls visible, memories applied.
+**Result:** User memory AGENTIC mode working correctly. Tool calls visible, memories personalize responses.
 
 ---
 
@@ -98,7 +97,6 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 **Turn 3:** User asks "What did we decide?"
 - Agent recalls context from summary
 - Provides coherent answer about PUT/PATCH and URL patterns
-- Summary maintained with full conversation history
 
 **Result:** Session context summary mode working correctly. Running summary persists.
 
@@ -136,7 +134,6 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 **Session 2:** User asks about picking cloud provider for 10TB pipeline.
 - Agent searches learnings with `search_learnings` tool
 - Finds and applies egress costs insight
-- Egress costs prominently featured in response
 
 **Result:** Learned knowledge working correctly. Save and search operations functional.
 
@@ -153,8 +150,8 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 **Session 2:** User shares funding news and hiring plans.
 - Event added: "$50M Series B from Sequoia"
 - Fact added: "Hiring 20 engineers"
-- Relationships created
-- Entity search found 3 entities (Sequoia, Jane Smith, Acme Corp)
+- Relationships created (investor, person who shared update)
+- Entity search found 3 entities
 
 **Result:** Entity memory ALWAYS mode working correctly. Facts, events, relationships extracted.
 
@@ -322,7 +319,7 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 **3 messages showing save and apply:**
 - Msg 1: Saved egress costs insight
 - Msg 2: Saved database migration rollback insight
-- Msg 3: Applied both learnings when asked about PostgreSQL on AWS
+- Msg 3: Applied learnings when asked about PostgreSQL on AWS
 
 **Tool calls visible:** search_learnings, save_learning with title/learning/context/tags
 
@@ -344,46 +341,6 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 ---
 
 ## 05_learned_knowledge COMPLETE - All 2 tests passed
-
----
-
-## 07_patterns/
-
-### personal_assistant.py
-
-**Status:** PASS
-
-**3 conversations demonstrating combined learning:**
-- Conv 1: Introduction (name, job, preference, sister Sarah)
-  - User profile extracted
-  - Entity (Sarah) created
-- Conv 2: Memory test - agent recalls name, job, sister
-- Conv 3: Planning Sarah's visit
-  - Session context tracks goal/plan/progress
-  - Uses entity knowledge about Sarah (likes hiking)
-
-**Result:** Combined stores (user_profile + session_context + entity_memory) working together.
-
----
-
-### support_agent.py
-
-**Status:** PASS
-
-**3 ticket interactions showing knowledge transfer:**
-- Ticket 1: Customer has login issue in Chrome
-  - Agent suggests troubleshooting steps
-  - Customer confirms "clearing cache worked"
-  - Agent saves learning about cache fix
-- Ticket 2: Different customer, similar issue
-  - Agent searches prior learnings with `search_learnings`
-  - Finds and applies cache clearing solution from ticket 1
-
-**Result:** Support pattern working. Knowledge transfers across tickets/customers.
-
----
-
-## 07_patterns COMPLETE - All 2 tests passed
 
 ---
 
@@ -437,22 +394,114 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 
 ---
 
+## 07_patterns/
+
+### personal_assistant.py
+
+**Status:** PASS
+
+**3 conversations demonstrating combined learning:**
+- Conv 1: Introduction (name, job, preference, sister Sarah)
+  - User profile extracted
+  - Entity (Sarah) created with "likes hiking" fact
+- Conv 2: Memory test - agent recalls name, job, sister
+- Conv 3: Planning Sarah's visit
+  - Session context tracks goal/plan/progress
+  - Uses entity knowledge about Sarah (likes hiking)
+
+**Result:** Combined stores (user_profile + session_context + entity_memory) working together.
+
+---
+
+### support_agent.py
+
+**Status:** PASS
+
+**2 ticket interactions showing knowledge transfer:**
+- Ticket 1: Customer has login issue in Chrome
+  - Agent suggests troubleshooting steps
+  - Customer confirms "clearing cache worked"
+  - Agent saves learning about cache fix
+- Ticket 2: Different customer, similar issue
+  - Agent searches prior learnings with `search_learnings`
+  - Finds and applies cache clearing solution from ticket 1
+
+**Result:** Support pattern working. Knowledge transfers across tickets/customers.
+
+---
+
+## 07_patterns COMPLETE - All 2 tests passed
+
+---
+
+## 08_custom_stores/ (NEW)
+
+### 01_minimal_custom_store.py
+
+**Status:** PASS
+
+**Description:** Demonstrates how to create a custom learning store with in-memory storage.
+
+**Features tested:**
+- Custom store implementing LearningStore protocol
+- Context injection via constructor (`context={"project_id": "learning-machine"}`)
+- Manual context setting (`set_context()`)
+- Custom `build_context()` formatting
+
+**Result:** Custom store works correctly. Project context displayed in agent's system prompt and persists in memory.
+
+**Note:** Warning logged "Database not provided. LearningMachine not initialized." but custom store still functions with in-memory storage.
+
+---
+
+### 02_custom_store_with_db.py
+
+**Status:** PASS
+
+**Description:** Demonstrates a database-backed custom store with tools.
+
+**Features tested:**
+- Database persistence using `db.get_learning()` / `db.upsert_learning()`
+- Namespacing by project_id
+- Custom tools exposed to agent (`add_project_note`, `update_project_summary`)
+- Custom schema (`ProjectNotes` dataclass)
+
+**3 interactions:**
+- Msg 1: User describes project goal - agent uses `add_project_note` tool
+- Msg 2: User mentions blocker - agent adds blocker note
+- Msg 3: New session - notes persisted and recalled
+
+**Result:** Database-backed custom store working. Tools functional, data persists across sessions.
+
+---
+
+## 08_custom_stores COMPLETE - All 2 tests passed
+
+---
+
 ## TESTING COMPLETE
 
 **Summary:**
-- Total cookbooks tested: 24
-- All passed: 24/24
-- API change validated: `agent.get_learning_machine()` works correctly
+- Total cookbooks tested: 26
+- All passed: 26/26
 
 **Key Changes Validated:**
-1. `agent.get_learning_machine()` returns the resolved `LearningMachine` instance
-2. All store accessors work: `user_profile_store`, `memories_store`, `session_context_store`, `entity_memory_store`, `learned_knowledge_store`
-3. The public `agent.learning` field is preserved (not mutated)
-4. Internal `agent._learning` field holds the resolved machine
-5. Async path works correctly
-6. `learning=True` shorthand works
-7. Graceful degradation without DB
-8. Claude models work (use `claude-sonnet-4-5` or newer)
+1. `memories` → `user_memory` rename works correctly
+   - Field: `user_memory` (was `memories`)
+   - Property: `user_memory_store` (was `memories_store`)
+   - Internal store key: `"user_memory"` (was `"memories"`)
+   - Storage `learning_type`: `"user_memory"` (was `"memories"`)
+2. Custom stores with context injection work
+3. All stores work with both sync and async paths
+4. `agent.get_learning_machine()` returns the resolved `LearningMachine` instance
+5. `learning=True` shorthand works
+6. Graceful degradation without DB
+7. Claude models work (use `claude-sonnet-4-5` or newer)
+
+**Migration Note:**
+The `upsert_learning` in postgres.py does NOT update `learning_type` on conflict - it only updates `content`, `metadata`, and `updated_at`. If you have existing data with `learning_type="memories"`, you need to either:
+1. Delete the old rows: `DELETE FROM agno_learnings WHERE learning_type = 'memories';`
+2. Update the rows: `UPDATE agno_learnings SET learning_type = 'user_memory' WHERE learning_type = 'memories';`
 
 **Notes:**
 - LearningMachine is lazily initialized (only on first run)

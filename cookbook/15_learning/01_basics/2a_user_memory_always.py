@@ -32,7 +32,7 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=db,
     learning=LearningMachine(
-        memories=UserMemoryConfig(
+        user_memory=UserMemoryConfig(
             mode=LearningMode.ALWAYS,
         ),
     ),
@@ -59,7 +59,7 @@ if __name__ == "__main__":
         session_id="session_1",
         stream=True,
     )
-    agent.get_learning_machine().memories_store.print(user_id=user_id)
+    agent.get_learning_machine().user_memory_store.print(user_id=user_id)
 
     # Session 2: New session - memories are recalled automatically
     print("\n" + "=" * 60)
@@ -72,4 +72,4 @@ if __name__ == "__main__":
         session_id="session_2",
         stream=True,
     )
-    agent.get_learning_machine().memories_store.print(user_id=user_id)
+    agent.get_learning_machine().user_memory_store.print(user_id=user_id)
