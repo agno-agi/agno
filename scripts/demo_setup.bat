@@ -1,4 +1,4 @@
-:: filepath: d:\programs\repos\agno\scripts\demo_setup.bat
+
 @echo off
 :: FORCE UTF-8 ENCODING to fix the logo
 chcp 65001 >nul
