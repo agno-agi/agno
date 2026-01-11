@@ -104,6 +104,19 @@ def test_parse_json_with_generic_code_block():
     assert result.value == "123"
 
 
+def test_parse_json_with_unclosed_block():
+    """Test parsing JSON from an unclosed markdown code block"""
+    content = """```json
+    {
+        "name": "test",
+        "value": "123"
+    }"""
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
+
+
 def test_parse_json_with_control_characters():
     """Test parsing JSON with control characters"""
     content = '{\n\t"name": "test",\r\n\t"value": "123"\n}'
