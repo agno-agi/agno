@@ -473,7 +473,7 @@ def attach_routes(
         session_id = request_body.get("params", {}).get("session_id")
 
         # 2. Cancel the run
-        if not agent.cancel_run(run_id=task_id):
+        if not agent.cancel_run(run_id=task_id): # type: ignore
             raise HTTPException(status_code=500, detail=f"Failed to cancel run with ID {task_id}")
 
         # 3. Build the canceled task response
@@ -906,7 +906,7 @@ def attach_routes(
         session_id = request_body.get("params", {}).get("session_id")
 
         # 2. Cancel the run
-        if not team.cancel_run(run_id=task_id):
+        if not team.cancel_run(run_id=task_id): # type: ignore
             raise HTTPException(status_code=500, detail=f"Failed to cancel run with ID {task_id}")
 
         # 3. Build the canceled task response
@@ -1339,7 +1339,7 @@ def attach_routes(
         session_id = request_body.get("params", {}).get("session_id")
 
         # 2. Cancel the run
-        if not workflow.cancel_run(run_id=task_id):
+        if not workflow.cancel_run(run_id=task_id): # type: ignore
             raise HTTPException(status_code=500, detail=f"Failed to cancel run with ID {task_id}")
 
         # 3. Build the canceled task response
