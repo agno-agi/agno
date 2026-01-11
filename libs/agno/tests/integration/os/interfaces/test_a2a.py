@@ -9,6 +9,8 @@ from agno.agent import Agent
 from agno.models.response import ToolExecution
 from agno.os.app import AgentOS
 from agno.os.interfaces.a2a import A2A
+from agno.os.interfaces.a2a.utils import map_run_schema_to_a2a_task
+
 from agno.run.agent import (
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
@@ -63,6 +65,8 @@ def test_a2a_interface_parameter():
     assert any([isinstance(interface, A2A) for interface in agent_os.interfaces])
     assert "/a2a/agents/{id}/v1/message:send" in [route.path for route in app.routes]  # type: ignore
     assert "/a2a/agents/{id}/v1/message:stream" in [route.path for route in app.routes]  # type: ignore
+    # New agent card endpoint should be registered
+    assert "/a2a/agents/{id}/.well-known/agent-card.json" in [route.path for route in app.routes]  # type: ignore
 
 
 def test_a2a_interface_in_interfaces_parameter():
@@ -76,6 +80,59 @@ def test_a2a_interface_in_interfaces_parameter():
     assert any([isinstance(interface, A2A) for interface in agent_os.interfaces])
     assert "/a2a/agents/{id}/v1/message:send" in [route.path for route in app.routes]  # type: ignore
     assert "/a2a/agents/{id}/v1/message:stream" in [route.path for route in app.routes]  # type: ignore
+    # New agent card endpoint should be registered
+    assert "/a2a/agents/{id}/.well-known/agent-card.json" in [route.path for route in app.routes]  # type: ignore
+
+
+def test_agent_card_endpoint(test_agent: Agent, test_client: TestClient):
+    """Verify the agent card endpoint returns a valid AgentCard."""
+    resp = test_client.get(f"/a2a/agents/{test_agent.id}/.well-known/agent-card.json")
+    assert resp.status_code == 200
+    card = resp.json()
+    # Basic shape
+    assert card["name"] == (test_agent.name or "")
+    assert card["version"] == "1.0.0"
+    assert card["description"] == (test_agent.description or "")
+    # URL should point to this agent's streaming endpoint
+    assert card["url"].endswith(f"/a2a/agents/{test_agent.id}/v1/message:stream")
+    # Capabilities and skills present
+    assert "capabilities" in card
+    assert "skills" in card and isinstance(card["skills"], list) and len(card["skills"]) >= 1
+
+
+@pytest.fixture
+def test_team_client_for_card(test_team: Team):
+    """Dedicated client for team card tests."""
+    agent_os = AgentOS(teams=[test_team], a2a_interface=True)
+    app = agent_os.get_app()
+    return TestClient(app)
+
+
+def test_team_card_endpoint(test_team: Team, test_team_client_for_card: TestClient):
+    """Verify the team card endpoint returns a valid AgentCard for teams."""
+    resp = test_team_client_for_card.get(f"/a2a/teams/{test_team.id}/.well-known/agent-card.json")
+    assert resp.status_code == 200
+    card = resp.json()
+    assert card["name"] == (test_team.name or "")
+    assert card["version"] == "1.0.0"
+    assert card["url"].endswith(f"/a2a/teams/{test_team.id}/v1/message:stream")
+    assert "capabilities" in card
+    assert "skills" in card and isinstance(card["skills"], list) and len(card["skills"]) >= 1
+
+
+
+
+
+def test_workflow_card_endpoint(test_workflow: Workflow, test_workflow_client: TestClient):
+    """Verify the workflow card endpoint returns a valid AgentCard for workflows."""
+    resp = test_workflow_client.get(f"/a2a/workflows/{test_workflow.id}/.well-known/agent-card.json")
+    assert resp.status_code == 200
+    card = resp.json()
+    assert card["name"] == (test_workflow.name or "")
+    assert card["version"] == "1.0.0"
+    assert card["url"].endswith(f"/a2a/workflows/{test_workflow.id}/v1/message:stream")
+    assert "capabilities" in card
+    assert "skills" in card and isinstance(card["skills"], list) and len(card["skills"]) >= 1
 
 
 def test_a2a(test_agent: Agent, test_client: TestClient):
@@ -768,6 +825,24 @@ def test_a2a_streaming_team(test_team: Team, test_team_client: TestClient):
         assert call_kwargs["stream_events"] is True
 
 
+# ===== New: Tasks listing and cancel endpoints (teams) =====
+
+def test_team_list_tasks_unknown_team_returns_404(test_team_client: TestClient):
+    resp = test_team_client.get("/a2a/teams/unknown-team-id/v1/tasks")
+    assert resp.status_code == 404
+
+
+def test_team_get_task_unknown_team_returns_404(test_team_client: TestClient):
+    resp = test_team_client.get("/a2a/teams/unknown-team-id/v1/tasks/t-123?session_id=context-1")
+    assert resp.status_code == 404
+
+
+def test_team_cancel_task_unknown_team_returns_404(test_team_client: TestClient):
+    body = {"jsonrpc": "2.0", "id": "req-6", "params": {"session_id": "context-1"}}
+    resp = test_team_client.post("/a2a/teams/unknown-team-id/v1/tasks/t-123:cancel", json=body)
+    assert resp.status_code == 404
+
+
 def test_a2a_user_id_from_header(test_agent: Agent, test_client: TestClient):
     """Test that user_id is extracted from X-User-ID header and passed to arun()."""
     mock_output = RunOutput(
@@ -1085,6 +1160,24 @@ def test_a2a_user_id_in_response_metadata(test_agent: Agent, test_client: TestCl
         assert message["metadata"]["userId"] == "user-456"
 
 
+# ===== New: Tasks listing and cancel endpoints (agents) =====
+
+def test_agent_list_tasks_unknown_agent_returns_404(test_client: TestClient):
+    resp = test_client.get("/a2a/agents/unknown-agent-id/v1/tasks")
+    assert resp.status_code == 404
+
+
+def test_agent_get_task_unknown_agent_returns_404(test_client: TestClient):
+    resp = test_client.get("/a2a/agents/unknown-agent-id/v1/tasks/t-123?session_id=context-1")
+    assert resp.status_code == 404
+
+
+def test_agent_cancel_task_unknown_agent_returns_404(test_client: TestClient):
+    body = {"jsonrpc": "2.0", "id": "req-3", "params": {"session_id": "context-1"}}
+    resp = test_client.post("/a2a/agents/unknown-agent-id/v1/tasks/t-123:cancel", json=body)
+    assert resp.status_code == 404
+
+
 @pytest.fixture
 def test_workflow():
     """Create a test workflow for A2A."""
@@ -1229,3 +1322,109 @@ def test_a2a_streaming_workflow(test_workflow: Workflow, test_workflow_client: T
         final_task = events[-1]
         assert final_task["result"]["kind"] == "task"
         assert final_task["result"]["status"]["state"] in ["completed", "failed"]
+
+
+# ===== New: Tasks listing and cancel endpoints (workflows) =====
+
+def test_workflow_list_tasks_unknown_workflow_returns_404(test_workflow_client: TestClient):
+    resp = test_workflow_client.get("/a2a/workflows/unknown-workflow-id/v1/tasks")
+    assert resp.status_code == 404
+
+
+def test_workflow_get_task_unknown_workflow_returns_404(test_workflow_client: TestClient):
+    resp = test_workflow_client.get("/a2a/workflows/unknown-workflow-id/v1/tasks/t-123?session_id=context-1")
+    assert resp.status_code == 404
+
+
+def test_workflow_cancel_task_unknown_workflow_returns_404(test_workflow_client: TestClient):
+    body = {"jsonrpc": "2.0", "id": "req-9", "params": {"session_id": "context-1"}}
+    resp = test_workflow_client.post("/a2a/workflows/unknown-workflow-id/v1/tasks/t-123:cancel", json=body)
+    assert resp.status_code == 404
+
+
+# ===== Unit tests for utils =====
+
+def test_map_run_schema_basic_content():
+    """Test mapping run schema with basic content."""
+    run_schema = {
+        "run_id": "run-123",
+        "session_id": "session-456",
+        "content": "Hello world",
+    }
+    task = map_run_schema_to_a2a_task(run_schema)
+
+    assert task.id == "run-123"
+    assert task.context_id == "session-456"
+    assert task.status.state.value == "completed"
+    assert len(task.history) == 1
+    assert task.history[0].parts[0].root.text == "Hello world"
+
+
+def test_map_run_schema_with_messages():
+    """Test mapping run schema with message history."""
+    run_schema = {
+        "run_id": "run-123",
+        "session_id": "session-456",
+        "messages": [
+            {"id": "msg-1", "role": "user", "content": "What is 2+2?"},
+            {"id": "msg-2", "role": "assistant", "content": "4"},
+        ],
+    }
+    task = map_run_schema_to_a2a_task(run_schema)
+
+    assert len(task.history) == 2
+    assert task.history[0].role.value == "user"
+    assert task.history[0].parts[0].root.text == "What is 2+2?"
+    assert task.history[1].role.value == "agent"
+    assert task.history[1].parts[0].root.text == "4"
+
+
+def test_map_run_schema_status_failed():
+    """Test mapping run schema with failed status."""
+    run_schema = {
+        "run_id": "run-123",
+        "session_id": "session-456",
+        "content": "Error occurred",
+        "status": "FAILED",
+    }
+    task = map_run_schema_to_a2a_task(run_schema)
+    assert task.status.state.value == "failed"
+
+
+def test_map_run_schema_status_canceled():
+    """Test mapping run schema with canceled status."""
+    run_schema = {
+        "run_id": "run-123",
+        "session_id": "session-456",
+        "content": "Cancelled",
+        "status": "CANCELLED",
+    }
+    task = map_run_schema_to_a2a_task(run_schema)
+    assert task.status.state.value == "canceled"
+
+
+def test_map_run_schema_with_artifacts():
+    """Test mapping run schema with media artifacts."""
+    run_schema = {
+        "run_id": "run-123",
+        "session_id": "session-456",
+        "content": "Generated media",
+        "images": [{"url": "https://example.com/img.png", "alt_text": "An image"}],
+        "videos": [{"url": "https://example.com/vid.mp4"}],
+        "audio": [{"url": "https://example.com/audio.mp3"}],
+    }
+    task = map_run_schema_to_a2a_task(run_schema)
+
+    assert len(task.artifacts) == 3
+    image_artifact = next(a for a in task.artifacts if "image" in a.artifact_id)
+    assert image_artifact.parts[0].root.file.uri == "https://example.com/img.png"
+
+
+def test_map_run_schema_empty():
+    """Test mapping empty run schema generates valid task."""
+    run_schema = {}
+    task = map_run_schema_to_a2a_task(run_schema)
+
+    assert task.id is not None
+    assert task.context_id is not None
+    assert task.status.state.value == "completed"
