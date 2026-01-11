@@ -5,7 +5,11 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 **Test Environment:**
 - Python: `.venvs/demo/bin/python`
 - Database: PostgreSQL with PgVector at `localhost:5532`
-- Date: 2026-01-10
+- Date: 2026-01-11
+
+**Changes Tested:**
+- Updated all cookbooks to use `agent.get_learning_machine()` instead of `agent.learning` for accessing stores
+- This change supports the new internal `_learning` field pattern in agent.py
 
 ---
 
@@ -17,11 +21,11 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 
 **Session 1:** User says "Hi! I'm Alice Chen, but please call me Ali."
 - Profile automatically extracted: `name=Alice Chen`, `preferred_name=Ali`
-- Agent responds: "Hi Ali — what can I help you with today?"
+- Agent responds: "Hi Ali - will do. What can I help you with today?"
 
 **Session 2:** New session, user asks "What's my name again?"
 - Profile recalled from database
-- Agent responds: "Your name is Alice Chen — you go by Ali."
+- Agent responds: "Your name is Alice Chen - and you go by Ali."
 
 **Result:** User profile ALWAYS mode working correctly. Profile persists across sessions.
 
@@ -34,11 +38,11 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 **Session 1:** User says "Hi! I'm Robert Johnson, but everyone calls me Bob."
 - Agent calls `update_profile(name=Robert Johnson, preferred_name=Bob)` tool
 - Tool call visible in output
-- Agent responds: "Hi Bob — nice to meet you. How can I help today?"
+- Agent responds appropriately
 
 **Session 2:** New session, user asks "What should you call me?"
 - Profile recalled from database
-- Agent responds: "You go by Bob — I'll call you Bob."
+- Agent responds: "Bob - unless you'd like me to use a different name."
 
 **Result:** User profile AGENTIC mode working correctly. Tool calls visible, profile persists.
 
@@ -105,13 +109,17 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 **Status:** PASS
 
 **Turn 1:** User asks about deploying Python app to production.
-- Goal extracted: "Provide a concise 3-step production deployment path"
-- Plan created with 3 steps
+- Goal extracted and plan created with steps
 
-**Turn 2:** User says "Step 2 done. What's left?"
-- Progress tracked: 2 items marked as completed
-- Agent provides step 3 checklist (CI/CD, ops hardening)
-- Summary, goal, plan, and progress all maintained
+**Turn 2-3:** User reports progress on steps.
+- Progress tracked with checkmarks
+- Agent provides next steps
+
+**Session context shows:**
+- Summary: Full deployment context
+- Goal: Clear deployment objective
+- Plan: Multiple steps
+- Progress: Completed items tracked
 
 **Result:** Session context planning mode working correctly. Goal/plan/progress tracked.
 
@@ -128,7 +136,7 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 **Session 2:** User asks about picking cloud provider for 10TB pipeline.
 - Agent searches learnings with `search_learnings` tool
 - Finds and applies egress costs insight
-- Egress costs prominently featured as consideration #1
+- Egress costs prominently featured in response
 
 **Result:** Learned knowledge working correctly. Save and search operations functional.
 
@@ -145,8 +153,8 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 **Session 2:** User shares funding news and hiring plans.
 - Event added: "$50M Series B from Sequoia"
 - Fact added: "Hiring 20 engineers"
-- Relationships created: Sequoia invested_in Acme Corp, Jane Smith shared_update_about Acme Corp
-- Entity search found 3 entities
+- Relationships created
+- Entity search found 3 entities (Sequoia, Jane Smith, Acme Corp)
 
 **Result:** Entity memory ALWAYS mode working correctly. Facts, events, relationships extracted.
 
@@ -157,7 +165,7 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 **Status:** PASS
 
 **Session 1:** User shares info about Acme Corp.
-- Agent calls `add_fact` tools to create entity and add facts
+- Agent calls `create_entity` and `add_fact` tools
 - Tool calls visible in output
 
 **Session 2:** User shares funding news.
@@ -245,18 +253,18 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 **Status:** PASS
 
 **4 steps deploying Python app to AWS:**
-- Step 1: Initial goal stated, plan created (6 steps)
+- Step 1: Initial goal stated, plan created
 - Step 2: Dockerfile done - progress updated
 - Step 3: ECR setup done - progress updated
-- Step 4: "What's next?" - agent provides step 3 details
+- Step 4: "What's next?" - agent provides remaining steps
 
 **Session context shows:**
 - Summary: Full deployment context
 - Goal: "Deploy containerized Python web app to AWS"
-- Plan: 6 steps (networking, deploy, CI/CD, etc.)
-- Progress: 3 items with checkmarks
+- Plan: Multiple steps (networking, deploy, CI/CD, etc.)
+- Progress: Completed items with checkmarks
 
-**Result:** Planning mode working. Goal/plan/progress tracked correctly.
+**Result:** Planning mode working correctly. Goal/plan/progress tracked.
 
 ---
 
@@ -268,9 +276,7 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 
 ### 01_facts_and_events.py
 
-**Status:** PASS (after fix)
-
-**Fix applied:** Changed `print(namespace=...)` to `search()` + `pprint()` (API mismatch)
+**Status:** PASS
 
 **3 messages showing facts vs events:**
 - Msg 1: Created DataPipe entity with facts (SF, Rust, CTO) and events (1000 customers, $80M Series B)
@@ -285,9 +291,7 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 
 ### 02_entity_relationships.py
 
-**Status:** PASS (after fix)
-
-**Fix applied:** Removed custom `namespace="org_graph"` (search doesn't filter by namespace)
+**Status:** PASS
 
 **3 messages showing relationships:**
 - Msg 1: Created org structure (TechCorp, Sarah/Bob/Alice, teams)
@@ -295,15 +299,17 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 - Msg 3: Company acquisitions/partnerships (TechCorp acquired StartupAI, partnered with CloudCo)
 
 **Relationships created:**
-- reports_to (people → people)
-- acquired (company → company)
-- partner_of (company → company)
+- reports_to (people -> people)
+- acquired (company -> company)
+- partner_of (company -> company)
+
+**Entity search found 9 entities including all people, teams, and companies.**
 
 **Result:** Entity relationships working. Knowledge graph structure captured.
 
 ---
 
-## 04_entity_memory COMPLETE - All 2 tests passed (with fixes)
+## 04_entity_memory COMPLETE - All 2 tests passed
 
 ---
 
@@ -311,9 +317,7 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 
 ### 01_agentic_mode.py
 
-**Status:** PASS (after fix)
-
-**Fix applied:** Added `query=` parameter to `print()` calls (API requires search query)
+**Status:** PASS
 
 **3 messages showing save and apply:**
 - Msg 1: Saved egress costs insight
@@ -328,9 +332,7 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 
 ### 02_propose_mode.py
 
-**Status:** PASS (after fix)
-
-**Fix applied:** Added `query=` parameter to `print()` calls
+**Status:** PASS
 
 **3 messages showing propose-confirm flow:**
 - Msg 1: User shares Docker localhost insight - agent proposes saving
@@ -341,7 +343,7 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 
 ---
 
-## 05_learned_knowledge COMPLETE - All 2 tests passed (with fixes)
+## 05_learned_knowledge COMPLETE - All 2 tests passed
 
 ---
 
@@ -349,9 +351,7 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 
 ### personal_assistant.py
 
-**Status:** PASS (after fix)
-
-**Fix applied:** Changed `entity_memory_store.print(namespace=...)` to `search()` + `pprint()`
+**Status:** PASS
 
 **3 conversations demonstrating combined learning:**
 - Conv 1: Introduction (name, job, preference, sister Sarah)
@@ -368,9 +368,7 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 
 ### support_agent.py
 
-**Status:** PASS (after fix)
-
-**Fix applied:** Added `query=` parameter to `learned_knowledge_store.print()`
+**Status:** PASS
 
 **3 ticket interactions showing knowledge transfer:**
 - Ticket 1: Customer has login issue in Chrome
@@ -385,7 +383,7 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 
 ---
 
-## 07_patterns COMPLETE - All 2 tests passed (with fixes)
+## 07_patterns COMPLETE - All 2 tests passed
 
 ---
 
@@ -394,5 +392,10 @@ Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected
 **Summary:**
 - Total cookbooks tested: 20
 - All passed: 20/20
-- Required fixes: 7 files (API mismatches for `.print()` methods)
+- API change validated: `agent.get_learning_machine()` works correctly
 
+**Key Changes Validated:**
+1. `agent.get_learning_machine()` returns the resolved `LearningMachine` instance
+2. All store accessors work: `user_profile_store`, `memories_store`, `session_context_store`, `entity_memory_store`, `learned_knowledge_store`
+3. The public `agent.learning` field is preserved (not mutated)
+4. Internal `agent._learning` field holds the resolved machine
