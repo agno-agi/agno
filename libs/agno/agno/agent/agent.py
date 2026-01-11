@@ -62,6 +62,9 @@ from agno.run.agent import (
     RunOutputEvent,
 )
 from agno.run.cancel import (
+    acancel_run as acancel_run_global,
+)
+from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
     aregister_run,
@@ -77,6 +80,7 @@ from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
+from agno.skills import Skills
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
@@ -263,6 +267,10 @@ class Agent:
     #     ...
     knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None
     references_format: Literal["json", "yaml"] = "json"
+
+    # --- Skills ---
+    # Skills provide structured instructions, reference docs, and scripts for agents
+    skills: Optional[Skills] = None
 
     # --- Agent Tools ---
     # A list of tools provided to the Model.
@@ -487,6 +495,7 @@ class Agent:
         add_knowledge_to_context: bool = False,
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
+        skills: Optional[Skills] = None,
         metadata: Optional[Dict[str, Any]] = None,
         tools: Optional[Sequence[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
@@ -609,6 +618,8 @@ class Agent:
         self.add_knowledge_to_context = add_knowledge_to_context
         self.knowledge_retriever = knowledge_retriever
         self.references_format = references_format
+
+        self.skills = skills
 
         self.metadata = metadata
 
@@ -2022,6 +2033,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         session=agent_session,
+                        async_mode=True,
                     )
 
                     # 6. Prepare run messages
@@ -2369,6 +2381,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         session=agent_session,
+                        async_mode=True,
                     )
 
                     # 6. Prepare run messages
@@ -3289,6 +3302,9 @@ class Agent:
                         tools=tools,
                         tool_choice=self.tool_choice,
                         tool_call_limit=self.tool_call_limit,
+                        run_response=run_response,
+                        send_media_to_model=self.send_media_to_model,
+                        compression_manager=self.compression_manager if self.compress_tool_results else None,
                     )
 
                     # Check for cancellation after model processing
@@ -3979,6 +3995,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         session=agent_session,
+                        async_mode=True,
                     )
 
                     # 6. Prepare run messages
@@ -4001,6 +4018,9 @@ class Agent:
                         tools=_tools,
                         tool_choice=self.tool_choice,
                         tool_call_limit=self.tool_call_limit,
+                        run_response=run_response,
+                        send_media_to_model=self.send_media_to_model,
+                        compression_manager=self.compression_manager if self.compress_tool_results else None,
                     )
                     # Check for cancellation after model call
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -4285,6 +4305,7 @@ class Agent:
                         run_response=run_response,
                         run_context=run_context,
                         session=agent_session,
+                        async_mode=True,
                     )
 
                     # 6. Prepare run messages
@@ -6396,6 +6417,10 @@ class Agent:
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
+        # Add tools for accessing skills
+        if self.skills is not None:
+            agent_tools.extend(self.skills.get_tools())
+
         return agent_tools
 
     async def aget_tools(
@@ -6489,6 +6514,10 @@ class Agent:
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
+        # Add tools for accessing skills
+        if self.skills is not None:
+            agent_tools.extend(self.skills.get_tools())
+
         return agent_tools
 
     def _determine_tools_for_model(
@@ -6498,6 +6527,7 @@ class Agent:
         run_response: RunOutput,
         run_context: RunContext,
         session: AgentSession,
+        async_mode: bool = False,
     ) -> List[Union[Function, dict]]:
         _function_names = []
         _functions: List[Union[Function, dict]] = []
@@ -6528,7 +6558,8 @@ class Agent:
 
                 elif isinstance(tool, Toolkit):
                     # For each function in the toolkit and process entrypoint
-                    for name, _func in tool.functions.items():
+                    toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
+                    for name, _func in toolkit_functions.items():
                         if name in _function_names:
                             continue
                         _function_names.append(name)
@@ -6757,6 +6788,18 @@ class Agent:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
         return cancel_run_global(run_id)
+
+    @staticmethod
+    async def acancel_run(run_id: str) -> bool:
+        """Cancel a running agent execution (async version).
+
+        Args:
+            run_id (str): The run_id to cancel.
+
+        Returns:
+            bool: True if the run was found and marked for cancellation, False otherwise.
+        """
+        return await acancel_run_global(run_id)
 
     # -*- Session Database Functions
     def _read_session(
@@ -7171,7 +7214,6 @@ class Agent:
         """
         if self._has_async_db():
             raise ValueError("Async database not supported for save_session")
-
         # If the agent is a member of a team, do not save the session to the database
         if (
             self.db is not None
@@ -7937,6 +7979,11 @@ class Agent:
         # 3.3.8 Then add additional context
         if self.additional_context is not None:
             system_message_content += f"{self.additional_context}\n"
+        # 3.3.8.1 Then add skills to the system prompt
+        if self.skills is not None:
+            skills_snippet = self.skills.get_system_prompt_snippet()
+            if skills_snippet:
+                system_message_content += f"\n{skills_snippet}\n"
         # 3.3.9 Then add memories to the system prompt
         if self.add_memories_to_context:
             _memory_manager_not_set = False
@@ -8281,6 +8328,11 @@ class Agent:
         # 3.3.8 Then add additional context
         if self.additional_context is not None:
             system_message_content += f"{self.additional_context}\n"
+        # 3.3.8.1 Then add skills to the system prompt
+        if self.skills is not None:
+            skills_snippet = self.skills.get_system_prompt_snippet()
+            if skills_snippet:
+                system_message_content += f"\n{skills_snippet}\n"
         # 3.3.9 Then add memories to the system prompt
         if self.add_memories_to_context:
             _memory_manager_not_set = False
