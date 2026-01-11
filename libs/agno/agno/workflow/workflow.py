@@ -4673,6 +4673,10 @@ def get_workflow_by_id(
 
         workflow = Workflow.from_dict(cfg, db=db, refs=refs, registry=registry)
 
+        # Ensure workflow.id is set to the entity_id (the id used to load the workflow)
+        # This ensures events use the correct workflow_id
+        workflow.id = id
+
         try:
             workflow.version = int(resolved_version)
         except Exception:
@@ -4703,9 +4707,13 @@ def get_workflows(
             if config is not None:
                 workflow_config = config.get("config")
                 if workflow_config is not None:
+                    entity_id = entity["entity_id"]
                     if "id" not in workflow_config:
-                        workflow_config["id"] = entity["entity_id"]
+                        workflow_config["id"] = entity_id
                     workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
+                    # Ensure workflow.id is set to the entity_id (the id used to load the workflow)
+                    # This ensures events use the correct workflow_id
+                    workflow.id = entity_id
                     workflow.db = db
                     workflows.append(workflow)
         return workflows
