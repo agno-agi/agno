@@ -84,7 +84,7 @@ class UserMemoryStore(LearningStore):
     @property
     def learning_type(self) -> str:
         """Unique identifier for this learning type."""
-        return "memories"
+        return "user_memory"
 
     @property
     def schema(self) -> Any:

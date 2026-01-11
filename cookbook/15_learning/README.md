@@ -255,7 +255,7 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
     learning=LearningMachine(
-        memories=UserMemoryConfig(
+        user_memory=UserMemoryConfig(
             mode=LearningMode.ALWAYS,
         ),
     ),

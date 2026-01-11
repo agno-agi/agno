@@ -2,7 +2,20 @@
 
 Use this prompt to test and document any cookbook directory following the golden standard established in `cookbook/15_learning/`.
 
-## Prompt
+## Quick Prompt
+
+```
+Your task is to test the cookbooks in `cookbook/15_learning`.
+
+1. Read `cookbook/15_learning/README.md` to understand the cookbook structure and purpose.
+2. Check `cookbook/15_learning/CLAUDE.md` to understand the testing workflow.
+3. Check `cookbook/15_learning/TESTING.md` to understand the past test results log.
+4. Confirm the test plan with me.
+5. Run all tests and update `cookbook/15_learning/TESTING.md` with the results.
+```
+
+## Full Prompt
+
 ```
 Your task is to test the cookbooks in `cookbook/<FOLDER_NAME>`.
 

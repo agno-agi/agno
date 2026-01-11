@@ -1,6 +1,6 @@
-# CLAUDE.md - Learning Machine Testing
+# CLAUDE.md - Learning Machines Cookbook
 
-Instructions for Claude Code when testing the Learning Machine implementation.
+Instructions for Claude Code when testing the Learning Machine cookbooks.
 
 ---
 
@@ -112,6 +112,7 @@ cookbook/15_learning/
 ├── 05_learned_knowledge/ # Learned knowledge specific tests
 ├── 06_quick_tests/      # Quick validation tests (async, shorthand, edge cases)
 ├── 07_patterns/         # Combined pattern tests
+├── 08_custom_stores/    # Custom store implementations
 ├── TESTING.md           # Test results log
 └── CLAUDE.md            # This file
 ```
@@ -127,7 +128,7 @@ learning_machine = agent.get_learning_machine()
 
 # Access individual stores
 learning_machine.user_profile_store.print(user_id=user_id)
-learning_machine.memories_store.print(user_id=user_id)
+learning_machine.user_memory_store.print(user_id=user_id)
 learning_machine.session_context_store.print(session_id=session_id)
 learning_machine.entity_memory_store.search(query="...", limit=10)
 learning_machine.learned_knowledge_store.print(query="...")
@@ -148,6 +149,76 @@ learning_machine.learned_knowledge_store.print(query="...")
 5. **Claude model version matters**: Use `claude-sonnet-4-5` or newer. Older model IDs (e.g., `claude-sonnet-4-20250514`) don't support structured outputs and extraction will fail. See `06_quick_tests/04_claude_model.py`.
 
 6. **Lazy initialization**: `LearningMachine` is only initialized when the agent runs, not when constructed. Calling `agent.get_learning_machine()` before the first `print_response()` will return `None`.
+
+7. **upsert_learning doesn't update learning_type**: The `upsert_learning` method in postgres.py (and likely other DB adapters) only updates `content`, `metadata`, and `updated_at` on conflict - it does NOT update `learning_type`. This means if you rename a learning type (e.g., `memories` → `user_memory`), existing rows won't be found. **Future work:** Fix `upsert_learning` to update `learning_type` on conflict.
+
+---
+
+## Custom Stores
+
+Create custom learning stores by inheriting from the `LearningStore` protocol:
+
+```python
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional
+
+from agno.learn.stores.protocol import LearningStore
+
+@dataclass
+class ProjectContextStore(LearningStore):
+    """Custom store for project-specific context."""
+
+    # Pass custom context at construction time (pattern choice, not required by protocol)
+    context: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def learning_type(self) -> str:
+        return "project_context"
+
+    @property
+    def schema(self) -> Any:
+        return dict
+
+    def recall(self, **kwargs) -> Optional[Any]:
+        project_id = self.context.get("project_id")
+        # Retrieve from your storage...
+
+    async def arecall(self, **kwargs) -> Optional[Any]:
+        return self.recall(**kwargs)
+
+    def process(self, messages: List[Any], **kwargs) -> None:
+        # Extract and save relevant context
+        pass
+
+    async def aprocess(self, messages: List[Any], **kwargs) -> None:
+        self.process(messages, **kwargs)
+
+    def build_context(self, data: Any) -> str:
+        if not data:
+            return ""
+        return f"<project_context>\n{data}\n</project_context>"
+
+    def get_tools(self, **kwargs) -> List[Callable]:
+        return []
+
+    async def aget_tools(self, **kwargs) -> List[Callable]:
+        return []
+
+    @property
+    def was_updated(self) -> bool:
+        return False
+
+# Plug into LearningMachine
+learning = LearningMachine(
+    custom_stores={
+        "project": ProjectContextStore(
+            context={"project_id": "my-project"},
+        ),
+    },
+)
+```
+
+See `08_custom_stores/` for complete examples.
 
 ---
 
