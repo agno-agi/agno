@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import io
+import os
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -23,6 +24,9 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 ContentDict = Dict[str, Union[str, Dict[str, str]]]
+
+OCR_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".gif", ".webp"}
+EXCEL_EXTENSIONS = {".xlsx", ".xls"}
 
 
 class KnowledgeContentOrigin(Enum):
@@ -74,25 +78,37 @@ class Knowledge:
     ) -> None: ...
 
     async def add_contents_async(self, *args, **kwargs) -> None:
+        """
+        Add multiple contents in PARALLEL with configurable concurrency.
+
+        Set via environment variable AGNO_BULK_CONCURRENCY (default: 10).
+        """
+        import os
+
+        # Collect all tasks to run in parallel
+        tasks = []
+
         if args and isinstance(args[0], list):
             arguments = args[0]
             upsert = kwargs.get("upsert", True)
             skip_if_exists = kwargs.get("skip_if_exists", False)
             for argument in arguments:
-                await self.add_content_async(
-                    name=argument.get("name"),
-                    description=argument.get("description"),
-                    path=argument.get("path"),
-                    url=argument.get("url"),
-                    metadata=argument.get("metadata"),
-                    topics=argument.get("topics"),
-                    text_content=argument.get("text_content"),
-                    reader=argument.get("reader"),
-                    include=argument.get("include"),
-                    exclude=argument.get("exclude"),
-                    upsert=argument.get("upsert", upsert),
-                    skip_if_exists=argument.get("skip_if_exists", skip_if_exists),
-                    remote_content=argument.get("remote_content", None),
+                tasks.append(
+                    self.add_content_async(
+                        name=argument.get("name"),
+                        description=argument.get("description"),
+                        path=argument.get("path"),
+                        url=argument.get("url"),
+                        metadata=argument.get("metadata"),
+                        topics=argument.get("topics"),
+                        text_content=argument.get("text_content"),
+                        reader=argument.get("reader"),
+                        include=argument.get("include"),
+                        exclude=argument.get("exclude"),
+                        upsert=argument.get("upsert", upsert),
+                        skip_if_exists=argument.get("skip_if_exists", skip_if_exists),
+                        remote_content=argument.get("remote_content", None),
+                    )
                 )
 
         elif kwargs:
@@ -109,70 +125,93 @@ class Knowledge:
             upsert = kwargs.get("upsert", True)
             skip_if_exists = kwargs.get("skip_if_exists", False)
             remote_content = kwargs.get("remote_content", None)
+
             for path in paths:
-                await self.add_content_async(
-                    name=name,
-                    description=description,
-                    path=path,
-                    metadata=metadata,
-                    include=include,
-                    exclude=exclude,
-                    upsert=upsert,
-                    skip_if_exists=skip_if_exists,
-                    reader=reader,
+                tasks.append(
+                    self.add_content_async(
+                        name=name,
+                        description=description,
+                        path=path,
+                        metadata=metadata,
+                        include=include,
+                        exclude=exclude,
+                        upsert=upsert,
+                        skip_if_exists=skip_if_exists,
+                        reader=reader,
+                    )
                 )
             for url in urls:
-                await self.add_content_async(
-                    name=name,
-                    description=description,
-                    url=url,
-                    metadata=metadata,
-                    include=include,
-                    exclude=exclude,
-                    upsert=upsert,
-                    skip_if_exists=skip_if_exists,
-                    reader=reader,
+                tasks.append(
+                    self.add_content_async(
+                        name=name,
+                        description=description,
+                        url=url,
+                        metadata=metadata,
+                        include=include,
+                        exclude=exclude,
+                        upsert=upsert,
+                        skip_if_exists=skip_if_exists,
+                        reader=reader,
+                    )
                 )
             for i, text_content in enumerate(text_contents):
                 content_name = f"{name}_{i}" if name else f"text_content_{i}"
                 log_debug(f"Adding text content: {content_name}")
-                await self.add_content_async(
-                    name=content_name,
-                    description=description,
-                    text_content=text_content,
-                    metadata=metadata,
-                    include=include,
-                    exclude=exclude,
-                    upsert=upsert,
-                    skip_if_exists=skip_if_exists,
-                    reader=reader,
+                tasks.append(
+                    self.add_content_async(
+                        name=content_name,
+                        description=description,
+                        text_content=text_content,
+                        metadata=metadata,
+                        include=include,
+                        exclude=exclude,
+                        upsert=upsert,
+                        skip_if_exists=skip_if_exists,
+                        reader=reader,
+                    )
                 )
             if topics:
-                await self.add_content_async(
-                    name=name,
-                    description=description,
-                    topics=topics,
-                    metadata=metadata,
-                    include=include,
-                    exclude=exclude,
-                    upsert=upsert,
-                    skip_if_exists=skip_if_exists,
-                    reader=reader,
+                tasks.append(
+                    self.add_content_async(
+                        name=name,
+                        description=description,
+                        topics=topics,
+                        metadata=metadata,
+                        include=include,
+                        exclude=exclude,
+                        upsert=upsert,
+                        skip_if_exists=skip_if_exists,
+                        reader=reader,
+                    )
                 )
 
             if remote_content:
-                await self.add_content_async(
-                    name=name,
-                    metadata=metadata,
-                    description=description,
-                    remote_content=remote_content,
-                    upsert=upsert,
-                    skip_if_exists=skip_if_exists,
-                    reader=reader,
+                tasks.append(
+                    self.add_content_async(
+                        name=name,
+                        metadata=metadata,
+                        description=description,
+                        remote_content=remote_content,
+                        upsert=upsert,
+                        skip_if_exists=skip_if_exists,
+                        reader=reader,
+                    )
                 )
 
         else:
             raise ValueError("Invalid usage of add_contents.")
+
+        # Execute all tasks in PARALLEL with configurable concurrency limit
+        if tasks:
+            max_concurrent = int(os.getenv("AGNO_BULK_CONCURRENCY", "10"))
+            semaphore = asyncio.Semaphore(max_concurrent)
+
+            async def run_with_limit(task):
+                async with semaphore:
+                    return await task
+
+            log_debug(f"Processing {len(tasks)} content items in parallel with max concurrency {max_concurrent}")
+            await asyncio.gather(*[run_with_limit(t) for t in tasks])
 
     @overload
     def add_contents(self, contents: List[ContentDict]) -> None: ...
@@ -594,6 +633,74 @@ class Knowledge:
             else:
                 return reader.read(source, name=name)
 
+    async def _read_with_reader_async(
+        self,
+        reader: Reader,
+        source: Union[Path, str, BytesIO],
+        name: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> List[Document]:
+        """
+        Read content using a reader's async_read() if available, otherwise fallback to sync read().
+
+        This enables parallel processing when readers implement async_read() with non-blocking I/O.
+
+        Args:
+            reader: Reader to use
+            source: Source to read from (Path, URL string, or BytesIO)
+            name: Optional name for the document
+            password: Optional password for protected files
+
+        Returns:
+            List of documents read
+        """
+        import inspect
+
+        # Try async_read first, fall back to sync read if NotImplementedError
+        # (base Reader class defines async_read that raises NotImplementedError)
+        if hasattr(reader, "async_read") and callable(getattr(reader, "async_read")):
+            async_read_method = getattr(reader, "async_read")
+            async_read_signature = inspect.signature(async_read_method)
+
+            try:
+                log_debug(f"Trying async_read() for reader: {reader.__class__.__name__}")
+
+                if password and "password" in async_read_signature.parameters:
+                    return await async_read_method(source, name=name, password=password)
+                else:
+                    return await async_read_method(source, name=name)
+            except NotImplementedError:
+                # Reader doesn't have a real async_read implementation, fall back to sync
+                log_debug(f"async_read() not implemented for {reader.__class__.__name__}, falling back to sync read()")
+
+        # Fallback to sync read() in thread pool to avoid blocking event loop
+        log_debug(f"Using sync read() in thread pool for reader: {reader.__class__.__name__}")
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: self._read_with_reader(reader, source, name, password),
+        )
+
+    def _get_reader_semaphore_for_path(self, path: Path) -> asyncio.Semaphore:
+        """
+        Get per-reader-type semaphore based on file extension.
+
+        Uses OCRFLUX_CONCURRENCY, EXCEL_CONCURRENCY, and DEFAULT_CONCURRENCY env vars.
+        """
+        if not hasattr(self, "_reader_semaphores"):
+            self._reader_semaphores = {
+                "ocr": asyncio.Semaphore(int(os.getenv("OCRFLUX_CONCURRENCY", "10"))),
+                "excel": asyncio.Semaphore(int(os.getenv("EXCEL_CONCURRENCY", "5"))),
+                "default": asyncio.Semaphore(int(os.getenv("DEFAULT_CONCURRENCY", "5"))),
+            }
+
+        ext = path.suffix.lower()
+        if ext in OCR_EXTENSIONS:
+            return self._reader_semaphores["ocr"]
+        if ext in EXCEL_EXTENSIONS:
+            return self._reader_semaphores["excel"]
+        return self._reader_semaphores["default"]
+
     def _prepare_documents_for_insert(
         self,
         documents: List[Document],
@@ -690,13 +797,16 @@ class Knowledge:
                     reader = ReaderFactory.get_reader_for_extension(path.suffix)
                     log_debug(f"Using Reader: {reader.__class__.__name__}")
 
-                if reader:
-                    password = content.auth.password if content.auth and content.auth.password else None
-                    read_documents = self._read_with_reader(
-                        reader, path, name=content.name or path.name, password=password
-                    )
-                else:
-                    read_documents = []
+                semaphore = self._get_reader_semaphore_for_path(path)
+                async with semaphore:
+                    if reader:
+                        password = content.auth.password if content.auth and content.auth.password else None
+                        # Use async reader method to enable parallel processing
+                        read_documents = await self._read_with_reader_async(
+                            reader, path, name=content.name or path.name, password=password
+                        )
+                    else:
+                        read_documents = []
 
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
@@ -705,6 +815,8 @@ class Knowledge:
                 await self._handle_vector_db_insert_async(content, read_documents, upsert)
 
         elif path.is_dir():
+            # Collect all file contents to process
+            file_contents = []
             for file_path in path.iterdir():
                 # Apply include/exclude filtering
                 if not self._should_include_file(str(file_path), include, exclude):
@@ -720,8 +832,21 @@ class Knowledge:
                 )
                 file_content.content_hash = self._build_content_hash(file_content)
                 file_content.id = generate_id(file_content.content_hash)
+                file_contents.append(file_content)
 
-                await self._load_from_path_async(file_content, upsert, skip_if_exists, include, exclude)
+            # Process files in PARALLEL with configurable concurrency limit
+            # Set via environment variable AGNO_DIR_CONCURRENCY (default: 10)
+            import os
+            max_concurrent = int(os.getenv("AGNO_DIR_CONCURRENCY", "10"))
+            semaphore = asyncio.Semaphore(max_concurrent)
+
+            async def load_with_limit(fc):
+                async with semaphore:
+                    await self._load_from_path_async(fc, upsert, skip_if_exists, include, exclude)
+
+            if file_contents:
+                log_debug(f"Processing {len(file_contents)} files from directory {path} with max concurrency {max_concurrent}")
+                await asyncio.gather(*[load_with_limit(fc) for fc in file_contents])
         else:
             log_warning(f"Invalid path: {path}")
 
