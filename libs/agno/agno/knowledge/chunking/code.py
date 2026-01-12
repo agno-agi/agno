@@ -53,7 +53,15 @@ class CodeChunking(ChunkingStrategy):
         if self.chunker_params:
             _chunker_params.update(self.chunker_params)
 
-        self.chunker = CodeChunker(**_chunker_params)
+        try:
+            self.chunker = CodeChunker(**_chunker_params)
+        except ValueError as e:
+            if "Tokenizer not found" in str(e):
+                raise ImportError(
+                    f"Missing dependencies for tokenizer `{self.tokenizer}`. "
+                    f"Please install using `pip install tiktoken`, `pip install transformers`, or `pip install tokenizers`"
+                ) from e
+            raise
 
     def chunk(self, document: Document) -> List[Document]:
         """Split document into code chunks using Chonkie."""

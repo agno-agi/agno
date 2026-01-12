@@ -15,7 +15,7 @@ knowledge.add_content(
     url="https://raw.githubusercontent.com/agno-agi/agno/main/libs/agno/agno/session/workflow.py",
     reader=TextReader(
         chunking_strategy=CodeChunking(
-            tokenizer="gpt2", chunk_size=500, language="auto", include_nodes=False
+            tokenizer="gpt2", chunk_size=500, language="python", include_nodes=False
         ),
     ),
 )
