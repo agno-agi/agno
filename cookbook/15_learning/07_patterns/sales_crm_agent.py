@@ -115,26 +115,35 @@ if __name__ == "__main__":
     print("PHASE 1: Alice Logs Meeting")
     print("=" * 60 + "\n")
 
-    alice = create_sales_agent("alice@sales.com", "alice-session-1")
-    alice.print_response(
-        "I'm Alice, West Coast AE focusing on tech companies. "
-        "I just had a meeting TODAY with Bob Chen, the CTO at Acme Corp. "
-        "Please create entities for both Bob and Acme and record this information:\n"
-        "- Bob Chen: CTO, prefers async communication via Slack\n"
-        "- Acme Corp: Series B dev tools startup, 200 employees, uses PostgreSQL\n"
-        "- Bob works at Acme (add this relationship)\n"
-        "- Record today's meeting as an event on Acme: discussed Enterprise plan",
+    alice_intro = create_sales_agent("alice@sales.com", "alice-session-1")
+    alice_intro.print_response(
+        "I'm Alice, West Coast AE focusing on tech companies.",
         stream=True,
     )
+
+    alice_meeting_bob = create_sales_agent("alice@sales.com", "alice-session-1")
+    alice_meeting_bob.print_response(
+        "I just had a meeting TODAY with Bob Chen, the CTO at Acme Corp. "
+        "Bob Chen prefers async communication via Slack.",
+        stream=True,
+    )
+
+    alice_acme_details = create_sales_agent("alice@sales.com", "alice-session-1")
+    alice_acme_details.print_response(
+        "Acme Corp is a Series B dev tools startup, 200 employees, uses PostgreSQL. "
+        "Bob works at Acme. We discussed their Enterprise plan.",
+        stream=True,
+    )
+    alice_acme_details.get_learning_machine().session_context_store.print(session_id="alice-session-1")
 
     # Carlos queries shared CRM data
     print("\n" + "=" * 60)
     print("PHASE 2: Carlos Queries CRM")
     print("=" * 60 + "\n")
 
-    carlos = create_sales_agent("carlos@sales.com", "carlos-session-1")
-    carlos.print_response(
-        "Carlos here, East Coast SDR. Search for what we know about Acme Corp and Bob Chen.",
+    carlos_query_acme = create_sales_agent("carlos@sales.com", "carlos-session-1")
+    carlos_query_acme.print_response(
+        "Carlos here, East Coast SDR. What do we know about Acme Corp and Bob Chen?",
         stream=True,
     )
 
@@ -143,41 +152,23 @@ if __name__ == "__main__":
     print("PHASE 3: Alice Closes Deal")
     print("=" * 60 + "\n")
 
-    alice2 = create_sales_agent("alice@sales.com", "alice-session-2")
-    alice2.print_response(
-        "Great news! I closed Acme Corp for $55K ACV today! "
-        "Please add this as an EVENT to the Acme Corp entity with today's date. "
-        "Also, save a LEARNING about why this deal succeeded so other reps can benefit. "
+    alice_close_announcement = create_sales_agent("alice@sales.com", "alice-session-2")
+    alice_close_announcement.print_response(
+        "Great news! I closed Acme Corp for $55K ACV today!",
+        stream=True,
+    )
+
+    alice_win_factors = create_sales_agent("alice@sales.com", "alice-session-2")
+    alice_win_factors.print_response(
         "Key win factors: PostgreSQL integration matched their stack, "
         "async communication style fit their culture, "
         "and we moved fast on their Q1 timeline. Bob championed internally.",
         stream=True,
     )
-    alice2.get_learning_machine().learned_knowledge_store.print(query="sales win")
+    alice_win_factors.get_learning_machine().learned_knowledge_store.print(query="sales")
+    alice_win_factors.get_learning_machine().session_context_store.print(session_id="alice-session-2")
 
-    # Verify data was saved
+    # Cross-user sharing verification
     print("\n" + "=" * 60)
-    print("VERIFICATION: Entity & Knowledge Sharing")
-    print("=" * 60 + "\n")
-
-    print("Learned knowledge:")
-    alice2.get_learning_machine().learned_knowledge_store.print(query="sales")
-
-    print("\nEntity memory:")
-    em = alice2.get_learning_machine().entity_memory_store
-    if em:
-        results = em.search(
-            query="Acme Corp", entity_type="company", limit=1, namespace="sales:global"
-        )
-        if results:
-            print(f"  Acme Corp: {results[0].name if hasattr(results[0], 'name') else 'FOUND'}")
-        else:
-            print("  Acme Corp: NOT FOUND")
-
-        results = em.search(
-            query="Bob Chen", entity_type="person", limit=1, namespace="sales:global"
-        )
-        if results:
-            print(f"  Bob Chen: {results[0].name if hasattr(results[0], 'name') else 'FOUND'}")
-        else:
-            print("  Bob Chen: NOT FOUND")
+    print("Cross-user sharing: Alice created -> Carlos queried -> Alice closed")
+    print("=" * 60)

@@ -92,29 +92,29 @@ if __name__ == "__main__":
     print("INCIDENT 1: Database Connection Storm (Sarah)")
     print("=" * 60 + "\n")
 
-    bot1 = create_oncall_bot("sarah@company.com", "INC-001")
-    bot1.print_response(
+    sarah_initial_report = create_oncall_bot("sarah@company.com", "INC-001")
+    sarah_initial_report.print_response(
         "I'm getting paged - our API is throwing 'too many connections' errors to Postgres. "
         "Response times are spiking. What should I check first?",
         stream=True,
     )
-    bot1.get_learning_machine().session_context_store.print(session_id="INC-001")
+    sarah_initial_report.get_learning_machine().session_context_store.print(session_id="INC-001")
 
-    bot1.print_response(
+    sarah_investigation = create_oncall_bot("sarah@company.com", "INC-001")
+    sarah_investigation.print_response(
         "I checked pg_stat_activity - there are 500 connections! Our pool is set to 100. "
         "Most are in 'idle in transaction' state. What's causing this?",
         stream=True,
     )
 
-    # Sarah resolves and saves pattern
-    bot1.print_response(
+    sarah_resolution = create_oncall_bot("sarah@company.com", "INC-001")
+    sarah_resolution.print_response(
         "Found it! A new deployment had a missing connection.close() in a retry loop. "
         "Rolled back the deployment, connections dropping. Crisis averted! "
-        "Please save this as a learning so other engineers can benefit. "
         "Root cause was unclosed connections in retry logic.",
         stream=True,
     )
-    bot1.get_learning_machine().learned_knowledge_store.print(
+    sarah_resolution.get_learning_machine().learned_knowledge_store.print(
         query="database connections"
     )
 
@@ -123,8 +123,8 @@ if __name__ == "__main__":
     print("INCIDENT 2: Similar Database Issue (Marcus)")
     print("=" * 60 + "\n")
 
-    bot2 = create_oncall_bot("marcus@company.com", "INC-002")
-    bot2.print_response(
+    marcus_similar_issue = create_oncall_bot("marcus@company.com", "INC-002")
+    marcus_similar_issue.print_response(
         "Seeing Postgres connection exhaustion on the payments service. "
         "Pool is maxed out. What's the fastest way to diagnose?",
         stream=True,
@@ -136,10 +136,10 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     print("Learned knowledge (shared across engineers):")
-    bot2.get_learning_machine().learned_knowledge_store.print(
+    marcus_similar_issue.get_learning_machine().learned_knowledge_store.print(
         query="connection postgres"
     )
 
     print("\nSession contexts (separate per incident):")
-    bot1.get_learning_machine().session_context_store.print(session_id="INC-001")
-    bot2.get_learning_machine().session_context_store.print(session_id="INC-002")
+    sarah_resolution.get_learning_machine().session_context_store.print(session_id="INC-001")
+    marcus_similar_issue.get_learning_machine().session_context_store.print(session_id="INC-002")
