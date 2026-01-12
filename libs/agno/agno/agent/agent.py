@@ -8797,22 +8797,36 @@ class Agent:
             return message_copy
 
         if isinstance(message_copy.content, list):
-            # When content uses multimodal parts (e.g. [{"type":"text","text":...}]),
-            # append the additional context to the last text part to avoid dropping non-text parts.
-            if (
-                len(message_copy.content) > 0
-                and isinstance(message_copy.content[0], dict)
-                and "type" in message_copy.content[0]
-            ):
-                for part in reversed(message_copy.content):
-                    if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
-                        part["text"] += dependencies_block
-                        break
-                else:
-                    message_copy.content.append({"type": "text", "text": dependencies_block.lstrip("\n")})
-                return message_copy
+            if len(message_copy.content) > 0 and isinstance(message_copy.content[0], dict):
+                # When content uses multimodal parts (e.g. [{"type":"text","text":...}]),
+                # append the additional context to the last text part to avoid dropping non-text parts.
+                if "type" in message_copy.content[0]:
+                    for part in reversed(message_copy.content):
+                        if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                            part["text"] += dependencies_block
+                            break
+                    else:
+                        message_copy.content.append({"type": "text", "text": dependencies_block.lstrip("\n")})
+                    return message_copy
 
-            message_copy.content = get_text_from_message(message_copy.content) + dependencies_block
+                # Some providers may store a list of dict parts without a "type" key, but with plain "text".
+                if "text" in message_copy.content[0]:
+                    for part in reversed(message_copy.content):
+                        if isinstance(part, dict) and isinstance(part.get("text"), str):
+                            part["text"] += dependencies_block
+                            break
+                    else:
+                        message_copy.content.append({"text": dependencies_block.lstrip("\n")})
+                    return message_copy
+
+            if all(isinstance(item, str) for item in message_copy.content):
+                original_text = "\n".join(message_copy.content)
+            else:
+                original_text = get_text_from_message(message_copy.content)
+                if original_text == "" and len(message_copy.content) > 0:
+                    original_text = str(message_copy.content)
+
+            message_copy.content = original_text + dependencies_block
             return message_copy
 
         message_copy.content = str(message_copy.content) + dependencies_block
