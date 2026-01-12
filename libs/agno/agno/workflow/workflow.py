@@ -331,7 +331,7 @@ class Workflow:
         # Handle steps reconstruction
         if "steps" in config and config["steps"]:
             steps = [
-                Step.from_dict(step_data, db=config.get("db"), refs=refs, registry=registry)
+                Step.from_dict(step_data, db=db, refs=refs, registry=registry)
                 for step_data in config["steps"]
             ]
 
