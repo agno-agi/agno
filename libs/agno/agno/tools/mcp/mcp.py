@@ -128,7 +128,12 @@ class MCPTools(Toolkit):
         self.transport = transport
 
         self.header_provider = None
-        if self._is_valid_header_provider(header_provider):
+        if header_provider is not None:
+            if not self._is_valid_header_provider(header_provider):
+                raise ValueError(
+                    f"header_provider is not supported with '{self.transport}' transport. "
+                    "Use 'sse' or 'streamable-http' transport instead."
+                )
             self.header_provider = header_provider
 
         self.timeout_seconds = timeout_seconds
