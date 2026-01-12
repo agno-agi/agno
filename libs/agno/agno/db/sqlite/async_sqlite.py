@@ -737,6 +737,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["session_id"],
                         set_=dict(
+                            session_type=SessionType.AGENT.value,
                             agent_id=serialized_session.get("agent_id"),
                             user_id=serialized_session.get("user_id"),
                             runs=serialized_session.get("runs"),
@@ -775,6 +776,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["session_id"],
                         set_=dict(
+                            session_type=SessionType.TEAM.value,
                             team_id=serialized_session.get("team_id"),
                             user_id=serialized_session.get("user_id"),
                             summary=serialized_session.get("summary"),
@@ -812,6 +814,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["session_id"],
                         set_=dict(
+                            session_type=SessionType.WORKFLOW.value,
                             workflow_id=serialized_session.get("workflow_id"),
                             user_id=serialized_session.get("user_id"),
                             summary=serialized_session.get("summary"),

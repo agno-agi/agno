@@ -781,6 +781,7 @@ class PostgresDb(BaseDb):
                     stmt = stmt.on_conflict_do_update(  # type: ignore
                         index_elements=["session_id"],
                         set_=dict(
+                            session_type=SessionType.AGENT.value,
                             agent_id=session_dict.get("agent_id"),
                             user_id=session_dict.get("user_id"),
                             agent_data=session_dict.get("agent_data"),
@@ -817,6 +818,7 @@ class PostgresDb(BaseDb):
                     stmt = stmt.on_conflict_do_update(  # type: ignore
                         index_elements=["session_id"],
                         set_=dict(
+                            session_type=SessionType.TEAM.value,
                             team_id=session_dict.get("team_id"),
                             user_id=session_dict.get("user_id"),
                             team_data=session_dict.get("team_data"),
@@ -853,6 +855,7 @@ class PostgresDb(BaseDb):
                     stmt = stmt.on_conflict_do_update(  # type: ignore
                         index_elements=["session_id"],
                         set_=dict(
+                            session_type=SessionType.WORKFLOW.value,
                             workflow_id=session_dict.get("workflow_id"),
                             user_id=session_dict.get("user_id"),
                             workflow_data=session_dict.get("workflow_data"),

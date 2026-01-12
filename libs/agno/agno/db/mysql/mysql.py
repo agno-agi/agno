@@ -742,6 +742,7 @@ class MySQLDb(BaseDb):
                         updated_at=session_dict.get("created_at"),
                     )
                     stmt = stmt.on_duplicate_key_update(
+                        session_type=SessionType.AGENT.value,
                         agent_id=session_dict.get("agent_id"),
                         user_id=session_dict.get("user_id"),
                         agent_data=session_dict.get("agent_data"),
@@ -780,6 +781,7 @@ class MySQLDb(BaseDb):
                         updated_at=session_dict.get("created_at"),
                     )
                     stmt = stmt.on_duplicate_key_update(
+                        session_type=SessionType.TEAM.value,
                         team_id=session_dict.get("team_id"),
                         user_id=session_dict.get("user_id"),
                         team_data=session_dict.get("team_data"),
@@ -818,6 +820,7 @@ class MySQLDb(BaseDb):
                         updated_at=session_dict.get("created_at"),
                     )
                     stmt = stmt.on_duplicate_key_update(
+                        session_type=SessionType.WORKFLOW.value,
                         workflow_id=session_dict.get("workflow_id"),
                         user_id=session_dict.get("user_id"),
                         workflow_data=session_dict.get("workflow_data"),
