@@ -449,6 +449,85 @@ def get_workflow_by_id(
     return None
 
 
+def get_agent_for_request(
+    agent_id: str,
+    agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    create_fresh: bool = False,
+) -> Optional[Union[Agent, RemoteAgent]]:
+    """Get an agent by ID, optionally creating a fresh instance for request isolation.
+
+    When create_fresh=True, creates a new agent instance using deep_copy() to prevent
+    state contamination between concurrent requests. The new instance shares heavy
+    resources (db, model, MCP tools) but has isolated mutable state.
+
+    Args:
+        agent_id: The agent ID to look up
+        agents: List of template agents
+        create_fresh: If True, creates a new instance using deep_copy()
+
+    Returns:
+        The agent instance (shared or fresh copy based on create_fresh)
+    """
+    agent = get_agent_by_id(agent_id, agents)
+    if agent is None:
+        return None
+    if create_fresh and isinstance(agent, Agent):
+        return agent.deep_copy()
+    return agent
+
+
+def get_team_for_request(
+    team_id: str,
+    teams: Optional[List[Union[Team, RemoteTeam]]] = None,
+    create_fresh: bool = False,
+) -> Optional[Union[Team, RemoteTeam]]:
+    """Get a team by ID, optionally creating a fresh instance for request isolation.
+
+    When create_fresh=True, creates a new team instance using deep_copy() to prevent
+    state contamination between concurrent requests. Member agents are also deep copied.
+
+    Args:
+        team_id: The team ID to look up
+        teams: List of template teams
+        create_fresh: If True, creates a new instance using deep_copy()
+
+    Returns:
+        The team instance (shared or fresh copy based on create_fresh)
+    """
+    team = get_team_by_id(team_id, teams)
+    if team is None:
+        return None
+    if create_fresh and isinstance(team, Team):
+        return team.deep_copy()
+    return team
+
+
+def get_workflow_for_request(
+    workflow_id: str,
+    workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
+    create_fresh: bool = False,
+) -> Optional[Union[Workflow, RemoteWorkflow]]:
+    """Get a workflow by ID, optionally creating a fresh instance for request isolation.
+
+    When create_fresh=True, creates a new workflow instance using deep_copy() to prevent
+    state contamination between concurrent requests. Steps containing agents/teams are also deep copied.
+
+    Args:
+        workflow_id: The workflow ID to look up
+        workflows: List of template workflows
+        create_fresh: If True, creates a new instance using deep_copy()
+
+    Returns:
+        The workflow instance (shared or fresh copy based on create_fresh)
+    """
+    workflow = get_workflow_by_id(workflow_id, workflows)
+    if workflow is None:
+        return None
+    if create_fresh and isinstance(workflow, Workflow):
+        return workflow.deep_copy()
+    return workflow
+
+
 def resolve_origins(user_origins: Optional[List[str]] = None, default_origins: Optional[List[str]] = None) -> List[str]:
     """
     Get CORS origins - user-provided origins override defaults.

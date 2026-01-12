@@ -9898,8 +9898,24 @@ class Agent:
         if field_name == "reasoning_agent":
             return field_value.deep_copy()
 
+        # For tools, share MCP tools but copy others
+        if field_name == "tools" and field_value is not None:
+            copied_tools = []
+            for tool in field_value:
+                # Share MCP tools (they maintain server connections)
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
+                    copied_tools.append(tool)
+                else:
+                    try:
+                        copied_tools.append(deepcopy(tool))
+                    except Exception:
+                        copied_tools.append(tool)
+            return copied_tools
+
         # For storage, model and reasoning_model, use a deep copy
-        elif field_name in ("db", "model", "reasoning_model"):
+        if field_name in ("db", "model", "reasoning_model"):
             try:
                 return deepcopy(field_value)
             except Exception:
@@ -9910,7 +9926,7 @@ class Agent:
                     return field_value
 
         # For compound types, attempt a deep copy
-        elif isinstance(field_value, (list, dict, set)):
+        if isinstance(field_value, (list, dict, set)):
             try:
                 return deepcopy(field_value)
             except Exception:
@@ -9921,7 +9937,7 @@ class Agent:
                     return field_value
 
         # For pydantic models, attempt a model_copy
-        elif isinstance(field_value, BaseModel):
+        if isinstance(field_value, BaseModel):
             try:
                 return field_value.model_copy(deep=True)
             except Exception:
@@ -9933,8 +9949,6 @@ class Agent:
 
         # For other types, attempt a shallow copy first
         try:
-            from copy import copy
-
             return copy(field_value)
         except Exception:
             # If copy fails, return as is
