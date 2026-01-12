@@ -79,8 +79,8 @@ class FileTools(Toolkit):
                 file_path.parent.mkdir(parents=True, exist_ok=True)
             if file_path.exists() and not overwrite:
                 return f"File {file_name} already exists"
-            file_path.write_text(contents, encoding=encoding)
-            log_debug(f"Saved: {file_path}")
+            file_path.write_text(contents, encoding="utf-8")
+            log_info(f"Saved: {file_path}")
             return str(file_name)
         except Exception as e:
             log_error(f"Error saving to file: {e}")
