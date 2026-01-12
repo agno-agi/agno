@@ -144,7 +144,9 @@ if __name__ == "__main__":
         "Also reaching out to Benchmark - they're known for product-led growth companies.",
         stream=True,
     )
-    benchmark_outreach.get_learning_machine().session_context_store.print(session_id="seed-round")
+    benchmark_outreach.get_learning_machine().session_context_store.print(
+        session_id="seed-round"
+    )
 
     # Week 2: First rejections
     print("\n" + "=" * 60)
@@ -168,7 +170,9 @@ if __name__ == "__main__":
         "Benchmark asked for a demo but I only showed slides. What patterns do you see?",
         stream=True,
     )
-    benchmark_feedback.get_learning_machine().session_context_store.print(session_id="seed-round")
+    benchmark_feedback.get_learning_machine().session_context_store.print(
+        session_id="seed-round"
+    )
 
     # Week 3: Pivot based on learning
     print("\n" + "=" * 60)
@@ -194,7 +198,9 @@ if __name__ == "__main__":
         "Also pitching Unusual Ventures (AI/data focus) and Insight Partners (vertical SaaS).",
         stream=True,
     )
-    unusual_insight_pitch.get_learning_machine().session_context_store.print(session_id="seed-round")
+    unusual_insight_pitch.get_learning_machine().session_context_store.print(
+        session_id="seed-round"
+    )
 
     # Week 4: Improved results
     print("\n" + "=" * 60)
@@ -218,7 +224,9 @@ if __name__ == "__main__":
         "Insight wants to meet our early customers. How do we convert these to term sheets?",
         stream=True,
     )
-    insight_customers.get_learning_machine().session_context_store.print(session_id="seed-round")
+    insight_customers.get_learning_machine().session_context_store.print(
+        session_id="seed-round"
+    )
 
     # Week 5: Close round
     print("\n" + "=" * 60)
@@ -237,14 +245,18 @@ if __name__ == "__main__":
         "fast follow-up (< 24 hours), and bringing customer references to second meetings.",
         stream=True,
     )
-    reflect_on_learnings.get_learning_machine().learned_knowledge_store.print(query="successful")
+    reflect_on_learnings.get_learning_machine().learned_knowledge_store.print(
+        query="successful"
+    )
 
     round_closed = create_fundraising_assistant(founder_id, "seed-round")
     round_closed.print_response(
         "We accepted FirstRound's term sheet. Seed round closed!",
         stream=True,
     )
-    round_closed.get_learning_machine().session_context_store.print(session_id="seed-round")
+    round_closed.get_learning_machine().session_context_store.print(
+        session_id="seed-round"
+    )
 
     # Verify all 5 stores have data
     print("\n" + "=" * 60)
@@ -252,8 +264,12 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     round_closed.get_learning_machine().user_profile_store.print(user_id=founder_id)
-    round_closed.get_learning_machine().session_context_store.print(session_id="seed-round")
-    round_closed.get_learning_machine().learned_knowledge_store.print(query="fundraising")
+    round_closed.get_learning_machine().session_context_store.print(
+        session_id="seed-round"
+    )
+    round_closed.get_learning_machine().learned_knowledge_store.print(
+        query="fundraising"
+    )
 
     # Success metrics
     print("\n" + "=" * 60)

@@ -175,7 +175,9 @@ if __name__ == "__main__":
         + "Help me prioritize all of today's messages.",
         stream=True,
     )
-    monday_other_messages.get_learning_machine().session_context_store.print(session_id="week-jan-15")
+    monday_other_messages.get_learning_machine().session_context_store.print(
+        session_id="week-jan-15"
+    )
 
     # Tuesday: Pattern recognition
     print("\n" + "=" * 60)
@@ -198,11 +200,11 @@ if __name__ == "__main__":
             "Great discussion yesterday...",
         )
         + "\n\n"
-        + format_email("Newsletter", "Weekly Product Digest", "Top 10 product trends...")
+        + format_email(
+            "Newsletter", "Weekly Product Digest", "Top 10 product trends..."
+        )
         + "\n\n"
-        + format_slack(
-            "product-team", "Sarah", "Can we sync on post-launch roadmap?"
-        ),
+        + format_slack("product-team", "Sarah", "Can we sync on post-launch roadmap?"),
         stream=True,
     )
 
@@ -211,7 +213,9 @@ if __name__ == "__main__":
         "What patterns do you see? How should I prioritize today?",
         stream=True,
     )
-    tuesday_pattern_check.get_learning_machine().learned_knowledge_store.print(query="priority Sarah")
+    tuesday_pattern_check.get_learning_machine().learned_knowledge_store.print(
+        query="priority Sarah"
+    )
 
     # Wednesday: Proactive assistance
     print("\n" + "=" * 60)
@@ -234,12 +238,16 @@ if __name__ == "__main__":
         "Also received:\n\n"
         + format_slack("random", "Karen", "Anyone want coffee?")
         + "\n\n"
-        + format_email("Sarah Chen", "Post-launch retrospective", "Let's schedule for Friday")
+        + format_email(
+            "Sarah Chen", "Post-launch retrospective", "Let's schedule for Friday"
+        )
         + "\n\n"
         + "Use learned patterns to prioritize all messages today.",
         stream=True,
     )
-    wednesday_other_messages.get_learning_machine().session_context_store.print(session_id="week-jan-15")
+    wednesday_other_messages.get_learning_machine().session_context_store.print(
+        session_id="week-jan-15"
+    )
 
     # Thursday: Cross-channel context tracking
     print("\n" + "=" * 60)
@@ -268,7 +276,9 @@ if __name__ == "__main__":
         + "What's the status on these action items?",
         stream=True,
     )
-    thursday_slack_followup.get_learning_machine().session_context_store.print(session_id="week-jan-15")
+    thursday_slack_followup.get_learning_machine().session_context_store.print(
+        session_id="week-jan-15"
+    )
 
     # Friday: Week wrap-up
     print("\n" + "=" * 60)
@@ -284,7 +294,9 @@ if __name__ == "__main__":
         "4. Suggest prep for next week",
         stream=True,
     )
-    friday_summary.get_learning_machine().learned_knowledge_store.print(query="priority pattern")
+    friday_summary.get_learning_machine().learned_knowledge_store.print(
+        query="priority pattern"
+    )
 
     # Verify all 5 stores
     print("\n" + "=" * 60)
@@ -292,5 +304,9 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     friday_summary.get_learning_machine().user_profile_store.print(user_id=user_id)
-    friday_summary.get_learning_machine().session_context_store.print(session_id="week-jan-15")
-    friday_summary.get_learning_machine().learned_knowledge_store.print(query="priority")
+    friday_summary.get_learning_machine().session_context_store.print(
+        session_id="week-jan-15"
+    )
+    friday_summary.get_learning_machine().learned_knowledge_store.print(
+        query="priority"
+    )

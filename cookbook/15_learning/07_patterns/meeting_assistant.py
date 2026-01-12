@@ -95,14 +95,18 @@ if __name__ == "__main__":
     print("MEETING 1: Team Standup")
     print("=" * 60 + "\n")
 
-    standup_intro = create_meeting_assistant("manager@company.com", "standup-2024-01-15")
+    standup_intro = create_meeting_assistant(
+        "manager@company.com", "standup-2024-01-15"
+    )
     standup_intro.print_response(
         "Starting our Monday standup. Present: Alice (senior engineer), "
         "Bob (junior engineer), and myself.",
         stream=True,
     )
 
-    standup_updates = create_meeting_assistant("manager@company.com", "standup-2024-01-15")
+    standup_updates = create_meeting_assistant(
+        "manager@company.com", "standup-2024-01-15"
+    )
     standup_updates.print_response(
         "Alice: Project Atlas is on track for Q1 launch. Finished the auth module. "
         "Bob: Working on the onboarding flow for Atlas, blocked on API specs. "
@@ -110,7 +114,9 @@ if __name__ == "__main__":
         stream=True,
     )
 
-    standup_action_items = create_meeting_assistant("manager@company.com", "standup-2024-01-15")
+    standup_action_items = create_meeting_assistant(
+        "manager@company.com", "standup-2024-01-15"
+    )
     standup_action_items.print_response(
         "Action items from this standup: "
         "1. Alice to review Bob's PR by Wednesday "
@@ -195,7 +201,9 @@ if __name__ == "__main__":
             results = em.search(query=name, entity_type="person", limit=1)
             if results:
                 entity = results[0]
-                print(f"  {name}: {len(entity.facts) if hasattr(entity, 'facts') else 0} facts")
+                print(
+                    f"  {name}: {len(entity.facts) if hasattr(entity, 'facts') else 0} facts"
+                )
             else:
                 print(f"  {name}: NOT FOUND")
 

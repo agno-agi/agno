@@ -98,7 +98,9 @@ if __name__ == "__main__":
         "Response times are spiking. What should I check first?",
         stream=True,
     )
-    sarah_initial_report.get_learning_machine().session_context_store.print(session_id="INC-001")
+    sarah_initial_report.get_learning_machine().session_context_store.print(
+        session_id="INC-001"
+    )
 
     sarah_investigation = create_oncall_bot("sarah@company.com", "INC-001")
     sarah_investigation.print_response(
@@ -141,5 +143,9 @@ if __name__ == "__main__":
     )
 
     print("\nSession contexts (separate per incident):")
-    sarah_resolution.get_learning_machine().session_context_store.print(session_id="INC-001")
-    marcus_similar_issue.get_learning_machine().session_context_store.print(session_id="INC-002")
+    sarah_resolution.get_learning_machine().session_context_store.print(
+        session_id="INC-001"
+    )
+    marcus_similar_issue.get_learning_machine().session_context_store.print(
+        session_id="INC-002"
+    )

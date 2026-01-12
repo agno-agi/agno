@@ -134,7 +134,9 @@ if __name__ == "__main__":
         "Bob works at Acme. We discussed their Enterprise plan.",
         stream=True,
     )
-    alice_acme_details.get_learning_machine().session_context_store.print(session_id="alice-session-1")
+    alice_acme_details.get_learning_machine().session_context_store.print(
+        session_id="alice-session-1"
+    )
 
     # Carlos queries shared CRM data
     print("\n" + "=" * 60)
@@ -165,8 +167,12 @@ if __name__ == "__main__":
         "and we moved fast on their Q1 timeline. Bob championed internally.",
         stream=True,
     )
-    alice_win_factors.get_learning_machine().learned_knowledge_store.print(query="sales")
-    alice_win_factors.get_learning_machine().session_context_store.print(session_id="alice-session-2")
+    alice_win_factors.get_learning_machine().learned_knowledge_store.print(
+        query="sales"
+    )
+    alice_win_factors.get_learning_machine().session_context_store.print(
+        session_id="alice-session-2"
+    )
 
     # Cross-user sharing verification
     print("\n" + "=" * 60)

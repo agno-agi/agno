@@ -64,8 +64,6 @@ def create_personal_assistant(user_id: str, session_id: str) -> Agent:
 # ============================================================================
 
 if __name__ == "__main__":
-    from rich.pretty import pprint
-
     user_id = "alex@example.com"
 
     # Conversation 1: Introduction
