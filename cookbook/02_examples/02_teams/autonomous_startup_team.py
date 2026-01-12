@@ -24,9 +24,7 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content(
-    path="cookbook/teams/coordinate/data", reader=PDFReader(chunk=True)
-)
+knowledge.insert(path="cookbook/teams/coordinate/data", reader=PDFReader(chunk=True))
 
 
 support_channel = "testing"

@@ -33,7 +33,7 @@ def get_recipe_image_agent(
             ),
             max_results=3,
         )
-        knowledge.add_content(
+        knowledge.insert(
             name=f"Uploaded Recipe: {local_pdf_path.split('/')[-1]}",
             path=local_pdf_path,
             reader=PDFImageReader(),
@@ -50,7 +50,7 @@ def get_recipe_image_agent(
             ),
             max_results=3,
         )
-        knowledge.add_content(
+        knowledge.insert(
             name="Thai Recipes Collection",
             url=DEFAULT_RECIPE_URL,
             description="Comprehensive Thai recipe book with traditional dishes",

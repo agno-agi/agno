@@ -12,7 +12,7 @@ knowledge = Knowledge(
 )
 
 asyncio.run(
-    knowledge.add_content_async(
+    knowledge.ainsert(
         url="https://www.justice.gov/d9/criminal-ccips/legacy/2015/01/14/ccmanual_0.pdf",
     )
 )

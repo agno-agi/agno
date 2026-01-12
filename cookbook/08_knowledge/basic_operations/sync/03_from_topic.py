@@ -6,6 +6,7 @@ It is important to specify the reader for the content when using topics.
 2. Run: `python cookbook/agent_concepts/knowledge/03_from_topic.py` to run the cookbook
 """
 
+from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.arxiv_reader import ArxivReader
 from agno.knowledge.reader.wikipedia_reader import WikipediaReader
@@ -21,21 +22,33 @@ knowledge = Knowledge(
 )
 
 # Add topics from Wikipedia
-knowledge.add_content(
+knowledge.insert(
     metadata={"user_tag": "Wikipedia content"},
     topics=["Manchester United"],
     reader=WikipediaReader(),
 )
 
 # Add topics from Arxiv
-knowledge.add_content(
+knowledge.insert(
     metadata={"user_tag": "Arxiv content"},
     topics=["Carbon Dioxide", "Oxygen"],
     reader=ArxivReader(),
 )
 
-# Using the add_contents method
-knowledge.add_contents(
+# Using the insert_many method
+knowledge.insert_many(
     topics=["Carbon Dioxide", "Nitrogen"],
     reader=ArxivReader(),
+)
+
+agent = Agent(
+    name="My Agent",
+    description="Agno 2.0 Agent Implementation",
+    knowledge=knowledge,
+    search_knowledge=True,
+)
+
+agent.print_response(
+    "What can you tell me about Manchester United?",
+    markdown=True,
 )

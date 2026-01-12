@@ -17,7 +17,7 @@ knowledge = Knowledge(
     ),
 )
 # Load the knowledge
-knowledge.add_content(
+knowledge.insert(
     url="https://en.wikipedia.org/wiki/OpenAI",
     reader=WebsiteReader(),
 )
