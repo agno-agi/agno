@@ -452,7 +452,7 @@ def get_workflow_by_id(
 def get_agent_for_request(
     agent_id: str,
     agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
-    create_fresh: bool = False,
+    create_fresh: bool = True,
 ) -> Optional[Union[Agent, RemoteAgent]]:
     """Get an agent by ID, optionally creating a fresh instance for request isolation.
 
@@ -479,7 +479,7 @@ def get_agent_for_request(
 def get_team_for_request(
     team_id: str,
     teams: Optional[List[Union[Team, RemoteTeam]]] = None,
-    create_fresh: bool = False,
+    create_fresh: bool = True,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Get a team by ID, optionally creating a fresh instance for request isolation.
 
@@ -505,7 +505,7 @@ def get_team_for_request(
 def get_workflow_for_request(
     workflow_id: str,
     workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
-    create_fresh: bool = False,
+    create_fresh: bool = True,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Get a workflow by ID, optionally creating a fresh instance for request isolation.
 

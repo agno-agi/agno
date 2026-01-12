@@ -9914,16 +9914,9 @@ class Agent:
                         copied_tools.append(tool)
             return copied_tools
 
-        # For storage, model and reasoning_model, use a deep copy
-        if field_name in ("db", "model", "reasoning_model"):
-            try:
-                return deepcopy(field_value)
-            except Exception:
-                try:
-                    return copy(field_value)
-                except Exception as e:
-                    log_warning(f"Failed to copy field: {field_name} - {e}")
-                    return field_value
+        # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
+        if field_name in ("db", "model", "reasoning_model", "knowledge", "memory_manager"):
+            return field_value
 
         # For compound types, attempt a deep copy
         if isinstance(field_value, (list, dict, set)):

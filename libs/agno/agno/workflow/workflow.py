@@ -4519,15 +4519,9 @@ class Workflow:
                         fields_for_new_workflow[f.name] = field_value.deep_copy()
                     else:
                         fields_for_new_workflow[f.name] = field_value
-                # For db, share the reference (connection pool)
+                # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
                 elif f.name == "db":
-                    try:
-                        fields_for_new_workflow[f.name] = deepcopy(field_value)
-                    except Exception:
-                        try:
-                            fields_for_new_workflow[f.name] = copy(field_value)
-                        except Exception:
-                            fields_for_new_workflow[f.name] = field_value
+                    fields_for_new_workflow[f.name] = field_value
                 # For compound types, attempt a deep copy
                 elif isinstance(field_value, (list, dict, set)):
                     try:
