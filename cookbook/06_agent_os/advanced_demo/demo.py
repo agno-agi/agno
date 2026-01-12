@@ -41,7 +41,7 @@ if __name__ == "__main__":
     # evaluation.run(print_results=False)
 
     # Setup knowledge
-    # agno_assist.knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt", skip_if_exists=True)
+    # agno_assist.knowledge.insert(name="Agno Docs", url="https://docs.agno.com/llms-full.txt", skip_if_exists=True)
 
     # Simple run to generate and record a session
     agent_os.serve(app="demo:app", reload=True)

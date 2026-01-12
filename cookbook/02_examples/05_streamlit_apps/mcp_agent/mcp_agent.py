@@ -49,7 +49,7 @@ def get_mcp_agent(
     )
 
     try:
-        knowledge_base.add_content(
+        knowledge_base.insert(
             url="https://modelcontextprotocol.io/llms-full.txt",
             name="MCP Documentation",
             description="Complete Model Context Protocol documentation",

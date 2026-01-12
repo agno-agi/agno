@@ -19,7 +19,7 @@ knowledge = Knowledge(
 
 # As a list
 asyncio.run(
-    knowledge.add_contents_async(
+    knowledge.ainsert_many(
         [
             {
                 "name": "CV's",
@@ -37,7 +37,7 @@ asyncio.run(
 
 # Using specifc fields
 asyncio.run(
-    knowledge.add_contents_async(
+    knowledge.ainsert_many(
         urls=[
             "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
             "https://docs.agno.com/introduction",

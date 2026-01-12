@@ -33,7 +33,7 @@ knowledge = Knowledge(
     max_results=5,
 )
 
-knowledge.add_content(
+knowledge.insert(
     path=downloaded_csv_paths[0],
     metadata={
         "data_type": "sales",
@@ -44,7 +44,7 @@ knowledge.add_content(
     },
 )
 
-knowledge.add_content(
+knowledge.insert(
     path=downloaded_csv_paths[1],
     metadata={
         "data_type": "sales",
@@ -54,7 +54,7 @@ knowledge.add_content(
     },
 )
 
-knowledge.add_content(
+knowledge.insert(
     path=downloaded_csv_paths[2],
     metadata={
         "data_type": "survey",
@@ -64,7 +64,7 @@ knowledge.add_content(
     },
 )
 
-knowledge.add_content(
+knowledge.insert(
     path=downloaded_csv_paths[3],
     metadata={
         "data_type": "financial",

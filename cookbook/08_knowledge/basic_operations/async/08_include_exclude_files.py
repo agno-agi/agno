@@ -20,7 +20,7 @@ knowledge = Knowledge(
 
 # Add from local file to the knowledge base
 asyncio.run(
-    knowledge.add_content_async(
+    knowledge.ainsert(
         name="CV",
         path="cookbook/08_knowledge/testing_resources",
         metadata={"user_tag": "Engineering Candidates"},

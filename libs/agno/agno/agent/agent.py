@@ -8378,7 +8378,7 @@ class Agent:
 
         # 3.2.5 Add information about agentic filters if enabled
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = await self.knowledge.async_get_valid_filters()
+            valid_filters = await self.knowledge.aget_valid_filters()
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)
                 additional_information.append(
@@ -9602,7 +9602,7 @@ class Agent:
                 num_documents = self.knowledge.max_results
 
             log_debug(f"Searching knowledge base with filters: {filters}")
-            relevant_docs: List[Document] = await self.knowledge.async_search(
+            relevant_docs: List[Document] = await self.knowledge.asearch(
                 query=query, max_results=num_documents, filters=filters
             )
 
@@ -10748,7 +10748,7 @@ class Agent:
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
         from agno.knowledge.reader.text_reader import TextReader
 
-        self.knowledge.add_content(name=document_name, text_content=document_content, reader=TextReader())
+        self.knowledge.insert(name=document_name, text_content=document_content, reader=TextReader())
         return "Successfully added to knowledge base"
 
     def _get_previous_sessions_messages_function(

@@ -41,7 +41,7 @@ knowledge = Knowledge(
 )
 
 asyncio.run(
-    knowledge.add_contents_async(
+    knowledge.ainsert_many(
         [
             {
                 "path": downloaded_cv_paths[0],

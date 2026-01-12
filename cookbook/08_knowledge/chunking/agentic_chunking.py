@@ -10,7 +10,7 @@ knowledge = Knowledge(
     vector_db=PgVector(table_name="recipes_agentic_chunking", db_url=db_url),
 )
 
-knowledge.add_content(
+knowledge.insert(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
     reader=PDFReader(
         name="Agentic Chunking Reader",

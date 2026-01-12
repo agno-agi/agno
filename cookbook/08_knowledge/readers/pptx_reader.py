@@ -16,8 +16,8 @@ knowledge = Knowledge(
 )
 
 # Load PPTX content from file(s)
-# You can load multiple PPTX files by calling add_content multiple times
-knowledge.add_content(
+# You can load multiple PPTX files by calling insert multiple times
+knowledge.insert(
     path="path/to/your/presentation.pptx",  # Replace with actual PPTX file path
     reader=PPTXReader(),
 )

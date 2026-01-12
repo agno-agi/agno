@@ -126,7 +126,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
+    knowledge.insert(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
     """Run your AgentOS.
 
     You can see test your AgentOS at:

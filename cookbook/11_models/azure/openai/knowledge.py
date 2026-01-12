@@ -19,7 +19,7 @@ knowledge = Knowledge(
 )
 # Add content to the knowledge
 asyncio.run(
-    knowledge.add_content_async(
+    knowledge.ainsert(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
 )
