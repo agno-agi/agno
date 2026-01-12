@@ -655,6 +655,11 @@ class AgentOS:
         # Update CORS middleware
         update_cors_middleware(fastapi_app, self.cors_allowed_origins)  # type: ignore
 
+        # Add trailing slash normalization middleware
+        from agno.os.middleware.trailing_slash import TrailingSlashMiddleware
+
+        fastapi_app.add_middleware(TrailingSlashMiddleware)
+
         # Set agent_os_id and cors_allowed_origins on app state
         # This allows middleware (like JWT) to access these values
         fastapi_app.state.agent_os_id = self.id
