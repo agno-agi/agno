@@ -27,6 +27,7 @@ class DocxReader(Reader):
         """Get the list of supported chunking strategies for DOCX readers."""
         return [
             ChunkingStrategyType.DOCUMENT_CHUNKER,
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.SEMANTIC_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
