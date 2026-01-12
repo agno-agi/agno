@@ -139,6 +139,9 @@ def format_meeting(title: str, notes: str) -> str:
 # ============================================================================
 
 if __name__ == "__main__":
+    # Seed knowledge base with email management best practices from authoritative sources
+    personal_kb.add_content(url="https://blog.superhuman.com/inbox-zero-method/")
+
     user_id = "alex@stripe.com"
 
     # Monday: Initial setup and message triage
