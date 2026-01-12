@@ -1,4 +1,9 @@
-"""Integration tests for per-request isolation feature."""
+"""Integration tests for per-request isolation feature.
+
+Per-request isolation is the default behavior in AgentOS. Each request
+gets a fresh instance of the agent/team/workflow to prevent state
+contamination between concurrent requests.
+"""
 
 import uuid
 from unittest.mock import AsyncMock, patch
@@ -34,46 +39,11 @@ def test_team(test_agent):
 
 
 class TestAgentOSPerRequestIsolation:
-    """Tests for AgentOS with per_request_isolation enabled."""
+    """Tests for AgentOS with per-request isolation (default behavior)."""
 
-    def test_per_request_isolation_default_is_false(self, test_agent):
-        """Default value for per_request_isolation should be False."""
+    def test_agent_run_creates_fresh_instance(self, test_agent):
+        """Each request should use a fresh agent instance."""
         os = AgentOS(agents=[test_agent])
-        assert os.per_request_isolation is False
-
-    def test_per_request_isolation_can_be_enabled(self, test_agent):
-        """per_request_isolation can be set to True."""
-        os = AgentOS(agents=[test_agent], per_request_isolation=True)
-        assert os.per_request_isolation is True
-
-    def test_agent_run_with_isolation_disabled(self, test_agent):
-        """With isolation disabled, same agent instance is used."""
-        os = AgentOS(agents=[test_agent], per_request_isolation=False)
-        app = os.get_app()
-        client = TestClient(app)
-
-        # Mock the agent's arun method to capture the agent instance
-        captured_agents = []
-
-        async def capture_arun(*args, **kwargs):
-            captured_agents.append(test_agent)
-            # Return a mock response
-            mock_response = AsyncMock()
-            mock_response.to_dict.return_value = {"run_id": str(uuid.uuid4())}
-            return mock_response
-
-        with patch.object(test_agent, "arun", side_effect=capture_arun):
-            response = client.post(
-                f"/agents/{test_agent.id}/runs",
-                data={"message": "Hello", "stream": "false"},
-            )
-
-        # Should use the same agent (although we're capturing the original)
-        assert response.status_code == 200
-
-    def test_agent_run_with_isolation_enabled(self, test_agent):
-        """With isolation enabled, fresh agent instance should be used per request."""
-        os = AgentOS(agents=[test_agent], per_request_isolation=True)
         app = os.get_app()
         client = TestClient(app)
 
@@ -107,7 +77,7 @@ class TestMetadataIsolation:
     def test_metadata_not_shared_between_requests(self, test_agent):
         """Metadata changes in one request should not affect others."""
         test_agent.metadata = {"initial": "value"}
-        os = AgentOS(agents=[test_agent], per_request_isolation=True)
+        os = AgentOS(agents=[test_agent])
         app = os.get_app()
         client = TestClient(app)
 
@@ -132,9 +102,9 @@ class TestMetadataIsolation:
 class TestTeamIsolation:
     """Tests for Team per-request isolation."""
 
-    def test_team_with_isolation_enabled(self, test_team):
-        """With isolation enabled, fresh team instance should be used."""
-        os = AgentOS(teams=[test_team], per_request_isolation=True)
+    def test_team_creates_fresh_instance(self, test_team):
+        """Each request should use a fresh team instance."""
+        os = AgentOS(teams=[test_team])
         app = os.get_app()
         client = TestClient(app)
 

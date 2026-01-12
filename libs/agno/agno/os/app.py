@@ -148,7 +148,6 @@ class AgentOS:
         tracing_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         auto_provision_dbs: bool = True,
         run_hooks_in_background: bool = False,
-        per_request_isolation: bool = False,
         telemetry: bool = True,
     ):
         """Initialize AgentOS.
@@ -178,8 +177,6 @@ class AgentOS:
             tracing_db: Dedicated database for storing and reading traces. Recommended for multi-db setups.
                        If not provided and tracing=True, the first available db from agents/teams/workflows is used.
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
-            per_request_isolation: If True, create fresh agent/team/workflow instances per request to prevent
-                                   state contamination between concurrent requests. Recommended for production.
             telemetry: Whether to enable telemetry
 
         """
@@ -234,9 +231,6 @@ class AgentOS:
 
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
-
-        # If True, create fresh agent/team/workflow instances per request
-        self.per_request_isolation = per_request_isolation
 
         # List of all MCP tools used inside the AgentOS
         self.mcp_tools: List[Any] = []

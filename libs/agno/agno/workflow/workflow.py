@@ -4615,10 +4615,6 @@ class Workflow:
                 step_kwargs["agent"] = step.agent.deep_copy() if hasattr(step.agent, "deep_copy") else step.agent
             if step.team:
                 step_kwargs["team"] = step.team.deep_copy() if hasattr(step.team, "deep_copy") else step.team
-            if step.workflow:
-                step_kwargs["workflow"] = (
-                    step.workflow.deep_copy() if hasattr(step.workflow, "deep_copy") else step.workflow
-                )
             # Copy other step attributes
             for attr in ["pre_hooks", "post_hooks", "output_schema", "cache_results", "cache_ttl"]:
                 if hasattr(step, attr) and getattr(step, attr) is not None:
@@ -4636,7 +4632,7 @@ class Workflow:
         # Handle Parallel steps
         if isinstance(step, Parallel):
             copied_parallel_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
-            return Parallel(steps=copied_parallel_steps, name=step.name, description=step.description)
+            return Parallel(*copied_parallel_steps, name=step.name, description=step.description)
 
         # Handle Loop steps
         if isinstance(step, Loop):
@@ -4646,14 +4642,14 @@ class Workflow:
                 name=step.name,
                 description=step.description,
                 max_iterations=step.max_iterations,
-                condition=step.condition,
+                end_condition=step.end_condition,
             )
 
         # Handle Condition steps
         if isinstance(step, Condition):
             copied_condition_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
             return Condition(
-                steps=copied_condition_steps, name=step.name, description=step.description, condition=step.condition
+                evaluator=step.evaluator, steps=copied_condition_steps, name=step.name, description=step.description
             )
 
         # Handle Router steps
