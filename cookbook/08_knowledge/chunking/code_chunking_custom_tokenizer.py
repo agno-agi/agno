@@ -13,6 +13,10 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 class LineTokenizer(Tokenizer):
     """Custom tokenizer that counts lines of code."""
 
+    def __init__(self):
+        self.vocab = []
+        self.token2id = {}
+
     def __repr__(self) -> str:
         return f"LineTokenizer(vocab_size={len(self.vocab)})"
 
@@ -24,10 +28,10 @@ class LineTokenizer(Tokenizer):
     def encode(self, text: str) -> Sequence[int]:
         encoded = []
         for token in self.tokenize(text):
-            id = self.token2id[token]
-            if id >= len(self.vocab):
+            if token not in self.token2id:
+                self.token2id[token] = len(self.vocab)
                 self.vocab.append(token)
-            encoded.append(id)
+            encoded.append(self.token2id[token])
         return encoded
 
     def decode(self, tokens: Sequence[int]) -> str:
