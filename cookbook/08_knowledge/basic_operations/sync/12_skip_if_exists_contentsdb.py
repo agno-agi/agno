@@ -18,7 +18,7 @@ knowledge = Knowledge(
     ),
 )
 # Add from a URL to the knowledge base
-knowledge.add_content(
+knowledge.insert(
     name="CV",
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
     metadata={"user_tag": "Engineering Candidates"},
@@ -33,7 +33,7 @@ contents_db = PostgresDb(
 knowledge.contents_db = contents_db
 
 # Add from a URL to the knowledge base that already exists in the vectorDB, but adds it to the contentsDB
-knowledge.add_content(
+knowledge.insert(
     name="CV",
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
     metadata={"user_tag": "Engineering Candidates"},

@@ -8378,7 +8378,7 @@ class Agent:
 
         # 3.2.5 Add information about agentic filters if enabled
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = await self.knowledge.async_get_valid_filters()
+            valid_filters = await self.knowledge.aget_valid_filters()
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)
                 additional_information.append(
@@ -9504,15 +9504,19 @@ class Agent:
 
         # Use knowledge base search
         try:
-            if self.knowledge is None or (
-                (getattr(self.knowledge, "vector_db", None)) is None
-                and getattr(self.knowledge, "knowledge_retriever", None) is None
-            ):
+            if self.knowledge is None:
+                return None
+
+            # Check if knowledge has search capability (protocol-based or traditional)
+            has_search = callable(getattr(self.knowledge, "search", None))
+            has_vector_db = getattr(self.knowledge, "vector_db", None) is not None
+            has_retriever = getattr(self.knowledge, "knowledge_retriever", None) is not None
+
+            if not has_search and not has_vector_db and not has_retriever:
                 return None
 
             if num_documents is None:
-                if isinstance(self.knowledge, Knowledge):
-                    num_documents = self.knowledge.max_results
+                num_documents = getattr(self.knowledge, "max_results", None)
 
             log_debug(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = self.knowledge.search(
@@ -9549,7 +9553,7 @@ class Agent:
         # Validate the filters against known valid filter keys
         if self.knowledge is not None and filters is not None:
             if validate_filters:
-                valid_filters, invalid_keys = await self.knowledge.async_validate_filters(filters)  # type: ignore
+                valid_filters, invalid_keys = await self.knowledge.avalidate_filters(filters)  # type: ignore
 
                 # Warn about invalid filter keys
                 if invalid_keys:  # type: ignore
@@ -9592,17 +9596,24 @@ class Agent:
 
         # Use knowledge base search
         try:
-            if self.knowledge is None or (
-                getattr(self.knowledge, "vector_db", None) is None
-                and getattr(self.knowledge, "knowledge_retriever", None) is None
-            ):
+            if self.knowledge is None:
+                return None
+
+            # Check if knowledge has search capability (protocol-based or traditional)
+            has_search = callable(getattr(self.knowledge, "asearch", None)) or callable(
+                getattr(self.knowledge, "search", None)
+            )
+            has_vector_db = getattr(self.knowledge, "vector_db", None) is not None
+            has_retriever = getattr(self.knowledge, "knowledge_retriever", None) is not None
+
+            if not has_search and not has_vector_db and not has_retriever:
                 return None
 
             if num_documents is None:
-                num_documents = self.knowledge.max_results
+                num_documents = getattr(self.knowledge, "max_results", None)
 
             log_debug(f"Searching knowledge base with filters: {filters}")
-            relevant_docs: List[Document] = await self.knowledge.async_search(
+            relevant_docs: List[Document] = await self.knowledge.asearch(
                 query=query, max_results=num_documents, filters=filters
             )
 
@@ -10748,7 +10759,7 @@ class Agent:
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
         from agno.knowledge.reader.text_reader import TextReader
 
-        self.knowledge.add_content(name=document_name, text_content=document_content, reader=TextReader())
+        self.knowledge.insert(name=document_name, text_content=document_content, reader=TextReader())
         return "Successfully added to knowledge base"
 
     def _get_previous_sessions_messages_function(

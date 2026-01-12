@@ -21,21 +21,21 @@ knowledge = Knowledge(
 )
 
 # Add topics from Wikipedia
-knowledge.add_content(
+knowledge.insert(
     metadata={"user_tag": "Wikipedia content"},
     topics=["Manchester United"],
     reader=WikipediaReader(),
 )
 
 # Add topics from Arxiv
-knowledge.add_content(
+knowledge.insert(
     metadata={"user_tag": "Arxiv content"},
     topics=["Carbon Dioxide", "Oxygen"],
     reader=ArxivReader(),
 )
 
-# Using the add_contents method
-knowledge.add_contents(
+# Using the insert_many method
+knowledge.insert_many(
     topics=["Carbon Dioxide", "Nitrogen"],
     reader=ArxivReader(),
 )

@@ -49,7 +49,7 @@ class WebsiteReader(Reader):
         self._urls_to_crawl = []
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Website readers."""
         return [
             ChunkingStrategyType.CODE_CHUNKER,
@@ -61,7 +61,7 @@ class WebsiteReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.URL]
 
     def delay(self, min_seconds=1, max_seconds=3):
