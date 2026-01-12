@@ -411,7 +411,6 @@ learning = LearningMachine(
 )
 ```
 
-<<<<<<< HEAD
 ## Comprehensive Examples
 
 The `09_comprehensive/` folder contains real-world scenarios demonstrating all 5 learning stores working together over multi-week journeys.
@@ -452,8 +451,6 @@ An AI assistant manages daily communication across email, Slack, WhatsApp, and m
 
 ---
 
-=======
->>>>>>> origin/main
 ## Learn More
 
 - [Agno Documentation](https://docs.agno.com)
