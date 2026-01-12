@@ -1,7 +1,7 @@
 """Skill operations for the CLI."""
 
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 from rich.prompt import Prompt
 from rich.table import Table
@@ -16,6 +16,8 @@ from agno.cli.console import (
 )
 from agno.skills.validator import MAX_DESCRIPTION_LENGTH, MAX_SKILL_NAME_LENGTH
 
+# Type alias for skill info: (name, description, scripts_count, refs_count)
+SkillInfo = Tuple[str, str, int, int]
 
 def _validate_skill_name(name: str) -> List[str]:
     """Validate skill name format.
@@ -29,7 +31,7 @@ def _validate_skill_name(name: str) -> List[str]:
     Returns:
         List of validation error messages. Empty list means valid.
     """
-    errors = []
+    errors: List[str] = []
 
     if not name or not name.strip():
         errors.append("Skill name cannot be empty")
@@ -59,8 +61,8 @@ def create_skill_from_template(
     name: Optional[str] = None,
     path: Optional[str] = None,
     description: Optional[str] = None,
-    with_scripts: bool = False,
-    with_references: bool = False,
+    with_scripts: bool = True,
+    with_references: bool = True,
 ) -> Optional[Path]:
     """Create a new skill directory with proper structure.
 
@@ -68,8 +70,8 @@ def create_skill_from_template(
         name: Skill name (lowercase, alphanumeric with hyphens).
         path: Directory where skill folder will be created (default: cwd).
         description: Short description of the skill.
-        with_scripts: Include a scripts/ subdirectory.
-        with_references: Include a references/ subdirectory.
+        with_scripts: Include a scripts/ subdirectory (default: True).
+        with_references: Include a references/ subdirectory (default: True).
 
     Returns:
         Path to the created skill directory, or None if creation failed.
@@ -130,7 +132,7 @@ def create_skill_from_template(
         skill_md_path = skill_dir / "SKILL.md"
         skill_md_path.write_text(skill_md_content, encoding="utf-8")
 
-        # Create optional directories
+        # Create scripts and references directories (included by default)
         if with_scripts:
             scripts_dir = skill_dir / "scripts"
             scripts_dir.mkdir()
@@ -159,16 +161,14 @@ def create_skill_from_template(
             console.print(f"  - {name}/references/README.md")
         console.print("")
         console.print("[bold]Next steps:[/bold]")
-        console.print(f"  1. Edit [cyan]{skill_dir}/SKILL.md[/cyan] to add instructions")
+        steps = [f"Edit [cyan]{skill_dir}/SKILL.md[/cyan] to add instructions"]
         if with_scripts:
-            console.print(f"  2. Add scripts to [cyan]{skill_dir}/scripts/[/cyan]")
+            steps.append(f"Add scripts to [cyan]{skill_dir}/scripts/[/cyan]")
         if with_references:
-            console.print(
-                f"  {'3' if with_scripts else '2'}. Add reference docs to [cyan]{skill_dir}/references/[/cyan]"
-            )
-        console.print(
-            f"  {'4' if with_scripts and with_references else '3' if with_scripts or with_references else '2'}. Run [cyan]ag skill validate {skill_dir}[/cyan] to verify"
-        )
+            steps.append(f"Add reference docs to [cyan]{skill_dir}/references/[/cyan]")
+        steps.append(f"Run [cyan]ag skill validate {skill_dir}[/cyan] to verify")
+        for i, step in enumerate(steps, 1):
+            console.print(f"  {i}. {step}")
         console.print("─" * 50)
 
         return skill_dir
@@ -338,7 +338,7 @@ def list_skills(path: str, verbose: bool = False) -> None:
                 console.print(f"    ... and {len(errors) - 3} more error(s)")
 
 
-def _load_skill_info(skill_path: Path) -> Tuple[bool, Any]:
+def _load_skill_info(skill_path: Path) -> Tuple[bool, Union[SkillInfo, List[str]]]:
     """Load skill info for listing.
 
     Args:

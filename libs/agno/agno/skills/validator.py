@@ -37,7 +37,7 @@ def _validate_name(name: str, skill_dir: Optional[Path] = None) -> List[str]:
     Returns:
         List of validation error messages. Empty list means valid.
     """
-    errors = []
+    errors: List[str] = []
 
     if not name or not isinstance(name, str) or not name.strip():
         errors.append("Field 'name' must be a non-empty string")
@@ -79,7 +79,7 @@ def _validate_description(description: str) -> List[str]:
     Returns:
         List of validation error messages. Empty list means valid.
     """
-    errors = []
+    errors: List[str] = []
 
     if not description or not isinstance(description, str) or not description.strip():
         errors.append("Field 'description' must be a non-empty string")
@@ -100,7 +100,7 @@ def _validate_compatibility(compatibility: str) -> List[str]:
     Returns:
         List of validation error messages. Empty list means valid.
     """
-    errors = []
+    errors: List[str] = []
 
     if not isinstance(compatibility, str):
         errors.append("Field 'compatibility' must be a string")
@@ -138,7 +138,7 @@ def _validate_allowed_tools(allowed_tools) -> List[str]:
     Returns:
         List of validation error messages. Empty list means valid.
     """
-    errors = []
+    errors: List[str] = []
 
     if not isinstance(allowed_tools, list):
         errors.append("Field 'allowed-tools' must be a list")
@@ -159,7 +159,7 @@ def _validate_metadata_value(metadata_val) -> List[str]:
     Returns:
         List of validation error messages. Empty list means valid.
     """
-    errors = []
+    errors: List[str] = []
 
     if not isinstance(metadata_val, dict):
         errors.append("Field 'metadata' must be a dictionary")
@@ -247,7 +247,7 @@ def _validate_metadata_fields(metadata: Dict) -> List[str]:
     Returns:
         List of validation error messages. Empty list means valid.
     """
-    errors = []
+    errors: List[str] = []
 
     extra_fields = set(metadata.keys()) - ALLOWED_FIELDS
     if extra_fields:
@@ -271,7 +271,7 @@ def validate_metadata(metadata: Dict, skill_dir: Optional[Path] = None) -> List[
     Returns:
         List of validation error messages. Empty list means valid.
     """
-    errors = []
+    errors: List[str] = []
     errors.extend(_validate_metadata_fields(metadata))
 
     if "name" not in metadata:
