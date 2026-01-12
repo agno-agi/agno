@@ -193,7 +193,7 @@ class Model(ABC):
             True if the error is transient and worth retrying, False otherwise.
         """
         # Non-retryable status codes (client errors that won't change)
-        non_retryable_codes = {400, 401, 403, 413, 422}
+        non_retryable_codes = {400, 401, 403, 404, 413, 422}
         if error.status_code in non_retryable_codes:
             return False
 
