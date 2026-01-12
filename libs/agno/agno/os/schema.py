@@ -193,7 +193,7 @@ class SessionSchema(BaseModel):
         session_data = session.get("session_data", {}) or {}
 
         created_at = session.get("created_at", 0)
-        updated_at = session.get("updated_at", 0)
+        updated_at = session.get("updated_at", created_at)
 
         # Handle created_at and updated_at as either ISO 8601 string or timestamp
         def parse_datetime(val):
@@ -213,7 +213,7 @@ class SessionSchema(BaseModel):
             return None
 
         created_at = parse_datetime(session.get("created_at", 0))
-        updated_at = parse_datetime(session.get("updated_at", 0))
+        updated_at = parse_datetime(session.get("updated_at", created_at))
         return cls(
             session_id=session.get("session_id", ""),
             session_name=session_name,
@@ -265,6 +265,8 @@ class AgentSessionDetailSchema(BaseModel):
     @classmethod
     def from_session(cls, session: AgentSession) -> "AgentSessionDetailSchema":
         session_name = get_session_name({**session.to_dict(), "session_type": "agent"})
+        created_at = datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None
+        updated_at = datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else created_at
         return cls(
             user_id=session.user_id,
             agent_session_id=session.session_id,
@@ -280,8 +282,8 @@ class AgentSessionDetailSchema(BaseModel):
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,  # type: ignore
             metadata=session.metadata,
             chat_history=[message.to_dict() for message in session.get_chat_history()],
-            created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
-            updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
+            created_at=created_at,
+            updated_at=updated_at,
         )
 
 
@@ -304,7 +306,8 @@ class TeamSessionDetailSchema(BaseModel):
     def from_session(cls, session: TeamSession) -> "TeamSessionDetailSchema":
         session_dict = session.to_dict()
         session_name = get_session_name({**session_dict, "session_type": "team"})
-
+        created_at = datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None
+        updated_at = datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else created_at
         return cls(
             session_id=session.session_id,
             team_id=session.team_id,
@@ -319,8 +322,8 @@ class TeamSessionDetailSchema(BaseModel):
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
             metadata=session.metadata,
             chat_history=[message.to_dict() for message in session.get_chat_history()],
-            created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
-            updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
+            created_at=created_at,
+            updated_at=updated_at,
         )
 
 
@@ -343,7 +346,6 @@ class WorkflowSessionDetailSchema(BaseModel):
     def from_session(cls, session: WorkflowSession) -> "WorkflowSessionDetailSchema":
         session_dict = session.to_dict()
         session_name = get_session_name({**session_dict, "session_type": "workflow"})
-
         return cls(
             session_id=session.session_id,
             user_id=session.user_id,
@@ -355,7 +357,7 @@ class WorkflowSessionDetailSchema(BaseModel):
             workflow_data=session.workflow_data,
             metadata=session.metadata,
             created_at=session.created_at,
-            updated_at=session.updated_at,
+            updated_at=session.updated_at or session.created_at,
         )
 
 
@@ -547,7 +549,7 @@ class SortOrder(str, Enum):
 
 class PaginationInfo(BaseModel):
     page: int = Field(0, description="Current page number (0-indexed)", ge=0)
-    limit: int = Field(20, description="Number of items per page", ge=1, le=100)
+    limit: int = Field(20, description="Number of items per page", ge=1)
     total_pages: int = Field(0, description="Total number of pages", ge=0)
     total_count: int = Field(0, description="Total count of items", ge=0)
     search_time_ms: float = Field(0, description="Search execution time in milliseconds", ge=0)

@@ -67,7 +67,7 @@ def sample_knowledge_rows() -> List[KnowledgeRow]:
     return rows
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_upsert_knowledge_content(async_postgres_db_real: AsyncPostgresDb, sample_knowledge_row: KnowledgeRow):
     """Test upserting knowledge content"""
     # First insert
@@ -88,7 +88,7 @@ async def test_upsert_knowledge_content(async_postgres_db_real: AsyncPostgresDb,
     assert updated_result.access_count == 5
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_knowledge_content(async_postgres_db_real: AsyncPostgresDb, sample_knowledge_row: KnowledgeRow):
     """Test getting a single knowledge content"""
     # First upsert the knowledge
@@ -104,7 +104,7 @@ async def test_get_knowledge_content(async_postgres_db_real: AsyncPostgresDb, sa
     assert result.metadata["category"] == "testing"
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_knowledge_content_not_found(async_postgres_db_real: AsyncPostgresDb):
     """Test getting knowledge content that doesn't exist"""
     result = await async_postgres_db_real.get_knowledge_content("nonexistent_id")
@@ -112,7 +112,7 @@ async def test_get_knowledge_content_not_found(async_postgres_db_real: AsyncPost
     assert result is None
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_knowledge_contents_all(
     async_postgres_db_real: AsyncPostgresDb, sample_knowledge_rows: List[KnowledgeRow]
 ):
@@ -129,7 +129,7 @@ async def test_get_knowledge_contents_all(
     assert all(isinstance(row, KnowledgeRow) for row in contents)
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_knowledge_contents_with_pagination(
     async_postgres_db_real: AsyncPostgresDb, sample_knowledge_rows: List[KnowledgeRow]
 ):
@@ -157,7 +157,7 @@ async def test_get_knowledge_contents_with_pagination(
     assert total_count == 5
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_knowledge_contents_with_sorting(
     async_postgres_db_real: AsyncPostgresDb, sample_knowledge_rows: List[KnowledgeRow]
 ):
@@ -183,7 +183,7 @@ async def test_get_knowledge_contents_with_sorting(
     assert created_at_times == sorted(created_at_times, reverse=True)
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_delete_knowledge_content(async_postgres_db_real: AsyncPostgresDb, sample_knowledge_row: KnowledgeRow):
     """Test deleting knowledge content"""
     # First insert the knowledge
@@ -201,7 +201,7 @@ async def test_delete_knowledge_content(async_postgres_db_real: AsyncPostgresDb,
     assert result is None
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_upsert_knowledge_content_partial_data(async_postgres_db_real: AsyncPostgresDb):
     """Test upserting knowledge content with minimal data"""
     minimal_knowledge = KnowledgeRow(
@@ -223,7 +223,7 @@ async def test_upsert_knowledge_content_partial_data(async_postgres_db_real: Asy
     assert retrieved.name == "Minimal Knowledge"
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_upsert_knowledge_content_update_metadata(
     async_postgres_db_real: AsyncPostgresDb, sample_knowledge_row: KnowledgeRow
 ):
@@ -251,7 +251,7 @@ async def test_upsert_knowledge_content_update_metadata(
     assert retrieved.access_count == 10
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_knowledge_content_with_null_fields(async_postgres_db_real: AsyncPostgresDb):
     """Test knowledge content with some null/None fields"""
     knowledge_with_nulls = KnowledgeRow(

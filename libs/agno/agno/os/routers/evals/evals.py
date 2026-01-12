@@ -118,8 +118,8 @@ def attach_routes(
         model_id: Optional[str] = Query(default=None, description="Model ID"),
         filter_type: Optional[EvalFilterType] = Query(default=None, description="Filter type", alias="type"),
         eval_types: Optional[List[EvalType]] = Depends(parse_eval_types_filter),
-        limit: Optional[int] = Query(default=20, description="Number of eval runs to return"),
-        page: Optional[int] = Query(default=1, description="Page number"),
+        limit: Optional[int] = Query(default=20, description="Number of eval runs to return", ge=1),
+        page: Optional[int] = Query(default=1, description="Page number", ge=0),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
@@ -143,15 +143,6 @@ def attach_routes(
                 filter_type=filter_type.value if filter_type else None,
                 headers=headers,
             )
-
-        # TODO: Delete me:
-        # Filtering out agent-as-judge by default for now,
-        # as they are not supported yet in the AgentOS UI.
-        eval_types = eval_types or [
-            EvalType.ACCURACY,
-            EvalType.PERFORMANCE,
-            EvalType.RELIABILITY,
-        ]
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
