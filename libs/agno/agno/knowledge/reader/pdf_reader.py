@@ -204,6 +204,7 @@ class BasePDFReader(Reader):
         """Get the list of supported chunking strategies for PDF readers."""
         return [
             ChunkingStrategyType.DOCUMENT_CHUNKER,
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.SEMANTIC_CHUNKER,
