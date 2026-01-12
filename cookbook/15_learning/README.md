@@ -148,6 +148,10 @@ python cookbook/15_learning/07_patterns/incident_response.py
 # Run comprehensive examples (all 5 stores, multi-week journeys)
 python cookbook/15_learning/09_comprehensive/startup_fundraising.py
 python cookbook/15_learning/09_comprehensive/personal_assistant.py
+
+# Or run any specific example
+python cookbook/15_learning/02_user_profile/03_custom_schema.py
+python cookbook/15_learning/07_patterns/personal_assistant.py
 ```
 
 ---
@@ -407,6 +411,7 @@ learning = LearningMachine(
 )
 ```
 
+<<<<<<< HEAD
 ## Comprehensive Examples
 
 The `09_comprehensive/` folder contains real-world scenarios demonstrating all 5 learning stores working together over multi-week journeys.
@@ -447,6 +452,8 @@ An AI assistant manages daily communication across email, Slack, WhatsApp, and m
 
 ---
 
+=======
+>>>>>>> origin/main
 ## Learn More
 
 - [Agno Documentation](https://docs.agno.com)
