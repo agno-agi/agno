@@ -79,6 +79,9 @@ agno_json_data/
 # Private design documents (symlinked)
 projects
 
+# Private Claude coding session preferences
+CLAUDE_PRIVATE.md
+
 # ignore pyrightconfig.json
 pyrightconfig.json
 .python-version
