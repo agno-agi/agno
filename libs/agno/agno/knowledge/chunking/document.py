@@ -16,19 +16,79 @@ class DocumentChunking(ChunkingStrategy):
         if len(document.content) <= self.chunk_size:
             return [document]
 
-        # Split on double newlines first (paragraphs)
-        paragraphs = self.clean_text(document.content).split("\n\n")
+        # Split on double newlines first (paragraphs), then clean each paragraph
+        raw_paragraphs = document.content.split("\n\n")
+        paragraphs = [self.clean_text(para) for para in raw_paragraphs]
         chunks: List[Document] = []
-        current_chunk = []
+        current_chunk: List[str] = []
         current_size = 0
         chunk_meta_data = document.meta_data
         chunk_number = 1
 
         for para in paragraphs:
             para = para.strip()
+            if not para:
+                continue
+
             para_size = len(para)
 
-            if current_size + para_size <= self.chunk_size:
+            # If paragraph itself is larger than chunk_size, split it by sentences
+            if para_size > self.chunk_size:
+                # Save current chunk first
+                if current_chunk:
+                    meta_data = chunk_meta_data.copy()
+                    meta_data["chunk"] = chunk_number
+                    chunk_id = None
+                    if document.id:
+                        chunk_id = f"{document.id}_{chunk_number}"
+                    elif document.name:
+                        chunk_id = f"{document.name}_{chunk_number}"
+                    meta_data["chunk_size"] = len("\n\n".join(current_chunk))
+                    chunks.append(
+                        Document(
+                            id=chunk_id, name=document.name, meta_data=meta_data, content="\n\n".join(current_chunk)
+                        )
+                    )
+                    chunk_number += 1
+                    current_chunk = []
+                    current_size = 0
+
+                # Split oversized paragraph by sentences
+                import re
+
+                sentences = re.split(r"(?<=[.!?])\s+", para)
+                for sentence in sentences:
+                    sentence = sentence.strip()
+                    if not sentence:
+                        continue
+                    sentence_size = len(sentence)
+
+                    if current_size + sentence_size <= self.chunk_size:
+                        current_chunk.append(sentence)
+                        current_size += sentence_size
+                    else:
+                        if current_chunk:
+                            meta_data = chunk_meta_data.copy()
+                            meta_data["chunk"] = chunk_number
+                            chunk_id = None
+                            if document.id:
+                                chunk_id = f"{document.id}_{chunk_number}"
+                            elif document.name:
+                                chunk_id = f"{document.name}_{chunk_number}"
+                            meta_data["chunk_size"] = len(" ".join(current_chunk))
+                            chunks.append(
+                                Document(
+                                    id=chunk_id,
+                                    name=document.name,
+                                    meta_data=meta_data,
+                                    content=" ".join(current_chunk),
+                                )
+                            )
+                            chunk_number += 1
+                        current_chunk = [sentence]
+                        current_size = sentence_size
+
+            elif current_size + para_size <= self.chunk_size:
                 current_chunk.append(para)
                 current_size += para_size
             else:
@@ -46,6 +106,7 @@ class DocumentChunking(ChunkingStrategy):
                             id=chunk_id, name=document.name, meta_data=meta_data, content="\n\n".join(current_chunk)
                         )
                     )
+                    chunk_number += 1
                 current_chunk = [para]
                 current_size = para_size
 
