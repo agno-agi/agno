@@ -68,7 +68,7 @@ def initialize_knowledge(load_knowledge: bool = False):
         print("   • Loading Agno documentation")
         print("   • Building vector embeddings")
         print("   • Optimizing for hybrid search")
-        agent_knowledge.add_content(
+        agent_knowledge.insert(
             name="Agno Docs", url="https://docs.agno.com/llms-full.txt"
         )
         print("[bold green]✨ Knowledge ready![/bold green]\n")
