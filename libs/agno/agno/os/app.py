@@ -817,14 +817,16 @@ class AgentOS:
         for agent in self.agents or []:
             if agent.db:
                 self._register_db_with_validation(dbs, agent.db)
-            if agent.knowledge and agent.knowledge.contents_db:
-                self._register_db_with_validation(knowledge_dbs, agent.knowledge.contents_db)
+            agent_contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
+            if agent_contents_db:
+                self._register_db_with_validation(knowledge_dbs, agent_contents_db)
 
         for team in self.teams or []:
             if team.db:
                 self._register_db_with_validation(dbs, team.db)
-            if team.knowledge and team.knowledge.contents_db:
-                self._register_db_with_validation(knowledge_dbs, team.knowledge.contents_db)
+            team_contents_db = getattr(team.knowledge, "contents_db", None) if team.knowledge else None
+            if team_contents_db:
+                self._register_db_with_validation(knowledge_dbs, team_contents_db)
 
         for workflow in self.workflows or []:
             if workflow.db:
@@ -949,18 +951,21 @@ class AgentOS:
 
     def _auto_discover_knowledge_instances(self) -> None:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
-        seen_ids = set()
+        seen_ids: set[str] = set()
         knowledge_instances: List[Union[Knowledge, RemoteKnowledge]] = []
 
-        def _add_knowledge_if_not_duplicate(knowledge: Union["Knowledge", RemoteKnowledge]) -> None:
+        def _add_knowledge_if_not_duplicate(knowledge: Any) -> None:
             """Add knowledge instance if it's not already in the list (by object identity or db_id)."""
-            # Use database ID if available, otherwise use object ID as fallback
-            if not knowledge.contents_db:
+            # Only handle Knowledge and RemoteKnowledge instances that have contents_db
+            contents_db = getattr(knowledge, "contents_db", None)
+            if not contents_db:
                 return
-            if knowledge.contents_db.id in seen_ids:
+            if contents_db.id in seen_ids:
                 return
-            seen_ids.add(knowledge.contents_db.id)
-            knowledge_instances.append(knowledge)
+            seen_ids.add(contents_db.id)
+            # Only append if it's a Knowledge or RemoteKnowledge instance
+            if isinstance(knowledge, (Knowledge, RemoteKnowledge)):
+                knowledge_instances.append(knowledge)
 
         for agent in self.agents or []:
             if agent.knowledge:

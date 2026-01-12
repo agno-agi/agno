@@ -151,8 +151,9 @@ class AgentResponse(BaseModel):
             "cache_session": agent.cache_session,
         }
 
+        contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
         knowledge_info = {
-            "db_id": agent.knowledge.contents_db.id if agent.knowledge and agent.knowledge.contents_db else None,
+            "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": agent.enable_agentic_knowledge_filters,
             "knowledge_filters": agent.knowledge_filters,
