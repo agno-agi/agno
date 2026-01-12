@@ -626,11 +626,11 @@ def get_workflow_router(
         kwargs = await get_request_kwargs(request, create_workflow_run)
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            if user_id:
+            if user_id and user_id != request.state.user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = request.state.user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
-            if session_id:
+            if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
             session_id = request.state.session_id
         if hasattr(request.state, "session_state") and request.state.session_state is not None:
@@ -721,7 +721,7 @@ def get_workflow_router(
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        cancelled = workflow.cancel_run(run_id=run_id)
+        cancelled = await workflow.acancel_run(run_id=run_id)
         if not cancelled:
             raise HTTPException(status_code=500, detail="Failed to cancel run - run not found or already completed")
 

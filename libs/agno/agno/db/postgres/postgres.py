@@ -1,6 +1,6 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.string import generate_id
+from agno.utils.string import generate_id, sanitize_postgres_string, sanitize_postgres_strings
 
 try:
     from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, and_, case, func, or_, select, update
@@ -57,6 +57,7 @@ class PostgresDb(BaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        learnings_table: Optional[str] = None,
         id: Optional[str] = None,
         create_schema: bool = True,
     ):
@@ -81,6 +82,7 @@ class PostgresDb(BaseDb):
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
+            learnings_table (Optional[str]): Name of the table to store learnings.
             id (Optional[str]): ID of the database.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
@@ -91,7 +93,11 @@ class PostgresDb(BaseDb):
         """
         _engine: Optional[Engine] = db_engine
         if _engine is None and db_url is not None:
-            _engine = create_engine(db_url)
+            _engine = create_engine(
+                db_url,
+                pool_pre_ping=True,
+                pool_recycle=3600,
+            )
         if _engine is None:
             raise ValueError("One of db_url or db_engine must be provided")
 
@@ -115,6 +121,7 @@ class PostgresDb(BaseDb):
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
+            learnings_table=learnings_table,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
@@ -155,6 +162,7 @@ class PostgresDb(BaseDb):
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
+            (self.learnings_table_name, "learnings"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -172,7 +180,10 @@ class PostgresDb(BaseDb):
             Table: SQLAlchemy Table object
         """
         try:
-            table_schema = get_table_schema_definition(table_type).copy()
+            # Pass traces_table_name and db_schema for spans table foreign key resolution
+            table_schema = get_table_schema_definition(
+                table_type, traces_table_name=self.trace_table_name, db_schema=self.db_schema
+            ).copy()
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -195,12 +206,7 @@ class PostgresDb(BaseDb):
 
                 # Handle foreign key constraint
                 if "foreign_key" in col_config:
-                    fk_ref = col_config["foreign_key"]
-                    # For spans table, dynamically replace the traces table reference
-                    # with the actual trace table name configured for this db instance
-                    if table_type == "spans" and "trace_id" in fk_ref:
-                        fk_ref = f"{self.db_schema}.{self.trace_table_name}.trace_id"
-                    column_args.append(ForeignKey(fk_ref))
+                    column_args.append(ForeignKey(col_config["foreign_key"]))
 
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
@@ -341,6 +347,14 @@ class PostgresDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.spans_table
+
+        if table_type == "learnings":
+            self.learnings_table = self._get_or_create_table(
+                table_name=self.learnings_table_name,
+                table_type="learnings",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.learnings_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -512,6 +526,11 @@ class PostgresDb(BaseDb):
 
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
+
+                # Filter by session_type to ensure we get the correct session type
+                session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
+                stmt = stmt.where(table.c.session_type == session_type_value)
+
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -596,9 +615,7 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.created_at <= end_timestamp)
                 if session_name is not None:
                     stmt = stmt.where(
-                        func.coalesce(func.json_extract_path_text(table.c.session_data, "session_name"), "").ilike(
-                            f"%{session_name}%"
-                        )
+                        func.coalesce(table.c.session_data["session_name"].astext, "").ilike(f"%{session_name}%")
                     )
                 if session_type is not None:
                     session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
@@ -663,6 +680,8 @@ class PostgresDb(BaseDb):
                 return None
 
             with self.Session() as sess, sess.begin():
+                # Sanitize session_name to remove null bytes
+                sanitized_session_name = sanitize_postgres_string(session_name)
                 stmt = (
                     update(table)
                     .where(table.c.session_id == session_id)
@@ -672,7 +691,7 @@ class PostgresDb(BaseDb):
                             func.jsonb_set(
                                 func.cast(table.c.session_data, postgresql.JSONB),
                                 text("'{session_name}'"),
-                                func.to_jsonb(session_name),
+                                func.to_jsonb(sanitized_session_name),
                             ),
                             postgresql.JSON,
                         )
@@ -728,6 +747,21 @@ class PostgresDb(BaseDb):
                 return None
 
             session_dict = session.to_dict()
+            # Sanitize JSON/dict fields to remove null bytes from nested strings
+            if session_dict.get("agent_data"):
+                session_dict["agent_data"] = sanitize_postgres_strings(session_dict["agent_data"])
+            if session_dict.get("team_data"):
+                session_dict["team_data"] = sanitize_postgres_strings(session_dict["team_data"])
+            if session_dict.get("workflow_data"):
+                session_dict["workflow_data"] = sanitize_postgres_strings(session_dict["workflow_data"])
+            if session_dict.get("session_data"):
+                session_dict["session_data"] = sanitize_postgres_strings(session_dict["session_data"])
+            if session_dict.get("summary"):
+                session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
+            if session_dict.get("metadata"):
+                session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
+            if session_dict.get("runs"):
+                session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
 
             if isinstance(session, AgentSession):
                 with self.Session() as sess, sess.begin():
@@ -881,6 +915,18 @@ class PostgresDb(BaseDb):
                 session_records = []
                 for agent_session in agent_sessions:
                     session_dict = agent_session.to_dict()
+                    # Sanitize JSON/dict fields to remove null bytes from nested strings
+                    if session_dict.get("agent_data"):
+                        session_dict["agent_data"] = sanitize_postgres_strings(session_dict["agent_data"])
+                    if session_dict.get("session_data"):
+                        session_dict["session_data"] = sanitize_postgres_strings(session_dict["session_data"])
+                    if session_dict.get("summary"):
+                        session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
+                    if session_dict.get("metadata"):
+                        session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
+                    if session_dict.get("runs"):
+                        session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
+
                     # Use preserved updated_at if flag is set (even if None), otherwise use current time
                     updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                     session_records.append(
@@ -926,6 +972,18 @@ class PostgresDb(BaseDb):
                 session_records = []
                 for team_session in team_sessions:
                     session_dict = team_session.to_dict()
+                    # Sanitize JSON/dict fields to remove null bytes from nested strings
+                    if session_dict.get("team_data"):
+                        session_dict["team_data"] = sanitize_postgres_strings(session_dict["team_data"])
+                    if session_dict.get("session_data"):
+                        session_dict["session_data"] = sanitize_postgres_strings(session_dict["session_data"])
+                    if session_dict.get("summary"):
+                        session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
+                    if session_dict.get("metadata"):
+                        session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
+                    if session_dict.get("runs"):
+                        session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
+
                     # Use preserved updated_at if flag is set (even if None), otherwise use current time
                     updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                     session_records.append(
@@ -971,6 +1029,18 @@ class PostgresDb(BaseDb):
                 session_records = []
                 for workflow_session in workflow_sessions:
                     session_dict = workflow_session.to_dict()
+                    # Sanitize JSON/dict fields to remove null bytes from nested strings
+                    if session_dict.get("workflow_data"):
+                        session_dict["workflow_data"] = sanitize_postgres_strings(session_dict["workflow_data"])
+                    if session_dict.get("session_data"):
+                        session_dict["session_data"] = sanitize_postgres_strings(session_dict["session_data"])
+                    if session_dict.get("summary"):
+                        session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
+                    if session_dict.get("metadata"):
+                        session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
+                    if session_dict.get("runs"):
+                        session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
+
                     # Use preserved updated_at if flag is set (even if None), otherwise use current time
                     updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                     session_records.append(
@@ -1098,16 +1168,35 @@ class PostgresDb(BaseDb):
                 return []
 
             with self.Session() as sess, sess.begin():
+                # Filter out NULL topics and ensure topics is an array before extracting elements
+                # jsonb_typeof returns 'array' for JSONB arrays
+                conditions = [
+                    table.c.topics.is_not(None),
+                    func.jsonb_typeof(table.c.topics) == "array",
+                ]
+
                 try:
-                    stmt = select(func.jsonb_array_elements_text(table.c.topics))
+                    # jsonb_array_elements_text is a set-returning function that must be used with select_from
+                    stmt = select(func.jsonb_array_elements_text(table.c.topics).label("topic"))
+                    stmt = stmt.select_from(table)
+                    stmt = stmt.where(and_(*conditions))
                     result = sess.execute(stmt).fetchall()
                 except ProgrammingError:
                     # Retrying with json_array_elements_text. This works in older versions,
                     # where the topics column was of type JSON instead of JSONB
-                    stmt = select(func.json_array_elements_text(table.c.topics))
+                    # For JSON (not JSONB), we use json_typeof
+                    json_conditions = [
+                        table.c.topics.is_not(None),
+                        func.json_typeof(table.c.topics) == "array",
+                    ]
+                    stmt = select(func.json_array_elements_text(table.c.topics).label("topic"))
+                    stmt = stmt.select_from(table)
+                    stmt = stmt.where(and_(*json_conditions))
                     result = sess.execute(stmt).fetchall()
 
-                return list(set([record[0] for record in result]))
+                # Extract topics from records - each record is a Row with a 'topic' attribute
+                topics = [record.topic for record in result if record.topic is not None]
+                return list(set(topics))
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
@@ -1348,6 +1437,10 @@ class PostgresDb(BaseDb):
             if table is None:
                 return None
 
+            # Sanitize string fields to remove null bytes (PostgreSQL doesn't allow them)
+            sanitized_input = sanitize_postgres_string(memory.input)
+            sanitized_feedback = sanitize_postgres_string(memory.feedback)
+
             with self.Session() as sess, sess.begin():
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
@@ -1357,24 +1450,26 @@ class PostgresDb(BaseDb):
                 stmt = postgresql.insert(table).values(
                     memory_id=memory.memory_id,
                     memory=memory.memory,
-                    input=memory.input,
+                    input=sanitized_input,
                     user_id=memory.user_id,
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
                     topics=memory.topics,
-                    feedback=memory.feedback,
+                    feedback=sanitized_feedback,
                     created_at=memory.created_at,
-                    updated_at=memory.created_at,
+                    updated_at=memory.updated_at
+                    if memory.updated_at is not None
+                    else (memory.created_at if memory.created_at is not None else current_time),
                 )
                 stmt = stmt.on_conflict_do_update(  # type: ignore
                     index_elements=["memory_id"],
                     set_=dict(
                         memory=memory.memory,
                         topics=memory.topics,
-                        input=memory.input,
+                        input=sanitized_input,
                         agent_id=memory.agent_id,
                         team_id=memory.team_id,
-                        feedback=memory.feedback,
+                        feedback=sanitized_feedback,
                         updated_at=current_time,
                         # Preserve created_at on update - don't overwrite existing value
                         created_at=table.c.created_at,
@@ -1432,16 +1527,20 @@ class PostgresDb(BaseDb):
                 # Use preserved updated_at if flag is set (even if None), otherwise use current time
                 updated_at = memory.updated_at if preserve_updated_at else current_time
 
+                # Sanitize string fields to remove null bytes (PostgreSQL doesn't allow them)
+                sanitized_input = sanitize_postgres_string(memory.input)
+                sanitized_feedback = sanitize_postgres_string(memory.feedback)
+
                 memory_records.append(
                     {
                         "memory_id": memory.memory_id,
                         "memory": memory.memory,
-                        "input": memory.input,
+                        "input": sanitized_input,
                         "user_id": memory.user_id,
                         "agent_id": memory.agent_id,
                         "team_id": memory.team_id,
                         "topics": memory.topics,
-                        "feedback": memory.feedback,
+                        "feedback": sanitized_feedback,
                         "created_at": memory.created_at,
                         "updated_at": updated_at,
                     }
@@ -1747,8 +1846,7 @@ class PostgresDb(BaseDb):
                 stmt = select(table)
 
                 # Apply sorting
-                if sort_by is not None:
-                    stmt = stmt.order_by(getattr(table.c, sort_by) * (1 if sort_order == "asc" else -1))
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
 
                 # Get total count before applying limit and pagination
                 count_stmt = select(func.count()).select_from(stmt.alias())
@@ -1807,10 +1905,19 @@ class PostgresDb(BaseDb):
                 }
 
                 # Build insert and update data only for fields that exist in the table
+                # String fields that need sanitization
+                string_fields = {"name", "description", "type", "status", "status_message", "external_id", "linked_to"}
+
                 for model_field, table_column in field_mapping.items():
                     if table_column in table_columns:
                         value = getattr(knowledge_row, model_field, None)
                         if value is not None:
+                            # Sanitize string fields to remove null bytes
+                            if table_column in string_fields and isinstance(value, str):
+                                value = sanitize_postgres_string(value)
+                            # Sanitize metadata dict if present
+                            elif table_column == "metadata" and isinstance(value, dict):
+                                value = sanitize_postgres_strings(value)
                             insert_data[table_column] = value
                             # Don't include ID in update_fields since it's the primary key
                             if table_column != "id":
@@ -1865,8 +1972,22 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 current_time = int(time.time())
+                eval_data = eval_run.model_dump()
+                # Sanitize string fields in eval_run
+                if eval_data.get("name"):
+                    eval_data["name"] = sanitize_postgres_string(eval_data["name"])
+                if eval_data.get("evaluated_component_name"):
+                    eval_data["evaluated_component_name"] = sanitize_postgres_string(
+                        eval_data["evaluated_component_name"]
+                    )
+                # Sanitize nested dicts/JSON fields
+                if eval_data.get("eval_data"):
+                    eval_data["eval_data"] = sanitize_postgres_strings(eval_data["eval_data"])
+                if eval_data.get("eval_input"):
+                    eval_data["eval_input"] = sanitize_postgres_strings(eval_data["eval_input"])
+
                 stmt = postgresql.insert(table).values(
-                    {"created_at": current_time, "updated_at": current_time, **eval_run.model_dump()}
+                    {"created_at": current_time, "updated_at": current_time, **eval_data}
                 )
                 sess.execute(stmt)
 
@@ -2080,8 +2201,12 @@ class PostgresDb(BaseDb):
                 return None
 
             with self.Session() as sess, sess.begin():
+                # Sanitize string field to remove null bytes
+                sanitized_name = sanitize_postgres_string(name)
                 stmt = (
-                    table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))
+                    table.update()
+                    .where(table.c.run_id == eval_run_id)
+                    .values(name=sanitized_name, updated_at=int(time.time()))
                 )
                 sess.execute(stmt)
 
@@ -2278,15 +2403,25 @@ class PostgresDb(BaseDb):
 
             # Serialize content, categories, and notes into a JSON dict for DB storage
             content_dict = serialize_cultural_knowledge(cultural_knowledge)
+            # Sanitize content_dict to remove null bytes from nested strings
+            if content_dict:
+                content_dict = cast(Dict[str, Any], sanitize_postgres_strings(content_dict))
+
+            # Sanitize string fields to remove null bytes (PostgreSQL doesn't allow them)
+            sanitized_name = sanitize_postgres_string(cultural_knowledge.name)
+            sanitized_summary = sanitize_postgres_string(cultural_knowledge.summary)
+            sanitized_input = sanitize_postgres_string(cultural_knowledge.input)
 
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(
                     id=cultural_knowledge.id,
-                    name=cultural_knowledge.name,
-                    summary=cultural_knowledge.summary,
+                    name=sanitized_name,
+                    summary=sanitized_summary,
                     content=content_dict if content_dict else None,
-                    metadata=cultural_knowledge.metadata,
-                    input=cultural_knowledge.input,
+                    metadata=sanitize_postgres_strings(cultural_knowledge.metadata)
+                    if cultural_knowledge.metadata
+                    else None,
+                    input=sanitized_input,
                     created_at=cultural_knowledge.created_at,
                     updated_at=int(time.time()),
                     agent_id=cultural_knowledge.agent_id,
@@ -2295,11 +2430,13 @@ class PostgresDb(BaseDb):
                 stmt = stmt.on_conflict_do_update(  # type: ignore
                     index_elements=["id"],
                     set_=dict(
-                        name=cultural_knowledge.name,
-                        summary=cultural_knowledge.summary,
+                        name=sanitized_name,
+                        summary=sanitized_summary,
                         content=content_dict if content_dict else None,
-                        metadata=cultural_knowledge.metadata,
-                        input=cultural_knowledge.input,
+                        metadata=sanitize_postgres_strings(cultural_knowledge.metadata)
+                        if cultural_knowledge.metadata
+                        else None,
+                        input=sanitized_input,
                         updated_at=int(time.time()),
                         agent_id=cultural_knowledge.agent_id,
                         team_id=cultural_knowledge.team_id,
@@ -2458,6 +2595,13 @@ class PostgresDb(BaseDb):
             trace_dict = trace.to_dict()
             trace_dict.pop("total_spans", None)
             trace_dict.pop("error_count", None)
+            # Sanitize string fields and nested JSON structures
+            if trace_dict.get("name"):
+                trace_dict["name"] = sanitize_postgres_string(trace_dict["name"])
+            if trace_dict.get("status"):
+                trace_dict["status"] = sanitize_postgres_string(trace_dict["status"])
+            # Sanitize any nested dict/JSON fields
+            trace_dict = cast(Dict[str, Any], sanitize_postgres_strings(trace_dict))
 
             with self.Session() as sess, sess.begin():
                 # Use upsert to handle concurrent inserts atomically
@@ -2781,7 +2925,15 @@ class PostgresDb(BaseDb):
                 return
 
             with self.Session() as sess, sess.begin():
-                stmt = postgresql.insert(table).values(span.to_dict())
+                span_dict = span.to_dict()
+                # Sanitize string fields and nested JSON structures
+                if span_dict.get("name"):
+                    span_dict["name"] = sanitize_postgres_string(span_dict["name"])
+                if span_dict.get("status_code"):
+                    span_dict["status_code"] = sanitize_postgres_string(span_dict["status_code"])
+                # Sanitize any nested dict/JSON fields
+                span_dict = cast(Dict[str, Any], sanitize_postgres_strings(span_dict))
+                stmt = postgresql.insert(table).values(span_dict)
                 sess.execute(stmt)
 
         except Exception as e:
@@ -2803,7 +2955,15 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 for span in spans:
-                    stmt = postgresql.insert(table).values(span.to_dict())
+                    span_dict = span.to_dict()
+                    # Sanitize string fields and nested JSON structures
+                    if span_dict.get("name"):
+                        span_dict["name"] = sanitize_postgres_string(span_dict["name"])
+                    if span_dict.get("status_code"):
+                        span_dict["status_code"] = sanitize_postgres_string(span_dict["status_code"])
+                    # Sanitize any nested dict/JSON fields
+                    span_dict = sanitize_postgres_strings(span_dict)
+                    stmt = postgresql.insert(table).values(span_dict)
                     sess.execute(stmt)
 
         except Exception as e:
@@ -2876,4 +3036,231 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting spans: {e}")
+            return []
+
+    # -- Learning methods --
+    def get_learning(
+        self,
+        learning_type: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve a learning record.
+
+        Args:
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
+
+        Returns:
+            Dict with 'content' key containing the learning data, or None.
+        """
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.learning_type == learning_type)
+
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                row = dict(result._mapping)
+                return {"content": row.get("content")}
+
+        except Exception as e:
+            log_debug(f"Error retrieving learning: {e}")
+            return None
+
+    def upsert_learning(
+        self,
+        id: str,
+        learning_type: str,
+        content: Dict[str, Any],
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Insert or update a learning record.
+
+        Args:
+            id: Unique identifier for the learning.
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            content: The learning content as a dict.
+            user_id: Associated user ID.
+            agent_id: Associated agent ID.
+            team_id: Associated team ID.
+            workflow_id: Associated workflow ID.
+            session_id: Associated session ID.
+            namespace: Namespace for scoping ('user', 'global', or custom).
+            entity_id: Associated entity ID (for entity-specific learnings).
+            entity_type: Entity type ('person', 'company', etc.).
+            metadata: Optional metadata.
+        """
+        try:
+            table = self._get_table(table_type="learnings", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            current_time = int(time.time())
+
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(
+                    learning_id=id,
+                    learning_type=learning_type,
+                    namespace=namespace,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    workflow_id=workflow_id,
+                    session_id=session_id,
+                    entity_id=entity_id,
+                    entity_type=entity_type,
+                    content=content,
+                    metadata=metadata,
+                    created_at=current_time,
+                    updated_at=current_time,
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["learning_id"],
+                    set_=dict(
+                        content=content,
+                        metadata=metadata,
+                        updated_at=current_time,
+                    ),
+                )
+                sess.execute(stmt)
+
+            log_debug(f"Upserted learning: {id}")
+
+        except Exception as e:
+            log_debug(f"Error upserting learning: {e}")
+
+    def delete_learning(self, id: str) -> bool:
+        """Delete a learning record.
+
+        Args:
+            id: The learning ID to delete.
+
+        Returns:
+            True if deleted, False otherwise.
+        """
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.learning_id == id)
+                result = sess.execute(stmt)
+                return result.rowcount > 0
+
+        except Exception as e:
+            log_debug(f"Error deleting learning: {e}")
+            return False
+
+    def get_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get multiple learning records.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of learning records.
+        """
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table)
+
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+
+                stmt = stmt.order_by(table.c.updated_at.desc())
+
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+
+                result = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in result]
+
+        except Exception as e:
+            log_debug(f"Error getting learnings: {e}")
             return []

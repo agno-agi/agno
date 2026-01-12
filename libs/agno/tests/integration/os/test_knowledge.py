@@ -40,6 +40,7 @@ def mock_knowledge():
 
     # Mock specific Knowledge methods that tests expect to interact with
     knowledge.patch_content = Mock()
+    knowledge.apatch_content = AsyncMock()
     knowledge.get_content = Mock()
     knowledge.get_content_by_id = Mock()
     knowledge.remove_content_by_id = Mock()
@@ -50,6 +51,7 @@ def mock_knowledge():
     knowledge.aget_content_status = AsyncMock()
     knowledge.get_readers = Mock()
     knowledge.get_valid_filters = Mock()
+    knowledge.async_get_valid_filters = AsyncMock()
     knowledge._load_content = Mock()
     knowledge.search = Mock()  # Mock the search method for search endpoint tests
     knowledge.async_search = AsyncMock()  # Router calls async version
@@ -297,7 +299,7 @@ def test_get_content_status(test_app, mock_knowledge):
     assert data["status_message"] == "Could not read content"
 
 
-def test_get_config(test_app, mock_knowledge):
+def test_get_config(test_app, mock_knowledge, mock_content_row):
     """Test getting configuration."""
     # Mock the get_readers method to return a proper dictionary
     mock_reader = Mock()
@@ -308,7 +310,9 @@ def test_get_config(test_app, mock_knowledge):
     mock_knowledge.get_readers.return_value = {"text_reader": mock_reader}
 
     # Mock get_filters to return a list
-    mock_knowledge.get_valid_filters.return_value = ["filter_tag_1", "filter_tag2"]
+    mock_knowledge.async_get_valid_filters.return_value = ["filter_tag_1", "filter_tag2"]
+
+    mock_knowledge.contents_db.get_knowledge_contents.return_value = ([mock_content_row], 1)
 
     # Set vector_db to None so the config endpoint doesn't try to process it
     mock_knowledge.vector_db = None
@@ -336,7 +340,7 @@ def test_get_config_with_vector_db(test_app, mock_knowledge):
     mock_knowledge.get_readers.return_value = {"text_reader": mock_reader}
 
     # Mock get_filters to return a list
-    mock_knowledge.get_valid_filters.return_value = ["filter_tag_1", "filter_tag2"]
+    mock_knowledge.async_get_valid_filters.return_value = ["filter_tag_1", "filter_tag2"]
 
     # Configure the existing vector_db mock (from fixture) with the properties we need
     mock_knowledge.vector_db.name = "Test Vector DB"
