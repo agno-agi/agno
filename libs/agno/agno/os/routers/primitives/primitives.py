@@ -177,26 +177,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             # Prepare config - ensure it's a dict
             config = body.config or {}
             
-            # If config doesn't have db details, add the default db from AgentOS
-            if "db" not in config or config.get("db") is None:
-                try:
-                    # Get the default db (the one being used for this operation)
-                    db_dict = db.to_dict()
-                    # Validate that db_url exists and is valid before adding
-                    if isinstance(db_dict, dict):
-                        db_url = db_dict.get("db_url")
-                        if db_url and isinstance(db_url, str) and db_url.strip():
-                            config["db"] = db_dict
-                        else:
-                            log_warning("Default db has no valid db_url, skipping db details in config")
-                    else:
-                        config["db"] = db_dict
-                except Exception as e:
-                    log_error(f"Error adding db details to config: {e}")
-                    # Continue without db details if conversion fails
-            
             # Create the initial config
-            config_result = db.upsert_config(
+            db.upsert_config(
                 entity_id=entity_id,
                 config=config,
                 version_label=body.version_label,
