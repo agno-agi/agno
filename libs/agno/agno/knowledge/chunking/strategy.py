@@ -36,6 +36,7 @@ class ChunkingStrategyType(str, Enum):
     """Enumeration of available chunking strategies."""
 
     AGENTIC_CHUNKER = "AgenticChunker"
+    CODE_CHUNKER = "CodeChunker"
     DOCUMENT_CHUNKER = "DocumentChunker"
     RECURSIVE_CHUNKER = "RecursiveChunker"
     SEMANTIC_CHUNKER = "SemanticChunker"
@@ -70,6 +71,7 @@ class ChunkingStrategyFactory:
         """Create an instance of the chunking strategy with the given parameters."""
         strategy_map = {
             ChunkingStrategyType.AGENTIC_CHUNKER: cls._create_agentic_chunking,
+            ChunkingStrategyType.CODE_CHUNKER: cls._create_code_chunking,
             ChunkingStrategyType.DOCUMENT_CHUNKER: cls._create_document_chunking,
             ChunkingStrategyType.RECURSIVE_CHUNKER: cls._create_recursive_chunking,
             ChunkingStrategyType.SEMANTIC_CHUNKER: cls._create_semantic_chunking,
@@ -90,6 +92,18 @@ class ChunkingStrategyFactory:
             kwargs["max_chunk_size"] = chunk_size
         # Remove overlap since AgenticChunking doesn't support it
         return AgenticChunking(**kwargs)
+
+    @classmethod
+    def _create_code_chunking(
+        cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs
+    ) -> ChunkingStrategy:
+        from agno.knowledge.chunking.code import CodeChunking
+
+        # CodeChunking accepts chunk_size but not overlap
+        if chunk_size is not None:
+            kwargs["chunk_size"] = chunk_size
+        # Remove overlap since CodeChunking doesn't support it
+        return CodeChunking(**kwargs)
 
     @classmethod
     def _create_document_chunking(
