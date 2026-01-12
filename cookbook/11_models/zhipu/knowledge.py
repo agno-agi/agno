@@ -20,4 +20,3 @@ agent = Agent(
     knowledge=knowledge,
 )
 agent.print_response("How to make Thai curry?", markdown=True)
-

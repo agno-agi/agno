@@ -20,4 +20,3 @@ agent.print_response(
     "There are 35 heads and 94 feet in total. How many chickens and how many rabbits are there?",
     stream=True,
 )
-

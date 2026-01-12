@@ -4,9 +4,7 @@ from typing import Iterator  # noqa
 from agno.agent import Agent, RunOutputEvent  # noqa
 from agno.models.zhipu import Zhipu
 
-agent = Agent(
-    model=Zhipu(id="glm-4.7"), markdown=True
-)
+agent = Agent(model=Zhipu(id="glm-4.7"), markdown=True)
 
 # Get the response in a variable
 # run_response: Iterator[RunOutputEvent] = agent.run("Share a 2 sentence horror story", stream=True)
@@ -15,4 +13,3 @@ agent = Agent(
 
 # Print the response in the terminal
 asyncio.run(agent.aprint_response("Share a 2 sentence horror story", stream=True))
-

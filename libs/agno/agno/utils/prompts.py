@@ -10,7 +10,7 @@ def get_json_output_prompt(output_schema: Union[str, list, dict, BaseModel], add
     """Return the JSON output prompt for the Agent.
 
     This is added to the system prompt when the output_schema is set and structured_outputs is False.
-    
+
     Args:
         output_schema: The output schema
         add_required: If True, add 'required' arrays to nested objects in $defs
@@ -77,7 +77,7 @@ def get_json_output_prompt(output_schema: Union[str, list, dict, BaseModel], add
                                         if prop_name != "title"
                                     }
                                     formatted_def_properties[field_name] = formatted_field_properties
-                            
+
                             # Add required array if add_required is True
                             if add_required and len(formatted_def_properties) > 0:
                                 def_result = {"properties": formatted_def_properties}

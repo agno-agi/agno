@@ -3,9 +3,7 @@ import asyncio
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.zhipu import Zhipu
 
-agent = Agent(
-    model=Zhipu(id="glm-4.7"), markdown=True
-)
+agent = Agent(model=Zhipu(id="glm-4.7"), markdown=True)
 
 # Get the response in a variable
 # run: RunOutput = agent.run("Share a 2 sentence horror story")
@@ -13,4 +11,3 @@ agent = Agent(
 
 # Print the response in the terminal
 asyncio.run(agent.aprint_response("Share a 2 sentence horror story"))
-

@@ -36,4 +36,3 @@ movie_agent = Agent(
 # pprint(movie_agent.content)
 
 movie_agent.print_response("New York. Be brief.")
-

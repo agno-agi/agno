@@ -15,4 +15,3 @@ agent = Agent(
 )
 
 asyncio.run(agent.aprint_response("Whats happening in France?", stream=True))
-

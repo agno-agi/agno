@@ -179,7 +179,7 @@ def test_strict_mode_with_deeply_nested_schema():
     """
     Test that strict=False succeeds while strict=True fails on complex nested schemas.
     This demonstrates why Zhipu uses strict_output=False as default.
-    
+
     The test uses a highly complex schema that typically causes strict mode failures:
     - Multiple nesting levels (4 deep)
     - Lists of objects
@@ -217,6 +217,7 @@ def test_strict_mode_with_deeply_nested_schema():
         endpoints: List[ServiceEndpoint]
         global_settings: Dict[str, str]
         feature_flags: Dict[str, bool]
+
     # Test 1: strict=False - should succeed
     agent_flexible = Agent(
         model=Zhipu(id="glm-4.7"),
@@ -229,16 +230,16 @@ def test_strict_mode_with_deeply_nested_schema():
         "and POST /users (rate limit 100, cache disabled, same db). "
         "Global: env=prod, region=us-east. Features: new_ui=true, beta=false"
     )
-    
+
     # Print messages sent to the model
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("Messages sent to model:")
-    print("="*80)
+    print("=" * 80)
     for i, msg in enumerate(response_flexible.messages or []):
-        print(f"\n[Message {i+1}] Role: {msg.role}")
+        print(f"\n[Message {i + 1}] Role: {msg.role}")
         print("-" * 80)
         print(msg.content if isinstance(msg.content, str) else str(msg.content)[:10000])
-    print("="*80 + "\n")
+    print("=" * 80 + "\n")
 
     # Verify strict=False succeeds
     assert response_flexible.content is not None
@@ -254,24 +255,23 @@ def test_strict_mode_with_deeply_nested_schema():
         output_schema=MicroserviceConfig,
     )
 
-    
     response_strict = agent_strict.run(
         "Create config for UserService v2.0 with 2 endpoints: "
         "GET /users (rate limit 1000, cache enabled 60s 100MB redis, db: localhost:5432 user/pass max 50 connections 30s timeout) "
         "and POST /users (rate limit 100, cache disabled, same db). "
         "Global: env=prod, region=us-east. Features: new_ui=true, beta=false"
     )
-    
+
     # If we get here, check if the result is actually valid
     # strict=True often produces incomplete nested structures
     if response_strict.content is None:
         assert False, "strict=True produced None content"
-    
+
     # Check if nested structures are incomplete
     has_valid_endpoints = (
-        isinstance(response_strict.content, MicroserviceConfig) and
-        len(response_strict.content.endpoints) >= 2 and
-        all(isinstance(e.cache, CacheConfig) for e in response_strict.content.endpoints) and
-        all(isinstance(e.database, DatabaseConfig) for e in response_strict.content.endpoints)
+        isinstance(response_strict.content, MicroserviceConfig)
+        and len(response_strict.content.endpoints) >= 2
+        and all(isinstance(e.cache, CacheConfig) for e in response_strict.content.endpoints)
+        and all(isinstance(e.database, DatabaseConfig) for e in response_strict.content.endpoints)
     )
     assert has_valid_endpoints is True

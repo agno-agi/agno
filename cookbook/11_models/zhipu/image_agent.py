@@ -18,4 +18,3 @@ agent.print_response(
     ],
     stream=True,
 )
-

@@ -62,12 +62,12 @@ class Zhipu(OpenAILike):
     def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """Format message with reasoning_content support for thinking mode."""
         message_dict = super()._format_message(message, compress_tool_results)
-        
+
         # Add reasoning_content if present (from thinking mode)
         if message.reasoning_content:
             message_dict["reasoning_content"] = message.reasoning_content
             message_dict = {k: v for k, v in message_dict.items() if v is not None}
-        
+
         return message_dict
 
     def get_request_params(
@@ -78,8 +78,8 @@ class Zhipu(OpenAILike):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
     ) -> Dict[str, Any]:
         params = super().get_request_params(response_format, tools, tool_choice, run_response)
-        
+
         if self.enable_thinking:
             params.setdefault("extra_body", {})["thinking"] = {"type": "enabled"}
-        
+
         return params

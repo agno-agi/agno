@@ -34,4 +34,3 @@ agent.print_response(
     "and one is empty. Each box has a label, but all labels are wrong. Box A says 'Gold', "
     "Box B says 'Empty', and Box C says 'Silver'. Which box contains what?"
 )
-
