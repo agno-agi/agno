@@ -7448,6 +7448,8 @@ class Agent:
             return None
 
         agent = cls.from_dict(data["config"] if "config" in data else data)
+
+        agent.id = agent_id
         # If your get_config returns the entire configs row, set version:
         if isinstance(data, dict) and "version" in data:
             agent.version = int(data["version"])
@@ -11829,6 +11831,8 @@ def get_agent_by_id(
 
         agent = Agent.from_dict(cfg, registry=registry)
 
+        agent.id = id
+
         try:
             agent.version = int(row["version"])  # type: ignore[attr-defined]
         except Exception:
@@ -11861,9 +11865,13 @@ def get_agents(
             if config is not None:
                 agent_config = config.get("config")
                 if agent_config is not None:
+                    entity_id = entity["entity_id"]
                     if "id" not in agent_config:
-                        agent_config["id"] = entity["entity_id"]
+                        agent_config["id"] = entity_id
                     agent = Agent.from_dict(agent_config, registry=registry)
+                    # Ensure agent.id is set to the entity_id (the id used to load the agent)
+                    # This ensures events use the correct agent_id
+                    agent.id = entity_id
                     agent.db = db
                     agents.append(agent)
         return agents
