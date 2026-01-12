@@ -140,7 +140,7 @@ def format_meeting(title: str, notes: str) -> str:
 
 if __name__ == "__main__":
     # Seed knowledge base with email management best practices from authoritative sources
-    personal_kb.add_content(url="https://blog.superhuman.com/inbox-zero-method/")
+    personal_kb.add_content(url="https://blog.superhuman.com/inbox-zero-method/", skip_if_exists=True)
 
     user_id = "alex@stripe.com"
 
@@ -291,10 +291,9 @@ if __name__ == "__main__":
     friday_summary = create_personal_assistant(user_id, "week-jan-15")
     friday_summary.print_response(
         "It's Friday afternoon. Please:\n"
-        "1. Summarize my week based on session context\n"
-        "2. List any incomplete action items from entities\n"
-        "3. Show learned patterns that helped this week\n"
-        "4. Suggest prep for next week",
+        "1. Summarize my week\n"
+        "2. List any incomplete action\n"
+        "3. Suggest prep for next week",
         stream=True,
     )
     friday_summary.get_learning_machine().learned_knowledge_store.print(

@@ -114,7 +114,8 @@ Be supportive and data-driven in your recommendations.""",
 if __name__ == "__main__":
     # Seed knowledge base with fundraising best practices from authoritative sources
     fundraising_kb.add_content(
-        url="https://www.ycombinator.com/library/2u-how-to-build-your-seed-round-pitch-deck"
+        url="https://www.ycombinator.com/library/2u-how-to-build-your-seed-round-pitch-deck",
+        skip_if_exists=True,
     )
 
     founder_id = "sarah@startup.com"
