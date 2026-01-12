@@ -21,7 +21,7 @@ Key Features:
 Supported Modes:
 - AGENTIC: Agent calls save_learning directly when it discovers insights
 - PROPOSE: Agent proposes learnings, user approves before saving
-- BACKGROUND: Automatic extraction with duplicate detection
+- ALWAYS: Automatic extraction with duplicate detection
 """
 
 from copy import deepcopy
@@ -178,9 +178,9 @@ class LearnedKnowledgeStore(LearningStore):
             namespace: Namespace to save learnings to (default: "global").
             **kwargs: Additional context (ignored).
         """
-        # process only supported in BACKGROUND mode
+        # process only supported in ALWAYS mode
         # for programmatic extraction, use extract_and_save directly
-        if self.config.mode != LearningMode.BACKGROUND:
+        if self.config.mode != LearningMode.ALWAYS:
             return
 
         if not messages:
@@ -204,7 +204,7 @@ class LearnedKnowledgeStore(LearningStore):
         **kwargs,
     ) -> None:
         """Async version of process."""
-        if self.config.mode != LearningMode.BACKGROUND:
+        if self.config.mode != LearningMode.ALWAYS:
             return
 
         if not messages:
@@ -348,7 +348,7 @@ class LearnedKnowledgeStore(LearningStore):
         return instructions
 
     def _build_background_mode_context(self, data: Any) -> str:
-        """Build context for BACKGROUND mode (just show relevant learnings)."""
+        """Build context for ALWAYS mode (just show relevant learnings)."""
         if not data:
             return ""
 
@@ -1079,7 +1079,7 @@ class LearnedKnowledgeStore(LearningStore):
             return False
 
     # =========================================================================
-    # Background Extraction (BACKGROUND mode)
+    # Background Extraction (ALWAYS mode)
     # =========================================================================
 
     def extract_and_save(
@@ -1095,8 +1095,6 @@ class LearnedKnowledgeStore(LearningStore):
             return
 
         try:
-            from agno.models.message import Message
-
             conversation_text = self._messages_to_text(messages=messages)
 
             # Search for existing learnings to avoid duplicates
@@ -1142,8 +1140,6 @@ class LearnedKnowledgeStore(LearningStore):
             return
 
         try:
-            from agno.models.message import Message
-
             conversation_text = self._messages_to_text(messages=messages)
 
             # Search for existing learnings to avoid duplicates

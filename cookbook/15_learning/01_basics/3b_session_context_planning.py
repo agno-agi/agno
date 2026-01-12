@@ -1,17 +1,15 @@
 """
-Session Context: Planning Mode (Deep Dive)
-==========================================
-Goal, plan, and progress tracking for task-oriented sessions.
+Session Context: Planning Mode
+==============================
+Session Context tracks the current conversation's state:
+- What's been discussed
+- Current goals and their status
+- Active plans and progress
 
-Planning mode adds:
-- Goal: What the user is trying to achieve
-- Plan: Steps to reach the goal
-- Progress: Completed steps
+Planning mode (enable_planning=True) adds structured goal tracking -
+summary plus goal, plan steps, and progress markers.
 
-Use for task-oriented agents where tracking progress matters.
-
-Compare with: 01_summary_mode.py for summary-only (faster).
-See also: 01_basics/3b_session_context_planning.py for the basics.
+Compare with: 3a_session_context_summary.py for lightweight tracking.
 """
 
 from agno.agent import Agent
@@ -25,71 +23,61 @@ from agno.models.openai import OpenAIResponses
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
+# Planning mode: Tracks goals, plans, and progress in addition to summary.
+# Good for task-oriented conversations where you want structured progress.
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=db,
+    instructions="Be very concise. Give brief, actionable answers.",
     learning=LearningMachine(
         session_context=SessionContextConfig(
-            enable_planning=True,  # Track goal, plan, progress
+            enable_planning=True,
         ),
     ),
     markdown=True,
 )
 
 # ============================================================================
-# Demo: Task Planning
+# Demo
 # ============================================================================
 
 if __name__ == "__main__":
-    user_id = "deploy@example.com"
-    session_id = "deploy_session"
+    user_id = "planner@example.com"
+    session_id = "deploy_app"
 
-    # Step 1: State the goal
+    # Turn 1: Set a goal with clear steps
     print("\n" + "=" * 60)
-    print("STEP 1: State the goal")
+    print("TURN 1: Set goal")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "I need to deploy a new Python web app to AWS. Help me plan this.",
+        "Help me deploy a Python app to production. Give me 3 steps.",
         user_id=user_id,
         session_id=session_id,
         stream=True,
     )
     agent.get_learning_machine().session_context_store.print(session_id=session_id)
 
-    # Step 2: Complete first task
+    # Turn 2: Complete first step
     print("\n" + "=" * 60)
-    print("STEP 2: First task done")
+    print("TURN 2: Complete step 1")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Done! I've created the Dockerfile and it builds successfully.",
+        "Done with step 1. What's the command for step 2?",
         user_id=user_id,
         session_id=session_id,
         stream=True,
     )
     agent.get_learning_machine().session_context_store.print(session_id=session_id)
 
-    # Step 3: More progress
+    # Turn 3: Complete second step
     print("\n" + "=" * 60)
-    print("STEP 3: More progress")
+    print("TURN 3: Complete step 2")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "ECR repository is set up and I've pushed the image.",
-        user_id=user_id,
-        session_id=session_id,
-        stream=True,
-    )
-    agent.get_learning_machine().session_context_store.print(session_id=session_id)
-
-    # Step 4: What's next?
-    print("\n" + "=" * 60)
-    print("STEP 4: What's next?")
-    print("=" * 60 + "\n")
-
-    agent.print_response(
-        "What should I do next?",
+        "Step 2 done. What's left?",
         user_id=user_id,
         session_id=session_id,
         stream=True,

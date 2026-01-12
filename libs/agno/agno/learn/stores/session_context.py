@@ -22,14 +22,14 @@ Key Behavior:
 - Previous context + new messages → Updated context
 
 Supported Modes:
-- BACKGROUND only. SessionContextStore does not support AGENTIC, PROPOSE, or HITL modes.
+- ALWAYS only. SessionContextStore does not support AGENTIC, PROPOSE, or HITL modes.
 """
 
 from copy import deepcopy
 from dataclasses import dataclass, field
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.learn.config import LearningMode, SessionContextConfig
 from agno.learn.schemas import SessionContext
@@ -82,9 +82,9 @@ class SessionContextStore(LearningStore):
     def __post_init__(self):
         self._schema = self.config.schema or SessionContext
 
-        if self.config.mode != LearningMode.BACKGROUND:
+        if self.config.mode != LearningMode.ALWAYS:
             log_warning(
-                f"SessionContextStore only supports BACKGROUND mode, got {self.config.mode}. Ignoring mode setting."
+                f"SessionContextStore only supports ALWAYS mode, got {self.config.mode}. Ignoring mode setting."
             )
 
     # =========================================================================
@@ -140,9 +140,9 @@ class SessionContextStore(LearningStore):
             team_id: Team context (stored for audit).
             **kwargs: Additional context (ignored).
         """
-        # process only supported in BACKGROUND mode
+        # process only supported in ALWAYS mode
         # for programmatic extraction, use extract_and_save directly
-        if self.config.mode != LearningMode.BACKGROUND:
+        if self.config.mode != LearningMode.ALWAYS:
             return
 
         if not session_id or not messages:
@@ -166,7 +166,7 @@ class SessionContextStore(LearningStore):
         **kwargs,
     ) -> None:
         """Async version of process."""
-        if self.config.mode != LearningMode.BACKGROUND:
+        if self.config.mode != LearningMode.ALWAYS:
             return
 
         if not session_id or not messages:
@@ -284,8 +284,8 @@ class SessionContextStore(LearningStore):
                 session_id=session_id,
             )
 
-            if result and result.get("content"):
-                return from_dict_safe(self.schema, result["content"])
+            if result and result.get("content"):  # type: ignore[union-attr]
+                return from_dict_safe(self.schema, result["content"])  # type: ignore[index]
 
             return None
 
@@ -422,7 +422,7 @@ class SessionContextStore(LearningStore):
 
         try:
             context_id = self._build_context_id(session_id=session_id)
-            return self.db.delete_learning(id=context_id)
+            return self.db.delete_learning(id=context_id)  # type: ignore[return-value]
         except Exception as e:
             log_debug(f"SessionContextStore.delete failed for session_id={session_id}: {e}")
             return False
@@ -758,8 +758,7 @@ class SessionContextStore(LearningStore):
 
                 **Poor summary characteristics:**
                 - "User asked about APIs. We discussed some options. Made some decisions."
-                  (Too vague - doesn't capture what was actually decided)
-
+                  (Too vague - doesn't capture what was actually decided)\
             """)
                 + custom_instructions
                 + dedent("""
@@ -917,7 +916,7 @@ class SessionContextStore(LearningStore):
                     Confirmation message.
                 """
                 try:
-                    context_data = {
+                    context_data: Dict[str, Any] = {
                         "session_id": session_id,
                         "summary": summary,
                     }
@@ -954,7 +953,7 @@ class SessionContextStore(LearningStore):
 
         else:
             # Summary-only mode: only summary parameter
-            def save_session_context(summary: str) -> str:
+            def save_session_context(summary: str) -> str:  # type: ignore[misc]
                 """Save the updated session summary.
 
                 The summary should capture the current state of the conversation in a way that
@@ -1058,7 +1057,7 @@ class SessionContextStore(LearningStore):
                     Confirmation message.
                 """
                 try:
-                    context_data = {
+                    context_data: Dict[str, Any] = {
                         "session_id": session_id,
                         "summary": summary,
                     }
@@ -1095,7 +1094,7 @@ class SessionContextStore(LearningStore):
 
         else:
             # Summary-only mode: only summary parameter
-            async def save_session_context(summary: str) -> str:
+            async def save_session_context(summary: str) -> str:  # type: ignore[misc]
                 """Save the updated session summary.
 
                 The summary should capture the current state of the conversation in a way that

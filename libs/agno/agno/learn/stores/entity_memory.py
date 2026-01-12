@@ -30,7 +30,7 @@ Scoping:
     - "<custom>": Custom grouping (e.g., "sales_team")
 
 Supported Modes:
-- BACKGROUND: Automatic extraction of entity info from conversations
+- ALWAYS: Automatic extraction of entity info from conversations
 - AGENTIC: Agent calls tools directly to manage entity info
 """
 
@@ -85,9 +85,9 @@ class EntityMemoryStore(LearningStore):
         self._schema = self.config.schema or EntityMemory
 
         if self.config.mode == LearningMode.PROPOSE:
-            log_warning("EntityMemoryStore does not support PROPOSE mode. Falling back to BACKGROUND mode.")
+            log_warning("EntityMemoryStore does not support PROPOSE mode. Falling back to ALWAYS mode.")
         elif self.config.mode == LearningMode.HITL:
-            log_warning("EntityMemoryStore does not support HITL mode. Falling back to BACKGROUND mode.")
+            log_warning("EntityMemoryStore does not support HITL mode. Falling back to ALWAYS mode.")
 
     # =========================================================================
     # LearningStore Protocol Implementation
@@ -777,7 +777,7 @@ class EntityMemoryStore(LearningStore):
             if success:
                 self.entity_updated = True
                 return f"Entity created: {entity_type}/{entity_id} ({name})"
-            return f"Failed to create entity (may already exist)"
+            return "Failed to create entity (may already exist)"
 
         return create_entity
 
@@ -847,7 +847,7 @@ class EntityMemoryStore(LearningStore):
             if success:
                 self.entity_updated = True
                 return f"Entity created: {entity_type}/{entity_id} ({name})"
-            return f"Failed to create entity (may already exist)"
+            return "Failed to create entity (may already exist)"
 
         return create_entity
 
@@ -1033,7 +1033,7 @@ class EntityMemoryStore(LearningStore):
             if fact_id:
                 self.entity_updated = True
                 return f"Fact added to {entity_type}/{entity_id} (id: {fact_id})"
-            return f"Failed to add fact (entity may not exist)"
+            return "Failed to add fact (entity may not exist)"
 
         return add_fact
 
@@ -1093,7 +1093,7 @@ class EntityMemoryStore(LearningStore):
             if fact_id:
                 self.entity_updated = True
                 return f"Fact added to {entity_type}/{entity_id} (id: {fact_id})"
-            return f"Failed to add fact (entity may not exist)"
+            return "Failed to add fact (entity may not exist)"
 
         return add_fact
 
@@ -1390,7 +1390,7 @@ class EntityMemoryStore(LearningStore):
             if event_id:
                 self.entity_updated = True
                 return f"Event added to {entity_type}/{entity_id} (id: {event_id})"
-            return f"Failed to add event (entity may not exist)"
+            return "Failed to add event (entity may not exist)"
 
         return add_event
 
@@ -1455,7 +1455,7 @@ class EntityMemoryStore(LearningStore):
             if event_id:
                 self.entity_updated = True
                 return f"Event added to {entity_type}/{entity_id} (id: {event_id})"
-            return f"Failed to add event (entity may not exist)"
+            return "Failed to add event (entity may not exist)"
 
         return add_event
 
@@ -1536,7 +1536,7 @@ class EntityMemoryStore(LearningStore):
             if rel_id:
                 self.entity_updated = True
                 return f"Relationship added: {entity_id} --[{relation}]--> {related_entity_id} (id: {rel_id})"
-            return f"Failed to add relationship (entity may not exist)"
+            return "Failed to add relationship (entity may not exist)"
 
         return add_relationship
 
@@ -1613,7 +1613,7 @@ class EntityMemoryStore(LearningStore):
             if rel_id:
                 self.entity_updated = True
                 return f"Relationship added: {entity_id} --[{relation}]--> {related_entity_id} (id: {rel_id})"
-            return f"Failed to add relationship (entity may not exist)"
+            return "Failed to add relationship (entity may not exist)"
 
         return add_relationship
 
@@ -1653,8 +1653,8 @@ class EntityMemoryStore(LearningStore):
                 user_id=user_id if effective_namespace == "user" else None,
             )
 
-            if result and result.get("content"):
-                return self.schema.from_dict(result["content"])
+            if result and result.get("content"):  # type: ignore[union-attr]
+                return self.schema.from_dict(result["content"])  # type: ignore[index]
 
             return None
 
@@ -1743,7 +1743,7 @@ class EntityMemoryStore(LearningStore):
             entities = []
             query_lower = query.lower()
 
-            for result in results or []:
+            for result in results or []:  # type: ignore[union-attr]
                 content = result.get("content", {})
                 if self._matches_query(content=content, query=query_lower):
                     entity = self.schema.from_dict(content)
@@ -2854,7 +2854,7 @@ class EntityMemoryStore(LearningStore):
         namespace: Optional[str] = None,
     ) -> List[Callable]:
         """Get sync extraction tools based on config."""
-        tools = []
+        tools: List[Callable[..., str]] = []
         effective_namespace = namespace or self.config.namespace
 
         if self.config.enable_create_entity:
@@ -2953,7 +2953,7 @@ class EntityMemoryStore(LearningStore):
         namespace: Optional[str] = None,
     ) -> List[Callable]:
         """Get async extraction tools based on config."""
-        tools = []
+        tools: List[Callable] = []
         effective_namespace = namespace or self.config.namespace
 
         if self.config.enable_create_entity:

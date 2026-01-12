@@ -60,16 +60,8 @@ def _truncate_for_log(data: Any, max_len: int = 100) -> str:
 class UserProfile:
     """Schema for User Profile learning type.
 
-    Captures long-term information about a user that persists
+    Captures long-term structured profile information about a user that persists
     across sessions. Designed to be extended with custom fields.
-
-    ## Two Types of Data
-
-    1. **Profile Fields** (structured): name, preferred_name, and any
-       custom fields you add. Use `update_profile` tool to set these.
-
-    2. **Memories** (unstructured): Observations that don't fit fields.
-       Use `add_memory`, `update_memory`, `delete_memory` tools.
 
     ## Extending with Custom Fields
 
@@ -94,7 +86,6 @@ class UserProfile:
         user_id: Required unique identifier for the user.
         name: User's full name.
         preferred_name: How they prefer to be addressed (nickname, first name, etc).
-        memories: List of memory entries, each with 'id' and 'content'.
         agent_id: Which agent created this profile.
         team_id: Which team created this profile.
         created_at: When the profile was created (ISO format).
@@ -106,7 +97,6 @@ class UserProfile:
     preferred_name: Optional[str] = field(
         default=None, metadata={"description": "How they prefer to be addressed (nickname, first name, etc)"}
     )
-    memories: List[Dict[str, Any]] = field(default_factory=list)
     agent_id: Optional[str] = field(default=None, metadata={"internal": True})
     team_id: Optional[str] = field(default=None, metadata={"internal": True})
     created_at: Optional[str] = field(default=None, metadata={"internal": True})
@@ -151,8 +141,100 @@ class UserProfile:
             log_debug(f"{self.__class__.__name__}.to_dict failed: {e}")
             return {}
 
+    @classmethod
+    def get_updateable_fields(cls) -> Dict[str, Dict[str, Any]]:
+        """Get fields that can be updated via update_profile tool.
+
+        Returns:
+            Dict mapping field name to field info including description.
+            Excludes internal fields (user_id, timestamps, etc).
+        """
+        skip = {"user_id", "created_at", "updated_at", "agent_id", "team_id"}
+
+        result = {}
+        for f in fields(cls):
+            if f.name in skip:
+                continue
+            # Skip fields marked as internal
+            if f.metadata.get("internal"):
+                continue
+
+            result[f.name] = {
+                "type": f.type,
+                "description": f.metadata.get("description", f"User's {f.name.replace('_', ' ')}"),
+            }
+
+        return result
+
+    def __repr__(self) -> str:
+        return f"UserProfile(user_id={self.user_id})"
+
+
+@dataclass
+class Memories:
+    """Schema for Memories learning type.
+
+    Captures unstructured observations about a user that don't fit
+    into structured profile fields. These are long-term memories
+    that persist across sessions.
+
+    Attributes:
+        user_id: Required unique identifier for the user.
+        memories: List of memory entries, each with 'id' and 'content'.
+        agent_id: Which agent created these memories.
+        team_id: Which team created these memories.
+        created_at: When the memories were created (ISO format).
+        updated_at: When the memories were last updated (ISO format).
+    """
+
+    user_id: str
+    memories: List[Dict[str, Any]] = field(default_factory=list)
+    agent_id: Optional[str] = field(default=None, metadata={"internal": True})
+    team_id: Optional[str] = field(default=None, metadata={"internal": True})
+    created_at: Optional[str] = field(default=None, metadata={"internal": True})
+    updated_at: Optional[str] = field(default=None, metadata={"internal": True})
+
+    @classmethod
+    def from_dict(cls, data: Any) -> Optional["Memories"]:
+        """Parse from dict/JSON, returning None on any failure.
+
+        Works with subclasses - automatically handles additional fields.
+        """
+        if data is None:
+            return None
+        if isinstance(data, cls):
+            return data
+
+        try:
+            parsed = _parse_json(data)
+            if not parsed:
+                log_debug(f"{cls.__name__}.from_dict: _parse_json returned None for data={_truncate_for_log(data)}")
+                return None
+
+            # user_id is required
+            if not parsed.get("user_id"):
+                log_debug(f"{cls.__name__}.from_dict: missing required field 'user_id'")
+                return None
+
+            # Get field names for this class (includes subclass fields)
+            field_names = {f.name for f in fields(cls)}
+            kwargs = {k: v for k, v in parsed.items() if k in field_names}
+
+            return cls(**kwargs)
+        except Exception as e:
+            log_debug(f"{cls.__name__}.from_dict failed: {e}, data={_truncate_for_log(data)}")
+            return None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dict. Works with subclasses."""
+        try:
+            return asdict(self)
+        except Exception as e:
+            log_debug(f"{self.__class__.__name__}.to_dict failed: {e}")
+            return {}
+
     def add_memory(self, content: str, **kwargs) -> str:
-        """Add a new memory to the profile.
+        """Add a new memory.
 
         Args:
             content: The memory text to add.
@@ -213,30 +295,8 @@ class UserProfile:
 
         return "\n".join(lines)
 
-    @classmethod
-    def get_updateable_fields(cls) -> Dict[str, Dict[str, Any]]:
-        """Get fields that can be updated via update_profile tool.
-
-        Returns:
-            Dict mapping field name to field info including description.
-            Excludes internal fields (user_id, memories, timestamps, etc).
-        """
-        skip = {"user_id", "memories", "created_at", "updated_at", "agent_id", "team_id"}
-
-        result = {}
-        for f in fields(cls):
-            if f.name in skip:
-                continue
-            # Skip fields marked as internal
-            if f.metadata.get("internal"):
-                continue
-
-            result[f.name] = {
-                "type": f.type,
-                "description": f.metadata.get("description", f"User's {f.name.replace('_', ' ')}"),
-            }
-
-        return result
+    def __repr__(self) -> str:
+        return f"Memories(user_id={self.user_id})"
 
 
 # =============================================================================
@@ -347,6 +407,9 @@ class SessionContext:
 
         return "\n\n".join(parts)
 
+    def __repr__(self) -> str:
+        return f"SessionContext(session_id={self.session_id})"
+
 
 # =============================================================================
 # Learned Knowledge Schema
@@ -428,6 +491,9 @@ class LearnedKnowledge:
         if self.tags:
             parts.append(f"Tags: {', '.join(self.tags)}")
         return "\n".join(parts)
+
+    def __repr__(self) -> str:
+        return f"LearnedKnowledge(title={self.title})"
 
 
 # =============================================================================
@@ -716,6 +782,9 @@ class EntityMemory:
             }
 
         return result
+
+    def __repr__(self) -> str:
+        return f"EntityMemory(entity_id={self.entity_id})"
 
 
 # =============================================================================

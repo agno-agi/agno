@@ -1,13 +1,15 @@
 """
-User Profile: Agentic Mode (Deep Dive)
-======================================
-Agent-controlled profile updates via explicit tools.
+User Profile: Always Mode
+=========================
+User Profile captures structured profile fields about users:
+- Name and preferred name
+- Custom profile fields (when using extended schemas)
 
-AGENTIC mode gives the agent a tool to update profile fields.
-You'll see tool calls in the response - more transparent than ALWAYS mode.
+ALWAYS mode extracts profile information automatically in parallel
+while the agent responds - no explicit tool calls needed.
 
-Compare with: 01_always_extraction.py for automatic extraction.
-See also: 01_basics/1b_user_profile_agentic.py for the basics.
+Compare with: 1b_user_profile_agentic.py for explicit tool-based updates.
+See also: 2a_user_memory_always.py for unstructured observations.
 """
 
 from agno.agent import Agent
@@ -21,16 +23,15 @@ from agno.models.openai import OpenAIResponses
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
+# ALWAYS mode: Extraction happens automatically after each response.
+# The agent doesn't see or call any profile tools - it's invisible.
+# UserProfile stores structured fields (name, preferred_name, custom fields)
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=db,
-    instructions=(
-        "You are a helpful assistant. "
-        "When users share their name or preferences, use update_user_profile to save it."
-    ),
     learning=LearningMachine(
         user_profile=UserProfileConfig(
-            mode=LearningMode.AGENTIC,
+            mode=LearningMode.ALWAYS,
         ),
     ),
     markdown=True,
@@ -41,43 +42,30 @@ agent = Agent(
 # ============================================================================
 
 if __name__ == "__main__":
-    user_id = "jordan@example.com"
+    user_id = "alice@example.com"
 
-    # Session 1: Share name - watch for tool calls
+    # Session 1: Share information naturally
     print("\n" + "=" * 60)
-    print("SESSION 1: Share name (watch for tool calls)")
+    print("SESSION 1: Share information (extraction happens automatically)")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "Hi! I'm Jordan Chen, but everyone calls me JC.",
+        "Hi! I'm Alice Chen, but please call me Ali.",
         user_id=user_id,
         session_id="session_1",
         stream=True,
     )
     agent.get_learning_machine().user_profile_store.print(user_id=user_id)
 
-    # Session 2: Recall in new session
+    # Session 2: New session - profile is recalled automatically
     print("\n" + "=" * 60)
     print("SESSION 2: Profile recalled in new session")
     print("=" * 60 + "\n")
 
     agent.print_response(
-        "What's my name and what should you call me?",
+        "What's my name again?",
         user_id=user_id,
         session_id="session_2",
-        stream=True,
-    )
-    agent.get_learning_machine().user_profile_store.print(user_id=user_id)
-
-    # Session 3: Update preferred name
-    print("\n" + "=" * 60)
-    print("SESSION 3: Update preferred name")
-    print("=" * 60 + "\n")
-
-    agent.print_response(
-        "Actually, I'd prefer you call me Jordan from now on.",
-        user_id=user_id,
-        session_id="session_3",
         stream=True,
     )
     agent.get_learning_machine().user_profile_store.print(user_id=user_id)

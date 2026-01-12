@@ -716,6 +716,10 @@ class Agent:
         self.debug_level = debug_level
         self.telemetry = telemetry
 
+        # Internal use: _learning holds the resolved LearningMachine instance
+        # use get_learning_machine() to access it.
+        self._learning: Optional[LearningMachine] = None
+
         # If we are caching the agent session
         self._cached_session: Optional[AgentSession] = None
 
@@ -825,6 +829,8 @@ class Agent:
     def _set_learning_machine(self) -> None:
         """Initialize LearningMachine with agent's db and model.
 
+        Sets the internal _learning field without modifying the public learning field.
+
         Handles:
         - learning=True: Create default LearningMachine
         - learning=False/None: Disabled
@@ -832,18 +838,18 @@ class Agent:
         """
         # Handle learning=False or learning=None
         if self.learning is None or self.learning is False:
-            self.learning = None
+            self._learning = None
             return
 
         # Check db requirement
         if self.db is None:
             log_warning("Database not provided. LearningMachine not initialized.")
-            self.learning = None
+            self._learning = None
             return
 
         # Handle learning=True: create default LearningMachine
         if self.learning is True:
-            self.learning = LearningMachine(db=self.db, model=self.model, user_profile=True)
+            self._learning = LearningMachine(db=self.db, model=self.model, user_profile=True)
             return
 
         # Handle learning=LearningMachine(...): inject dependencies
@@ -852,6 +858,16 @@ class Agent:
                 self.learning.db = self.db
             if self.learning.model is None:
                 self.learning.model = self.model
+            self._learning = self.learning
+
+    def get_learning_machine(self) -> Optional[LearningMachine]:
+        """Get the resolved LearningMachine instance.
+
+        Returns:
+            The LearningMachine instance if learning is enabled and initialized,
+            None otherwise.
+        """
+        return self._learning
 
     def _set_session_summary_manager(self) -> None:
         if self.enable_session_summaries and self.session_summary_manager is None:
@@ -6366,15 +6382,14 @@ class Agent:
         user_id: Optional[str],
     ) -> None:
         """Process learnings from conversation (runs in background thread)."""
-        if self.learning is None:
+        if self._learning is None:
             return
 
         try:
             # Convert run messages to list format expected by LearningMachine
             messages = run_messages.messages if run_messages else []
 
-            self.learning = cast(LearningMachine, self.learning)
-            self.learning.process(
+            self._learning.process(
                 messages=messages,
                 user_id=user_id,
                 session_id=session.session_id if session else None,
@@ -6412,7 +6427,7 @@ class Agent:
                 pass
 
         # Create new task if learning is enabled
-        if self.learning is not None:
+        if self._learning is not None:
             log_debug("Starting learning extraction as async task.")
             return create_task(
                 self._aprocess_learnings(
@@ -6431,13 +6446,12 @@ class Agent:
         user_id: Optional[str],
     ) -> None:
         """Async process learnings from conversation."""
-        if self.learning is None:
+        if self._learning is None:
             return
 
         try:
             messages = run_messages.messages if run_messages else []
-
-            await self.learning.aprocess(
+            await self._learning.aprocess(
                 messages=messages,
                 user_id=user_id,
                 session_id=session.session_id if session else None,
@@ -6504,7 +6518,7 @@ class Agent:
             existing_future.cancel()
 
         # Create new future if learning is enabled
-        if self.learning is not None:
+        if self._learning is not None:
             log_debug("Starting learning extraction in background thread.")
             return self.background_executor.submit(
                 self._process_learnings,
@@ -6607,8 +6621,8 @@ class Agent:
             agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=False))
 
         # Add learning machine tools
-        if self.learning is not None:
-            learning_tools = self.learning.get_tools(
+        if self._learning is not None:
+            learning_tools = self._learning.get_tools(
                 user_id=user_id,
                 session_id=session.session_id if session else None,
                 agent_id=self.id,
@@ -6725,8 +6739,8 @@ class Agent:
             agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=True))
 
         # Add learning machine tools (async)
-        if self.learning is not None:
-            learning_tools = await self.learning.aget_tools(
+        if self._learning is not None:
+            learning_tools = await self._learning.aget_tools(
                 user_id=user_id,
                 session_id=session.session_id if session else None,
                 agent_id=self.id,
@@ -8349,8 +8363,8 @@ class Agent:
             )
 
         # 3.3.12 then add learnings to the system prompt
-        if self.learning is not None and self.add_learnings_to_context:
-            learning_context = self.learning.build_context(
+        if self._learning is not None and self.add_learnings_to_context:
+            learning_context = self._learning.build_context(
                 user_id=user_id,
                 session_id=session.session_id if session else None,
                 agent_id=self.id,
@@ -8711,8 +8725,8 @@ class Agent:
             )
 
         # 3.3.12 then add learnings to the system prompt
-        if self.learning is not None and self.add_learnings_to_context:
-            learning_context = await self.learning.abuild_context(
+        if self._learning is not None and self.add_learnings_to_context:
+            learning_context = await self._learning.abuild_context(
                 user_id=user_id,
                 session_id=session.session_id if session else None,
                 agent_id=self.id,
@@ -11562,7 +11576,7 @@ class Agent:
             "has_memory": self.enable_user_memories is True
             or self.enable_agentic_memory is True
             or self.memory_manager is not None,
-            "has_learnings": self.learning is not None,
+            "has_learnings": self._learning is not None,
             "has_culture": self.enable_agentic_culture is True
             or self.update_cultural_knowledge is True
             or self.culture_manager is not None,
