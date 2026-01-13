@@ -9877,6 +9877,10 @@ class Agent:
         fields_for_new_agent: Dict[str, Any] = {}
 
         for f in fields(self):
+            # Skip private fields (not part of __init__ signature)
+            if f.name.startswith("_"):
+                continue
+
             field_value = getattr(self, f.name)
             if field_value is not None:
                 fields_for_new_agent[f.name] = self._deep_copy_field(f.name, field_value)
@@ -9898,19 +9902,47 @@ class Agent:
         if field_name == "reasoning_agent":
             return field_value.deep_copy()
 
-        # For storage, model and reasoning_model, use a deep copy
-        elif field_name in ("db", "model", "reasoning_model"):
+        # For tools, share MCP tools but copy others
+        if field_name == "tools" and field_value is not None:
             try:
-                return deepcopy(field_value)
-            except Exception:
-                try:
-                    return copy(field_value)
-                except Exception as e:
-                    log_warning(f"Failed to copy field: {field_name} - {e}")
-                    return field_value
+                copied_tools = []
+                for tool in field_value:
+                    try:
+                        # Share MCP tools (they maintain server connections)
+                        is_mcp_tool = hasattr(type(tool), "__mro__") and any(
+                            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                        )
+                        if is_mcp_tool:
+                            copied_tools.append(tool)
+                        else:
+                            try:
+                                copied_tools.append(deepcopy(tool))
+                            except Exception:
+                                copied_tools.append(tool)
+                    except Exception:
+                        # MCP detection failed, share tool by reference to be safe
+                        copied_tools.append(tool)
+                return copied_tools
+            except Exception as e:
+                # If entire tools processing fails, log and return original list
+                log_warning(f"Failed to process tools for deep copy: {e}")
+                return field_value
+
+        # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
+        if field_name in (
+            "db",
+            "model",
+            "reasoning_model",
+            "knowledge",
+            "memory_manager",
+            "parser_model",
+            "output_model",
+            "session_summary_manager",
+        ):
+            return field_value
 
         # For compound types, attempt a deep copy
-        elif isinstance(field_value, (list, dict, set)):
+        if isinstance(field_value, (list, dict, set)):
             try:
                 return deepcopy(field_value)
             except Exception:
@@ -9921,7 +9953,7 @@ class Agent:
                     return field_value
 
         # For pydantic models, attempt a model_copy
-        elif isinstance(field_value, BaseModel):
+        if isinstance(field_value, BaseModel):
             try:
                 return field_value.model_copy(deep=True)
             except Exception:
@@ -9933,8 +9965,6 @@ class Agent:
 
         # For other types, attempt a shallow copy first
         try:
-            from copy import copy
-
             return copy(field_value)
         except Exception:
             # If copy fails, return as is
