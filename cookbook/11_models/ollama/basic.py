@@ -1,7 +1,7 @@
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.ollama import Ollama
 
-agent = Agent(model=Ollama(id="llama3.2:latest "), markdown=True)
+agent = Agent(model=Ollama(id="llama3.2:latest"), markdown=True)
 
 # Get the response in a variable
 # run: RunOutput = agent.run("Share a 2 sentence horror story")

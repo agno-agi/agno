@@ -9,7 +9,7 @@ from agno.agent import Agent
 from agno.models.ollama import Ollama
 
 agent = Agent(
-    model=Ollama(id="kimi-k2:1t-cloud",cloud_model=True,host="https://ollama.com"),
+    model=Ollama(id="kimi-k2:1t-cloud", cloud_model=True, host="https://ollama.com"),
 )
 
 agent.print_response("What is the capital of France?", stream=True)
