@@ -177,12 +177,8 @@ def test_go_back_error(playwright_tools_initialized, mock_playwright_env):
     mock_page = mock_playwright_env["page"]
     mock_page.go_back.side_effect = Exception("No history")
 
-    result = playwright_tools_initialized.go_back()
-    result_data = json.loads(result)
-
-    assert result_data["status"] == "error"
-    assert result_data["action"] == "go_back"
-    assert "No history" in result_data["error"]
+    with pytest.raises(Exception, match="No history"):
+        playwright_tools_initialized.go_back()
 
 
 def test_go_forward_success(playwright_tools_initialized, mock_playwright_env):
@@ -201,12 +197,8 @@ def test_go_forward_error(playwright_tools_initialized, mock_playwright_env):
     mock_page = mock_playwright_env["page"]
     mock_page.go_forward.side_effect = Exception("No forward history")
 
-    result = playwright_tools_initialized.go_forward()
-    result_data = json.loads(result)
-
-    assert result_data["status"] == "error"
-    assert result_data["action"] == "go_forward"
-    assert "No forward history" in result_data["error"]
+    with pytest.raises(Exception, match="No forward history"):
+        playwright_tools_initialized.go_forward()
 
 
 def test_reload_page_success(playwright_tools_initialized, mock_playwright_env):
@@ -225,12 +217,8 @@ def test_reload_page_error(playwright_tools_initialized, mock_playwright_env):
     mock_page = mock_playwright_env["page"]
     mock_page.reload.side_effect = Exception("Reload failed")
 
-    result = playwright_tools_initialized.reload_page()
-    result_data = json.loads(result)
-
-    assert result_data["status"] == "error"
-    assert result_data["action"] == "reload"
-    assert "Reload failed" in result_data["error"]
+    with pytest.raises(Exception, match="Reload failed"):
+        playwright_tools_initialized.reload_page()
 
 
 def test_get_page_content(playwright_tools_initialized, mock_playwright_env):
@@ -295,11 +283,8 @@ def test_extract_text_error(playwright_tools_initialized, mock_playwright_env):
     mock_page = mock_playwright_env["page"]
     mock_page.wait_for_load_state.side_effect = Exception("Timeout")
 
-    result = playwright_tools_initialized.extract_text()
-    result_data = json.loads(result)
-
-    assert result_data["status"] == "error"
-    assert "Timeout" in result_data["error"]
+    with pytest.raises(Exception, match="Timeout"):
+        playwright_tools_initialized.extract_text()
 
 
 def test_screenshot_full_page(playwright_tools_initialized, mock_playwright_env):
@@ -388,11 +373,8 @@ def test_submit_form_error(playwright_tools_initialized, mock_playwright_env):
     mock_page = mock_playwright_env["page"]
     mock_page.locator.side_effect = Exception("Form not found")
 
-    result = playwright_tools_initialized.submit_form("form#nonexistent")
-    result_data = json.loads(result)
-
-    assert result_data["status"] == "error"
-    assert "Form not found" in result_data["error"]
+    with pytest.raises(Exception, match="Form not found"):
+        playwright_tools_initialized.submit_form("form#nonexistent")
 
 
 def test_scroll_page_down(playwright_tools_initialized, mock_playwright_env):

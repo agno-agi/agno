@@ -111,32 +111,23 @@ class PlaywrightTools(Toolkit):
     def go_back(self) -> str:
         """Navigates back in browser history using playwright browser."""
         self._ensure_browser_ready()
-        try:
-            self._page.go_back(wait_until="networkidle", timeout=self.timeout)
-            new_url = self._page.url
-            return json.dumps({"status": "success", "action": "go_back", "url": new_url})
-        except Exception as e:
-            return json.dumps({"status": "error", "action": "go_back", "error": str(e)})
+        self._page.go_back(wait_until="networkidle", timeout=self.timeout)
+        new_url = self._page.url
+        return json.dumps({"status": "success", "action": "go_back", "url": new_url})
 
     def go_forward(self) -> str:
         """Navigates forward in browser history using playwright browser."""
         self._ensure_browser_ready()
-        try:
-            self._page.go_forward(wait_until="networkidle", timeout=self.timeout)
-            new_url = self._page.url
-            return json.dumps({"status": "success", "action": "go_forward", "url": new_url})
-        except Exception as e:
-            return json.dumps({"status": "error", "action": "go_forward", "error": str(e)})
+        self._page.go_forward(wait_until="networkidle", timeout=self.timeout)
+        new_url = self._page.url
+        return json.dumps({"status": "success", "action": "go_forward", "url": new_url})
 
     def reload_page(self) -> str:
         """Reloads/refreshes the current page using playwright browser."""
         self._ensure_browser_ready()
-        try:
-            self._page.reload(wait_until="networkidle", timeout=self.timeout)
-            current_url = self._page.url
-            return json.dumps({"status": "success", "action": "reload", "url": current_url})
-        except Exception as e:
-            return json.dumps({"status": "error", "action": "reload", "error": str(e)})
+        self._page.reload(wait_until="networkidle", timeout=self.timeout)
+        current_url = self._page.url
+        return json.dumps({"status": "success", "action": "reload", "url": current_url})
 
     def click_element(self, selector: str) -> str:
         """Clicks on an element using playwright browser."""
@@ -191,19 +182,14 @@ class PlaywrightTools(Toolkit):
             JSON string with extracted text
         """
         self._ensure_browser_ready()
+        self._page.wait_for_load_state("networkidle", timeout=self.timeout)
+        if selector:
+            element = self._page.query_selector(selector)
+            text = element.text_content() if element else ""
+        else:
+            text = self._page.evaluate("document.body.innerText")
 
-        try:
-            self._page.wait_for_load_state("networkidle", timeout=self.timeout)
-            if selector:
-                element = self._page.query_selector(selector)
-                text = element.text_content() if element else ""
-            else:
-                text = self._page.evaluate("document.body.innerText")
-
-            return json.dumps({"status": "success", "text": text, "selector": selector})
-
-        except Exception as e:
-            return json.dumps({"status": "error", "error": str(e)})
+        return json.dumps({"status": "success", "text": text, "selector": selector})
 
     def get_page_title(self) -> str:
         """Gets the title of the current page.
@@ -223,23 +209,15 @@ class PlaywrightTools(Toolkit):
             wait_for_navigation: Whether to wait for page navigation after submission
         """
         self._ensure_browser_ready()
-
-        try:
-            form_locator = self._page.locator(form_selector)
-            if wait_for_navigation:
-                # Wait for navigation to complete after form submission
-                with self._page.expect_navigation(timeout=self.timeout):
-                    form_locator.evaluate("el => el.submit()")
-            else:
+        form_locator = self._page.locator(form_selector)
+        if wait_for_navigation:
+            with self._page.expect_navigation(timeout=self.timeout):
                 form_locator.evaluate("el => el.submit()")
+        else:
+            form_locator.evaluate("el => el.submit()")
 
-            # Wait for content to load after submission
-            self._page.wait_for_load_state("networkidle", timeout=self.timeout)
-
-            return json.dumps({"status": "success", "action": "form_submit", "selector": form_selector})
-
-        except Exception as e:
-            return json.dumps({"status": "error", "error": str(e), "selector": form_selector})
+        self._page.wait_for_load_state("networkidle", timeout=self.timeout)
+        return json.dumps({"status": "success", "action": "form_submit", "selector": form_selector})
 
     def wait_and_extract_text(self, selector: str, max_attempts: int = 3, wait_seconds: int = 2) -> str:
         """Waits for content to load and extracts text with multiple attempts.
