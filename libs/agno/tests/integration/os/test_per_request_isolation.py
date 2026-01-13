@@ -1517,7 +1517,7 @@ class TestCustomExecutorWithInternalAgentTeam:
             id="team-member-id",
             model=OpenAIChat(id="gpt-4o-mini"),
         )
-        inner_team = Team(
+        Team(
             name="inner-team",
             id="inner-team-id",
             members=[member],
