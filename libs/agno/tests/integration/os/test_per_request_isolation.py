@@ -1256,7 +1256,7 @@ class TestCustomExecutorWithInternalAgentTeam:
     def test_condition_with_agent_and_function_evaluator(self):
         """Condition with function evaluator and agent step inside."""
         from agno.workflow.condition import Condition
-        from agno.workflow.types import StepInput, StepOutput
+        from agno.workflow.types import StepInput
 
         def should_execute(step_input: StepInput) -> bool:
             return "yes" in str(step_input.input).lower()
