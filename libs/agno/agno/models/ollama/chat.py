@@ -71,7 +71,7 @@ class Ollama(Model):
             headers["authorization"] = f"Bearer {self.api_key}"
             log_debug(f"Using Ollama cloud endpoint: {host}")
         elif self.api_key and not is_cloud:
-            log_debug(f"API key is set but cloud_model=False. Using local Ollama instance at {host or 'default host'}.")
+            log_debug(f"Using local Ollama instance: {host or 'default host'}")
 
         base_params = {
             "host": host,
