@@ -1,4 +1,5 @@
 import json
+import re
 from os import getenv
 from typing import Any, Dict, List, Optional
 
@@ -22,6 +23,8 @@ class BrowserbaseTools(Toolkit):
         enable_get_page_content: bool = True,
         enable_close_session: bool = True,
         all: bool = False,
+        parse_html: bool = True,
+        max_content_length: Optional[int] = 100000,
         **kwargs,
     ):
         """Initialize BrowserbaseTools.
@@ -36,7 +39,14 @@ class BrowserbaseTools(Toolkit):
             enable_get_page_content (bool): Enable the get_page_content tool. Defaults to True.
             enable_close_session (bool): Enable the close_session tool. Defaults to True.
             all (bool): Enable all tools. Defaults to False.
+            parse_html (bool): If True, extract only visible text content instead of raw HTML. Defaults to True.
+                This significantly reduces token usage and is recommended for most use cases.
+            max_content_length (int, optional): Maximum character length for page content. Defaults to 100000.
+                Content exceeding this limit will be truncated with a notice. Set to None for no limit.
         """
+        self.parse_html = parse_html
+        self.max_content_length = max_content_length
+
         self.api_key = api_key or getenv("BROWSERBASE_API_KEY")
         if not self.api_key:
             raise ValueError(
@@ -191,18 +201,70 @@ class BrowserbaseTools(Toolkit):
             self._cleanup()
             raise e
 
+    def _extract_text_content(self, html: str) -> str:
+        """Extract visible text content from HTML, removing scripts, styles, and tags.
+
+        Args:
+            html: Raw HTML content
+
+        Returns:
+            Cleaned text content
+        """
+        # Remove script and style elements
+        html = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
+        html = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
+        # Remove HTML comments
+        html = re.sub(r"<!--.*?-->", "", html, flags=re.DOTALL)
+        # Remove all HTML tags
+        html = re.sub(r"<[^>]+>", " ", html)
+        # Decode common HTML entities
+        html = html.replace("&nbsp;", " ")
+        html = html.replace("&amp;", "&")
+        html = html.replace("&lt;", "<")
+        html = html.replace("&gt;", ">")
+        html = html.replace("&quot;", '"')
+        html = html.replace("&#39;", "'")
+        # Normalize whitespace
+        html = re.sub(r"\s+", " ", html)
+        return html.strip()
+
+    def _truncate_content(self, content: str) -> str:
+        """Truncate content if it exceeds max_content_length.
+
+        Args:
+            content: The content to potentially truncate
+
+        Returns:
+            Original or truncated content with notice
+        """
+        if self.max_content_length is None or len(content) <= self.max_content_length:
+            return content
+
+        truncated = content[: self.max_content_length]
+        return f"{truncated}\n\n[Content truncated. Original length: {len(content)} characters. Showing first {self.max_content_length} characters.]"
+
     def get_page_content(self, connect_url: Optional[str] = None) -> str:
-        """Gets the HTML content of the current page.
+        """Gets the content of the current page.
 
         Args:
             connect_url (str, optional): The connection URL from an existing session
 
         Returns:
-            The page HTML content
+            The page content (text-only if parse_html=True, otherwise raw HTML)
         """
         try:
             self._initialize_browser(connect_url)
-            return self._page.content() if self._page else ""
+            if not self._page:
+                return ""
+
+            raw_content = self._page.content()
+
+            if self.parse_html:
+                content = self._extract_text_content(raw_content)
+            else:
+                content = raw_content
+
+            return self._truncate_content(content)
         except Exception as e:
             self._cleanup()
             raise e
@@ -307,17 +369,27 @@ class BrowserbaseTools(Toolkit):
             raise e
 
     async def aget_page_content(self, connect_url: Optional[str] = None) -> str:
-        """Gets the HTML content of the current page asynchronously.
+        """Gets the content of the current page asynchronously.
 
         Args:
             connect_url (str, optional): The connection URL from an existing session
 
         Returns:
-            The page HTML content
+            The page content (text-only if parse_html=True, otherwise raw HTML)
         """
         try:
             await self._ainitialize_browser(connect_url)
-            return await self._async_page.content() if self._async_page else ""
+            if not self._async_page:
+                return ""
+
+            raw_content = await self._async_page.content()
+
+            if self.parse_html:
+                content = self._extract_text_content(raw_content)
+            else:
+                content = raw_content
+
+            return self._truncate_content(content)
         except Exception as e:
             await self._acleanup()
             raise e
