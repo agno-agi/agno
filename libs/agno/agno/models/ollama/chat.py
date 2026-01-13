@@ -28,6 +28,11 @@ class Ollama(Model):
     A class for interacting with Ollama models.
 
     For more information, see: https://github.com/ollama/ollama/blob/main/docs/api.md
+
+    Attributes:
+        cloud_model: When True, uses Ollama cloud endpoint (https://ollama.com) with API key authentication.
+                     When False (default), uses local Ollama instance. The cloud endpoint is also
+                     auto-detected when host is set to https://ollama.com.
     """
 
     id: str = "llama3.1"
@@ -47,7 +52,7 @@ class Ollama(Model):
     timeout: Optional[Any] = None
     api_key: Optional[str] = field(default_factory=lambda: getenv("OLLAMA_API_KEY"))
     client_params: Optional[Dict[str, Any]] = None
-    cloud_model: Optional[bool] = False
+    cloud_model: bool = False
 
     # Ollama clients
     client: Optional[OllamaClient] = None
@@ -57,11 +62,16 @@ class Ollama(Model):
         host = self.host
         headers = {}
 
-        if self.api_key and self.cloud_model:
+        # Auto-detect cloud usage if cloud_model is True or host points to ollama.com
+        is_cloud = self.cloud_model or (host and "ollama.com" in host)
+
+        if self.api_key and is_cloud:
             if not host:
                 host = "https://ollama.com"
             headers["authorization"] = f"Bearer {self.api_key}"
             log_debug(f"Using Ollama cloud endpoint: {host}")
+        elif self.api_key and not is_cloud:
+            log_debug("API key is set but cloud_model=False. Using local Ollama instance.")
 
         base_params = {
             "host": host,
