@@ -93,7 +93,10 @@ class ReasoningTools(Toolkit):
             run_context.session_state["reasoning_steps"][current_run_id].append(reasoning_step.model_dump_json())
 
             # Return all previous reasoning_steps and the new reasoning_step
-            if "reasoning_steps" in run_context.session_state and current_run_id in run_context.session_state["reasoning_steps"]:
+            if (
+                "reasoning_steps" in run_context.session_state
+                and current_run_id in run_context.session_state["reasoning_steps"]
+            ):
                 formatted_reasoning_steps = ""
                 for i, step in enumerate(run_context.session_state["reasoning_steps"][current_run_id], 1):
                     step_parsed = ReasoningStep.model_validate_json(step)
@@ -162,7 +165,10 @@ Confidence: {step_parsed.confidence}
             run_context.session_state["reasoning_steps"][current_run_id].append(reasoning_step.model_dump_json())
 
             # Return all previous reasoning_steps and the new reasoning_step
-            if "reasoning_steps" in run_context.session_state and current_run_id in run_context.session_state["reasoning_steps"]:
+            if (
+                "reasoning_steps" in run_context.session_state
+                and current_run_id in run_context.session_state["reasoning_steps"]
+            ):
                 formatted_reasoning_steps = ""
                 for i, step in enumerate(run_context.session_state["reasoning_steps"][current_run_id], 1):
                     step_parsed = ReasoningStep.model_validate_json(step)
