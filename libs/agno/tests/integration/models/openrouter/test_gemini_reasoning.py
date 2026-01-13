@@ -103,9 +103,9 @@ def test_gemini_multi_turn_with_provider_data_preservation():
     if has_reasoning_first:
         for msg in assistant_messages:
             assert "reasoning_details" in msg.provider_data, f"Message {msg.id} missing reasoning_details"
-        print(f"\n✓ Preserved reasoning_details across {len(assistant_messages)} turns")
+        print(f"\nPreserved reasoning_details across {len(assistant_messages)} turns")
     else:
-        print(f"\n✓ Preserved provider_data across {len(assistant_messages)} turns (no reasoning_details)")
+        print(f"\nPreserved provider_data across {len(assistant_messages)} turns (no reasoning_details)")
 
 
 @pytest.mark.asyncio
@@ -138,6 +138,6 @@ async def test_async_gemini_multi_turn_with_provider_data():
     if has_reasoning_first:
         for msg in assistant_messages:
             assert "reasoning_details" in msg.provider_data, f"Message {msg.id} missing reasoning_details"
-        print(f"\nAsync: ✓ Preserved reasoning_details across {len(assistant_messages)} turns")
+        print(f"\nAsync: Preserved reasoning_details across {len(assistant_messages)} turns")
     else:
-        print(f"\nAsync: ✓ Preserved provider_data across {len(assistant_messages)} turns (no reasoning_details)")
+        print(f"\nAsync: Preserved provider_data across {len(assistant_messages)} turns (no reasoning_details)")
