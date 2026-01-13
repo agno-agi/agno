@@ -80,7 +80,7 @@ class BrowserbaseTools(Toolkit):
 
         # Shared session state
         self._session = None
-        self._connect_url = None
+        self._connect_url: Optional[str] = None
 
         # Build tools lists
         # sync tools: used by agent.run() and agent.print_response()
