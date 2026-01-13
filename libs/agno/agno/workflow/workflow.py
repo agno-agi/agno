@@ -2814,7 +2814,7 @@ class Workflow:
             input=agent_input,
             stream=True,
             stream_events=True,
-            yield_run_response=True,
+            yield_run_output=True,
             session_id=session.session_id,
             dependencies=run_context.dependencies,  # Pass context dynamically per-run
             session_state=run_context.session_state,  # Pass session state dynamically per-run
@@ -3203,7 +3203,7 @@ class Workflow:
             input=agent_input,
             stream=True,
             stream_events=True,
-            yield_run_response=True,
+            yield_run_output=True,
             session_id=session.session_id,
             dependencies=run_context.dependencies,  # Pass context dynamically per-run
             session_state=run_context.session_state,  # Pass session state dynamically per-run
