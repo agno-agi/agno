@@ -913,22 +913,6 @@ class Team:
 
         return session_id, user_id
 
-    def _initialize_session_state(
-        self,
-        session_state: Dict[str, Any],
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        run_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Initialize the session state for the team."""
-        if user_id:
-            session_state["current_user_id"] = user_id
-        if session_id is not None:
-            session_state["current_session_id"] = session_id
-        if run_id is not None:
-            session_state["current_run_id"] = run_id
-        return session_state
-
     def _has_async_db(self) -> bool:
         """Return True if the db the team is equipped with is an Async implementation"""
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
@@ -2164,15 +2148,11 @@ class Team:
         team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=team_session)
 
-        # Initialize session state
-        session_state = self._initialize_session_state(
+        # Initialize session state. Get it from DB if relevant.
+        session_state = self._load_session_state(
+            session=team_session,
             session_state=session_state if session_state is not None else {},
-            user_id=user_id,
-            session_id=session_id,
-            run_id=run_id,
         )
-        # Update session state from DB
-        session_state = self._load_session_state(session=team_session, session_state=session_state)
 
         # Determine runtime dependencies
         dependencies = dependencies if dependencies is not None else self.dependencies
@@ -2346,18 +2326,12 @@ class Team:
 
                     # 2. Update metadata and session state
                     self._update_metadata(session=team_session)
-                    # Initialize session state
-                    run_context.session_state = self._initialize_session_state(
+
+                    # Initialize session state. Get it from DB if relevant.
+                    run_context.session_state = self._load_session_state(
+                        session=team_session,
                         session_state=run_context.session_state if run_context.session_state is not None else {},
-                        user_id=user_id,
-                        session_id=session_id,
-                        run_id=run_response.run_id,
                     )
-                    # Update session state from DB
-                    if run_context.session_state is not None:
-                        run_context.session_state = self._load_session_state(
-                            session=team_session, session_state=run_context.session_state
-                        )
 
                     run_input = cast(TeamRunInput, run_response.input)
 
@@ -2653,18 +2627,12 @@ class Team:
 
                     # 3. Update metadata and session state
                     self._update_metadata(session=team_session)
-                    # Initialize session state
-                    run_context.session_state = self._initialize_session_state(
+
+                    # Initialize session state. Get it from DB if relevant.
+                    run_context.session_state = self._load_session_state(
+                        session=team_session,
                         session_state=run_context.session_state if run_context.session_state is not None else {},
-                        user_id=user_id,
-                        session_id=session_id,
-                        run_id=run_response.run_id,
                     )
-                    # Update session state from DB
-                    if run_context.session_state is not None:
-                        run_context.session_state = self._load_session_state(
-                            session=team_session, session_state=run_context.session_state
-                        )  # type: ignore
 
                     # 4. Execute pre-hooks
                     run_input = cast(TeamRunInput, run_response.input)
