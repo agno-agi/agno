@@ -9929,7 +9929,16 @@ class Agent:
                 return field_value
 
         # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
-        if field_name in ("db", "model", "reasoning_model", "knowledge", "memory_manager"):
+        if field_name in (
+            "db",
+            "model",
+            "reasoning_model",
+            "knowledge",
+            "memory_manager",
+            "parser_model",
+            "output_model",
+            "session_summary_manager",
+        ):
             return field_value
 
         # For compound types, attempt a deep copy

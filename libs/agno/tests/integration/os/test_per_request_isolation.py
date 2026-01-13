@@ -2036,6 +2036,9 @@ class TestToolsDeepCopy:
                 self.instance_id = uuid.uuid4()
                 self.connected = True
 
+        # Patch the MRO check to recognize our mock as MCP tools
+        mock_mcp = MockMCPTools()
+
         # Create a subclass that includes MCPTools in its MRO for detection
         class MCPTools:
             pass
@@ -2319,6 +2322,84 @@ class TestModelDeepCopy:
 
         assert copy.model is team_model
         assert copy.members[0].model is member_model
+
+    def test_parser_model_is_shared(self):
+        """Parser model should be shared (not copied) between instances."""
+        model = OpenAIChat(id="gpt-4o-mini")
+        parser_model = OpenAIChat(id="gpt-4o")
+        agent = Agent(
+            name="test-agent", id="test-id", model=model, parser_model=parser_model
+        )
+
+        copy = agent.deep_copy()
+
+        # Parser model should be the SAME instance (shared)
+        assert copy.parser_model is parser_model
+
+    def test_output_model_is_shared(self):
+        """Output model should be shared (not copied) between instances."""
+        model = OpenAIChat(id="gpt-4o-mini")
+        output_model = OpenAIChat(id="gpt-4o")
+        agent = Agent(
+            name="test-agent", id="test-id", model=model, output_model=output_model
+        )
+
+        copy = agent.deep_copy()
+
+        # Output model should be the SAME instance (shared)
+        assert copy.output_model is output_model
+
+    def test_session_summary_manager_is_shared(self):
+        """Session summary manager should be shared (not copied) between instances."""
+        from agno.session.summary import SessionSummaryManager
+
+        model = OpenAIChat(id="gpt-4o-mini")
+        session_summary_manager = SessionSummaryManager(model=model)
+        agent = Agent(
+            name="test-agent",
+            id="test-id",
+            model=model,
+            session_summary_manager=session_summary_manager,
+        )
+
+        copy = agent.deep_copy()
+
+        # Session summary manager should be the SAME instance (shared)
+        assert copy.session_summary_manager is session_summary_manager
+
+    def test_parser_model_in_team_is_shared(self):
+        """Team's parser model should be shared."""
+        model = OpenAIChat(id="gpt-4o-mini")
+        parser_model = OpenAIChat(id="gpt-4o")
+
+        team = Team(
+            name="test-team",
+            id="test-team-id",
+            members=[Agent(name="member", id="member-id", model=model)],
+            model=model,
+            parser_model=parser_model,
+        )
+
+        copy = team.deep_copy()
+
+        assert copy.parser_model is parser_model
+
+    def test_output_model_in_team_is_shared(self):
+        """Team's output model should be shared."""
+        model = OpenAIChat(id="gpt-4o-mini")
+        output_model = OpenAIChat(id="gpt-4o")
+
+        team = Team(
+            name="test-team",
+            id="test-team-id",
+            members=[Agent(name="member", id="member-id", model=model)],
+            model=model,
+            output_model=output_model,
+        )
+
+        copy = team.deep_copy()
+
+        assert copy.output_model is output_model
 
 
 # ============================================================================
