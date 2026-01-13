@@ -1,8 +1,7 @@
 """Integration tests for exception handling in AgentOS."""
 
 import logging
-from unittest.mock import AsyncMock
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
