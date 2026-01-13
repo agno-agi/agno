@@ -400,7 +400,6 @@ def print_response_stream(
     files: Optional[Sequence[File]] = None,
     markdown: bool = False,
     stream_events: bool = False,
-    stream_intermediate_steps: bool = False,  # type: ignore
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     add_history_to_context: Optional[bool] = None,
     dependencies: Optional[Dict[str, Any]] = None,
@@ -1419,7 +1418,6 @@ async def aprint_response_stream(
     files: Optional[Sequence[File]] = None,
     markdown: bool = False,
     stream_events: bool = False,
-    stream_intermediate_steps: bool = False,  # type: ignore
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     add_history_to_context: Optional[bool] = None,
     dependencies: Optional[Dict[str, Any]] = None,

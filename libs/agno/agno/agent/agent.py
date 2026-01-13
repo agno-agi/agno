@@ -463,9 +463,6 @@ class Agent:
     # This helps us improve the Agent and provide better support
     telemetry: bool = True
 
-    # Deprecated. Use stream_events instead
-    stream_intermediate_steps: Optional[bool] = None
-
     def __init__(
         self,
         *,
@@ -559,7 +556,6 @@ class Agent:
         save_response_to_file: Optional[str] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         store_events: bool = False,
         events_to_skip: Optional[List[RunEvent]] = None,
         role: Optional[str] = None,
@@ -694,14 +690,7 @@ class Agent:
         self.save_response_to_file = save_response_to_file
 
         self.stream = stream
-
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        self.stream_events = stream_events or stream_intermediate_steps
+        self.stream_events = stream_events
 
         self.store_events = store_events
         self.role = role
@@ -1049,22 +1038,6 @@ class Agent:
 
         return session_id, user_id
 
-    def _initialize_session_state(
-        self,
-        session_state: Dict[str, Any],
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        run_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Initialize the session state for the agent."""
-        if user_id:
-            session_state["current_user_id"] = user_id
-        if session_id is not None:
-            session_state["current_session_id"] = session_id
-        if run_id is not None:
-            session_state["current_run_id"] = run_id
-        return session_state
-
     def _run(
         self,
         run_response: RunOutput,
@@ -1190,7 +1163,9 @@ class Agent:
                     raise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 5. Reason about the task
-                    self._handle_reasoning(run_response=run_response, run_messages=run_messages)
+                    self._handle_reasoning(
+                        run_response=run_response, run_messages=run_messages, run_context=run_context
+                    )
 
                     # Check for cancellation before model call
                     raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1503,6 +1478,7 @@ class Agent:
                     yield from self._handle_reasoning_stream(
                         run_response=run_response,
                         run_messages=run_messages,
+                        run_context=run_context,
                         stream_events=stream_events,
                     )
 
@@ -1778,7 +1754,6 @@ class Agent:
         *,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -1806,7 +1781,6 @@ class Agent:
         *,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -1823,7 +1797,6 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -1835,7 +1808,6 @@ class Agent:
         *,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -1852,7 +1824,6 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -1872,13 +1843,6 @@ class Agent:
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
-            )
-
-        if yield_run_response is not None:
-            warnings.warn(
-                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
-                DeprecationWarning,
-                stacklevel=2,
             )
 
         background_tasks = kwargs.pop("background_tasks", None)
@@ -1920,14 +1884,8 @@ class Agent:
         agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=agent_session)
 
-        # Initialize session state
-        session_state = self._initialize_session_state(
-            session_state=session_state if session_state is not None else {},
-            user_id=user_id,
-            session_id=session_id,
-            run_id=run_id,
-        )
-        # Update session state from DB
+        # Initialize session state. Get it from DB if relevant.
+        session_state = session_state if session_state is not None else {}
         session_state = self._load_session_state(session=agent_session, session_state=session_state)
 
         # Determine runtime dependencies
@@ -1971,15 +1929,6 @@ class Agent:
         if stream is None:
             stream = False if self.stream is None else self.stream
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
-
         # Can't stream events if streaming is disabled
         if stream is False:
             stream_events = False
@@ -2013,8 +1962,6 @@ class Agent:
         # Start the run metrics timer, to calculate the run duration
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
-
-        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         if stream:
             response_iterator = self._run_stream(
@@ -2104,18 +2051,12 @@ class Agent:
 
                     # 2. Update metadata and session state
                     self._update_metadata(session=agent_session)
-                    # Initialize session state
-                    run_context.session_state = self._initialize_session_state(
+
+                    # Initialize session state. Get it from DB if relevant.
+                    run_context.session_state = self._load_session_state(
+                        session=agent_session,
                         session_state=run_context.session_state if run_context.session_state is not None else {},
-                        user_id=user_id,
-                        session_id=session_id,
-                        run_id=run_response.run_id,
                     )
-                    # Update session state from DB
-                    if run_context.session_state is not None:
-                        run_context.session_state = self._load_session_state(
-                            session=agent_session, session_state=run_context.session_state
-                        )
 
                     # 3. Resolve dependencies
                     if run_context.dependencies is not None:
@@ -2204,7 +2145,9 @@ class Agent:
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 8. Reason about the task if reasoning is enabled
-                    await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
+                    await self._ahandle_reasoning(
+                        run_response=run_response, run_messages=run_messages, run_context=run_context
+                    )
 
                     # Check for cancellation before model call
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2478,18 +2421,12 @@ class Agent:
 
                     # 2. Update metadata and session state
                     self._update_metadata(session=agent_session)
-                    # Initialize session state
-                    run_context.session_state = self._initialize_session_state(
+
+                    # Initialize session state. Get it from DB if relevant.
+                    run_context.session_state = self._load_session_state(
+                        session=agent_session,
                         session_state=run_context.session_state if run_context.session_state is not None else {},
-                        user_id=user_id,
-                        session_id=session_id,
-                        run_id=run_response.run_id,
                     )
-                    # Update session state from DB
-                    if run_context.session_state is not None:
-                        run_context.session_state = self._load_session_state(
-                            session=agent_session, session_state=run_context.session_state
-                        )
 
                     # 3. Resolve dependencies
                     if run_context.dependencies is not None:
@@ -2578,6 +2515,7 @@ class Agent:
                     async for item in self._ahandle_reasoning_stream(
                         run_response=run_response,
                         run_messages=run_messages,
+                        run_context=run_context,
                         stream_events=stream_events,
                     ):
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2913,7 +2851,6 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -2940,7 +2877,6 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -2948,7 +2884,6 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -2969,7 +2904,6 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
@@ -2977,7 +2911,6 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
@@ -2990,13 +2923,6 @@ class Agent:
         if (add_history_to_context or self.add_history_to_context) and not self.db and not self.team_id:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
-            )
-
-        if yield_run_response is not None:
-            warnings.warn(
-                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
-                DeprecationWarning,
-                stacklevel=2,
             )
 
         background_tasks = kwargs.pop("background_tasks", None)
@@ -3050,15 +2976,6 @@ class Agent:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
         if stream is False:
@@ -3121,7 +3038,7 @@ class Agent:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
+        yield_run_output = yield_run_output
 
         # Pass the new run_response to _arun
         if stream:
@@ -3165,7 +3082,6 @@ class Agent:
         requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
@@ -3185,7 +3101,6 @@ class Agent:
         requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = False,
-        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
@@ -3204,7 +3119,6 @@ class Agent:
         requirements: Optional[List[RunRequirement]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = False,
-        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
@@ -3230,8 +3144,6 @@ class Agent:
             dependencies: The dependencies to use for the run.
             metadata: The metadata to use for the run.
             debug_mode: Whether to enable debug mode.
-            (deprecated) stream_intermediate_steps: Whether to stream all steps.
-            (deprecated) updated_tools: Use 'requirements' instead.
         """
         if run_response is None and run_id is None:
             raise ValueError("Either run_response or run_id must be provided.")
@@ -3262,12 +3174,8 @@ class Agent:
         agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=agent_session)
 
-        # Initialize session state
-        session_state = self._initialize_session_state(
-            session_state={}, user_id=user_id, session_id=session_id, run_id=run_id
-        )
-        # Update session state from DB
-        session_state = self._load_session_state(session=agent_session, session_state=session_state)
+        # Initialize session state. Get it from DB if relevant.
+        session_state = self._load_session_state(session=agent_session, session_state={})
 
         dependencies = dependencies if dependencies is not None else self.dependencies
 
@@ -3300,25 +3208,12 @@ class Agent:
         if stream is None:
             stream = False if self.stream is None else self.stream
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
-
         # Can't stream events if streaming is disabled
         if stream is False:
             stream_events = False
 
         if stream_events is None:
             stream_events = False if self.stream_events is None else self.stream_events
-
-        # Can't stream events if streaming is disabled
-        if stream is False:
-            stream_events = False
 
         # Run can be continued from previous run response or from passed run_response context
         if run_response is not None:
@@ -3860,7 +3755,6 @@ class Agent:
         *,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
@@ -3880,7 +3774,6 @@ class Agent:
         *,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         run_id: Optional[str] = None,
         updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
@@ -3902,7 +3795,6 @@ class Agent:
         requirements: Optional[List[RunRequirement]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         run_context: Optional[RunContext] = None,
@@ -3930,7 +3822,6 @@ class Agent:
             metadata: The metadata to use for continuing the run.
             debug_mode: Whether to enable debug mode.
             yield_run_output: Whether to yield the run response.
-            (deprecated) stream_intermediate_steps: Whether to stream all steps.
             (deprecated) updated_tools: Use 'requirements' instead.
         """
         if run_response is None and run_id is None:
@@ -3966,15 +3857,6 @@ class Agent:
         if stream is None:
             stream = False if self.stream is None else self.stream
 
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
-
         # Can't stream events if streaming is disabled
         if stream is False:
             stream_events = False
@@ -3982,7 +3864,7 @@ class Agent:
         if stream_events is None:
             stream_events = False if self.stream_events is None else self.stream_events
 
-        # Can't have stream_intermediate_steps if stream is False
+        # Can't have stream_events if stream is False
         if stream is False:
             stream_events = False
 
@@ -4095,15 +3977,12 @@ class Agent:
 
                     # 3. Update metadata and session state
                     self._update_metadata(session=agent_session)
-                    # Initialize session state
-                    run_context.session_state = self._initialize_session_state(
-                        session_state={}, user_id=user_id, session_id=session_id, run_id=run_id
+
+                    # Initialize session state. Get it from DB if relevant.
+                    run_context.session_state = self._load_session_state(
+                        session=agent_session,
+                        session_state=run_context.session_state if run_context.session_state is not None else {},
                     )
-                    # Update session state from DB
-                    if run_context.session_state is not None:
-                        run_context.session_state = self._load_session_state(
-                            session=agent_session, session_state=run_context.session_state
-                        )
 
                     # 4. Prepare run response
                     if run_response is not None:
@@ -4400,15 +4279,12 @@ class Agent:
 
                     # 2. Update session state and metadata
                     self._update_metadata(session=agent_session)
-                    # Initialize session state
-                    run_context.session_state = self._initialize_session_state(
-                        session_state={}, user_id=user_id, session_id=session_id, run_id=run_id
+
+                    # Initialize session state. Get it from DB if relevant.
+                    run_context.session_state = self._load_session_state(
+                        session=agent_session,
+                        session_state=run_context.session_state if run_context.session_state is not None else {},
                     )
-                    # Update session state from DB
-                    if run_context.session_state is not None:
-                        run_context.session_state = self._load_session_state(
-                            session=agent_session, session_state=run_context.session_state
-                        )
 
                     # 3. Resolve dependencies
                     if run_context.dependencies is not None:
@@ -4789,9 +4665,6 @@ class Agent:
             "run_context": run_context,
             "agent": self,
             "session": session,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
-            "metadata": run_context.metadata,
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
@@ -4884,9 +4757,6 @@ class Agent:
             "agent": self,
             "session": session,
             "run_context": run_context,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
-            "metadata": run_context.metadata,
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
@@ -4982,9 +4852,6 @@ class Agent:
             "run_output": run_output,
             "agent": self,
             "session": session,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
-            "metadata": run_context.metadata,
             "user_id": user_id,
             "run_context": run_context,
             "debug_mode": debug_mode or self.debug_mode,
@@ -5071,9 +4938,6 @@ class Agent:
             "agent": self,
             "session": session,
             "run_context": run_context,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
-            "metadata": run_context.metadata,
             "user_id": user_id,
             "debug_mode": debug_mode or self.debug_mode,
         }
@@ -6982,8 +6846,6 @@ class Agent:
             for func in _functions:  # type: ignore
                 if isinstance(func, Function):
                     func._run_context = run_context
-                    func._session_state = run_context.session_state
-                    func._dependencies = run_context.dependencies
                     func._images = joint_images
                     func._files = joint_files
                     func._audios = joint_audios
@@ -8089,18 +7951,21 @@ class Agent:
     def _format_message_with_state_variables(
         self,
         message: Any,
-        session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
     ) -> Any:
-        """Format a message with the session state variables."""
+        """Format a message with the session state variables from run_context."""
         import re
         import string
         from copy import deepcopy
 
         if not isinstance(message, str):
             return message
+
+        # Extract values from run_context
+        session_state = run_context.session_state if run_context else None
+        dependencies = run_context.dependencies if run_context else None
+        metadata = run_context.metadata if run_context else None
+        user_id = run_context.user_id if run_context else None
 
         # Should already be resolved and passed from run() method
         format_variables = ChainMap(
@@ -8130,12 +7995,8 @@ class Agent:
         self,
         session: AgentSession,
         run_context: Optional[RunContext] = None,
-        user_id: Optional[str] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
-        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
-        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
-        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
     ) -> Optional[Message]:
         """Return the system message for the Agent.
 
@@ -8144,11 +8005,9 @@ class Agent:
         3. Build and return the default system message for the Agent.
         """
 
-        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
-        if run_context is not None:
-            session_state = run_context.session_state or session_state
-            dependencies = run_context.dependencies or dependencies
-            metadata = run_context.metadata or metadata
+        # Extract values from run_context
+        session_state = run_context.session_state if run_context else None
+        user_id = run_context.user_id if run_context else None
 
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
@@ -8171,10 +8030,7 @@ class Agent:
             if self.resolve_in_context:
                 sys_message_content = self._format_message_with_state_variables(
                     sys_message_content,
-                    user_id=user_id,
-                    session_state=session_state,
-                    dependencies=dependencies,
-                    metadata=metadata,
+                    run_context=run_context,
                 )
 
             # type: ignore
@@ -8312,10 +8168,7 @@ class Agent:
         if self.resolve_in_context:
             system_message_content = self._format_message_with_state_variables(
                 system_message_content,
-                user_id=user_id,
-                session_state=session_state,
-                dependencies=dependencies,
-                metadata=metadata,
+                run_context=run_context,
             )
 
         # 3.3.7 Then add the expected output
@@ -8488,12 +8341,8 @@ class Agent:
         self,
         session: AgentSession,
         run_context: Optional[RunContext] = None,
-        user_id: Optional[str] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
-        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
-        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
-        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
     ) -> Optional[Message]:
         """Return the system message for the Agent.
 
@@ -8502,11 +8351,9 @@ class Agent:
         3. Build and return the default system message for the Agent.
         """
 
-        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
-        if run_context is not None:
-            session_state = run_context.session_state or session_state
-            dependencies = run_context.dependencies or dependencies
-            metadata = run_context.metadata or metadata
+        # Extract values from run_context
+        session_state = run_context.session_state if run_context else None
+        user_id = run_context.user_id if run_context else None
 
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
@@ -8530,10 +8377,7 @@ class Agent:
             if self.resolve_in_context:
                 sys_message_content = self._format_message_with_state_variables(
                     sys_message_content,
-                    user_id=user_id,
-                    dependencies=dependencies,
-                    metadata=metadata,
-                    session_state=session_state,
+                    run_context=run_context,
                 )
 
             # type: ignore
@@ -8671,10 +8515,7 @@ class Agent:
         if self.resolve_in_context:
             system_message_content = self._format_message_with_state_variables(
                 system_message_content,
-                user_id=user_id,
-                session_state=session_state,
-                dependencies=dependencies,
-                metadata=metadata,
+                run_context=run_context,
             )
 
         # 3.3.7 Then add the expected output
@@ -8854,17 +8695,12 @@ class Agent:
         *,
         run_response: RunOutput,
         run_context: Optional[RunContext] = None,
-        session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
         input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         add_dependencies_to_context: Optional[bool] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
         """Return the user message for the Agent.
@@ -8873,12 +8709,9 @@ class Agent:
         2. If build_user_context is False or if the message is a list, return the message as is.
         3. Build the default user message for the Agent
         """
-        # Consider both run_context and session_state, dependencies, metadata, knowledge_filters (deprecated fields)
-        if run_context is not None:
-            session_state = run_context.session_state or session_state
-            dependencies = run_context.dependencies or dependencies
-            metadata = run_context.metadata or metadata
-            knowledge_filters = run_context.knowledge_filters or knowledge_filters
+        # Extract values from run_context
+        dependencies = run_context.dependencies if run_context else None
+        knowledge_filters = run_context.knowledge_filters if run_context else None
         # Get references from the knowledge base to use in the user message
         references = None
 
@@ -8983,10 +8816,7 @@ class Agent:
                 if self.resolve_in_context:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
-                        user_id=user_id,
-                        session_state=session_state,
-                        dependencies=dependencies,
-                        metadata=metadata,
+                        run_context=run_context,
                     )
 
                 # Convert to string for concatenation operations
@@ -9028,17 +8858,12 @@ class Agent:
         *,
         run_response: RunOutput,
         run_context: Optional[RunContext] = None,
-        session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
         input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         add_dependencies_to_context: Optional[bool] = None,
-        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
         """Return the user message for the Agent (async version).
@@ -9047,12 +8872,9 @@ class Agent:
         2. If build_user_context is False or if the message is a list, return the message as is.
         3. Build the default user message for the Agent
         """
-        # Consider both run_context and session_state, dependencies, metadata, knowledge_filters (deprecated fields)
-        if run_context is not None:
-            session_state = run_context.session_state or session_state
-            dependencies = run_context.dependencies or dependencies
-            metadata = run_context.metadata or metadata
-            knowledge_filters = run_context.knowledge_filters or knowledge_filters
+        # Extract values from run_context
+        dependencies = run_context.dependencies if run_context else None
+        knowledge_filters = run_context.knowledge_filters if run_context else None
         # Get references from the knowledge base to use in the user message
         references = None
 
@@ -9157,10 +8979,7 @@ class Agent:
                 if self.resolve_in_context:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
-                        user_id=user_id,
-                        session_state=session_state,
-                        dependencies=dependencies,
-                        metadata=metadata,
+                        run_context=run_context,
                     )
 
                 # Convert to string for concatenation operations
@@ -9246,10 +9065,6 @@ class Agent:
         system_message = self.get_system_message(
             session=session,
             run_context=run_context,
-            session_state=run_context.session_state,
-            dependencies=run_context.dependencies,
-            metadata=run_context.metadata,
-            user_id=user_id,
             tools=tools,
             add_session_state_to_context=add_session_state_to_context,
         )
@@ -9446,12 +9261,6 @@ class Agent:
         )
         """
 
-        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
-        if run_context is not None:
-            session_state = run_context.session_state or session_state
-            dependencies = run_context.dependencies or dependencies
-            metadata = run_context.metadata or metadata
-
         # Initialize the RunMessages object (no media here - that's in RunInput now)
         run_messages = RunMessages()
 
@@ -9459,11 +9268,7 @@ class Agent:
         system_message = await self.aget_system_message(
             session=session,
             run_context=run_context,
-            session_state=session_state,
-            user_id=user_id,
             tools=tools,
-            dependencies=dependencies,
-            metadata=metadata,
             add_session_state_to_context=add_session_state_to_context,
         )
         if system_message is not None:
@@ -9549,15 +9354,11 @@ class Agent:
             user_message = await self._aget_user_message(
                 run_response=run_response,
                 run_context=run_context,
-                session_state=session_state,
-                dependencies=dependencies,
-                metadata=metadata,
                 input=input,
                 audio=audio,
                 images=images,
                 videos=videos,
                 files=files,
-                knowledge_filters=knowledge_filters,
                 add_dependencies_to_context=add_dependencies_to_context,
                 **kwargs,
             )
@@ -9957,18 +9758,30 @@ class Agent:
         fields_for_new_agent: Dict[str, Any] = {}
 
         for f in fields(self):
+            # Skip private fields (not part of __init__ signature)
+            if f.name.startswith("_"):
+                continue
+
             field_value = getattr(self, f.name)
             if field_value is not None:
-                fields_for_new_agent[f.name] = self._deep_copy_field(f.name, field_value)
+                try:
+                    fields_for_new_agent[f.name] = self._deep_copy_field(f.name, field_value)
+                except Exception as e:
+                    log_warning(f"Failed to deep copy field '{f.name}': {e}. Using original value.")
+                    fields_for_new_agent[f.name] = field_value
 
         # Update fields if provided
         if update:
             fields_for_new_agent.update(update)
 
         # Create a new Agent
-        new_agent = self.__class__(**fields_for_new_agent)
-        log_debug(f"Created new {self.__class__.__name__}")
-        return new_agent
+        try:
+            new_agent = self.__class__(**fields_for_new_agent)
+            log_debug(f"Created new {self.__class__.__name__}")
+            return new_agent
+        except Exception as e:
+            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
+            raise
 
     def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
         """Helper method to deep copy a field based on its type."""
@@ -9978,19 +9791,52 @@ class Agent:
         if field_name == "reasoning_agent":
             return field_value.deep_copy()
 
-        # For storage, model and reasoning_model, use a deep copy
-        elif field_name in ("db", "model", "reasoning_model"):
+        # For tools, share MCP tools but copy others
+        if field_name == "tools" and field_value is not None:
             try:
-                return deepcopy(field_value)
-            except Exception:
-                try:
-                    return copy(field_value)
-                except Exception as e:
-                    log_warning(f"Failed to copy field: {field_name} - {e}")
-                    return field_value
+                copied_tools = []
+                for tool in field_value:
+                    try:
+                        # Share MCP tools (they maintain server connections)
+                        is_mcp_tool = hasattr(type(tool), "__mro__") and any(
+                            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                        )
+                        if is_mcp_tool:
+                            copied_tools.append(tool)
+                        else:
+                            try:
+                                copied_tools.append(deepcopy(tool))
+                            except Exception:
+                                # Tool can't be deep copied, share by reference
+                                copied_tools.append(tool)
+                    except Exception:
+                        # MCP detection failed, share tool by reference to be safe
+                        copied_tools.append(tool)
+                return copied_tools
+            except Exception as e:
+                # If entire tools processing fails, log and return original list
+                log_warning(f"Failed to process tools for deep copy: {e}")
+                return field_value
+
+        # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
+        if field_name in (
+            "db",
+            "model",
+            "reasoning_model",
+            "knowledge",
+            "memory_manager",
+            "parser_model",
+            "output_model",
+            "session_summary_manager",
+            "culture_manager",
+            "compression_manager",
+            "learning",
+            "skills",
+        ):
+            return field_value
 
         # For compound types, attempt a deep copy
-        elif isinstance(field_value, (list, dict, set)):
+        if isinstance(field_value, (list, dict, set)):
             try:
                 return deepcopy(field_value)
             except Exception:
@@ -10001,7 +9847,7 @@ class Agent:
                     return field_value
 
         # For pydantic models, attempt a model_copy
-        elif isinstance(field_value, BaseModel):
+        if isinstance(field_value, BaseModel):
             try:
                 return field_value.model_copy(deep=True)
             except Exception:
@@ -10013,8 +9859,6 @@ class Agent:
 
         # For other types, attempt a shallow copy first
         try:
-            from copy import copy
-
             return copy(field_value)
         except Exception:
             # If copy fails, return as is
@@ -10077,40 +9921,56 @@ class Agent:
     # Reasoning
     ###########################################################################
 
-    def _handle_reasoning(self, run_response: RunOutput, run_messages: RunMessages) -> None:
+    def _handle_reasoning(
+        self, run_response: RunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    ) -> None:
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self._reason(
-                run_response=run_response, run_messages=run_messages, stream_events=False
+                run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
             )
 
             # Consume the generator without yielding
             deque(reasoning_generator, maxlen=0)
 
     def _handle_reasoning_stream(
-        self, run_response: RunOutput, run_messages: RunMessages, stream_events: Optional[bool] = None
+        self,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        run_context: Optional[RunContext] = None,
+        stream_events: Optional[bool] = None,
     ) -> Iterator[RunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self._reason(
                 run_response=run_response,
                 run_messages=run_messages,
+                run_context=run_context,
                 stream_events=stream_events,
             )
             yield from reasoning_generator
 
-    async def _ahandle_reasoning(self, run_response: RunOutput, run_messages: RunMessages) -> None:
+    async def _ahandle_reasoning(
+        self, run_response: RunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    ) -> None:
         if self.reasoning or self.reasoning_model is not None:
-            reason_generator = self._areason(run_response=run_response, run_messages=run_messages, stream_events=False)
+            reason_generator = self._areason(
+                run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
+            )
             # Consume the generator without yielding
             async for _ in reason_generator:  # type: ignore
                 pass
 
     async def _ahandle_reasoning_stream(
-        self, run_response: RunOutput, run_messages: RunMessages, stream_events: Optional[bool] = None
+        self,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        run_context: Optional[RunContext] = None,
+        stream_events: Optional[bool] = None,
     ) -> AsyncIterator[RunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
             reason_generator = self._areason(
                 run_response=run_response,
                 run_messages=run_messages,
+                run_context=run_context,
                 stream_events=stream_events,
             )
             async for item in reason_generator:  # type: ignore
@@ -10222,7 +10082,11 @@ class Agent:
             log_warning(f"Reasoning error. {event.error}, continuing regular session...")
 
     def _reason(
-        self, run_response: RunOutput, run_messages: RunMessages, stream_events: Optional[bool] = None
+        self,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        run_context: Optional[RunContext] = None,
+        stream_events: Optional[bool] = None,
     ) -> Iterator[RunOutputEvent]:
         """
         Run reasoning using the ReasoningManager.
@@ -10252,9 +10116,7 @@ class Agent:
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
-                session_state=self.session_state,
-                dependencies=self.dependencies,
-                metadata=self.metadata,
+                run_context=run_context,
             )
         )
 
@@ -10263,7 +10125,11 @@ class Agent:
             yield from self._handle_reasoning_event(event, run_response, stream_events)
 
     async def _areason(
-        self, run_response: RunOutput, run_messages: RunMessages, stream_events: Optional[bool] = None
+        self,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        run_context: Optional[RunContext] = None,
+        stream_events: Optional[bool] = None,
     ) -> Any:
         """
         Run reasoning asynchronously using the ReasoningManager.
@@ -10293,9 +10159,7 @@ class Agent:
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
-                session_state=self.session_state,
-                dependencies=self.dependencies,
-                metadata=self.metadata,
+                run_context=run_context,
             )
         )
 

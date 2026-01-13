@@ -24,6 +24,20 @@ from agno.utils.log import log_warning, logger
 from agno.workflow import RemoteWorkflow, Workflow
 
 
+def to_utc_datetime(value: Optional[Union[int, float, datetime]]) -> Optional[datetime]:
+    """Convert a timestamp to a UTC datetime."""
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        # If already a datetime, make sure the timezone is UTC
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+
+    return datetime.fromtimestamp(value, tz=timezone.utc)
+
+
 async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
     """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
 
@@ -414,37 +428,89 @@ def extract_format(file: UploadFile) -> Optional[str]:
 
 
 def get_agent_by_id(
-    agent_id: str, agents: Optional[List[Union[Agent, RemoteAgent]]] = None
+    agent_id: str,
+    agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    create_fresh: bool = False,
 ) -> Optional[Union[Agent, RemoteAgent]]:
+    """Get an agent by ID, optionally creating a fresh instance for request isolation.
+
+    When create_fresh=True, creates a new agent instance using deep_copy() to prevent
+    state contamination between concurrent requests. The new instance shares heavy
+    resources (db, model, MCP tools) but has isolated mutable state.
+
+    Args:
+        agent_id: The agent ID to look up
+        agents: List of agents to search
+        create_fresh: If True, creates a new instance using deep_copy()
+
+    Returns:
+        The agent instance (shared or fresh copy based on create_fresh)
+    """
     if agent_id is None or agents is None:
         return None
 
     for agent in agents:
         if agent.id == agent_id:
+            if create_fresh and isinstance(agent, Agent):
+                return agent.deep_copy()
             return agent
     return None
 
 
 def get_team_by_id(
-    team_id: str, teams: Optional[List[Union[Team, RemoteTeam]]] = None
+    team_id: str,
+    teams: Optional[List[Union[Team, RemoteTeam]]] = None,
+    create_fresh: bool = False,
 ) -> Optional[Union[Team, RemoteTeam]]:
+    """Get a team by ID, optionally creating a fresh instance for request isolation.
+
+    When create_fresh=True, creates a new team instance using deep_copy() to prevent
+    state contamination between concurrent requests. Member agents are also deep copied.
+
+    Args:
+        team_id: The team ID to look up
+        teams: List of teams to search
+        create_fresh: If True, creates a new instance using deep_copy()
+
+    Returns:
+        The team instance (shared or fresh copy based on create_fresh)
+    """
     if team_id is None or teams is None:
         return None
 
     for team in teams:
         if team.id == team_id:
+            if create_fresh and isinstance(team, Team):
+                return team.deep_copy()
             return team
     return None
 
 
 def get_workflow_by_id(
-    workflow_id: str, workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None
+    workflow_id: str,
+    workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
+    create_fresh: bool = False,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
+    """Get a workflow by ID, optionally creating a fresh instance for request isolation.
+
+    When create_fresh=True, creates a new workflow instance using deep_copy() to prevent
+    state contamination between concurrent requests. Steps containing agents/teams are also deep copied.
+
+    Args:
+        workflow_id: The workflow ID to look up
+        workflows: List of workflows to search
+        create_fresh: If True, creates a new instance using deep_copy()
+
+    Returns:
+        The workflow instance (shared or fresh copy based on create_fresh)
+    """
     if workflow_id is None or workflows is None:
         return None
 
     for workflow in workflows:
         if workflow.id == workflow_id:
+            if create_fresh and isinstance(workflow, Workflow):
+                return workflow.deep_copy()
             return workflow
     return None
 
@@ -819,7 +885,7 @@ def format_duration_ms(duration_ms: Optional[int]) -> str:
     return f"{duration_ms / 1000:.2f}s"
 
 
-def parse_datetime_to_utc(datetime_str: str, param_name: str = "datetime") -> "datetime":
+def timestamp_to_datetime(datetime_str: str, param_name: str = "datetime") -> "datetime":
     """Parse an ISO 8601 datetime string and convert to UTC.
 
     Args:
