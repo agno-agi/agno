@@ -9,6 +9,9 @@ Requirements:
 - boto3 installed: pip install boto3
 
 Supported formats: PDF, JSON, HTML, CSS, XML, images (PNG, JPEG, WebP, GIF)
+
+Note: External URL support requires Gemini 3.x models (e.g., gemini-3-flash-preview).
+      Gemini 2.0 models do not support this feature.
 """
 
 import boto3
@@ -17,24 +20,25 @@ from agno.media import File
 from agno.models.google import Gemini
 
 # Generate a pre-signed URL for your S3 object
+# Replace with your own bucket and key for private files
 s3_client = boto3.client("s3")
 presigned_url = s3_client.generate_presigned_url(
     "get_object",
     Params={
-        "Bucket": "your-bucket-name",
-        "Key": "path/to/document.pdf",
+        "Bucket": "agno-public",  # Example: using Agno's public bucket
+        "Key": "recipes/ThaiRecipes.pdf",
     },
     ExpiresIn=3600,  # URL valid for 1 hour
 )
 
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash"),
+    model=Gemini(id="gemini-3-flash-preview"),
     markdown=True,
 )
 
 # Pass pre-signed URL directly - Gemini fetches the content
 agent.print_response(
-    "Summarize this document and extract key insights.",
+    "What is this document about? Answer in one sentence.",
     files=[
         File(
             url=presigned_url,

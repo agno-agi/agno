@@ -11,6 +11,9 @@ This works with:
 - Any accessible HTTPS URL
 
 Supported formats: PDF, JSON, HTML, CSS, XML, images (PNG, JPEG, WebP, GIF)
+
+Note: External URL support requires Gemini 3.x models (e.g., gemini-3-flash-preview).
+      Gemini 2.0 models do not support this feature.
 """
 
 from agno.agent import Agent
@@ -18,7 +21,7 @@ from agno.media import File
 from agno.models.google import Gemini
 
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash"),
+    model=Gemini(id="gemini-3-flash-preview"),
     markdown=True,
 )
 
