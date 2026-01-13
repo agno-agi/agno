@@ -9549,7 +9549,7 @@ class Agent:
         # Validate the filters against known valid filter keys
         if self.knowledge is not None and filters is not None:
             if validate_filters:
-                valid_filters, invalid_keys = await self.knowledge.async_validate_filters(filters)  # type: ignore
+                valid_filters, invalid_keys = await self.knowledge.avalidate_filters(filters)  # type: ignore
 
                 # Warn about invalid filter keys
                 if invalid_keys:  # type: ignore

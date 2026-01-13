@@ -51,7 +51,7 @@ def mock_knowledge():
     knowledge.aget_content_status = AsyncMock()
     knowledge.get_readers = Mock()
     knowledge.get_valid_filters = Mock()
-    knowledge.async_get_valid_filters = AsyncMock()
+    knowledge.aget_valid_filters = AsyncMock()
     knowledge._load_content = Mock()
     knowledge.search = Mock()  # Mock the search method for search endpoint tests
     knowledge.asearch = AsyncMock()  # Router calls async version
@@ -310,7 +310,7 @@ def test_get_config(test_app, mock_knowledge, mock_content_row):
     mock_knowledge.get_readers.return_value = {"text_reader": mock_reader}
 
     # Mock get_filters to return a list
-    mock_knowledge.async_get_valid_filters.return_value = ["filter_tag_1", "filter_tag2"]
+    mock_knowledge.aget_valid_filters.return_value = ["filter_tag_1", "filter_tag2"]
 
     mock_knowledge.contents_db.get_knowledge_contents.return_value = ([mock_content_row], 1)
 
@@ -340,7 +340,7 @@ def test_get_config_with_vector_db(test_app, mock_knowledge):
     mock_knowledge.get_readers.return_value = {"text_reader": mock_reader}
 
     # Mock get_filters to return a list
-    mock_knowledge.async_get_valid_filters.return_value = ["filter_tag_1", "filter_tag2"]
+    mock_knowledge.aget_valid_filters.return_value = ["filter_tag_1", "filter_tag2"]
 
     # Configure the existing vector_db mock (from fixture) with the properties we need
     mock_knowledge.vector_db.name = "Test Vector DB"

@@ -246,6 +246,7 @@ class Knowledge:
                     upsert=argument.get("upsert", upsert),
                     skip_if_exists=argument.get("skip_if_exists", skip_if_exists),
                     remote_content=argument.get("remote_content", None),
+                    auth=argument.get("auth"),
                 )
 
         elif kwargs:
@@ -262,6 +263,7 @@ class Knowledge:
             upsert = kwargs.get("upsert", True)
             skip_if_exists = kwargs.get("skip_if_exists", False)
             remote_content = kwargs.get("remote_content", None)
+            auth = kwargs.get("auth")
             for path in paths:
                 await self.ainsert(
                     name=name,
@@ -273,6 +275,7 @@ class Knowledge:
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
                     reader=reader,
+                    auth=auth,
                 )
             for url in urls:
                 await self.ainsert(
@@ -285,6 +288,7 @@ class Knowledge:
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
                     reader=reader,
+                    auth=auth,
                 )
             for i, text_content in enumerate(text_contents):
                 content_name = f"{name}_{i}" if name else f"text_content_{i}"
@@ -299,6 +303,7 @@ class Knowledge:
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
                     reader=reader,
+                    auth=auth,
                 )
             if topics:
                 await self.ainsert(
@@ -311,6 +316,7 @@ class Knowledge:
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
                     reader=reader,
+                    auth=auth,
                 )
 
             if remote_content:
@@ -322,6 +328,7 @@ class Knowledge:
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
                     reader=reader,
+                    auth=auth,
                 )
 
         else:
@@ -388,6 +395,7 @@ class Knowledge:
                     upsert=argument.get("upsert", upsert),
                     skip_if_exists=argument.get("skip_if_exists", skip_if_exists),
                     remote_content=argument.get("remote_content", None),
+                    auth=argument.get("auth"),
                 )
 
         elif kwargs:
@@ -404,6 +412,7 @@ class Knowledge:
             upsert = kwargs.get("upsert", True)
             skip_if_exists = kwargs.get("skip_if_exists", False)
             remote_content = kwargs.get("remote_content", None)
+            auth = kwargs.get("auth")
             for path in paths:
                 self.insert(
                     name=name,
@@ -415,6 +424,7 @@ class Knowledge:
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
                     reader=reader,
+                    auth=auth,
                 )
             for url in urls:
                 self.insert(
@@ -427,6 +437,7 @@ class Knowledge:
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
                     reader=reader,
+                    auth=auth,
                 )
             for i, text_content in enumerate(text_contents):
                 content_name = f"{name}_{i}" if name else f"text_content_{i}"
@@ -441,6 +452,7 @@ class Knowledge:
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
                     reader=reader,
+                    auth=auth,
                 )
             if topics:
                 self.insert(
@@ -453,6 +465,7 @@ class Knowledge:
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
                     reader=reader,
+                    auth=auth,
                 )
 
             if remote_content:
@@ -464,6 +477,7 @@ class Knowledge:
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
                     reader=reader,
+                    auth=auth,
                 )
 
         else:
@@ -3073,3 +3087,77 @@ class Knowledge:
         Please migrate your code to use `ainsert_many()` instead.
         """
         return await self.ainsert_many(*args, **kwargs)
+
+    def add_contents(self, *args, **kwargs) -> None:
+        """
+        DEPRECATED: Use `insert_many()` instead. This method will be removed in a future version.
+
+        Synchronously insert multiple content items into the knowledge base.
+
+        This is a backward-compatible wrapper for the `insert_many()` method.
+        Please migrate your code to use `insert_many()` instead.
+        """
+        import warnings
+
+        warnings.warn(
+            "add_contents() is deprecated. Use insert_many() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.insert_many(*args, **kwargs)
+
+    async def async_search(self, *args, **kwargs) -> List[Document]:
+        """
+        DEPRECATED: Use `asearch()` instead. This method will be removed in a future version.
+
+        Asynchronously search for documents matching a query.
+
+        This is a backward-compatible wrapper for the `asearch()` method.
+        Please migrate your code to use `asearch()` instead.
+        """
+        import warnings
+
+        warnings.warn(
+            "async_search() is deprecated. Use asearch() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return await self.asearch(*args, **kwargs)
+
+    async def async_get_valid_filters(self) -> Set[str]:
+        """
+        DEPRECATED: Use `aget_valid_filters()` instead. This method will be removed in a future version.
+
+        Asynchronously get the set of valid filter keys.
+
+        This is a backward-compatible wrapper for the `aget_valid_filters()` method.
+        Please migrate your code to use `aget_valid_filters()` instead.
+        """
+        import warnings
+
+        warnings.warn(
+            "async_get_valid_filters() is deprecated. Use aget_valid_filters() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return await self.aget_valid_filters()
+
+    async def async_validate_filters(
+        self, filters: Dict[str, Any]
+    ) -> Tuple[Union[Dict[str, Any], List[Dict[str, Any]]], List[str]]:
+        """
+        DEPRECATED: Use `avalidate_filters()` instead. This method will be removed in a future version.
+
+        Asynchronously validate filter keys against known valid filters.
+
+        This is a backward-compatible wrapper for the `avalidate_filters()` method.
+        Please migrate your code to use `avalidate_filters()` instead.
+        """
+        import warnings
+
+        warnings.warn(
+            "async_validate_filters() is deprecated. Use avalidate_filters() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return await self.avalidate_filters(filters)
