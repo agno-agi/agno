@@ -1,11 +1,12 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, Optional, Type, Union
 
 from pydantic import BaseModel
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.models.message import Citations, UrlCitation
+from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_warning
 
@@ -16,6 +17,7 @@ try:
         ChoiceDelta,
     )
     from openai.types.chat.parsed_chat_completion import ParsedChatCompletion
+    from openai.types.completion_usage import CompletionUsage
 except ModuleNotFoundError:
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
@@ -40,7 +42,7 @@ class Perplexity(OpenAILike):
     name: str = "Perplexity"
     provider: str = "Perplexity"
 
-    api_key: Optional[str] = getenv("PERPLEXITY_API_KEY")
+    api_key: Optional[str] = field(default_factory=lambda: getenv("PERPLEXITY_API_KEY"))
     base_url: str = "https://api.perplexity.ai/"
     max_tokens: int = 1024
     top_k: Optional[float] = None
@@ -48,11 +50,26 @@ class Perplexity(OpenAILike):
     supports_native_structured_outputs: bool = False
     supports_json_schema_outputs: bool = True
 
+    def _get_client_params(self) -> Dict[str, Any]:
+        """
+        Returns client parameters for API requests, checking for PERPLEXITY_API_KEY.
+
+        Returns:
+            Dict[str, Any]: A dictionary of client parameters for API requests.
+        """
+        if not self.api_key:
+            self.api_key = getenv("PERPLEXITY_API_KEY")
+            if not self.api_key:
+                raise ModelAuthenticationError(
+                    message="PERPLEXITY_API_KEY not set. Please set the PERPLEXITY_API_KEY environment variable.",
+                    model_name=self.name,
+                )
+        return super()._get_client_params()
+
     def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -124,7 +141,7 @@ class Perplexity(OpenAILike):
             )
 
         if response.usage is not None:
-            model_response.response_usage = response.usage
+            model_response.response_usage = self._get_metrics(response.usage)
 
         return model_response
 
@@ -159,6 +176,28 @@ class Perplexity(OpenAILike):
 
         # Add usage metrics if present
         if response_delta.usage is not None:
-            model_response.response_usage = response_delta.usage
+            model_response.response_usage = self._get_metrics(response_delta.usage)
 
         return model_response
+
+    def _get_metrics(self, response_usage: CompletionUsage) -> Metrics:
+        """
+        Parse the given Perplexity usage into an Agno Metrics object.
+        """
+        metrics = Metrics()
+
+        metrics.input_tokens = response_usage.prompt_tokens or 0
+        metrics.output_tokens = response_usage.completion_tokens or 0
+        metrics.total_tokens = response_usage.total_tokens or 0
+
+        # Add the prompt_tokens_details field
+        if prompt_token_details := response_usage.prompt_tokens_details:
+            metrics.audio_input_tokens = prompt_token_details.audio_tokens or 0
+            metrics.cache_read_tokens = prompt_token_details.cached_tokens or 0
+
+        # Add the completion_tokens_details field
+        if completion_tokens_details := response_usage.completion_tokens_details:
+            metrics.audio_output_tokens = completion_tokens_details.audio_tokens or 0
+            metrics.reasoning_tokens = completion_tokens_details.reasoning_tokens or 0
+
+        return metrics

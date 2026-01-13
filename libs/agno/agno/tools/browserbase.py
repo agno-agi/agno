@@ -1,4 +1,5 @@
 import json
+import re
 from os import getenv
 from typing import Any, Dict, List, Optional
 
@@ -10,13 +11,6 @@ try:
 except ImportError:
     raise ImportError("`browserbase` not installed. Please install using `pip install browserbase`")
 
-try:
-    from playwright.sync_api import sync_playwright
-except ImportError:
-    raise ImportError(
-        "`playwright` not installed. Please install using `pip install playwright` and run `playwright install`"
-    )
-
 
 class BrowserbaseTools(Toolkit):
     def __init__(
@@ -24,6 +18,13 @@ class BrowserbaseTools(Toolkit):
         api_key: Optional[str] = None,
         project_id: Optional[str] = None,
         base_url: Optional[str] = None,
+        enable_navigate_to: bool = True,
+        enable_screenshot: bool = True,
+        enable_get_page_content: bool = True,
+        enable_close_session: bool = True,
+        all: bool = False,
+        parse_html: bool = True,
+        max_content_length: Optional[int] = 100000,
         **kwargs,
     ):
         """Initialize BrowserbaseTools.
@@ -31,8 +32,21 @@ class BrowserbaseTools(Toolkit):
         Args:
             api_key (str, optional): Browserbase API key.
             project_id (str, optional): Browserbase project ID.
-            base_url (str, optional): Custom Browserbase API endpoint URL (NOT the target website URL). Only use this if you're using a self-hosted Browserbase instance or need to connect to a different region.
+            base_url (str, optional): Custom Browserbase API endpoint URL (NOT the target website URL).
+                Only use this if you're using a self-hosted Browserbase instance or need to connect to a different region.
+            enable_navigate_to (bool): Enable the navigate_to tool. Defaults to True.
+            enable_screenshot (bool): Enable the screenshot tool. Defaults to True.
+            enable_get_page_content (bool): Enable the get_page_content tool. Defaults to True.
+            enable_close_session (bool): Enable the close_session tool. Defaults to True.
+            all (bool): Enable all tools. Defaults to False.
+            parse_html (bool): If True, extract only visible text content instead of raw HTML. Defaults to True.
+                This significantly reduces token usage and is recommended for most use cases.
+            max_content_length (int, optional): Maximum character length for page content. Defaults to 100000.
+                Content exceeding this limit will be truncated with a notice. Set to None for no limit.
         """
+        self.parse_html = parse_html
+        self.max_content_length = max_content_length
+
         self.api_key = api_key or getenv("BROWSERBASE_API_KEY")
         if not self.api_key:
             raise ValueError(
@@ -54,29 +68,40 @@ class BrowserbaseTools(Toolkit):
         else:
             self.app = Browserbase(api_key=self.api_key)
 
+        # Sync playwright state
         self._playwright = None
         self._browser = None
         self._page = None
+
+        # Async playwright state
+        self._async_playwright = None
+        self._async_browser = None
+        self._async_page = None
+
+        # Shared session state
         self._session = None
         self._connect_url = None
 
+        # Build tools lists
+        # sync tools: used by agent.run() and agent.print_response()
+        # async tools: used by agent.arun() and agent.aprint_response()
         tools: List[Any] = []
-        tools.append(self.navigate_to)
-        tools.append(self.screenshot)
-        tools.append(self.get_page_content)
-        tools.append(self.close_session)
-        tools.append(self.get_current_url)
-        tools.append(self.go_back)
-        tools.append(self.go_forward)
-        tools.append(self.reload_page)
-        tools.append(self.click_element)
-        tools.append(self.fill_input)
-        tools.append(self.wait_for_element)
-        tools.append(self.get_page_title)
-        tools.append(self.scroll_page)
-        tools.append(self.extract_text)
+        async_tools: List[tuple] = []
 
-        super().__init__(name="browserbase_tools", tools=tools, **kwargs)
+        if all or enable_navigate_to:
+            tools.append(self.navigate_to)
+            async_tools.append((self.anavigate_to, "navigate_to"))
+        if all or enable_screenshot:
+            tools.append(self.screenshot)
+            async_tools.append((self.ascreenshot, "screenshot"))
+        if all or enable_get_page_content:
+            tools.append(self.get_page_content)
+            async_tools.append((self.aget_page_content, "get_page_content"))
+        if all or enable_close_session:
+            tools.append(self.close_session)
+            async_tools.append((self.aclose_session, "close_session"))
+
+        super().__init__(name="browserbase_tools", tools=tools, async_tools=async_tools, **kwargs)
 
     def _ensure_session(self):
         """Ensures a session exists, creating one if needed."""
@@ -92,11 +117,18 @@ class BrowserbaseTools(Toolkit):
 
     def _initialize_browser(self, connect_url: Optional[str] = None):
         """
-        Initialize browser connection if not already initialized.
+        Initialize sync browser connection if not already initialized.
         Use provided connect_url or ensure we have a session with a connect_url
         """
+        try:
+            from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
+        except ImportError:
+            raise ImportError(
+                "`playwright` not installed. Please install using `pip install playwright` and run `playwright install`"
+            )
+
         if connect_url:
-            self._connect_url = connect_url
+            self._connect_url = connect_url if connect_url else ""  # type: ignore
         elif not self._connect_url:
             self._ensure_session()
 
@@ -104,13 +136,11 @@ class BrowserbaseTools(Toolkit):
             self._playwright = sync_playwright().start()  # type: ignore
             if self._playwright:
                 self._browser = self._playwright.chromium.connect_over_cdp(self._connect_url)
-            if not self._browser:
-                raise RuntimeError("Browser failed to connect")
-            context = self._browser.contexts[0]
-            self._page = context.pages[0] if context.pages else context.new_page()
+            context = self._browser.contexts[0] if self._browser else ""
+            self._page = context.pages[0] or context.new_page()  # type: ignore
 
     def _cleanup(self):
-        """Clean up browser resources."""
+        """Clean up sync browser resources."""
         if self._browser:
             self._browser.close()
             self._browser = None
@@ -131,13 +161,12 @@ class BrowserbaseTools(Toolkit):
             "connect_url": self._session.connect_url if self._session else "",
         }
 
-    def navigate_to(self, url: str, connect_url: Optional[str] = None, timeout: int = 600000) -> str:
+    def navigate_to(self, url: str, connect_url: Optional[str] = None) -> str:
         """Navigates to a URL.
 
         Args:
             url (str): The URL to navigate to
             connect_url (str, optional): The connection URL from an existing session
-            timeout (int): Timeout in milliseconds (default: 600000)
 
         Returns:
             JSON string with navigation status
@@ -145,7 +174,7 @@ class BrowserbaseTools(Toolkit):
         try:
             self._initialize_browser(connect_url)
             if self._page:
-                self._page.goto(url, wait_until="networkidle", timeout=timeout)
+                self._page.goto(url, wait_until="networkidle")
             result = {"status": "complete", "title": self._page.title() if self._page else "", "url": url}
             return json.dumps(result)
         except Exception as e:
@@ -172,238 +201,208 @@ class BrowserbaseTools(Toolkit):
             self._cleanup()
             raise e
 
+    def _extract_text_content(self, html: str) -> str:
+        """Extract visible text content from HTML, removing scripts, styles, and tags.
+
+        Args:
+            html: Raw HTML content
+
+        Returns:
+            Cleaned text content
+        """
+        # Remove script and style elements
+        html = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
+        html = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
+        # Remove HTML comments
+        html = re.sub(r"<!--.*?-->", "", html, flags=re.DOTALL)
+        # Remove all HTML tags
+        html = re.sub(r"<[^>]+>", " ", html)
+        # Decode common HTML entities
+        html = html.replace("&nbsp;", " ")
+        html = html.replace("&amp;", "&")
+        html = html.replace("&lt;", "<")
+        html = html.replace("&gt;", ">")
+        html = html.replace("&quot;", '"')
+        html = html.replace("&#39;", "'")
+        # Normalize whitespace
+        html = re.sub(r"\s+", " ", html)
+        return html.strip()
+
+    def _truncate_content(self, content: str) -> str:
+        """Truncate content if it exceeds max_content_length.
+
+        Args:
+            content: The content to potentially truncate
+
+        Returns:
+            Original or truncated content with notice
+        """
+        if self.max_content_length is None or len(content) <= self.max_content_length:
+            return content
+
+        truncated = content[: self.max_content_length]
+        return f"{truncated}\n\n[Content truncated. Original length: {len(content)} characters. Showing first {self.max_content_length} characters.]"
+
     def get_page_content(self, connect_url: Optional[str] = None) -> str:
-        """Gets the HTML content of the current page.
+        """Gets the content of the current page.
 
         Args:
             connect_url (str, optional): The connection URL from an existing session
 
         Returns:
-            The page HTML content
+            The page content (text-only if parse_html=True, otherwise raw HTML)
         """
         try:
             self._initialize_browser(connect_url)
-            return self._page.content() if self._page else ""
-        except Exception as e:
-            self._cleanup()
-            raise e
+            if not self._page:
+                return ""
 
-    def get_current_url(self, connect_url: Optional[str] = None) -> str:
-        """Gets the current URL of the page.
+            raw_content = self._page.content()
 
-        Args:
-            connect_url (str, optional): The connection URL from an existing session
-
-        Returns:
-            JSON string with the current URL
-        """
-        try:
-            self._initialize_browser(connect_url)
-            current_url = self._page.url if self._page else ""
-            return json.dumps({"status": "success", "url": current_url})
-        except Exception as e:
-            self._cleanup()
-            raise e
-
-    def go_back(self, connect_url: Optional[str] = None) -> str:
-        """Navigates back in browser history.
-
-        Args:
-            connect_url (str, optional): The connection URL from an existing session
-
-        Returns:
-            JSON string with navigation status
-        """
-        try:
-            self._initialize_browser(connect_url)
-            if self._page:
-                self._page.go_back(wait_until="networkidle")
-            new_url = self._page.url if self._page else ""
-            return json.dumps({"status": "success", "action": "go_back", "url": new_url})
-        except Exception as e:
-            self._cleanup()
-            raise e
-
-    def go_forward(self, connect_url: Optional[str] = None) -> str:
-        """Navigates forward in browser history.
-
-        Args:
-            connect_url (str, optional): The connection URL from an existing session
-
-        Returns:
-            JSON string with navigation status
-        """
-        try:
-            self._initialize_browser(connect_url)
-            if self._page:
-                self._page.go_forward(wait_until="networkidle")
-            new_url = self._page.url if self._page else ""
-            return json.dumps({"status": "success", "action": "go_forward", "url": new_url})
-        except Exception as e:
-            self._cleanup()
-            raise e
-
-    def reload_page(self, connect_url: Optional[str] = None) -> str:
-        """Reloads/refreshes the current page.
-
-        Args:
-            connect_url (str, optional): The connection URL from an existing session
-
-        Returns:
-            JSON string with reload status
-        """
-        try:
-            self._initialize_browser(connect_url)
-            if self._page:
-                self._page.reload(wait_until="networkidle")
-            current_url = self._page.url if self._page else ""
-            return json.dumps({"status": "success", "action": "reload", "url": current_url})
-        except Exception as e:
-            self._cleanup()
-            raise e
-
-    def click_element(self, selector: str, connect_url: Optional[str] = None, timeout: int = 600000) -> str:
-        """Clicks on an element specified by CSS selector.
-
-        Args:
-            selector (str): CSS selector for the element to click
-            connect_url (str, optional): The connection URL from an existing session
-            timeout (int): Timeout in milliseconds (default: 600000)
-
-        Returns:
-            JSON string with click status
-        """
-        try:
-            self._initialize_browser(connect_url)
-            if self._page:
-                self._page.click(selector, timeout=timeout)
-            return json.dumps({"status": "success", "action": "click", "selector": selector})
-        except Exception as e:
-            self._cleanup()
-            raise e
-
-    def fill_input(self, selector: str, text: str, connect_url: Optional[str] = None, timeout: int = 600000) -> str:
-        """Fills an input field with the specified text.
-
-        Args:
-            selector (str): CSS selector for the input element
-            text (str): Text to fill in the input
-            connect_url (str, optional): The connection URL from an existing session
-            timeout (int): Timeout in milliseconds (default: 600000)
-
-        Returns:
-            JSON string with fill status
-        """
-        try:
-            self._initialize_browser(connect_url)
-            if self._page:
-                self._page.fill(selector, text, timeout=timeout)
-            return json.dumps({"status": "success", "action": "fill", "selector": selector, "text": text})
-        except Exception as e:
-            self._cleanup()
-            raise e
-
-    def wait_for_element(self, selector: str, timeout: int = 600000, connect_url: Optional[str] = None) -> str:
-        """Waits for an element to appear on the page.
-
-        Args:
-            selector (str): CSS selector for the element to wait for
-            timeout (int): Timeout in milliseconds (default: 600000)
-            connect_url (str, optional): The connection URL from an existing session
-
-        Returns:
-            JSON string with wait status
-        """
-        try:
-            self._initialize_browser(connect_url)
-            if self._page:
-                self._page.wait_for_selector(selector, timeout=timeout)
-            return json.dumps({"status": "success", "action": "wait_for_element", "selector": selector})
-        except Exception as e:
-            self._cleanup()
-            raise e
-
-    def get_page_title(self, connect_url: Optional[str] = None) -> str:
-        """Gets the title of the current page.
-
-        Args:
-            connect_url (str, optional): The connection URL from an existing session
-
-        Returns:
-            JSON string with the page title
-        """
-        try:
-            self._initialize_browser(connect_url)
-            title = self._page.title() if self._page else ""
-            return json.dumps({"status": "success", "title": title})
-        except Exception as e:
-            self._cleanup()
-            raise e
-
-    def scroll_page(self, direction: str = "down", pixels: int = 500, connect_url: Optional[str] = None) -> str:
-        """Scrolls the page in the specified direction.
-
-        Args:
-            direction (str): Direction to scroll ("up", "down", "left", "right")
-            pixels (int): Number of pixels to scroll (default: 500)
-            connect_url (str, optional): The connection URL from an existing session
-
-        Returns:
-            JSON string with scroll status
-        """
-        try:
-            self._initialize_browser(connect_url)
-            if self._page:
-                if direction == "down":
-                    self._page.evaluate(f"window.scrollBy(0, {pixels})")
-                elif direction == "up":
-                    self._page.evaluate(f"window.scrollBy(0, -{pixels})")
-                elif direction == "right":
-                    self._page.evaluate(f"window.scrollBy({pixels}, 0)")
-                elif direction == "left":
-                    self._page.evaluate(f"window.scrollBy(-{pixels}, 0)")
-                else:
-                    raise ValueError(f"Invalid direction: {direction}. Use 'up', 'down', 'left', or 'right'")
-            return json.dumps({"status": "success", "action": "scroll", "direction": direction, "pixels": pixels})
-        except Exception as e:
-            self._cleanup()
-            raise e
-
-    def extract_text(self, selector: Optional[str] = None, connect_url: Optional[str] = None) -> str:
-        """Extracts text content from the page or a specific element.
-
-        Args:
-            selector (str, optional): CSS selector for specific element. If None, extracts all page text
-            connect_url (str, optional): The connection URL from an existing session
-
-        Returns:
-            JSON string with extracted text
-        """
-        try:
-            self._initialize_browser(connect_url)
-            if self._page:
-                if selector:
-                    element = self._page.query_selector(selector)
-                    text = element.text_content() if element else ""
-                else:
-                    text = self._page.evaluate("document.body.innerText")
+            if self.parse_html:
+                content = self._extract_text_content(raw_content)
             else:
-                text = ""
-            return json.dumps({"status": "success", "text": text, "selector": selector})
+                content = raw_content
+
+            return self._truncate_content(content)
         except Exception as e:
             self._cleanup()
             raise e
 
     def close_session(self) -> str:
         """Closes a browser session.
-        Args:
-            session_id (str, optional): The session ID to close. If not provided, will use the current session.
+
         Returns:
             JSON string with closure status
         """
         try:
             # First cleanup our local browser resources
             self._cleanup()
+
+            # Reset session state
+            self._session = None
+            self._connect_url = None
+
+            return json.dumps(
+                {
+                    "status": "closed",
+                    "message": "Browser resources cleaned up. Session will auto-close if not already closed.",
+                }
+            )
+        except Exception as e:
+            return json.dumps({"status": "warning", "message": f"Cleanup completed with warning: {str(e)}"})
+
+    async def _ainitialize_browser(self, connect_url: Optional[str] = None):
+        """
+        Initialize async browser connection if not already initialized.
+        Use provided connect_url or ensure we have a session with a connect_url
+        """
+        try:
+            from playwright.async_api import async_playwright  # type: ignore[import-not-found]
+        except ImportError:
+            raise ImportError(
+                "`playwright` not installed. Please install using `pip install playwright` and run `playwright install`"
+            )
+
+        if connect_url:
+            self._connect_url = connect_url if connect_url else ""  # type: ignore
+        elif not self._connect_url:
+            self._ensure_session()
+
+        if not self._async_playwright:
+            self._async_playwright = await async_playwright().start()  # type: ignore
+            if self._async_playwright:
+                self._async_browser = await self._async_playwright.chromium.connect_over_cdp(self._connect_url)
+            context = self._async_browser.contexts[0] if self._async_browser else None
+            if context:
+                self._async_page = context.pages[0] if context.pages else await context.new_page()
+
+    async def _acleanup(self):
+        """Clean up async browser resources."""
+        if self._async_browser:
+            await self._async_browser.close()
+            self._async_browser = None
+        if self._async_playwright:
+            await self._async_playwright.stop()
+            self._async_playwright = None
+        self._async_page = None
+
+    async def anavigate_to(self, url: str, connect_url: Optional[str] = None) -> str:
+        """Navigates to a URL asynchronously.
+
+        Args:
+            url (str): The URL to navigate to
+            connect_url (str, optional): The connection URL from an existing session
+
+        Returns:
+            JSON string with navigation status
+        """
+        try:
+            await self._ainitialize_browser(connect_url)
+            if self._async_page:
+                await self._async_page.goto(url, wait_until="networkidle")
+            title = await self._async_page.title() if self._async_page else ""
+            result = {"status": "complete", "title": title, "url": url}
+            return json.dumps(result)
+        except Exception as e:
+            await self._acleanup()
+            raise e
+
+    async def ascreenshot(self, path: str, full_page: bool = True, connect_url: Optional[str] = None) -> str:
+        """Takes a screenshot of the current page asynchronously.
+
+        Args:
+            path (str): Where to save the screenshot
+            full_page (bool): Whether to capture the full page
+            connect_url (str, optional): The connection URL from an existing session
+
+        Returns:
+            JSON string confirming screenshot was saved
+        """
+        try:
+            await self._ainitialize_browser(connect_url)
+            if self._async_page:
+                await self._async_page.screenshot(path=path, full_page=full_page)
+            return json.dumps({"status": "success", "path": path})
+        except Exception as e:
+            await self._acleanup()
+            raise e
+
+    async def aget_page_content(self, connect_url: Optional[str] = None) -> str:
+        """Gets the content of the current page asynchronously.
+
+        Args:
+            connect_url (str, optional): The connection URL from an existing session
+
+        Returns:
+            The page content (text-only if parse_html=True, otherwise raw HTML)
+        """
+        try:
+            await self._ainitialize_browser(connect_url)
+            if not self._async_page:
+                return ""
+
+            raw_content = await self._async_page.content()
+
+            if self.parse_html:
+                content = self._extract_text_content(raw_content)
+            else:
+                content = raw_content
+
+            return self._truncate_content(content)
+        except Exception as e:
+            await self._acleanup()
+            raise e
+
+    async def aclose_session(self) -> str:
+        """Closes a browser session asynchronously.
+
+        Returns:
+            JSON string with closure status
+        """
+        try:
+            # First cleanup our local browser resources
+            await self._acleanup()
 
             # Reset session state
             self._session = None

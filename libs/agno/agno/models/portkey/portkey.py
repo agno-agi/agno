@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Optional, cast
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.like import OpenAILike
 
 try:
@@ -30,26 +30,20 @@ class Portkey(OpenAILike):
     name: str = "Portkey"
     provider: str = "Portkey"
 
-    portkey_api_key: Optional[str] = getenv("PORTKEY_API_KEY")
-    virtual_key: Optional[str] = getenv("PORTKEY_VIRTUAL_KEY")
+    portkey_api_key: Optional[str] = None
+    virtual_key: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
     base_url: str = PORTKEY_GATEWAY_URL
 
     def _get_client_params(self) -> Dict[str, Any]:
         # Check for required keys
         if not self.portkey_api_key:
-            raise ModelProviderError(
+            raise ModelAuthenticationError(
                 message="PORTKEY_API_KEY not set. Please set the PORTKEY_API_KEY environment variable.",
                 model_name=self.name,
-                model_id=self.id,
             )
 
-        if not self.virtual_key:
-            raise ModelProviderError(
-                message="PORTKEY_VIRTUAL_KEY not set. Please set the PORTKEY_VIRTUAL_KEY environment variable.",
-                model_name=self.name,
-                model_id=self.id,
-            )
+        self.virtual_key = self.virtual_key or getenv("PORTKEY_VIRTUAL_KEY")
 
         # Create headers using Portkey's createHeaders function
         header_params: Dict[str, Any] = {

@@ -1,10 +1,11 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
+from agno.exceptions import ModelAuthenticationError
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
 from agno.utils.log import log_debug
@@ -16,15 +17,32 @@ class CerebrasOpenAI(OpenAILike):
     name: str = "CerebrasOpenAI"
     provider: str = "CerebrasOpenAI"
 
-    parallel_tool_calls: bool = False
+    parallel_tool_calls: Optional[bool] = None
     base_url: str = "https://api.cerebras.ai/v1"
-    api_key: Optional[str] = getenv("CEREBRAS_API_KEY", None)
+    api_key: Optional[str] = field(default_factory=lambda: getenv("CEREBRAS_API_KEY", None))
+
+    def _get_client_params(self) -> Dict[str, Any]:
+        """
+        Returns client parameters for API requests, checking for CEREBRAS_API_KEY.
+
+        Returns:
+            Dict[str, Any]: A dictionary of client parameters for API requests.
+        """
+        if not self.api_key:
+            self.api_key = getenv("CEREBRAS_API_KEY")
+            if not self.api_key:
+                raise ModelAuthenticationError(
+                    message="CEREBRAS_API_KEY not set. Please set the CEREBRAS_API_KEY environment variable.",
+                    model_name=self.name,
+                )
+        return super()._get_client_params()
 
     def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -44,7 +62,6 @@ class CerebrasOpenAI(OpenAILike):
                     "type": "function",
                     "function": {
                         "name": tool["function"]["name"],
-                        "strict": True,  # Ensure strict adherence to expected outputs
                         "description": tool["function"]["description"],
                         "parameters": tool["function"]["parameters"],
                     },
@@ -52,13 +69,16 @@ class CerebrasOpenAI(OpenAILike):
                 for tool in tools
             ]
             # Cerebras requires parallel_tool_calls=False for llama-4-scout-17b-16e-instruct
-            request_params["parallel_tool_calls"] = self.parallel_tool_calls
+            if self.id == "llama-4-scout-17b-16e-instruct":
+                request_params["parallel_tool_calls"] = False
+            elif self.parallel_tool_calls is not None:
+                request_params["parallel_tool_calls"] = self.parallel_tool_calls
 
         if request_params:
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
-    def _format_message(self, message: Message) -> Dict[str, Any]:
+    def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
         Format a message into the format expected by the Cerebras API.
 
@@ -68,6 +88,7 @@ class CerebrasOpenAI(OpenAILike):
         Returns:
             Dict[str, Any]: The formatted message.
         """
+
         # Basic message content
         message_dict: Dict[str, Any] = {
             "role": message.role,
@@ -97,10 +118,11 @@ class CerebrasOpenAI(OpenAILike):
 
         # Handle tool responses
         if message.role == "tool" and message.tool_call_id:
+            content = message.get_content(use_compressed_content=compress_tool_results)
             message_dict = {
                 "role": "tool",
                 "tool_call_id": message.tool_call_id,
-                "content": message.content if message.content is not None else "",
+                "content": content if message.content is not None else "",
             }
 
         # Ensure no None values in the message

@@ -48,13 +48,14 @@ import json
 from functools import wraps
 from os import getenv
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
 from agno.tools import Toolkit
 
 try:
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
+    from google.oauth2.service_account import Credentials as ServiceAccountCredentials
     from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import Resource, build
 except ImportError:
@@ -91,30 +92,34 @@ class GoogleSheetsTools(Toolkit):
         scopes: Optional[List[str]] = None,
         spreadsheet_id: Optional[str] = None,
         spreadsheet_range: Optional[str] = None,
-        creds: Optional[Credentials] = None,
+        creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         creds_path: Optional[str] = None,
         token_path: Optional[str] = None,
-        read: bool = True,
-        create: bool = False,
-        update: bool = False,
-        duplicate: bool = False,
+        service_account_path: Optional[str] = None,
         oauth_port: int = 0,
+        enable_read_sheet: bool = True,
+        enable_create_sheet: bool = False,
+        enable_update_sheet: bool = False,
+        enable_create_duplicate_sheet: bool = False,
+        all: bool = False,
         **kwargs,
     ):
         """Initialize GoogleSheetsTools with the specified configuration.
 
         Args:
-            scopes (Optional[List[str]]): Custom OAuth scopes. If None, determined by operations.
+            scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses write scope by default.
             spreadsheet_id (Optional[str]): ID of the target spreadsheet.
             spreadsheet_range (Optional[str]): Range within the spreadsheet.
-            creds (Optional[Credentials]): Pre-existing credentials.
+            creds (Optional[Credentials | ServiceAccountCredentials]): Pre-existing credentials.
             creds_path (Optional[str]): Path to credentials file.
             token_path (Optional[str]): Path to token file.
-            read (bool): Enable read operations. Defaults to True.
-            create (bool): Enable create operations. Defaults to False.
-            update (bool): Enable update operations. Defaults to False.
-            duplicate (bool): Enable duplicate operations. Defaults to False.
+            service_account_path (Optional[str]): Path to a service account file.
             oauth_port (int): Port to use for OAuth authentication. Defaults to 0.
+            enable_read_sheet (bool): Enable reading from a sheet.
+            enable_create_sheet (bool): Enable creating a sheet.
+            enable_update_sheet (bool): Enable updating a sheet.
+            enable_create_duplicate_sheet (bool): Enable creating a duplicate sheet.
+            all (bool): Enable all tools.
         """
 
         self.spreadsheet_id = spreadsheet_id
@@ -124,23 +129,26 @@ class GoogleSheetsTools(Toolkit):
         self.token_path = token_path
         self.oauth_port = oauth_port
         self.service: Optional[Resource] = None
+        self.service_account_path = service_account_path
 
         # Determine required scopes based on operations if no custom scopes provided
         if scopes is None:
             self.scopes = []
-            if read:
+            if enable_read_sheet:
                 self.scopes.append(self.DEFAULT_SCOPES["read"])
-            if create or update or duplicate:
+            if enable_create_sheet or enable_update_sheet or enable_create_duplicate_sheet:
                 self.scopes.append(self.DEFAULT_SCOPES["write"])
             # Remove duplicates while preserving order
             self.scopes = list(dict.fromkeys(self.scopes))
         else:
             self.scopes = scopes
             # Validate that required scopes are present for requested operations
-            if (create or update or duplicate) and self.DEFAULT_SCOPES["write"] not in self.scopes:
+            if (enable_create_sheet or enable_update_sheet or enable_create_duplicate_sheet) and self.DEFAULT_SCOPES[
+                "write"
+            ] not in self.scopes:
                 raise ValueError(f"The scope {self.DEFAULT_SCOPES['write']} is required for write operations")
             if (
-                read
+                enable_read_sheet
                 and self.DEFAULT_SCOPES["read"] not in self.scopes
                 and self.DEFAULT_SCOPES["write"] not in self.scopes
             ):
@@ -149,13 +157,13 @@ class GoogleSheetsTools(Toolkit):
                 )
 
         tools: List[Any] = []
-        if read:
+        if all or enable_read_sheet:
             tools.append(self.read_sheet)
-        if create:
+        if all or enable_create_sheet:
             tools.append(self.create_sheet)
-        if update:
+        if all or enable_update_sheet:
             tools.append(self.update_sheet)
-        if duplicate:
+        if all or enable_create_duplicate_sheet:
             tools.append(self.create_duplicate_sheet)
 
         super().__init__(name="google_sheets_tools", tools=tools, **kwargs)
@@ -167,6 +175,17 @@ class GoogleSheetsTools(Toolkit):
         if self.creds and self.creds.valid:
             return
 
+        service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+
+        if service_account_path:
+            self.creds = ServiceAccountCredentials.from_service_account_file(
+                service_account_path,
+                scopes=self.scopes,
+            )
+            if self.creds and self.creds.expired:
+                self.creds.refresh(Request())
+            return
+
         token_file = Path(self.token_path or "token.json")
         creds_file = Path(self.credentials_path or "credentials.json")
 
@@ -174,7 +193,7 @@ class GoogleSheetsTools(Toolkit):
             self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
 
         if not self.creds or not self.creds.valid:
-            if self.creds and self.creds.expired and self.creds.refresh_token:
+            if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore
                 self.creds.refresh(Request())
             else:
                 client_config = {
@@ -195,7 +214,7 @@ class GoogleSheetsTools(Toolkit):
                     flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
                 # Opens up a browser window for OAuth authentication
                 self.creds = flow.run_local_server(port=self.oauth_port)
-            token_file.write_text(self.creds.to_json()) if self.creds else None
+            token_file.write_text(self.creds.to_json()) if self.creds else None  # type: ignore
 
     @authenticate
     def read_sheet(self, spreadsheet_id: Optional[str] = None, spreadsheet_range: Optional[str] = None) -> str:

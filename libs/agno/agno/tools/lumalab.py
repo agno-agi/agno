@@ -4,8 +4,9 @@ from os import getenv
 from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 from agno.agent import Agent
-from agno.media import VideoArtifact
+from agno.media import Video
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.log import log_info, logger
 
 try:
@@ -30,6 +31,9 @@ class LumaLabTools(Toolkit):
         wait_for_completion: bool = True,
         poll_interval: int = 3,
         max_wait_time: int = 300,  # 5 minutes
+        enable_generate_video: bool = True,
+        enable_image_to_video: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.wait_for_completion = wait_for_completion
@@ -43,8 +47,10 @@ class LumaLabTools(Toolkit):
         self.client = LumaAI(auth_token=self.api_key)
 
         tools: List[Any] = []
-        tools.append(self.generate_video)
-        tools.append(self.image_to_video)
+        if all or enable_generate_video:
+            tools.append(self.generate_video)
+        if all or enable_image_to_video:
+            tools.append(self.image_to_video)
 
         super().__init__(name="luma_lab", tools=tools, **kwargs)
 
@@ -56,7 +62,7 @@ class LumaLabTools(Toolkit):
         end_image_url: Optional[str] = None,
         loop: bool = False,
         aspect_ratio: Literal["1:1", "16:9", "9:16", "4:3", "3:4", "21:9", "9:21"] = "16:9",
-    ) -> str:
+    ) -> ToolResult:
         """Generate a video from one or two images with a prompt.
 
         Args:
@@ -68,7 +74,7 @@ class LumaLabTools(Toolkit):
             aspect_ratio: Aspect ratio of the output video
 
         Returns:
-            str: Status message or error
+            ToolResult: A ToolResult containing the generated video or error message.
         """
 
         try:
@@ -90,33 +96,36 @@ class LumaLabTools(Toolkit):
             video_id = str(uuid.uuid4())
 
             if not self.wait_for_completion:
-                return "Async generation unsupported"
+                return ToolResult(content="Async generation unsupported")
 
             # Poll for completion
             seconds_waited = 0
             while seconds_waited < self.max_wait_time:
                 if not generation or not generation.id:
-                    return "Failed to get generation ID"
+                    return ToolResult(content="Failed to get generation ID")
 
                 generation = self.client.generations.get(generation.id)
 
                 if generation.state == "completed" and generation.assets:
                     video_url = generation.assets.video
                     if video_url:
-                        agent.add_video(VideoArtifact(id=video_id, url=video_url, eta="completed"))
-                        return f"Video generated successfully: {video_url}"
+                        video_artifact = Video(id=video_id, url=video_url, eta="completed")
+                        return ToolResult(
+                            content=f"Video generated successfully: {video_url}",
+                            videos=[video_artifact],
+                        )
                 elif generation.state == "failed":
-                    return f"Generation failed: {generation.failure_reason}"
+                    return ToolResult(content=f"Generation failed: {generation.failure_reason}")
 
                 log_info(f"Generation in progress... State: {generation.state}")
                 time.sleep(self.poll_interval)
                 seconds_waited += self.poll_interval
 
-            return f"Video generation timed out after {self.max_wait_time} seconds"
+            return ToolResult(content=f"Video generation timed out after {self.max_wait_time} seconds")
 
         except Exception as e:
             logger.error(f"Failed to generate video: {e}")
-            return f"Error: {e}"
+            return ToolResult(content=f"Error: {e}")
 
     def generate_video(
         self,
@@ -125,7 +134,7 @@ class LumaLabTools(Toolkit):
         loop: bool = False,
         aspect_ratio: Literal["1:1", "16:9", "9:16", "4:3", "3:4", "21:9", "9:21"] = "16:9",
         keyframes: Optional[Dict[str, Dict[str, str]]] = None,
-    ) -> str:
+    ) -> ToolResult:
         """Use this function to generate a video given a prompt."""
 
         try:
@@ -142,30 +151,33 @@ class LumaLabTools(Toolkit):
 
             video_id = str(uuid.uuid4())
             if not self.wait_for_completion:
-                return "Async generation unsupported"
+                return ToolResult(content="Async generation unsupported")
 
             # Poll for completion
             seconds_waited = 0
             while seconds_waited < self.max_wait_time:
                 if not generation or not generation.id:
-                    return "Failed to get generation ID"
+                    return ToolResult(content="Failed to get generation ID")
 
                 generation = self.client.generations.get(generation.id)
 
                 if generation.state == "completed" and generation.assets:
                     video_url = generation.assets.video
                     if video_url:
-                        agent.add_video(VideoArtifact(id=video_id, url=video_url, state="completed"))
-                        return f"Video generated successfully: {video_url}"
+                        video_artifact = Video(id=video_id, url=video_url, state="completed")
+                        return ToolResult(
+                            content=f"Video generated successfully: {video_url}",
+                            videos=[video_artifact],
+                        )
                 elif generation.state == "failed":
-                    return f"Generation failed: {generation.failure_reason}"
+                    return ToolResult(content=f"Generation failed: {generation.failure_reason}")
 
                 log_info(f"Generation in progress... State: {generation.state}")
                 time.sleep(self.poll_interval)
                 seconds_waited += self.poll_interval
 
-            return f"Video generation timed out after {self.max_wait_time} seconds"
+            return ToolResult(content=f"Video generation timed out after {self.max_wait_time} seconds")
 
         except Exception as e:
             logger.error(f"Failed to generate video: {e}")
-            return f"Error: {e}"
+            return ToolResult(content=f"Error: {e}")

@@ -1,5 +1,5 @@
 import json
-import os
+from os import getenv
 from typing import Any, List, Optional, cast
 
 from agno.tools import Toolkit
@@ -18,12 +18,18 @@ class JiraTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         token: Optional[str] = None,
+        enable_get_issue: bool = True,
+        enable_create_issue: bool = True,
+        enable_search_issues: bool = True,
+        enable_add_comment: bool = True,
+        enable_add_worklog: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        self.server_url = server_url or os.getenv("JIRA_SERVER_URL")
-        self.username = username or os.getenv("JIRA_USERNAME")
-        self.password = password or os.getenv("JIRA_PASSWORD")
-        self.token = token or os.getenv("JIRA_TOKEN")
+        self.server_url = server_url or getenv("JIRA_SERVER_URL")
+        self.username = username or getenv("JIRA_USERNAME")
+        self.password = password or getenv("JIRA_PASSWORD")
+        self.token = token or getenv("JIRA_TOKEN")
 
         if not self.server_url:
             raise ValueError("JIRA server URL not provided.")
@@ -42,10 +48,16 @@ class JiraTools(Toolkit):
             self.jira = JIRA(server=self.server_url)
 
         tools: List[Any] = []
-        tools.append(self.get_issue)
-        tools.append(self.create_issue)
-        tools.append(self.search_issues)
-        tools.append(self.add_comment)
+        if enable_get_issue or all:
+            tools.append(self.get_issue)
+        if enable_create_issue or all:
+            tools.append(self.create_issue)
+        if enable_search_issues or all:
+            tools.append(self.search_issues)
+        if enable_add_comment or all:
+            tools.append(self.add_comment)
+        if enable_add_worklog or all:
+            tools.append(self.add_worklog)
 
         super().__init__(name="jira_tools", tools=tools, **kwargs)
 
@@ -138,4 +150,21 @@ class JiraTools(Toolkit):
             return json.dumps({"status": "success", "issue_key": issue_key})
         except Exception as e:
             logger.error(f"Error adding comment to issue {issue_key}: {e}")
+            return json.dumps({"error": str(e)})
+
+    def add_worklog(self, issue_key: str, time_spent: str, comment: Optional[str] = None) -> str:
+        """
+        Adds a worklog entry to log time spent on a specific Jira issue.
+
+        :param issue_key: The key of the issue to log work against (e.g., 'PROJ-123').
+        :param time_spent: The amount of time spent. Use Jira's format, e.g., '2h', '30m', '1d 4h'.
+        :param comment: An optional comment describing the work done.
+        :return: A JSON string indicating success or containing an error message.
+        """
+        try:
+            self.jira.add_worklog(issue=issue_key, timeSpent=time_spent, comment=comment)
+            log_debug(f"Worklog of '{time_spent}' added to issue {issue_key}")
+            return json.dumps({"status": "success", "issue_key": issue_key, "time_spent": time_spent})
+        except Exception as e:
+            logger.error(f"Error adding worklog to issue {issue_key}: {e}")
             return json.dumps({"error": str(e)})

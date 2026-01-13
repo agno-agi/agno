@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "main"
+      - "v2.4.0"
   pull_request:
     types:
       - opened
@@ -11,13 +12,18 @@ on:
       - reopened
     branches:
       - "main"
+      - "v2.4.0"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  style-check:
+  style-check-agno:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.9"]
+        python-version: ["3.10"]
 
     defaults:
       run:
@@ -32,22 +38,73 @@ jobs:
           cache: "pip"
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade \
-            pip setuptools wheel \
-            ruff mypy pytest types-pyyaml
-          pip install --no-deps -r requirements.txt
-      - name: Ruff format
-        run: |
-          ruff format .
+          python -m pip install -e .[dev]
       - name: Ruff check
         run: |
           ruff check .
       - name: Mypy
         run: |
-          mypy .
+          mypy . --config-file pyproject.toml
+
+  style-check-cookbook:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10"]
+
+    defaults:
+      run:
+        working-directory: cookbook
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+      - name: Install dependencies
+        run: |
+          python -m pip install -e "../libs/agno/"[dev]
+      - name: Ruff check
+        run: |
+          ruff check .
+      # - name: Mypy
+      #   run: |
+      #     mypy .
+
+
+  style-check-agno-infra:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10"]
+
+    defaults:
+      run:
+        working-directory: libs/agno_infra
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+      - name: Install dependencies
+        run: |
+          python -m pip install -e .[dev]
+      - name: Ruff check
+        run: |
+          ruff check .
+      - name: Mypy
+        run: |
+          mypy . --config-file pyproject.toml
 
   tests:
     runs-on: ubuntu-latest
+    # Skip push events if there's an open PR from the same branch
+    if: github.event_name != 'push' || !github.event.pull_request
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -64,55 +121,16 @@ jobs:
           set -e
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Run dev setup
+      - name: Run test setup
         working-directory: .
         run: |
           set -e
-          ./scripts/dev_setup.sh
+          ./scripts/test_setup.sh
       - name: Run tests for Agno
         working-directory: .
+        env:
+          AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
           python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests/unit
           echo "AGNO_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-agno.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
-
-#      - name: Run tests for Agno Docker
-#        working-directory: .
-#        run: |
-#          source .venv/bin/activate
-#          python -m pytest --cov=agno_docker --cov-report=json:coverage-docker.json ./libs/infra/agno_docker/tests
-#          echo "DOCKER_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-docker.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
-#      - name: Run tests for Agno AWS
-#        working-directory: .
-#        run: |
-#          source .venv/bin/activate
-#          python -m pytest --cov=agno_aws --cov-report=json:coverage-aws.json ./libs/infra/agno_aws/tests
-#          echo "AWS_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-aws.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
-# ![badge](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/dirkbrnd/9ba6033402f8be8ae2a63323a114211a/raw/agno-coverage.json)
-# - name: Create Coverage Badge
-#   uses: schneegans/dynamic-badges-action@v1.7.0
-#   with:
-#     auth: ${{ secrets.GIST_SECRET }}
-#     gistID: 9ba6033402f8be8ae2a63323a114211a
-#     filename: agno-coverage.json
-#     label: Coverage
-#     message: ${{ env.AGNO_COVERAGE }}%
-#     color: |
-#       [
-#         {
-#           "value": 100,
-#           "color": "brightgreen"
-#         },
-#         {
-#           "value": 80,
-#           "color": "green"
-#         },
-#         {
-#           "value": 60,
-#           "color": "yellow"
-#         },
-#         {
-#           "value": 0,
-#           "color": "red"
-#         }
-#       ]

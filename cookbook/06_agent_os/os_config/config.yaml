@@ -1,0 +1,14 @@
+chat:
+  quick_prompts:
+    marketing-agent:
+      - "What can you do?"
+      - "How is our latest post working?"
+      - "Tell me about our active marketing campaigns"
+memory:
+  dbs:
+    - db_id: db-0001
+      domain_config:
+        display_name: Main app user memories
+    - db_id: db-0002
+      domain_config:
+        display_name: Support flow user memories

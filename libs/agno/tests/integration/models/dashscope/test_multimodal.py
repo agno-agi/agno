@@ -8,7 +8,7 @@ from agno.models.dashscope import DashScope
 
 
 def test_image_input_url():
-    agent = Agent(model=DashScope(id="qwen-vl-plus"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=DashScope(id="qwen-vl-plus"), markdown=True, telemetry=False)
 
     response = agent.run(
         "Tell me about this image.",
@@ -20,7 +20,7 @@ def test_image_input_url():
 
 
 def test_image_input_bytes():
-    agent = Agent(model=DashScope(id="qwen-vl-plus"), telemetry=False, monitoring=False)
+    agent = Agent(model=DashScope(id="qwen-vl-plus"), telemetry=False)
 
     image_path = Path(__file__).parent.parent.joinpath("sample_image.jpg")
 
@@ -38,7 +38,7 @@ def test_image_input_bytes():
 
 @pytest.mark.asyncio
 async def test_async_image_input_stream():
-    agent = Agent(model=DashScope(id="qwen-vl-plus"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=DashScope(id="qwen-vl-plus"), markdown=True, telemetry=False)
 
     image_path = Path(__file__).parent.parent.joinpath("sample_image.jpg")
     image_bytes = image_path.read_bytes()

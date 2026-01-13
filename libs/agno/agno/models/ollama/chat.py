@@ -1,13 +1,17 @@
 import json
-from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Mapping, Optional, Type, Union
+from dataclasses import dataclass, field
+from os import getenv
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
+from agno.agent import RunOutput
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_warning
+from agno.utils.reasoning import extract_thinking_content
 
 try:
     from ollama import AsyncClient as AsyncOllamaClient
@@ -41,6 +45,7 @@ class Ollama(Model):
     # Client parameters
     host: Optional[str] = None
     timeout: Optional[Any] = None
+    api_key: Optional[str] = field(default_factory=lambda: getenv("OLLAMA_API_KEY"))
     client_params: Optional[Dict[str, Any]] = None
 
     # Ollama clients
@@ -48,10 +53,23 @@ class Ollama(Model):
     async_client: Optional[AsyncOllamaClient] = None
 
     def _get_client_params(self) -> Dict[str, Any]:
+        host = self.host
+        headers = {}
+
+        if self.api_key:
+            if not host:
+                host = "https://ollama.com"
+            headers["authorization"] = f"Bearer {self.api_key}"
+            log_debug(f"Using Ollama cloud endpoint: {host}")
+
         base_params = {
-            "host": self.host,
+            "host": host,
             "timeout": self.timeout,
         }
+
+        if headers:
+            base_params["headers"] = headers
+
         # Create client_params dict with non-None values
         client_params = {k: v for k, v in base_params.items() if v is not None}
         # Add additional client params if provided
@@ -82,7 +100,8 @@ class Ollama(Model):
         if self.async_client is not None:
             return self.async_client
 
-        return AsyncOllamaClient(**self._get_client_params())
+        self.async_client = AsyncOllamaClient(**self._get_client_params())
+        return self.async_client
 
     def get_request_params(
         self,
@@ -128,26 +147,55 @@ class Ollama(Model):
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
-    def _format_message(self, message: Message) -> Dict[str, Any]:
+    def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
         Format a message into the format expected by Ollama.
 
         Args:
             message (Message): The message to format.
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             Dict[str, Any]: The formatted message.
         """
+        # Use compressed content for tool messages if compression is active
+        if message.role == "tool":
+            content = message.get_content(use_compressed_content=compress_tool_results)
+        else:
+            content = message.content
+
         _message: Dict[str, Any] = {
             "role": message.role,
-            "content": message.content,
+            "content": content,
         }
+
+        if message.role == "assistant" and message.tool_calls is not None:
+            # Format tool calls for assistant messages
+            formatted_tool_calls = []
+            for tool_call in message.tool_calls:
+                if "function" in tool_call:
+                    function_data = tool_call["function"]
+                    formatted_tool_call = {
+                        "id": tool_call.get("id"),
+                        "type": "function",
+                        "function": {
+                            "name": function_data["name"],
+                            "arguments": json.loads(function_data["arguments"])
+                            if isinstance(function_data["arguments"], str)
+                            else function_data["arguments"],
+                        },
+                    }
+                    formatted_tool_calls.append(formatted_tool_call)
+
+            if formatted_tool_calls:
+                _message["tool_calls"] = formatted_tool_calls
+
         if message.role == "user":
             if message.images is not None:
                 message_images = []
                 for image in message.images:
                     if image.url is not None:
-                        message_images.append(image.image_url_content)
+                        message_images.append(image.get_content_bytes())
                     if image.filepath is not None:
                         message_images.append(image.filepath)  # type: ignore
                     if image.content is not None and isinstance(image.content, bytes):
@@ -182,86 +230,128 @@ class Ollama(Model):
     def invoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Mapping[str, Any]:
+        run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
+    ) -> ModelResponse:
         """
         Send a chat request to the Ollama API.
         """
         request_kwargs = self._prepare_request_kwargs_for_invoke(response_format=response_format, tools=tools)
 
-        return self.get_client().chat(
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
+
+        assistant_message.metrics.start_timer()
+
+        provider_response = self.get_client().chat(
             model=self.id.strip(),
-            messages=[self._format_message(m) for m in messages],  # type: ignore
+            messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             **request_kwargs,
         )  # type: ignore
+
+        assistant_message.metrics.stop_timer()
+
+        model_response = self._parse_provider_response(provider_response)  # type: ignore
+        return model_response
 
     async def ainvoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Mapping[str, Any]:
+        run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
+    ) -> ModelResponse:
         """
         Sends an asynchronous chat request to the Ollama API.
         """
         request_kwargs = self._prepare_request_kwargs_for_invoke(response_format=response_format, tools=tools)
 
-        return await self.get_async_client().chat(
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
+
+        assistant_message.metrics.start_timer()
+
+        provider_response = await self.get_async_client().chat(
             model=self.id.strip(),
-            messages=[self._format_message(m) for m in messages],  # type: ignore
+            messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             **request_kwargs,
         )  # type: ignore
+
+        assistant_message.metrics.stop_timer()
+
+        model_response = self._parse_provider_response(provider_response)  # type: ignore
+        return model_response
 
     def invoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Iterator[Mapping[str, Any]]:
+        run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
+    ) -> Iterator[ModelResponse]:
         """
         Sends a streaming chat request to the Ollama API.
         """
-        yield from self.get_client().chat(
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
+
+        assistant_message.metrics.start_timer()
+
+        for chunk in self.get_client().chat(
             model=self.id,
-            messages=[self._format_message(m) for m in messages],  # type: ignore
+            messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             stream=True,
             **self.get_request_params(tools=tools),
-        )  # type: ignore
+        ):
+            yield self._parse_provider_response_delta(chunk)
+
+        assistant_message.metrics.stop_timer()
 
     async def ainvoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Any:
+        run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
+    ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the Ollama API.
         """
-        async_stream = await self.get_async_client().chat(
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
+
+        assistant_message.metrics.start_timer()
+
+        async for chunk in await self.get_async_client().chat(
             model=self.id.strip(),
-            messages=[self._format_message(m) for m in messages],  # type: ignore
+            messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             stream=True,
             **self.get_request_params(tools=tools),
-        )
-        async for chunk in async_stream:  # type: ignore
-            yield chunk
+        ):
+            yield self._parse_provider_response_delta(chunk)
 
-    def parse_provider_response(
-        self,
-        response: ChatResponse,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-    ) -> ModelResponse:
+        assistant_message.metrics.stop_timer()
+
+    def _parse_provider_response(self, response: dict) -> ModelResponse:
         """
         Parse the provider response.
         """
         model_response = ModelResponse()
         # Get response message
-        response_message: OllamaMessage = response.get("message")
+        response_message: OllamaMessage = response.get("message")  # type: ignore
 
         if response_message.get("role") is not None:
             model_response.role = response_message.get("role")
@@ -269,10 +359,20 @@ class Ollama(Model):
         if response_message.get("content") is not None:
             model_response.content = response_message.get("content")
 
+        # Extract thinking content between <think> tags if present
+        if model_response.content and model_response.content.find("<think>") != -1:
+            reasoning_content, clean_content = extract_thinking_content(model_response.content)
+
+            if reasoning_content:
+                # Store extracted thinking content separately
+                model_response.reasoning_content = reasoning_content
+                # Update main content with clean version
+                model_response.content = clean_content
+
         if response_message.get("tool_calls") is not None:
             if model_response.tool_calls is None:
                 model_response.tool_calls = []
-            for block in response_message.get("tool_calls"):
+            for block in response_message.get("tool_calls", []):
                 tool_call = block.get("function")
                 tool_name = tool_call.get("name")
                 tool_args = tool_call.get("arguments")
@@ -288,33 +388,23 @@ class Ollama(Model):
 
         # Get response usage
         if response.get("done"):
-            model_response.response_usage = {
-                "input_tokens": response.get("prompt_eval_count", 0),
-                "output_tokens": response.get("eval_count", 0),
-                "total_tokens": response.get("prompt_eval_count", 0) + response.get("eval_count", 0),
-                "additional_metrics": {
-                    "total_duration": response.get("total_duration", 0),
-                    "load_duration": response.get("load_duration", 0),
-                    "prompt_eval_duration": response.get("prompt_eval_duration", 0),
-                    "eval_duration": response.get("eval_duration", 0),
-                },
-            }
+            model_response.response_usage = self._get_metrics(response)
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: ChatResponse) -> ModelResponse:
+    def _parse_provider_response_delta(self, response: ChatResponse) -> ModelResponse:
         """
         Parse the provider response delta.
 
         Args:
-            response_delta (ChatResponse): The response from the provider.
+            response (ChatResponse): The response from the provider.
 
         Returns:
             Iterator[ModelResponse]: An iterator of the model response.
         """
         model_response = ModelResponse()
 
-        response_message = response_delta.get("message")
+        response_message = response.get("message")
 
         if response_message is not None:
             content_delta = response_message.get("content")
@@ -333,17 +423,30 @@ class Ollama(Model):
                     }
                     model_response.tool_calls.append({"type": "function", "function": function_def})
 
-        if response_delta.get("done"):
-            model_response.response_usage = {
-                "input_tokens": response_delta.get("prompt_eval_count", 0),
-                "output_tokens": response_delta.get("eval_count", 0),
-                "total_tokens": response_delta.get("prompt_eval_count", 0) + response_delta.get("eval_count", 0),
-                "additional_metrics": {
-                    "total_duration": response_delta.get("total_duration", 0),
-                    "load_duration": response_delta.get("load_duration", 0),
-                    "prompt_eval_duration": response_delta.get("prompt_eval_duration", 0),
-                    "eval_duration": response_delta.get("eval_duration", 0),
-                },
-            }
+        if response.get("done"):
+            model_response.response_usage = self._get_metrics(response)
 
         return model_response
+
+    def _get_metrics(self, response: Union[dict, ChatResponse]) -> Metrics:
+        """
+        Parse the given Ollama usage into an Agno Metrics object.
+
+        Args:
+            response: The response from the provider.
+
+        Returns:
+            Metrics: Parsed metrics data
+        """
+        metrics = Metrics()
+
+        # Safely handle None values from Ollama Cloud responses
+        input_tokens = response.get("prompt_eval_count")
+        output_tokens = response.get("eval_count")
+
+        # Default to 0 if None
+        metrics.input_tokens = input_tokens if input_tokens is not None else 0
+        metrics.output_tokens = output_tokens if output_tokens is not None else 0
+        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        return metrics

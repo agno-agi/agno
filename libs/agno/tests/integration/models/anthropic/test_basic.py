@@ -1,99 +1,79 @@
-from pathlib import Path
-
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput
+from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
-from agno.storage.sqlite import SqliteStorage
-from agno.utils.log import log_warning
-from agno.utils.media import download_file
 
 
-def _assert_metrics(response: RunResponse):
-    input_tokens = response.metrics.get("input_tokens", [])
-    output_tokens = response.metrics.get("output_tokens", [])
-    total_tokens = response.metrics.get("total_tokens", [])
-
-    assert sum(input_tokens) > 0
-    assert sum(output_tokens) > 0
-    assert sum(total_tokens) > 0
-    assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
+@pytest.fixture(scope="module")
+def claude_model():
+    """Fixture that provides a Claude model and reuses it across all tests in the module."""
+    return Claude(id="claude-3-5-haiku-20241022")
 
 
-def _get_large_system_prompt() -> str:
-    """Load an example large system message from S3"""
-    txt_path = Path(__file__).parent.joinpath("system_prompt.txt")
-    download_file(
-        "https://agno-public.s3.amazonaws.com/prompts/system_promt.txt",
-        str(txt_path),
-    )
-    return txt_path.read_text()
+def _assert_metrics(response: RunOutput):
+    assert response.metrics is not None
+    input_tokens = response.metrics.input_tokens
+    output_tokens = response.metrics.output_tokens
+    total_tokens = response.metrics.total_tokens
+
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert total_tokens > 0
+    assert total_tokens == input_tokens + output_tokens
 
 
-def test_basic():
-    agent = Agent(model=Claude(id="claude-3-5-haiku-20241022"), markdown=True, telemetry=False, monitoring=False)
+def test_basic(claude_model):
+    agent = Agent(model=claude_model, markdown=True, telemetry=False)
 
     # Print the response in the terminal
-    response: RunResponse = agent.run("Share a 2 sentence horror story")
+    response: RunOutput = agent.run("Share a 2 sentence horror story")
 
-    assert response.content is not None
+    assert response.content is not None and response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
 
     _assert_metrics(response)
 
 
-def test_basic_stream():
-    agent = Agent(model=Claude(id="claude-3-5-haiku-20241022"), markdown=True, telemetry=False, monitoring=False)
+def test_basic_stream(claude_model):
+    agent = Agent(model=claude_model, markdown=True, telemetry=False)
 
-    response_stream = agent.run("Share a 2 sentence horror story", stream=True)
-
-    # Verify it's an iterator
-    assert hasattr(response_stream, "__iter__")
-
-    responses = list(response_stream)
-    assert len(responses) > 0
-    for response in responses:
-        assert response.content is not None
-
-    # Broken at the moment
-    # _assert_metrics(agent.run_response)
+    run_stream = agent.run("Say 'hi'", stream=True)
+    for chunk in run_stream:
+        assert chunk.content is not None
 
 
 @pytest.mark.asyncio
-async def test_async_basic():
-    agent = Agent(model=Claude(id="claude-3-5-haiku-20241022"), markdown=True, telemetry=False, monitoring=False)
+async def test_async_basic(claude_model):
+    agent = Agent(model=claude_model, markdown=True, telemetry=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
     assert response.content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
+
     _assert_metrics(response)
 
 
 @pytest.mark.asyncio
-async def test_async_basic_stream():
-    agent = Agent(model=Claude(id="claude-3-5-haiku-20241022"), markdown=True, telemetry=False, monitoring=False)
+async def test_async_basic_stream(claude_model):
+    agent = Agent(model=claude_model, markdown=True, telemetry=False)
 
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
-
-    async for response in response_stream:
+    async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
 
-    # Broken at the moment
-    # _assert_metrics(agent.run_response)
 
-
-def test_with_memory():
+def test_with_memory(claude_model):
     agent = Agent(
-        model=Claude(id="claude-3-5-haiku-20241022"),
-        add_history_to_messages=True,
-        num_history_responses=5,
+        db=SqliteDb(db_file="tmp/test_with_memory.db"),
+        model=claude_model,
+        add_history_to_context=True,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # First interaction
@@ -102,10 +82,11 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
+    assert response2.content is not None
     assert "John Smith" in response2.content
 
     # Verify memories were created
-    messages = agent.get_messages_for_session()
+    messages = agent.get_session_messages()
     assert len(messages) == 5
     assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
 
@@ -113,15 +94,13 @@ def test_with_memory():
     _assert_metrics(response2)
 
 
-def test_structured_output():
+def test_structured_output(claude_model):
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(
-        model=Claude(id="claude-3-5-haiku-20241022"), response_model=MovieScript, telemetry=False, monitoring=False
-    )
+    agent = Agent(model=claude_model, output_schema=MovieScript, telemetry=False)
 
     response = agent.run("Create a movie about time travel")
 
@@ -132,18 +111,17 @@ def test_structured_output():
     assert response.content.plot is not None
 
 
-def test_json_response_mode():
+def test_json_response_mode(claude_model):
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=Claude(id="claude-3-5-haiku-20241022"),
-        response_model=MovieScript,
+        model=claude_model,
+        output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -155,48 +133,137 @@ def test_json_response_mode():
     assert response.content.plot is not None
 
 
-def test_history():
+def test_history(claude_model):
     agent = Agent(
-        model=Claude(id="claude-3-5-haiku-20241022"),
-        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
-        add_history_to_messages=True,
+        model=claude_model,
+        db=SqliteDb(db_file="tmp/anthropic/test_basic.db"),
+        add_history_to_context=True,
         telemetry=False,
-        monitoring=False,
     )
+    run_output = agent.run("Hello")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 2
+
+    run_output = agent.run("Hello 2")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 4
+
+    run_output = agent.run("Hello 3")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 6
+
+    run_output = agent.run("Hello 4")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 8
+
+
+def test_client_persistence(claude_model):
+    """Test that the same Claude client instance is reused across multiple calls"""
+    agent = Agent(model=claude_model, markdown=True, telemetry=False)
+
+    # First call should create a new client
     agent.run("Hello")
-    assert len(agent.run_response.messages) == 2
-    agent.run("Hello 2")
-    assert len(agent.run_response.messages) == 4
-    agent.run("Hello 3")
-    assert len(agent.run_response.messages) == 6
-    agent.run("Hello 4")
-    assert len(agent.run_response.messages) == 8
+    first_client = claude_model.client
+    assert first_client is not None
+
+    # Second call should reuse the same client
+    agent.run("Hello again")
+    second_client = claude_model.client
+    assert second_client is not None
+    assert first_client is second_client, "Client should be persisted and reused"
+
+    # Third call should also reuse the same client
+    agent.run("Hello once more")
+    third_client = claude_model.client
+    assert third_client is not None
+    assert first_client is third_client, "Client should still be the same instance"
 
 
-def test_prompt_caching():
-    large_system_prompt = _get_large_system_prompt()
-    agent = Agent(
-        model=Claude(id="claude-3-5-haiku-20241022", cache_system_prompt=True),
-        system_message=large_system_prompt,
-        telemetry=False,
-        monitoring=False,
-    )
+@pytest.mark.asyncio
+async def test_async_client_persistence(claude_model):
+    """Test that the same async Claude client instance is reused across multiple calls"""
+    agent = Agent(model=claude_model, markdown=True, telemetry=False)
 
-    response = agent.run("Explain the difference between REST and GraphQL APIs with examples")
-    # This test needs a clean Anthropic cache to run. If the cache is not empty, we skip the test.
-    if response.metrics.get("cached_tokens", [0])[0] > 0:
-        log_warning(
-            "A cache is already active in this Anthropic context. This test can't run until the cache is cleared."
-        )
-        return
+    # First call should create a new async client
+    await agent.arun("Hello")
+    first_client = claude_model.async_client
+    assert first_client is not None
 
-    # Asserting the system prompt is cached on the first run
-    assert response.content is not None
-    assert response.metrics.get("cache_write_tokens", [0])[0] > 0
-    assert response.metrics.get("cached_tokens", [0])[0] == 0
+    # Second call should reuse the same async client
+    await agent.arun("Hello again")
+    second_client = claude_model.async_client
+    assert second_client is not None
+    assert first_client is second_client, "Async client should be persisted and reused"
 
-    # Asserting the cached prompt is used on the second run
-    response = agent.run("What are the key principles of clean code and how do I apply them in Python?")
-    assert response.content is not None
-    assert response.metrics.get("cache_write_tokens", [0])[0] == 0
-    assert response.metrics.get("cached_tokens", [0])[0] > 0
+    # Third call should also reuse the same async client
+    await agent.arun("Hello once more")
+    third_client = claude_model.async_client
+    assert third_client is not None
+    assert first_client is third_client, "Async client should still be the same instance"
+
+
+def test_count_tokens(claude_model):
+    from agno.models.message import Message
+
+    messages = [
+        Message(role="user", content="Hello world, this is a test message for token counting"),
+    ]
+
+    tokens = claude_model.count_tokens(messages)
+
+    assert isinstance(tokens, int)
+    assert tokens > 0
+    assert tokens < 100
+
+
+def test_count_tokens_with_tools(claude_model):
+    from agno.models.message import Message
+    from agno.tools.calculator import CalculatorTools
+
+    messages = [
+        Message(role="user", content="What is 2 + 2?"),
+    ]
+
+    calculator = CalculatorTools()
+
+    tokens_without_tools = claude_model.count_tokens(messages)
+    tokens_with_tools = claude_model.count_tokens(messages, tools=list(calculator.functions.values()))
+
+    assert isinstance(tokens_with_tools, int)
+    assert tokens_with_tools > tokens_without_tools, "Token count with tools should be higher"
+
+
+@pytest.mark.asyncio
+async def test_acount_tokens(claude_model):
+    from agno.models.message import Message
+
+    messages = [
+        Message(role="user", content="Hello world, this is a test message for token counting"),
+    ]
+
+    sync_tokens = claude_model.count_tokens(messages)
+    async_tokens = await claude_model.acount_tokens(messages)
+
+    assert isinstance(async_tokens, int)
+    assert async_tokens > 0
+    assert async_tokens == sync_tokens
+
+
+@pytest.mark.asyncio
+async def test_acount_tokens_with_tools(claude_model):
+    from agno.models.message import Message
+    from agno.tools.calculator import CalculatorTools
+
+    messages = [
+        Message(role="user", content="What is 2 + 2?"),
+    ]
+
+    calculator = CalculatorTools()
+    tools = list(calculator.functions.values())
+
+    sync_tokens = claude_model.count_tokens(messages, tools=tools)
+    async_tokens = await claude_model.acount_tokens(messages, tools=tools)
+
+    assert isinstance(async_tokens, int)
+    assert async_tokens == sync_tokens
+    assert async_tokens > claude_model.count_tokens(messages), "Token count with tools should be higher"

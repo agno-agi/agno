@@ -3,9 +3,10 @@ from typing import Any, List, Literal, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import AudioArtifact, ImageArtifact
+from agno.media import Audio, Image
 from agno.team.team import Team
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
@@ -20,7 +21,23 @@ OpenAITTSFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
 
 
 class OpenAITools(Toolkit):
-    """Tools for interacting with OpenAIChat API"""
+    """Tools for interacting with OpenAI API.
+
+    Args:
+        api_key (str, optional): OpenAI API key. Retrieved from OPENAI_API_KEY env variable if not provided.
+        enable_transcription (bool): Enable audio transcription functionality. Default is True.
+        enable_image_generation (bool): Enable image generation functionality. Default is True.
+        enable_speech_generation (bool): Enable speech generation functionality. Default is True.
+        all (bool): Enable all tools. Overrides individual flags when True. Default is False.
+        transcription_model (str): Model to use for transcription. Default is "whisper-1".
+        text_to_speech_voice (OpenAIVoice): Voice to use for TTS. Default is "alloy".
+        text_to_speech_model (OpenAITTSModel): Model to use for TTS. Default is "tts-1".
+        text_to_speech_format (OpenAITTSFormat): Audio format for TTS. Default is "mp3".
+        image_model (str, optional): Model to use for image generation. Default is "dall-e-3".
+        image_quality (str, optional): Quality setting for image generation.
+        image_size (str, optional): Size setting for image generation.
+        image_style (str, optional): Style setting for image generation.
+    """
 
     def __init__(
         self,
@@ -28,6 +45,7 @@ class OpenAITools(Toolkit):
         enable_transcription: bool = True,
         enable_image_generation: bool = True,
         enable_speech_generation: bool = True,
+        all: bool = False,
         transcription_model: str = "whisper-1",
         text_to_speech_voice: OpenAIVoice = "alloy",
         text_to_speech_model: OpenAITTSModel = "tts-1",
@@ -53,11 +71,11 @@ class OpenAITools(Toolkit):
         self.image_size = image_size
 
         tools: List[Any] = []
-        if enable_transcription:
+        if all or enable_transcription:
             tools.append(self.transcribe_audio)
-        if enable_image_generation:
+        if all or enable_image_generation:
             tools.append(self.generate_image)
-        if enable_speech_generation:
+        if all or enable_speech_generation:
             tools.append(self.generate_speech)
 
         super().__init__(name="openai_tools", tools=tools, **kwargs)
@@ -85,14 +103,15 @@ class OpenAITools(Toolkit):
 
     def generate_image(
         self,
-        agent: Union[Agent, Team],
         prompt: str,
-    ) -> str:
+    ) -> ToolResult:
         """Generate images based on a text prompt.
         Args:
             prompt (str): The text prompt to generate the image from.
         """
         try:
+            import base64
+
             extra_params = {
                 "size": self.image_size,
                 "quality": self.image_quality,
@@ -120,36 +139,43 @@ class OpenAITools(Toolkit):
                 data = response.data[0]
             if data is None:
                 log_warning("OpenAI API did not return any data.")
-                return "Failed to generate image: No data received from API."
+                return ToolResult(content="Failed to generate image: No data received from API.")
+
             if hasattr(data, "b64_json") and data.b64_json:
                 image_base64 = data.b64_json
                 media_id = str(uuid4())
-                # Store base64-encoded content as bytes for later saving
-                agent.add_image(
-                    ImageArtifact(
-                        id=media_id,
-                        content=image_base64.encode("utf-8"),
-                        mime_type="image/png",
-                    )
+
+                # Decode base64 to bytes for proper storage
+                image_bytes = base64.b64decode(image_base64)
+
+                # Create ImageArtifact and return in ToolResult
+                image_artifact = Image(
+                    id=media_id,
+                    content=image_bytes,  # ← Store as bytes, not encoded string
+                    mime_type="image/png",
+                    original_prompt=prompt,
                 )
-                return "Image generated successfully."
-            return "Failed to generate image: No content received from API."
+
+                return ToolResult(
+                    content="Image generated successfully.",
+                    images=[image_artifact],
+                )
+
+            return ToolResult(content="Failed to generate image: No content received from API.")
         except Exception as e:
             log_error(f"Failed to generate image using {self.image_model}: {e}")
-            return f"Failed to generate image: {e}"
+            return ToolResult(content=f"Failed to generate image: {e}")
 
     def generate_speech(
         self,
         agent: Union[Agent, Team],
         text_input: str,
-    ) -> str:
+    ) -> ToolResult:  # Changed return type
         """Generate speech from text using OpenAI's Text-to-Speech API.
         Args:
             text_input (str): The text to synthesize into speech.
         """
         try:
-            import base64
-
             response = OpenAIClient(api_key=self.api_key).audio.speech.create(
                 model=self.tts_model,
                 voice=self.tts_voice,
@@ -160,17 +186,17 @@ class OpenAITools(Toolkit):
             # Get raw audio data for artifact creation before potentially saving
             audio_data: bytes = response.content
 
-            # Base64 encode the audio data
-            base64_encoded_audio = base64.b64encode(audio_data).decode("utf-8")
-
-            # Create and add AudioArtifact using base64_audio field
+            # Create AudioArtifact and return in ToolResult
             media_id = str(uuid4())
-            agent.add_audio(
-                AudioArtifact(
-                    id=media_id,
-                    base64_audio=base64_encoded_audio,
-                )
+            audio_artifact = Audio(
+                id=media_id,
+                content=audio_data,
+                mime_type=f"audio/{self.tts_format}",
             )
-            return f"Speech generated successfully with ID: {media_id}"
+
+            return ToolResult(
+                content=f"Speech generated successfully with ID: {media_id}",
+                audios=[audio_artifact],
+            )
         except Exception as e:
-            return f"Failed to generate speech: {str(e)}"
+            return ToolResult(content=f"Failed to generate speech: {str(e)}")

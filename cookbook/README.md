@@ -1,65 +1,72 @@
 # Agno Cookbooks
 
-## Getting Started
+Hundreds of examples. Copy, paste, run. Build agents that actually work.
 
-The getting started guide walks through the basics of building Agents with Agno. Recipes build on each other, introducing new concepts and capabilities.
+## Where to Start
 
-## Agent Concepts
+**New to Agno?** Start with [00_getting_started](./00_getting_started) — it walks you through the fundamentals, with each cookbook building on the last.
 
-The concepts cookbook walks through the core concepts of Agno.
+**Want to see something real?** Jump to [01_demo](./01_demo) — a complete multi-agent system using AgentOS. Run it, break it, learn from it.
 
-- [Async](./agent_concepts/async)
-- [RAG](./agent_concepts/rag)
-- [Knowledge](./agent_concepts/knowledge)
-- [Memory](./agent_concepts/memory)
-- [Storage](storage)
-- [Tools](./tools)
-- [Reasoning](./reasoning)
-- [Vector DBs](./agent_concepts/knowledge/vector_dbs)
-- [Multi-modal Agents](./agent_concepts/multimodal)
-- [Agent Teams](./teams)
-- [Other](./agent_concepts/other)
+**Know what you're building?** Find your use case below.
 
-## Examples
+---
 
-The examples cookbook contains real world examples of building agents with Agno.
+## Build by Use Case
 
-## Playground
+### I want to build a single agent
+→ [03_agents](./03_agents) — The atomic unit of Agno. Start here for tools, RAG, structured outputs, multimodal, guardrails, and more.
 
-The playground cookbook contains examples of interacting with agents using the Agno Agent UI.
+### I want agents working together
+→ [04_teams](./04_teams) — Coordinate multiple agents. Async flows, shared memory, distributed RAG, reasoning patterns.
 
-## Workflows
+### I want to orchestrate complex processes
+→ [05_workflows](./05_workflows) — Chain agents, teams, and functions into automated pipelines.
 
-The workflows cookbook contains examples of building workflows with Agno.
+### I want to deploy and manage agents
+→ [06_agent_os](./06_agent_os) — Deploy to web APIs, Slack, WhatsApp, and more. The control plane for your agent systems.
 
-## Scripts
+---
 
-Just a place to store setup scripts like `run_pgvector.sh` etc
+## Deep Dives
 
-## Setup
+### Knowledge & RAG
+[08_knowledge](./08_knowledge) — Give your agents information to search at runtime. Covers chunking strategies (semantic, recursive, agentic), embedders, vector databases, hybrid search, and loading from URLs, S3, GCS, YouTube, PDFs, and more.
 
-### Create and activate a virtual environment
+### Memory
+[09_memory](./09_memory) — Agents that remember. Store insights and facts about users across conversations for personalized responses.
 
-```shell
-python3 -m venv .venv
-source .venv/bin/activate
-```
+### Reasoning
+[10_reasoning](./10_reasoning) — Make agents think before they act. Three approaches:
+- **Reasoning models** — Use models pre-trained for reasoning (o1, o3, etc.)
+- **Reasoning tools** — Give any agent tools that enable reasoning
+- **Reasoning agents** — Set `reasoning=True` for chain-of-thought with tool use
 
-### Install libraries
+### Databases
+[07_database](./07_database) — Postgres and SQLite recommended. Also supports DynamoDB, Firestore, MongoDB, Redis, SingleStore, SurrealDB, and more.
 
-```shell
-pip install -U openai agno  # And all other packages you might need
-```
+### Models
+[11_models](./11_models) — 40+ model providers. Gemini, Claude, GPT, Llama, Mistral, DeepSeek, Groq, Ollama, vLLM — if it exists, we probably support it.
 
-### Export your keys
+### Tools
+[14_tools](./14_tools) — Extend what agents can do. Web search, SQL, email, APIs, MCP, Discord, Slack, Docker, and custom tools with the `@tool` decorator.
 
-```shell
-export OPENAI_API_KEY=***
-export GOOGLE_API_KEY=***
-```
+---
 
-## Run a cookbook
+## Production Ready
 
-```shell
-python cookbook/.../example.py
-```
+### Evals
+[12_evals](./12_evals) — Measure what matters: accuracy (LLM-as-judge), performance (latency, memory), reliability (expected tool calls), and agent-as-judge patterns.
+
+### Integrations
+[13_integrations](./13_integrations) — Connect to Discord, observability tools (Langfuse, Arize Phoenix, AgentOps, LangSmith), memory providers, and A2A protocol.
+
+## Real World Examples
+
+[02_examples](./02_examples) — Complete, production-style examples. Stop reading docs, start building.
+
+---
+
+## Contributing
+
+We're always adding new cookbooks. Want to contribute? See [CONTRIBUTING.md](./CONTRIBUTING.md).

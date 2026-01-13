@@ -2,76 +2,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel
 
-from agno.utils.string import parse_response_model_str, safe_content_hash, url_safe_string
-
-
-def test_safe_content_hash_normal_content():
-    """Test safe_content_hash with normal content"""
-    content = "Hello, world!"
-    result = safe_content_hash(content)
-    # Should produce consistent hash
-    assert result == "6cd3556deb0da54bca060b4c39479839"
-    assert len(result) == 32  # MD5 hash length
-
-
-def test_safe_content_hash_null_characters():
-    """Test safe_content_hash with null characters"""
-    content = "Hello\x00world"
-    result = safe_content_hash(content)
-    # Should handle null characters by replacing with replacement character
-    assert result is not None
-    assert len(result) == 32
-    # Should be different from content without null chars
-    normal_result = safe_content_hash("Helloworld")
-    assert result != normal_result
-
-
-def test_safe_content_hash_unicode_surrogates():
-    """Test safe_content_hash with Unicode surrogate characters (PDF mathematical formulas)"""
-    # This is the type of content that causes UnicodeEncodeError in PDFs with math formulas
-    content = "Mathematical formula: \ud835\udc00 = \ud835\udc01 + \ud835\udc02"
-    result = safe_content_hash(content)
-    # Should not raise UnicodeEncodeError and produce valid hash
-    assert result is not None
-    assert len(result) == 32
-    assert isinstance(result, str)
-
-
-def test_safe_content_hash_mixed_problematic_content():
-    """Test safe_content_hash with both null characters and surrogates"""
-    content = "Formula\x00with\ud835\udc00surrogates\x00and\ud835\udc01nulls"
-    result = safe_content_hash(content)
-    # Should handle both types of problematic characters
-    assert result is not None
-    assert len(result) == 32
-
-
-def test_safe_content_hash_empty_content():
-    """Test safe_content_hash with empty content"""
-    content = ""
-    result = safe_content_hash(content)
-    # Should handle empty string
-    assert result == "d41d8cd98f00b204e9800998ecf8427e"  # MD5 of empty string
-    assert len(result) == 32
-
-
-def test_safe_content_hash_consistency():
-    """Test that safe_content_hash produces consistent results"""
-    content = "Test content for consistency"
-    result1 = safe_content_hash(content)
-    result2 = safe_content_hash(content)
-    # Should always produce the same hash for the same content
-    assert result1 == result2
-
-
-def test_safe_content_hash_pdf_mathematical_symbols():
-    """Test with actual mathematical symbols that appear in PDFs"""
-    # These are Unicode characters commonly found in mathematical PDFs that cause issues
-    content = "∑∏∫∂∇∆√∞≠≤≥±∓∈∉∪∩⊂⊃⊆⊇∀∃"
-    result = safe_content_hash(content)
-    # Should handle mathematical symbols without issues
-    assert result is not None
-    assert len(result) == 32
+from agno.utils.string import parse_response_model_str, sanitize_postgres_string, url_safe_string
 
 
 def test_url_safe_string_spaces():
@@ -415,3 +346,34 @@ def test_parse_json_with_python_code_in_value():
         == "def factorial(n):     # Calculate factorial of n     if n <= 1:         return 1     return n * factorial(n - 1)"
     )
     assert result.description == "A recursive factorial function with comments and multiplication"
+
+
+def test_sanitize_postgres_string_none_input():
+    """Test that sanitize_postgres_string handles None input correctly"""
+    assert sanitize_postgres_string(None) is None
+
+
+def test_sanitize_postgres_string_normal_string():
+    """Test that sanitize_postgres_string handles normal strings correctly"""
+    assert sanitize_postgres_string("hello world") == "hello world"
+    assert sanitize_postgres_string("") == ""
+    assert sanitize_postgres_string("Special chars: @#$%^&*()") == "Special chars: @#$%^&*()"
+
+
+def test_sanitize_postgres_string_null_chars():
+    """Test that sanitize_postgres_string handles null characters correctly"""
+    assert sanitize_postgres_string("hello\x00world") == "helloworld"
+    assert sanitize_postgres_string("\x00\x00\x00") == ""
+    assert sanitize_postgres_string("start\x00middle\x00end") == "startmiddleend"
+
+
+def test_sanitize_postgres_string_other_illegal_chars():
+    """Test that sanitize_postgres_string handles other illegal characters correctly"""
+    # Control characters \x01-\x08
+    assert sanitize_postgres_string("hello\x01\x02\x03world") == "helloworld"
+    # \x0b (vertical tab) and \x0c (form feed)
+    assert sanitize_postgres_string("hello\x0b\x0cworld") == "helloworld"
+    # Control characters \x0e-\x1f
+    assert sanitize_postgres_string("hello\x0e\x1fworld") == "helloworld"
+    # Unicode replacement characters
+    assert sanitize_postgres_string("hello\ufffe\uffffworld") == "helloworld"

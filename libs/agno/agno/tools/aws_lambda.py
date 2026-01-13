@@ -9,19 +9,21 @@ except ImportError:
 
 
 class AWSLambdaTools(Toolkit):
-    name: str = "AWSLambdaTool"
-    description: str = "A tool for interacting with AWS Lambda functions"
-
     def __init__(
         self,
         region_name: str = "us-east-1",
+        enable_list_functions: bool = True,
+        enable_invoke_function: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.client = boto3.client("lambda", region_name=region_name)
 
         tools: List[Any] = []
-        tools.append(self.list_functions)
-        tools.append(self.invoke_function)
+        if all or enable_list_functions:
+            tools.append(self.list_functions)
+        if all or enable_invoke_function:
+            tools.append(self.invoke_function)
 
         super().__init__(name="aws-lambda", tools=tools, **kwargs)
 

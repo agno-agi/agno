@@ -11,16 +11,26 @@ except ImportError:
     raise ImportError("`bigquery` not installed. Please install using `pip install google-cloud-bigquery`")
 
 
+def _clean_sql(sql: str) -> str:
+    """Clean SQL query by normalizing whitespace while preserving token boundaries.
+
+    Replaces newlines with spaces (not empty strings) to prevent line comments
+    from swallowing subsequent SQL statements.
+    """
+    return sql.replace("\\n", " ").replace("\n", " ")
+
+
 class GoogleBigQueryTools(Toolkit):
     def __init__(
         self,
         dataset: str,
         project: Optional[str] = None,
         location: Optional[str] = None,
-        list_tables: Optional[bool] = True,
-        describe_table: Optional[bool] = True,
-        run_sql_query: Optional[bool] = True,
         credentials: Optional[Any] = None,
+        enable_list_tables: bool = True,
+        enable_describe_table: bool = True,
+        enable_run_sql_query: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.project = project or getenv("GOOGLE_CLOUD_PROJECT")
@@ -37,11 +47,11 @@ class GoogleBigQueryTools(Toolkit):
         self.client = bigquery.Client(project=self.project, credentials=credentials)
 
         tools: List[Any] = []
-        if list_tables:
+        if all or enable_list_tables:
             tools.append(self.list_tables)
-        if describe_table:
+        if all or enable_describe_table:
             tools.append(self.describe_table)
-        if run_sql_query:
+        if all or enable_run_sql_query:
             tools.append(self.run_sql_query)
 
         super().__init__(name="google_bigquery_tools", tools=tools, **kwargs)
@@ -105,12 +115,12 @@ class GoogleBigQueryTools(Toolkit):
         """
         try:
             log_debug(f"Running Google SQL |\n{sql}")
-            cleaned_query = sql.replace("\\n", " ").replace("\n", "").replace("\\", "")
+            cleaned_query = _clean_sql(sql)
             job_config = bigquery.QueryJobConfig(default_dataset=f"{self.project}.{self.dataset}")
             query_job = self.client.query(cleaned_query, job_config)
             results = query_job.result()
             results_str = str([dict(row) for row in results])
-            return results_str.replace("\\", "").replace("\n", "")
+            return results_str.replace("\n", " ")
         except Exception as e:
             logger.error(f"Error while executing SQL: {e}")
             return ""

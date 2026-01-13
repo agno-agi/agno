@@ -1,11 +1,16 @@
-from agno.memory.agent import AgentMemory
-from agno.memory.memory import Memory
-from agno.memory.row import MemoryRow
-from agno.memory.team import TeamMemory
+from agno.memory.manager import MemoryManager, UserMemory
+from agno.memory.strategies import (
+    MemoryOptimizationStrategy,
+    MemoryOptimizationStrategyFactory,
+    MemoryOptimizationStrategyType,
+    SummarizeStrategy,
+)
 
 __all__ = [
-    "AgentMemory",
-    "Memory",
-    "MemoryRow",
-    "TeamMemory",
+    "MemoryManager",
+    "UserMemory",
+    "MemoryOptimizationStrategy",
+    "MemoryOptimizationStrategyType",
+    "MemoryOptimizationStrategyFactory",
+    "SummarizeStrategy",
 ]

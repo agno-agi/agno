@@ -106,7 +106,7 @@ def test_init_with_custom_params():
 def test_search_no_api_key():
     """Calling search without any API key returns an error message."""
     tools = SerperTools(api_key=None)
-    result = tools.search("anything")
+    result = tools.search_web("anything")
     result_json = json.loads(result)
     assert "error" in result_json
     assert "Please provide a Serper API key" in result_json["error"]
@@ -114,7 +114,7 @@ def test_search_no_api_key():
 
 def test_search_empty_query(api_tools):
     """Calling search with an empty query returns an error message."""
-    result = api_tools.search("")
+    result = api_tools.search_web("")
     result_json = json.loads(result)
     assert "error" in result_json
     assert "Please provide a query to search for" in result_json["error"]
@@ -123,7 +123,7 @@ def test_search_empty_query(api_tools):
 def test_search_success(api_tools, mock_search_response):
     """A successful search should return the raw response.text and call requests.request correctly."""
     with patch("requests.request", return_value=mock_search_response) as mock_req:
-        result = api_tools.search("pytest testing")
+        result = api_tools.search_web("pytest testing")
         assert result == mock_search_response.text
 
         mock_req.assert_called_once_with(
@@ -137,7 +137,7 @@ def test_search_success(api_tools, mock_search_response):
 def test_search_with_custom_num_results(api_tools, mock_search_response):
     """Overriding the num_results parameter should be respected in the request payload."""
     with patch("requests.request", return_value=mock_search_response) as mock_req:
-        result = api_tools.search("pytest testing", num_results=20)
+        result = api_tools.search_web("pytest testing", num_results=20)
         assert result == mock_search_response.text
 
         expected_payload = {
@@ -158,7 +158,7 @@ def test_search_with_custom_num_results(api_tools, mock_search_response):
 def test_search_exception(api_tools):
     """If requests.request raises, search should catch and return an error string."""
     with patch("requests.request", side_effect=Exception("Network failure")):
-        result = api_tools.search("failure test")
+        result = api_tools.search_web("failure test")
         result_json = json.loads(result)
         assert "error" in result_json
         assert "Network failure" in result_json["error"]
@@ -353,7 +353,7 @@ def test_http_error_handling(api_tools):
     mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError("404 Not Found")
 
     with patch("requests.request", return_value=mock_response):
-        result = api_tools.search("test query")
+        result = api_tools.search_web("test query")
         result_json = json.loads(result)
         assert "error" in result_json
         assert "404 Not Found" in result_json["error"]

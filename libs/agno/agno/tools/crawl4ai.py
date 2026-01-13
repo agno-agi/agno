@@ -20,9 +20,16 @@ class Crawl4aiTools(Toolkit):
         bm25_threshold: float = 1.0,
         headless: bool = True,
         wait_until: str = "domcontentloaded",
+        proxy_config: Optional[Dict[str, Any]] = None,
+        enable_crawl: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        super().__init__(name="crawl4ai_tools", tools=[self.crawl], **kwargs)
+        tools = []
+        if all or enable_crawl:
+            tools.append(self.crawl)
+
+        super().__init__(name="crawl4ai_tools", tools=tools, **kwargs)
         self.max_length = max_length
         self.timeout = timeout
         self.use_pruning = use_pruning
@@ -30,6 +37,7 @@ class Crawl4aiTools(Toolkit):
         self.bm25_threshold = bm25_threshold
         self.wait_until = wait_until
         self.headless = headless
+        self.proxy_config = proxy_config or {}
 
     def _build_config(self, search_query: Optional[str] = None) -> Dict[str, Any]:
         """Build CrawlerRunConfig parameters from toolkit settings."""
@@ -97,6 +105,7 @@ class Crawl4aiTools(Toolkit):
             browser_config = BrowserConfig(
                 headless=self.headless,
                 verbose=False,
+                **self.proxy_config,
             )
 
             async with AsyncWebCrawler(config=browser_config) as crawler:

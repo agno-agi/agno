@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.media import File, Image
 from agno.models.message import Message
@@ -32,6 +32,7 @@ class MCPServerConfiguration:
 
 ROLE_MAP = {
     "system": "system",
+    "developer": "system",
     "user": "user",
     "assistant": "assistant",
     "tool": "user",
@@ -67,13 +68,25 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     }
 
     try:
+        img_type = None
+
         # Case 0: Image is an Anthropic uploaded file
         if image.content is not None and hasattr(image.content, "id"):
-            return {"type": "image", "source": {"type": "file", "file_id": image.content.id}}
+            content_bytes = image.content
 
         # Case 1: Image is a URL
         if image.url is not None:
-            return {"type": "image", "source": {"type": "url", "url": image.url}}
+            content_bytes = image.get_content_bytes()  # type: ignore
+
+            # If image URL has a suffix, use it as the type (without dot)
+            import os
+            from urllib.parse import urlparse
+
+            if image.url:
+                parsed_url = urlparse(image.url)
+                _, ext = os.path.splitext(parsed_url.path)
+                if ext:
+                    img_type = ext.lstrip(".").lower()
 
         # Case 2: Image is a local file path
         elif image.filepath is not None:
@@ -83,6 +96,11 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             if path.exists() and path.is_file():
                 with open(image.filepath, "rb") as f:
                     content_bytes = f.read()
+
+                # If image file path has a suffix, use it as the type (without dot)
+                path_ext = path.suffix.lstrip(".")
+                if path_ext:
+                    img_type = path_ext.lower()
             else:
                 log_error(f"Image file not found: {image}")
                 return None
@@ -95,15 +113,16 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             log_error(f"Unsupported image type: {type(image)}")
             return None
 
-        if using_filetype:
-            kind = filetype.guess(content_bytes)
-            if not kind:
-                log_error("Unable to determine image type")
-                return None
+        if not img_type:
+            if using_filetype:
+                kind = filetype.guess(content_bytes)
+                if not kind:
+                    log_error("Unable to determine image type")
+                    return None
 
-            img_type = kind.extension
-        else:
-            img_type = imghdr.what(None, h=content_bytes)  # type: ignore
+                img_type = kind.extension
+            else:
+                img_type = imghdr.what(None, h=content_bytes)  # type: ignore
 
         if not img_type:
             log_error("Unable to determine image type")
@@ -202,22 +221,26 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
     return None
 
 
-def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]:
+def format_messages(
+    messages: List[Message], compress_tool_results: bool = False
+) -> Tuple[List[Dict[str, Union[str, list]]], str]:
     """
     Process the list of messages and separate them into API messages and system messages.
 
     Args:
         messages (List[Message]): The list of messages to process.
+        compress_tool_results: Whether to compress tool results.
 
     Returns:
-        Tuple[List[Dict[str, str]], str]: A tuple containing the list of API messages and the concatenated system messages.
+        Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
     """
-    chat_messages: List[Dict[str, str]] = []
+    chat_messages: List[Dict[str, Union[str, list]]] = []
     system_messages: List[str] = []
 
     for message in messages:
         content = message.content or ""
-        if message.role == "system":
+        # Both "system" and "developer" roles should be extracted as system messages
+        if message.role in ("system", "developer"):
             if content is not None:
                 system_messages.append(content)  # type: ignore
             continue
@@ -246,21 +269,23 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
         elif message.role == "assistant":
             content = []
 
-            if message.thinking is not None and message.provider_data is not None:
+            if message.reasoning_content is not None and message.provider_data is not None:
                 from anthropic.types import RedactedThinkingBlock, ThinkingBlock
 
                 content.append(
                     ThinkingBlock(
-                        thinking=message.thinking,
+                        thinking=message.reasoning_content,
                         signature=message.provider_data.get("signature"),
                         type="thinking",
                     )
                 )
 
-            if message.redacted_thinking is not None:
+            if message.redacted_reasoning_content is not None:
                 from anthropic.types import RedactedThinkingBlock
 
-                content.append(RedactedThinkingBlock(data=message.redacted_thinking, type="redacted_thinking"))
+                content.append(
+                    RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_reasoning_content")
+                )
 
             if isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
                 content.append(TextBlock(text=message.content, type="text"))
@@ -277,6 +302,19 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                             type="tool_use",
                         )
                     )
+        elif message.role == "tool":
+            content = []
+
+            # Use compressed content for tool messages if compression is active
+            tool_result = message.get_content(use_compressed_content=compress_tool_results)
+
+            content.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": message.tool_call_id,
+                    "content": str(tool_result),
+                }
+            )
 
         # Skip empty assistant responses
         if message.role == "assistant" and not content:
@@ -284,3 +322,52 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
 
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
     return chat_messages, " ".join(system_messages)
+
+
+def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
+    """
+    Transforms function definitions into a format accepted by the Anthropic API.
+    Now supports strict mode for structured outputs.
+    """
+    if not tools:
+        return None
+
+    parsed_tools: List[Dict[str, Any]] = []
+    for tool_def in tools:
+        if tool_def.get("type", "") != "function":
+            parsed_tools.append(tool_def)
+            continue
+
+        func_def = tool_def.get("function", {})
+        parameters: Dict[str, Any] = func_def.get("parameters", {})
+        properties: Dict[str, Any] = parameters.get("properties", {})
+        required: List[str] = parameters.get("required", [])
+        required_params: List[str] = required
+
+        input_properties: Dict[str, Any] = {}
+        for param_name, param_info in properties.items():
+            # Preserve the complete schema structure for complex types
+            input_properties[param_name] = param_info.copy()
+
+            # Ensure description is present (default to empty if missing)
+            if "description" not in input_properties[param_name]:
+                input_properties[param_name]["description"] = ""
+
+        tool = {
+            "name": func_def.get("name") or "",
+            "description": func_def.get("description") or "",
+            "input_schema": {
+                "type": parameters.get("type", "object"),
+                "properties": input_properties,
+                "required": required_params,
+                "additionalProperties": False,
+            },
+        }
+
+        # Add strict mode if specified (check both function dict and tool_def top level)
+        strict_mode = func_def.get("strict") or tool_def.get("strict")
+        if strict_mode is True:
+            tool["strict"] = True
+
+        parsed_tools.append(tool)
+    return parsed_tools
