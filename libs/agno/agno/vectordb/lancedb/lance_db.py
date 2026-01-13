@@ -489,8 +489,8 @@ class LanceDb(VectorDb):
         """
         Asynchronously search for documents matching the query.
 
-        Note: Currently wraps sync search method since LanceDB async search has sync/async table
-        synchronization issues. Performance impact is minimal for search operations.
+        Uses async embedder to avoid blocking the event loop during embedding API calls.
+        Table operations use asyncio.to_thread for non-blocking execution.
 
         Args:
             query (str): Query string to search for
@@ -500,8 +500,55 @@ class LanceDb(VectorDb):
         Returns:
             List[Document]: List of matching documents
         """
-        # Wrap sync search method to avoid sync/async table synchronization issues
-        return self.search(query=query, limit=limit, filters=filters)
+        if self.connection:
+            self.table = self.connection.open_table(name=self.table_name)
+
+        results = None
+
+        if isinstance(filters, list):
+            log_warning("Filter Expressions are not yet supported in LanceDB. No filters will be applied.")
+            filters = None
+
+        if self.search_type == SearchType.vector:
+            results = await self.async_vector_search(query, limit)
+        elif self.search_type == SearchType.keyword:
+            # Keyword search doesn't need embedding, use thread for table I/O
+            results = await asyncio.to_thread(self.keyword_search, query, limit)
+        elif self.search_type == SearchType.hybrid:
+            results = await self.async_hybrid_search(query, limit)
+        else:
+            logger.error(f"Invalid search type '{self.search_type}'.")
+            return []
+
+        if results is None:
+            return []
+
+        search_results = self._build_search_results(results)
+
+        # Filter results based on metadata if filters are provided
+        if filters and search_results:
+            filtered_results = []
+            for doc in search_results:
+                if doc.meta_data is None:
+                    continue
+
+                # Check if all filter criteria match
+                match = True
+                for key, value in filters.items():
+                    if key not in doc.meta_data or doc.meta_data[key] != value:
+                        match = False
+                        break
+
+                if match:
+                    filtered_results.append(doc)
+
+            search_results = filtered_results
+
+        if self.reranker and search_results:
+            search_results = self.reranker.rerank(query=query, documents=search_results)
+
+        log_info(f"Found {len(search_results)} documents")
+        return search_results
 
     def vector_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
@@ -573,6 +620,97 @@ class LanceDb(VectorDb):
         ).limit(limit)
 
         return results.to_pandas()
+
+    async def async_vector_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
+        """
+        Asynchronously perform vector similarity search.
+
+        Uses async embedder to avoid blocking the event loop during embedding API calls.
+        Table search operations run in a thread to avoid blocking.
+
+        Args:
+            query (str): Query string to search for
+            limit (int): Maximum number of results to return
+            filters: Not used, included for API consistency
+
+        Returns:
+            Search results as pandas DataFrame
+        """
+        # Use async embedder to avoid blocking the event loop
+        query_embedding = await self.embedder.async_get_embedding(query)
+        if query_embedding is None or len(query_embedding) == 0:
+            logger.error(f"Error getting embedding for Query: {query}")
+            return None  # type: ignore
+
+        if self.table is None:
+            logger.error("Table not initialized. Please create the table first")
+            return None  # type: ignore
+
+        # Run table search in thread to avoid blocking (LanceDB table ops are sync)
+        def _do_search():
+            results = self.table.search(
+                query=query_embedding,
+                vector_column_name=self._vector_col,
+            ).limit(limit)
+
+            if self.nprobes:
+                results.nprobes(self.nprobes)
+
+            return results.to_pandas()
+
+        return await asyncio.to_thread(_do_search)
+
+    async def async_hybrid_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
+        """
+        Asynchronously perform hybrid search combining vector and full-text search.
+
+        Uses async embedder to avoid blocking the event loop during embedding API calls.
+        Table search operations run in a thread to avoid blocking.
+
+        Args:
+            query (str): Query string to search for
+            limit (int): Maximum number of results to return
+            filters: Not used, included for API consistency
+
+        Returns:
+            Search results as pandas DataFrame
+        """
+        # Use async embedder to avoid blocking the event loop
+        query_embedding = await self.embedder.async_get_embedding(query)
+        if query_embedding is None or len(query_embedding) == 0:
+            logger.error(f"Error getting embedding for Query: {query}")
+            return []
+
+        if self.table is None:
+            logger.error("Table not initialized. Please create the table first")
+            return []
+
+        # Run table search in thread to avoid blocking (LanceDB table ops are sync)
+        def _do_search():
+            if not self.fts_index_exists:
+                self.table.create_fts_index("payload", use_tantivy=self.use_tantivy, replace=True)
+                self.fts_index_exists = True
+
+            results = (
+                self.table.search(
+                    vector_column_name=self._vector_col,
+                    query_type="hybrid",
+                )
+                .vector(query_embedding)
+                .text(query)
+                .limit(limit)
+            )
+
+            if self.nprobes:
+                results.nprobes(self.nprobes)
+
+            return results.to_pandas()
+
+        return await asyncio.to_thread(_do_search)
 
     def _build_search_results(self, results) -> List[Document]:  # TODO: typehint pandas?
         search_results: List[Document] = []
