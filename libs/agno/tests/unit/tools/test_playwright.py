@@ -99,10 +99,21 @@ def test_init_registers_all_tools():
         tools = PlaywrightTools()
 
         expected_tools = [
-            "navigate_to", "screenshot", "get_page_content", "close_session",
-            "get_current_url", "go_back", "go_forward", "reload_page",
-            "click_element", "fill_input", "wait_for_element", "scroll_page",
-            "extract_text", "get_page_title", "submit_form",
+            "navigate_to",
+            "screenshot",
+            "get_page_content",
+            "close_session",
+            "get_current_url",
+            "go_back",
+            "go_forward",
+            "reload_page",
+            "click_element",
+            "fill_input",
+            "wait_for_element",
+            "scroll_page",
+            "extract_text",
+            "get_page_title",
+            "submit_form",
         ]
 
         registered_tools = [func.name for func in tools.functions.values()]
@@ -360,8 +371,6 @@ def test_submit_form_with_navigation(playwright_tools_initialized, mock_playwrig
 
 
 def test_submit_form_without_navigation(playwright_tools_initialized, mock_playwright_env):
-    mock_page = mock_playwright_env["page"]
-
     result = playwright_tools_initialized.submit_form("form#search", wait_for_navigation=False)
     result_data = json.loads(result)
 
