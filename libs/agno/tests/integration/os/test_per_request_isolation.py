@@ -1256,7 +1256,7 @@ class TestCustomExecutorWithInternalAgentTeam:
     def test_condition_with_agent_and_function_evaluator(self):
         """Condition with function evaluator and agent step inside."""
         from agno.workflow.condition import Condition
-        from agno.workflow.types import StepInput, StepOutput
+        from agno.workflow.types import StepInput
 
         def should_execute(step_input: StepInput) -> bool:
             return "yes" in str(step_input.input).lower()
@@ -1639,7 +1639,7 @@ class TestCustomExecutorWithInternalAgentTeam:
             id="team-member-id",
             model=OpenAIChat(id="gpt-4o-mini"),
         )
-        inner_team = Team(
+        closure_team = Team(
             name="inner-team",
             id="inner-team-id",
             members=[member],
@@ -1649,10 +1649,11 @@ class TestCustomExecutorWithInternalAgentTeam:
         call_log: List[str] = []
 
         def executor_with_team_run(step_input: StepInput) -> StepOutput:
-            # This captures inner_team in closure and would call run()
+            # This captures closure_team in closure and would call run()
             # The team is SHARED across workflow copies
             call_log.append(f"team_run:{step_input.input}")
-            # In real usage: result = inner_team.run(step_input.input)
+            # In real usage: result = closure_team.run(step_input.input)
+            _ = closure_team  # Reference to show closure captures this
             return StepOutput(content=f"Team executed for: {step_input.input}")
 
         workflow = Workflow(
@@ -2035,12 +2036,7 @@ class TestToolsDeepCopy:
                 self.instance_id = uuid.uuid4()
                 self.connected = True
 
-        # Patch the MRO check to recognize our mock as MCP tools
-        mock_mcp = MockMCPTools()
-
-        # Manually add MCPTools to the class hierarchy for detection
-        original_mro = type(mock_mcp).__mro__
-
+        # Create a subclass that includes MCPTools in its MRO for detection
         class MCPTools:
             pass
 
@@ -2165,11 +2161,12 @@ class TestToolsDeepCopy:
         assert copy.tools is not agent.tools
 
     def test_none_tools_handled(self):
-        """None tools should remain None."""
+        """None tools gets normalized to empty list by Agent."""
         agent = Agent(name="test-agent", id="test-id", tools=None)
 
         copy = agent.deep_copy()
 
+        # Agent normalizes None to empty list, so copy should also be empty list
         assert copy.tools == []
 
     def test_tools_with_state_isolation(self):
