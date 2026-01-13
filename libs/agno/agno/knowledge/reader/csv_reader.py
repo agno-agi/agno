@@ -29,6 +29,7 @@ class CSVReader(Reader):
         """Get the list of supported chunking strategies for CSV readers."""
         return [
             ChunkingStrategyType.ROW_CHUNKER,
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
