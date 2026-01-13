@@ -2536,10 +2536,6 @@ class Knowledge:
             return content_row.to_dict()
 
         else:
-            if self.name:
-                log_warning(f"Contents DB not found for knowledge base: {self.name}")
-            else:
-                log_warning("Contents DB not found for knowledge base")
             return None
 
     async def _aupdate_content(self, content: Content) -> Optional[Dict[str, Any]]:
@@ -2589,10 +2585,6 @@ class Knowledge:
             return content_row.to_dict()
 
         else:
-            if self.name:
-                log_warning(f"Contents DB not found for knowledge base: {self.name}")
-            else:
-                log_warning("Contents DB not found for knowledge base")
             return None
 
     # ==========================================
