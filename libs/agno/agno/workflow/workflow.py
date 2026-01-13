@@ -4609,10 +4609,20 @@ class Workflow:
                 step_kwargs["agent"] = step.agent.deep_copy() if hasattr(step.agent, "deep_copy") else step.agent
             if step.team:
                 step_kwargs["team"] = step.team.deep_copy() if hasattr(step.team, "deep_copy") else step.team
-            # Copy other step attributes
-            for attr in ["pre_hooks", "post_hooks", "output_schema", "cache_results", "cache_ttl"]:
-                if hasattr(step, attr) and getattr(step, attr) is not None:
-                    step_kwargs[attr] = getattr(step, attr)
+            # Copy Step configuration attributes
+            for attr in [
+                "max_retries",
+                "timeout_seconds",
+                "skip_on_failure",
+                "strict_input_validation",
+                "add_workflow_history",
+                "num_history_runs",
+            ]:
+                if hasattr(step, attr):
+                    value = getattr(step, attr)
+                    # Only include non-default values to avoid overriding defaults
+                    if value is not None:
+                        step_kwargs[attr] = value
             return Step(**step_kwargs)
 
         # Handle direct Agent
@@ -4654,7 +4664,7 @@ class Workflow:
         # Handle Steps container
         if isinstance(step, Steps):
             copied_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
-            return Steps(steps=copied_steps)
+            return Steps(name=step.name, description=step.description, steps=copied_steps)
 
         # For other types, attempt deep copy
         try:

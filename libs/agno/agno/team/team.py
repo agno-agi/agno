@@ -9412,6 +9412,10 @@ class Team:
         fields_for_new_team: Dict[str, Any] = {}
 
         for f in fields(self):
+            # Skip private fields (not part of __init__ signature)
+            if f.name.startswith("_"):
+                continue
+
             field_value = getattr(self, f.name)
             if field_value is not None:
                 fields_for_new_team[f.name] = self._deep_copy_field(f.name, field_value)
