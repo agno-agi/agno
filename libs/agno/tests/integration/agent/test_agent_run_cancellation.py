@@ -14,13 +14,13 @@ import time
 from unittest.mock import patch
 
 import pytest
-from libs.agno.agno.run.cancellation_management.base import BaseRunCancellationManager
 
 from agno.agent.agent import Agent
 from agno.exceptions import RunCancelledException
 from agno.models.openai import OpenAIChat
 from agno.run.agent import RunCancelledEvent
 from agno.run.base import RunStatus
+from agno.run.cancellation_management.base import BaseRunCancellationManager
 
 
 # ============================================================================
