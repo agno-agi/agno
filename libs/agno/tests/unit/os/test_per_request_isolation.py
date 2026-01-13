@@ -1,4 +1,14 @@
-"""Unit tests for per-request isolation feature."""
+"""Unit tests for per-request isolation feature.
+
+This module tests:
+- Factory functions (get_agent_for_request, get_team_for_request, get_workflow_for_request)
+- Deep copying of Agent, Team, and Workflow classes
+- Complex workflow structures including nested step containers
+- State isolation between copies
+- Edge cases and concurrent request scenarios
+"""
+
+import pytest
 
 from agno.agent import Agent
 from agno.os.utils import (
@@ -8,6 +18,37 @@ from agno.os.utils import (
 )
 from agno.team import Team
 from agno.workflow import Workflow
+from agno.workflow.condition import Condition
+from agno.workflow.loop import Loop
+from agno.workflow.parallel import Parallel
+from agno.workflow.router import Router
+from agno.workflow.step import Step
+from agno.workflow.steps import Steps
+from agno.workflow.types import StepInput, StepOutput
+
+
+# ============================================================================
+# Fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def basic_agent():
+    """Create a basic test agent."""
+    return Agent(name="basic-agent", id="basic-agent-id")
+
+
+@pytest.fixture
+def basic_team():
+    """Create a basic test team."""
+    member1 = Agent(name="member-1", id="member-1-id")
+    member2 = Agent(name="member-2", id="member-2-id")
+    return Team(name="basic-team", id="basic-team-id", members=[member1, member2])
+
+
+# ============================================================================
+# Factory Function Tests
+# ============================================================================
 
 
 class TestGetAgentForRequest:
@@ -62,7 +103,6 @@ class TestGetAgentForRequest:
         copy.metadata["key"] = "modified"
 
         # Original should be unchanged (deep copy)
-        # Note: metadata is deep copied, so changes don't affect original
         assert agent.metadata["key"] == "original"
 
     def test_internal_state_is_reset(self):
@@ -159,6 +199,11 @@ class TestGetWorkflowForRequest:
         assert result is None
 
 
+# ============================================================================
+# Agent Deep Copy Tests
+# ============================================================================
+
+
 class TestAgentDeepCopy:
     """Tests for Agent.deep_copy() method."""
 
@@ -198,6 +243,11 @@ class TestAgentDeepCopy:
         assert agent.name == "original"
 
 
+# ============================================================================
+# Team Deep Copy Tests
+# ============================================================================
+
+
 class TestTeamDeepCopy:
     """Tests for Team.deep_copy() method."""
 
@@ -226,6 +276,11 @@ class TestTeamDeepCopy:
         assert copy.members[1].id == member2.id
 
 
+# ============================================================================
+# Workflow Deep Copy - Basic Tests
+# ============================================================================
+
+
 class TestWorkflowDeepCopy:
     """Tests for Workflow.deep_copy() method."""
 
@@ -252,3 +307,821 @@ class TestWorkflowDeepCopy:
         assert copy.name == workflow.name
         assert copy.description == workflow.description
         assert copy.debug_mode == workflow.debug_mode
+
+
+# ============================================================================
+# Workflow Deep Copy - Basic Step Types
+# ============================================================================
+
+
+class TestWorkflowDeepCopyBasicSteps:
+    """Tests for Workflow.deep_copy() with basic step types."""
+
+    def test_workflow_with_single_agent_step(self, basic_agent):
+        """Test deep copying a workflow with a single agent step."""
+        workflow = Workflow(
+            name="single-agent-workflow",
+            id="workflow-id",
+            steps=[Step(name="agent-step", agent=basic_agent)],
+        )
+
+        copy = workflow.deep_copy()
+
+        assert copy is not workflow
+        assert copy.id == workflow.id
+        assert len(copy.steps) == 1
+        # Agent should be copied (different instance)
+        assert copy.steps[0].agent is not basic_agent
+        assert copy.steps[0].agent.id == basic_agent.id
+
+    def test_workflow_with_single_team_step(self, basic_team):
+        """Test deep copying a workflow with a single team step."""
+        workflow = Workflow(
+            name="single-team-workflow",
+            id="workflow-id",
+            steps=[Step(name="team-step", team=basic_team)],
+        )
+
+        copy = workflow.deep_copy()
+
+        assert copy is not workflow
+        # Team should be copied
+        assert copy.steps[0].team is not basic_team
+        assert copy.steps[0].team.id == basic_team.id
+        # Team members should also be copied
+        assert copy.steps[0].team.members[0] is not basic_team.members[0]
+
+    def test_workflow_with_function_executor_step(self):
+        """Test deep copying a workflow with a function executor step."""
+
+        def my_function(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="result")
+
+        workflow = Workflow(
+            name="function-workflow",
+            id="workflow-id",
+            steps=[Step(name="function-step", executor=my_function)],
+        )
+
+        copy = workflow.deep_copy()
+
+        assert copy is not workflow
+        # Function reference should be the same (functions can't be deep copied)
+        assert copy.steps[0].executor is my_function
+
+    def test_workflow_with_direct_agent_step(self, basic_agent):
+        """Test deep copying when agent is directly in steps list (not wrapped in Step)."""
+        workflow = Workflow(
+            name="direct-agent-workflow",
+            id="workflow-id",
+            steps=[basic_agent],
+        )
+
+        copy = workflow.deep_copy()
+
+        assert copy is not workflow
+        # Direct agent should be copied
+        assert copy.steps[0] is not basic_agent
+        assert copy.steps[0].id == basic_agent.id
+
+    def test_workflow_with_direct_team_step(self, basic_team):
+        """Test deep copying when team is directly in steps list."""
+        workflow = Workflow(
+            name="direct-team-workflow",
+            id="workflow-id",
+            steps=[basic_team],
+        )
+
+        copy = workflow.deep_copy()
+
+        assert copy is not workflow
+        # Direct team should be copied
+        assert copy.steps[0] is not basic_team
+        assert copy.steps[0].id == basic_team.id
+
+
+# ============================================================================
+# Workflow Deep Copy - Step Container Types
+# ============================================================================
+
+
+class TestWorkflowDeepCopyContainerSteps:
+    """Tests for Workflow.deep_copy() with container step types."""
+
+    def test_workflow_with_parallel_steps(self):
+        """Test deep copying a workflow with Parallel steps."""
+        agent1 = Agent(name="parallel-agent-1", id="parallel-agent-1-id")
+        agent2 = Agent(name="parallel-agent-2", id="parallel-agent-2-id")
+
+        workflow = Workflow(
+            name="parallel-workflow",
+            id="workflow-id",
+            steps=[
+                Parallel(
+                    Step(name="parallel-step-1", agent=agent1),
+                    Step(name="parallel-step-2", agent=agent2),
+                    name="parallel-container",
+                    description="Parallel execution",
+                )
+            ],
+        )
+
+        copy = workflow.deep_copy()
+
+        assert copy is not workflow
+        parallel_copy = copy.steps[0]
+        assert isinstance(parallel_copy, Parallel)
+        assert parallel_copy.name == "parallel-container"
+        assert parallel_copy.description == "Parallel execution"
+        # Agents inside parallel should be copied
+        assert parallel_copy.steps[0].agent is not agent1
+        assert parallel_copy.steps[1].agent is not agent2
+        assert parallel_copy.steps[0].agent.id == agent1.id
+        assert parallel_copy.steps[1].agent.id == agent2.id
+
+    def test_workflow_with_loop_steps(self, basic_agent):
+        """Test deep copying a workflow with Loop steps."""
+
+        def end_condition(outputs):
+            return len(outputs) >= 2
+
+        workflow = Workflow(
+            name="loop-workflow",
+            id="workflow-id",
+            steps=[
+                Loop(
+                    name="loop-container",
+                    description="Loop execution",
+                    steps=[Step(name="loop-step", agent=basic_agent)],
+                    max_iterations=5,
+                    end_condition=end_condition,
+                )
+            ],
+        )
+
+        copy = workflow.deep_copy()
+
+        assert copy is not workflow
+        loop_copy = copy.steps[0]
+        assert isinstance(loop_copy, Loop)
+        assert loop_copy.name == "loop-container"
+        assert loop_copy.description == "Loop execution"
+        assert loop_copy.max_iterations == 5
+        assert loop_copy.end_condition is end_condition  # Function reference preserved
+        # Agent inside loop should be copied
+        assert loop_copy.steps[0].agent is not basic_agent
+        assert loop_copy.steps[0].agent.id == basic_agent.id
+
+    def test_workflow_with_condition_steps(self, basic_agent):
+        """Test deep copying a workflow with Condition steps."""
+
+        def evaluator(step_input):
+            return True
+
+        workflow = Workflow(
+            name="condition-workflow",
+            id="workflow-id",
+            steps=[
+                Condition(
+                    name="condition-container",
+                    description="Conditional execution",
+                    evaluator=evaluator,
+                    steps=[Step(name="condition-step", agent=basic_agent)],
+                )
+            ],
+        )
+
+        copy = workflow.deep_copy()
+
+        assert copy is not workflow
+        condition_copy = copy.steps[0]
+        assert isinstance(condition_copy, Condition)
+        assert condition_copy.name == "condition-container"
+        assert condition_copy.description == "Conditional execution"
+        assert condition_copy.evaluator is evaluator  # Function reference preserved
+        # Agent inside condition should be copied
+        assert condition_copy.steps[0].agent is not basic_agent
+        assert condition_copy.steps[0].agent.id == basic_agent.id
+
+    def test_workflow_with_router_steps(self):
+        """Test deep copying a workflow with Router steps."""
+        agent1 = Agent(name="choice-1", id="choice-1-id")
+        agent2 = Agent(name="choice-2", id="choice-2-id")
+
+        def selector(step_input):
+            return [Step(name="selected", agent=agent1)]
+
+        workflow = Workflow(
+            name="router-workflow",
+            id="workflow-id",
+            steps=[
+                Router(
+                    name="router-container",
+                    description="Router execution",
+                    selector=selector,
+                    choices=[
+                        Step(name="choice-step-1", agent=agent1),
+                        Step(name="choice-step-2", agent=agent2),
+                    ],
+                )
+            ],
+        )
+
+        copy = workflow.deep_copy()
+
+        assert copy is not workflow
+        router_copy = copy.steps[0]
+        assert isinstance(router_copy, Router)
+        assert router_copy.name == "router-container"
+        assert router_copy.description == "Router execution"
+        assert router_copy.selector is selector  # Function reference preserved
+        # Choices should be copied
+        assert router_copy.choices[0].agent is not agent1
+        assert router_copy.choices[1].agent is not agent2
+        assert router_copy.choices[0].agent.id == agent1.id
+        assert router_copy.choices[1].agent.id == agent2.id
+
+    def test_workflow_with_steps_container(self):
+        """Test deep copying a workflow with Steps container."""
+        agent1 = Agent(name="steps-agent-1", id="steps-agent-1-id")
+        agent2 = Agent(name="steps-agent-2", id="steps-agent-2-id")
+
+        workflow = Workflow(
+            name="steps-workflow",
+            id="workflow-id",
+            steps=[
+                Steps(
+                    name="steps-container",
+                    description="Steps sequence",
+                    steps=[
+                        Step(name="step-1", agent=agent1),
+                        Step(name="step-2", agent=agent2),
+                    ],
+                )
+            ],
+        )
+
+        copy = workflow.deep_copy()
+
+        assert copy is not workflow
+        steps_copy = copy.steps[0]
+        assert isinstance(steps_copy, Steps)
+        assert steps_copy.name == "steps-container"
+        assert steps_copy.description == "Steps sequence"
+        assert steps_copy.steps[0].agent is not agent1
+        assert steps_copy.steps[1].agent is not agent2
+
+
+# ============================================================================
+# Workflow Deep Copy - Deeply Nested Structures
+# ============================================================================
+
+
+class TestWorkflowDeepCopyDeeplyNested:
+    """Tests for deeply nested step structures."""
+
+    def test_parallel_inside_loop(self):
+        """Test Parallel steps nested inside a Loop."""
+        agent1 = Agent(name="nested-agent-1", id="nested-agent-1-id")
+        agent2 = Agent(name="nested-agent-2", id="nested-agent-2-id")
+
+        workflow = Workflow(
+            name="nested-workflow",
+            id="workflow-id",
+            steps=[
+                Loop(
+                    name="outer-loop",
+                    max_iterations=3,
+                    steps=[
+                        Parallel(
+                            Step(name="inner-parallel-1", agent=agent1),
+                            Step(name="inner-parallel-2", agent=agent2),
+                            name="inner-parallel",
+                        )
+                    ],
+                )
+            ],
+        )
+
+        copy = workflow.deep_copy()
+
+        # Navigate to deeply nested agents
+        loop_copy = copy.steps[0]
+        parallel_copy = loop_copy.steps[0]
+        assert parallel_copy.steps[0].agent is not agent1
+        assert parallel_copy.steps[1].agent is not agent2
+        assert parallel_copy.steps[0].agent.id == agent1.id
+        assert parallel_copy.steps[1].agent.id == agent2.id
+
+    def test_condition_inside_parallel(self):
+        """Test Condition steps nested inside Parallel."""
+
+        def evaluator(step_input):
+            return True
+
+        agent1 = Agent(name="cond-agent-1", id="cond-agent-1-id")
+        agent2 = Agent(name="cond-agent-2", id="cond-agent-2-id")
+
+        workflow = Workflow(
+            name="nested-workflow",
+            id="workflow-id",
+            steps=[
+                Parallel(
+                    Condition(
+                        name="cond-1",
+                        evaluator=evaluator,
+                        steps=[Step(name="cond-step-1", agent=agent1)],
+                    ),
+                    Condition(
+                        name="cond-2",
+                        evaluator=evaluator,
+                        steps=[Step(name="cond-step-2", agent=agent2)],
+                    ),
+                    name="outer-parallel",
+                )
+            ],
+        )
+
+        copy = workflow.deep_copy()
+
+        parallel_copy = copy.steps[0]
+        cond1_copy = parallel_copy.steps[0]
+        cond2_copy = parallel_copy.steps[1]
+        assert cond1_copy.steps[0].agent is not agent1
+        assert cond2_copy.steps[0].agent is not agent2
+
+    def test_router_inside_condition(self):
+        """Test Router nested inside Condition."""
+
+        def evaluator(step_input):
+            return True
+
+        def selector(step_input):
+            return []
+
+        agent1 = Agent(name="router-choice-1", id="router-choice-1-id")
+        agent2 = Agent(name="router-choice-2", id="router-choice-2-id")
+
+        workflow = Workflow(
+            name="nested-workflow",
+            id="workflow-id",
+            steps=[
+                Condition(
+                    name="outer-condition",
+                    evaluator=evaluator,
+                    steps=[
+                        Router(
+                            name="inner-router",
+                            selector=selector,
+                            choices=[
+                                Step(name="choice-1", agent=agent1),
+                                Step(name="choice-2", agent=agent2),
+                            ],
+                        )
+                    ],
+                )
+            ],
+        )
+
+        copy = workflow.deep_copy()
+
+        condition_copy = copy.steps[0]
+        router_copy = condition_copy.steps[0]
+        assert router_copy.choices[0].agent is not agent1
+        assert router_copy.choices[1].agent is not agent2
+
+    def test_three_levels_nesting(self):
+        """Test 3 levels of nesting: Loop > Parallel > Condition > Agent."""
+
+        def evaluator(step_input):
+            return True
+
+        deep_agent = Agent(name="deep-agent", id="deep-agent-id")
+
+        workflow = Workflow(
+            name="deeply-nested-workflow",
+            id="workflow-id",
+            steps=[
+                Loop(
+                    name="level-1-loop",
+                    max_iterations=2,
+                    steps=[
+                        Parallel(
+                            Condition(
+                                name="level-3-condition",
+                                evaluator=evaluator,
+                                steps=[Step(name="deep-step", agent=deep_agent)],
+                            ),
+                            name="level-2-parallel",
+                        )
+                    ],
+                )
+            ],
+        )
+
+        copy = workflow.deep_copy()
+
+        # Navigate through 3 levels
+        loop_copy = copy.steps[0]
+        parallel_copy = loop_copy.steps[0]
+        condition_copy = parallel_copy.steps[0]
+        assert condition_copy.steps[0].agent is not deep_agent
+        assert condition_copy.steps[0].agent.id == deep_agent.id
+
+
+# ============================================================================
+# Workflow Deep Copy - Step Attribute Preservation
+# ============================================================================
+
+
+class TestWorkflowDeepCopyStepAttributes:
+    """Tests for Step attribute preservation during copying."""
+
+    def test_step_name_and_description_preserved(self, basic_agent):
+        """Test that Step name and description are preserved."""
+        workflow = Workflow(
+            name="attr-workflow",
+            id="workflow-id",
+            steps=[
+                Step(
+                    name="named-step",
+                    description="Step description",
+                    agent=basic_agent,
+                )
+            ],
+        )
+
+        copy = workflow.deep_copy()
+
+        assert copy.steps[0].name == "named-step"
+        assert copy.steps[0].description == "Step description"
+
+    def test_step_config_attributes_preserved(self, basic_agent):
+        """Test that Step configuration attributes are preserved."""
+        workflow = Workflow(
+            name="config-workflow",
+            id="workflow-id",
+            steps=[
+                Step(
+                    name="configured-step",
+                    agent=basic_agent,
+                    max_retries=5,
+                    skip_on_failure=True,
+                )
+            ],
+        )
+
+        copy = workflow.deep_copy()
+
+        assert copy.steps[0].max_retries == 5
+        assert copy.steps[0].skip_on_failure is True
+
+
+# ============================================================================
+# Agent/Team State Isolation Tests
+# ============================================================================
+
+
+class TestAgentStateIsolation:
+    """Tests for agent state isolation between copies."""
+
+    def test_metadata_changes_isolated(self):
+        """Changes to metadata in copy don't affect original."""
+        agent = Agent(
+            name="isolation-agent",
+            id="isolation-id",
+            metadata={"counter": 0, "user": "original"},
+        )
+        agents = [agent]
+
+        copy = get_agent_for_request("isolation-id", agents, create_fresh=True)
+
+        # Modify the copy
+        copy.metadata["counter"] = 100
+        copy.metadata["user"] = "modified"
+        copy.metadata["new_key"] = "new_value"
+
+        # Original should be unchanged
+        assert agent.metadata["counter"] == 0
+        assert agent.metadata["user"] == "original"
+        assert "new_key" not in agent.metadata
+
+    def test_internal_list_state_isolated(self):
+        """Internal list state like _mcp_tools_initialized_on_run is isolated."""
+        agent = Agent(name="list-agent", id="list-id")
+        # Simulate accumulated state
+        agent._mcp_tools_initialized_on_run = ["tool1", "tool2"]
+        agents = [agent]
+
+        copy = get_agent_for_request("list-id", agents, create_fresh=True)
+
+        # Copy should have empty/reset lists
+        assert copy._mcp_tools_initialized_on_run == []
+        # Original should be unchanged
+        assert len(agent._mcp_tools_initialized_on_run) == 2
+
+    def test_cached_session_reset(self):
+        """_cached_session should be None in copy."""
+        agent = Agent(name="session-agent", id="session-id")
+        agent._cached_session = "cached_value"  # type: ignore
+        agents = [agent]
+
+        copy = get_agent_for_request("session-id", agents, create_fresh=True)
+
+        assert copy._cached_session is None
+        assert agent._cached_session == "cached_value"
+
+
+class TestTeamStateIsolation:
+    """Tests for team state isolation between copies."""
+
+    def test_member_modification_isolated(self):
+        """Modifications to team members don't affect original."""
+        member = Agent(name="member", id="member-id", metadata={"role": "worker"})
+        team = Team(name="team", id="team-id", members=[member])
+        teams = [team]
+
+        copy = get_team_for_request("team-id", teams, create_fresh=True)
+
+        # Modify the copied member
+        copy.members[0].metadata["role"] = "leader"
+
+        # Original member should be unchanged
+        assert team.members[0].metadata["role"] == "worker"
+
+    def test_nested_team_member_isolation(self):
+        """Nested team members are also isolated."""
+        inner_agent = Agent(name="inner", id="inner-id")
+        inner_team = Team(name="inner-team", id="inner-team-id", members=[inner_agent])
+        outer_team = Team(name="outer-team", id="outer-team-id", members=[inner_team])
+        teams = [outer_team]
+
+        copy = get_team_for_request("outer-team-id", teams, create_fresh=True)
+
+        # The inner team should be different
+        copied_inner = copy.members[0]
+        assert copied_inner is not inner_team
+        # The inner agent should be different
+        assert copied_inner.members[0] is not inner_agent
+
+
+# ============================================================================
+# Workflow with Teams Tests
+# ============================================================================
+
+
+class TestWorkflowWithTeams:
+    """Tests for workflows containing teams."""
+
+    def test_workflow_step_with_team(self):
+        """Test team inside workflow step is copied."""
+        member = Agent(name="team-member", id="team-member-id")
+        team = Team(name="workflow-team", id="workflow-team-id", members=[member])
+
+        workflow = Workflow(
+            name="team-workflow",
+            id="workflow-id",
+            steps=[Step(name="team-step", team=team)],
+        )
+
+        copy = workflow.deep_copy()
+
+        # Team should be copied
+        assert copy.steps[0].team is not team
+        assert copy.steps[0].team.id == team.id
+        # Team member should be copied
+        assert copy.steps[0].team.members[0] is not member
+        assert copy.steps[0].team.members[0].id == member.id
+
+    def test_workflow_parallel_with_teams(self):
+        """Test parallel execution with teams."""
+        member1 = Agent(name="member-1", id="member-1-id")
+        member2 = Agent(name="member-2", id="member-2-id")
+        team1 = Team(name="team-1", id="team-1-id", members=[member1])
+        team2 = Team(name="team-2", id="team-2-id", members=[member2])
+
+        workflow = Workflow(
+            name="parallel-teams-workflow",
+            id="workflow-id",
+            steps=[
+                Parallel(
+                    Step(name="team-step-1", team=team1),
+                    Step(name="team-step-2", team=team2),
+                    name="parallel-teams",
+                )
+            ],
+        )
+
+        copy = workflow.deep_copy()
+
+        parallel_copy = copy.steps[0]
+        assert parallel_copy.steps[0].team is not team1
+        assert parallel_copy.steps[1].team is not team2
+
+
+# ============================================================================
+# Edge Cases and Error Handling
+# ============================================================================
+
+
+class TestEdgeCases:
+    """Tests for edge cases in deep copying."""
+
+    def test_empty_workflow_steps(self):
+        """Test workflow with no steps."""
+        workflow = Workflow(name="empty-workflow", id="workflow-id", steps=[])
+
+        copy = workflow.deep_copy()
+
+        assert copy is not workflow
+        assert copy.steps == []
+
+    def test_none_workflow_steps(self):
+        """Test workflow with None steps."""
+        workflow = Workflow(name="none-workflow", id="workflow-id", steps=None)
+
+        copy = workflow.deep_copy()
+
+        assert copy is not workflow
+        assert copy.steps is None
+
+    def test_workflow_with_empty_parallel(self):
+        """Test Parallel with no steps."""
+        workflow = Workflow(
+            name="empty-parallel-workflow",
+            id="workflow-id",
+            steps=[Parallel(name="empty-parallel")],
+        )
+
+        copy = workflow.deep_copy()
+
+        assert copy is not workflow
+        assert isinstance(copy.steps[0], Parallel)
+
+    def test_workflow_with_empty_loop(self):
+        """Test Loop with no steps."""
+        workflow = Workflow(
+            name="empty-loop-workflow",
+            id="workflow-id",
+            steps=[Loop(name="empty-loop", steps=[], max_iterations=3)],
+        )
+
+        copy = workflow.deep_copy()
+
+        assert copy is not workflow
+        assert isinstance(copy.steps[0], Loop)
+        assert copy.steps[0].max_iterations == 3
+
+    def test_workflow_update_parameter(self):
+        """Test deep_copy with update parameter."""
+        workflow = Workflow(
+            name="original-name",
+            id="original-id",
+            description="Original description",
+        )
+
+        copy = workflow.deep_copy(update={"name": "updated-name"})
+
+        assert copy.name == "updated-name"
+        assert copy.id == "original-id"  # ID should be preserved
+        assert workflow.name == "original-name"  # Original unchanged
+
+    def test_mixed_step_types(self):
+        """Test workflow with mixed step types."""
+        agent1 = Agent(name="agent-1", id="agent-1-id")
+        agent2 = Agent(name="agent-2", id="agent-2-id")
+        member = Agent(name="member", id="member-id")
+        team = Team(name="team", id="team-id", members=[member])
+
+        def function_executor(step_input):
+            return StepOutput(content="result")
+
+        workflow = Workflow(
+            name="mixed-workflow",
+            id="workflow-id",
+            steps=[
+                Step(name="agent-step", agent=agent1),
+                Step(name="team-step", team=team),
+                Step(name="function-step", executor=function_executor),
+                Parallel(
+                    Step(name="parallel-agent", agent=agent2),
+                    name="parallel-section",
+                ),
+            ],
+        )
+
+        copy = workflow.deep_copy()
+
+        # Verify all step types are copied correctly
+        assert copy.steps[0].agent is not agent1
+        assert copy.steps[1].team is not team
+        assert copy.steps[2].executor is function_executor
+        assert copy.steps[3].steps[0].agent is not agent2
+
+
+# ============================================================================
+# Callable Workflow Steps (Workflows 1.0 style)
+# ============================================================================
+
+
+class TestCallableWorkflowSteps:
+    """Tests for workflows using callable steps (function-based)."""
+
+    def test_callable_steps_preserved(self):
+        """Test that callable steps function is preserved."""
+
+        def my_workflow_function(workflow, execution_input):
+            return "result"
+
+        workflow = Workflow(
+            name="callable-workflow",
+            id="workflow-id",
+            steps=my_workflow_function,
+        )
+
+        copy = workflow.deep_copy()
+
+        # Function reference should be preserved
+        assert copy.steps is my_workflow_function
+
+
+# ============================================================================
+# Concurrent Request Simulation
+# ============================================================================
+
+
+class TestConcurrentRequestSimulation:
+    """Tests simulating concurrent request scenarios."""
+
+    def test_multiple_copies_independent(self):
+        """Multiple copies from same template are independent."""
+        template = Agent(
+            name="template",
+            id="template-id",
+            metadata={"request_id": None},
+        )
+        agents = [template]
+
+        # Simulate 3 concurrent requests
+        copy1 = get_agent_for_request("template-id", agents, create_fresh=True)
+        copy2 = get_agent_for_request("template-id", agents, create_fresh=True)
+        copy3 = get_agent_for_request("template-id", agents, create_fresh=True)
+
+        # Modify each copy
+        copy1.metadata["request_id"] = "request-1"
+        copy2.metadata["request_id"] = "request-2"
+        copy3.metadata["request_id"] = "request-3"
+
+        # All should be independent
+        assert template.metadata["request_id"] is None
+        assert copy1.metadata["request_id"] == "request-1"
+        assert copy2.metadata["request_id"] == "request-2"
+        assert copy3.metadata["request_id"] == "request-3"
+
+        # All copies are different instances
+        assert copy1 is not copy2
+        assert copy2 is not copy3
+        assert copy1 is not copy3
+
+    def test_workflow_multiple_copies_independent(self):
+        """Multiple workflow copies are independent."""
+        agent = Agent(name="workflow-agent", id="workflow-agent-id")
+        template = Workflow(
+            name="template-workflow",
+            id="template-workflow-id",
+            steps=[Step(name="step", agent=agent)],
+        )
+        workflows = [template]
+
+        copy1 = get_workflow_for_request("template-workflow-id", workflows, create_fresh=True)
+        copy2 = get_workflow_for_request("template-workflow-id", workflows, create_fresh=True)
+
+        # Verify independence
+        assert copy1 is not copy2
+        assert copy1.steps[0].agent is not copy2.steps[0].agent
+        assert copy1.steps[0].agent is not agent
+        assert copy2.steps[0].agent is not agent
+
+
+# ============================================================================
+# Shared Resources Tests
+# ============================================================================
+
+
+class TestSharedResources:
+    """Tests verifying that heavy resources are shared, not copied."""
+
+    def test_workflow_agent_field_copied(self):
+        """Workflow.agent field (for workflow orchestration) should be copied."""
+        orchestrator = Agent(name="orchestrator", id="orchestrator-id")
+        workflow = Workflow(
+            name="orchestrated-workflow",
+            id="workflow-id",
+            agent=orchestrator,
+        )
+
+        copy = workflow.deep_copy()
+
+        # Orchestrator agent should be copied
+        assert copy.agent is not orchestrator
+        assert copy.agent.id == orchestrator.id
