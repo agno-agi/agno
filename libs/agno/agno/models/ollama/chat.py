@@ -63,7 +63,9 @@ class Ollama(Model):
         headers = {}
 
         # Auto-detect cloud usage if cloud_model is True or host points to ollama.com
-        is_cloud = self.cloud_model or (host and "ollama.com" in host)
+        is_cloud = self.cloud_model or (
+            host and (host.startswith("https://ollama.com") or host.startswith("http://ollama.com"))
+        )
 
         if self.api_key and is_cloud:
             if not host:
