@@ -68,8 +68,18 @@ class Ollama(Model):
         if self.api_key and is_cloud:
             if not host:
                 host = "https://ollama.com"
-            headers["authorization"] = f"Bearer {self.api_key}"
-            log_debug(f"Using Ollama cloud endpoint: {host}")
+            # Security: Ensure cloud endpoints use HTTPS to protect API keys
+            elif not host.startswith("https://"):
+                log_warning(
+                    f"Cloud mode enabled but host '{host}' does not use HTTPS. "
+                    "API keys should only be sent over secure connections. "
+                    "Using local mode instead."
+                )
+                is_cloud = False
+
+            if is_cloud:
+                headers["authorization"] = f"Bearer {self.api_key}"
+                log_debug(f"Using Ollama cloud endpoint: {host}")
         elif self.api_key and not is_cloud:
             log_debug(f"Using local Ollama instance: {host or 'default host'}")
 
