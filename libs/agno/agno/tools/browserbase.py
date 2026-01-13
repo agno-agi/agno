@@ -96,7 +96,7 @@ class BrowserbaseTools(Toolkit):
         Use provided connect_url or ensure we have a session with a connect_url
         """
         if connect_url:
-            self._connect_url = connect_url if connect_url else ""  # type: ignore
+            self._connect_url = connect_url
         elif not self._connect_url:
             self._ensure_session()
 
@@ -104,8 +104,10 @@ class BrowserbaseTools(Toolkit):
             self._playwright = sync_playwright().start()  # type: ignore
             if self._playwright:
                 self._browser = self._playwright.chromium.connect_over_cdp(self._connect_url)
-            context = self._browser.contexts[0] if self._browser else ""
-            self._page = context.pages[0] or context.new_page()  # type: ignore
+            if not self._browser:
+                raise RuntimeError("Browser failed to connect")
+            context = self._browser.contexts[0]
+            self._page = context.pages[0] if context.pages else context.new_page()
 
     def _cleanup(self):
         """Clean up browser resources."""
@@ -197,7 +199,7 @@ class BrowserbaseTools(Toolkit):
         """
         try:
             self._initialize_browser(connect_url)
-            current_url = self._page.url() if self._page else ""
+            current_url = self._page.url if self._page else ""
             return json.dumps({"status": "success", "url": current_url})
         except Exception as e:
             self._cleanup()
@@ -216,7 +218,7 @@ class BrowserbaseTools(Toolkit):
             self._initialize_browser(connect_url)
             if self._page:
                 self._page.go_back(wait_until="networkidle")
-            new_url = self._page.url() if self._page else ""
+            new_url = self._page.url if self._page else ""
             return json.dumps({"status": "success", "action": "go_back", "url": new_url})
         except Exception as e:
             self._cleanup()
@@ -235,7 +237,7 @@ class BrowserbaseTools(Toolkit):
             self._initialize_browser(connect_url)
             if self._page:
                 self._page.go_forward(wait_until="networkidle")
-            new_url = self._page.url() if self._page else ""
+            new_url = self._page.url if self._page else ""
             return json.dumps({"status": "success", "action": "go_forward", "url": new_url})
         except Exception as e:
             self._cleanup()
@@ -254,7 +256,7 @@ class BrowserbaseTools(Toolkit):
             self._initialize_browser(connect_url)
             if self._page:
                 self._page.reload(wait_until="networkidle")
-            current_url = self._page.url() if self._page else ""
+            current_url = self._page.url if self._page else ""
             return json.dumps({"status": "success", "action": "reload", "url": current_url})
         except Exception as e:
             self._cleanup()

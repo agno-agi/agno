@@ -39,9 +39,9 @@ class PlaywrightTools(Toolkit):
         tools.append(self.fill_input)
         tools.append(self.wait_for_element)
         tools.append(self.scroll_page)
-        tools.append(self.extract_page_text)
+        tools.append(self.extract_text)
+        tools.append(self.get_page_title)
         tools.append(self.submit_form)
-        tools.append(self.wait_for_element)
 
         super().__init__(name="playwright_tools", tools=tools, **kwargs)
 
@@ -111,23 +111,32 @@ class PlaywrightTools(Toolkit):
     def go_back(self) -> str:
         """Navigates back in browser history using playwright browser."""
         self._ensure_browser_ready()
-        self._page.go_back(wait_until="networkidle")
-        new_url = self._page.url
-        return json.dumps({"status": "success", "action": "go_back", "url": new_url})
+        try:
+            self._page.go_back(wait_until="networkidle", timeout=self.timeout)
+            new_url = self._page.url
+            return json.dumps({"status": "success", "action": "go_back", "url": new_url})
+        except Exception as e:
+            return json.dumps({"status": "error", "action": "go_back", "error": str(e)})
 
     def go_forward(self) -> str:
         """Navigates forward in browser history using playwright browser."""
         self._ensure_browser_ready()
-        self._page.go_forward(wait_until="networkidle")
-        new_url = self._page.url
-        return json.dumps({"status": "success", "action": "go_forward", "url": new_url})
+        try:
+            self._page.go_forward(wait_until="networkidle", timeout=self.timeout)
+            new_url = self._page.url
+            return json.dumps({"status": "success", "action": "go_forward", "url": new_url})
+        except Exception as e:
+            return json.dumps({"status": "error", "action": "go_forward", "error": str(e)})
 
     def reload_page(self) -> str:
         """Reloads/refreshes the current page using playwright browser."""
         self._ensure_browser_ready()
-        self._page.reload(wait_until="networkidle")
-        current_url = self._page.url
-        return json.dumps({"status": "success", "action": "reload", "url": current_url})
+        try:
+            self._page.reload(wait_until="networkidle", timeout=self.timeout)
+            current_url = self._page.url
+            return json.dumps({"status": "success", "action": "reload", "url": current_url})
+        except Exception as e:
+            return json.dumps({"status": "error", "action": "reload", "error": str(e)})
 
     def click_element(self, selector: str) -> str:
         """Clicks on an element using playwright browser."""
@@ -148,8 +157,18 @@ class PlaywrightTools(Toolkit):
         return json.dumps({"status": "success", "action": "wait_for_element", "selector": selector})
 
     def scroll_page(self, direction: str = "down", pixels: int = 500) -> str:
-        """Scrolls the page using playwright browser."""
+        """Scrolls the page using playwright browser.
+
+        Args:
+            direction: Direction to scroll ("up", "down", "left", "right")
+            pixels: Number of pixels to scroll (1-10000, default: 500)
+
+        Returns:
+            JSON string with scroll status
+        """
         self._ensure_browser_ready()
+        # Validate pixels parameter
+        pixels = max(1, min(int(pixels), 10000))
         if direction == "down":
             self._page.evaluate(f"window.scrollBy(0, {pixels})")
         elif direction == "up":
@@ -162,19 +181,39 @@ class PlaywrightTools(Toolkit):
             raise ValueError(f"Invalid direction: {direction}. Use 'up', 'down', 'left', or 'right'")
         return json.dumps({"status": "success", "action": "scroll", "direction": direction, "pixels": pixels})
 
-    def extract_page_text(self) -> str:
-        """Extracts all text content from the entire page."""
+    def extract_text(self, selector: Optional[str] = None) -> str:
+        """Extracts text content from the page or a specific element.
+
+        Args:
+            selector (str, optional): CSS selector for specific element. If None, extracts all page text
+
+        Returns:
+            JSON string with extracted text
+        """
         self._ensure_browser_ready()
 
         try:
-            # Wait for page to be fully loaded
             self._page.wait_for_load_state("networkidle", timeout=self.timeout)
-            text = self._page.evaluate("document.body.textContent")
+            if selector:
+                element = self._page.query_selector(selector)
+                text = element.text_content() if element else ""
+            else:
+                text = self._page.evaluate("document.body.innerText")
 
-            return json.dumps({"status": "success", "text": text})
+            return json.dumps({"status": "success", "text": text, "selector": selector})
 
         except Exception as e:
             return json.dumps({"status": "error", "error": str(e)})
+
+    def get_page_title(self) -> str:
+        """Gets the title of the current page.
+
+        Returns:
+            JSON string with the page title
+        """
+        self._ensure_browser_ready()
+        title = self._page.title()
+        return json.dumps({"status": "success", "title": title})
 
     def submit_form(self, form_selector: str = "form", wait_for_navigation: bool = True) -> str:
         """Submits a form and optionally waits for navigation/page change.
@@ -186,12 +225,13 @@ class PlaywrightTools(Toolkit):
         self._ensure_browser_ready()
 
         try:
+            form_locator = self._page.locator(form_selector)
             if wait_for_navigation:
                 # Wait for navigation to complete after form submission
                 with self._page.expect_navigation(timeout=self.timeout):
-                    self._page.evaluate(f"document.querySelector('{form_selector}').submit()")
+                    form_locator.evaluate("el => el.submit()")
             else:
-                self._page.evaluate(f"document.querySelector('{form_selector}').submit()")
+                form_locator.evaluate("el => el.submit()")
 
             # Wait for content to load after submission
             self._page.wait_for_load_state("networkidle", timeout=self.timeout)
