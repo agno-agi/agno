@@ -547,7 +547,7 @@ async def test_async_search_uses_async_embedder(tracking_embedder):
         tracking_embedder.async_call_count = 0
 
         # Call async_search - should use async embedder
-        results = await db.async_search("test query", limit=1)
+        await db.async_search("test query", limit=1)
 
         # Verify async embedder was used, not sync
         assert tracking_embedder.async_call_count > 0, "async_get_embedding should have been called"
@@ -589,7 +589,7 @@ async def test_async_vector_search_uses_async_embedder(tracking_embedder):
         tracking_embedder.async_call_count = 0
 
         # Call async_vector_search directly
-        results = await db.async_vector_search("test query", limit=1)
+        await db.async_vector_search("test query", limit=1)
 
         assert tracking_embedder.async_call_count > 0, "async_get_embedding should have been called"
         assert tracking_embedder.sync_call_count == 0, "sync get_embedding should NOT have been called"
