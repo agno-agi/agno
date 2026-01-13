@@ -128,7 +128,7 @@ class BrowserbaseTools(Toolkit):
             )
 
         if connect_url:
-            self._connect_url = connect_url if connect_url else ""  # type: ignore
+            self._connect_url = connect_url
         elif not self._connect_url:
             self._ensure_session()
 
@@ -136,8 +136,10 @@ class BrowserbaseTools(Toolkit):
             self._playwright = sync_playwright().start()  # type: ignore
             if self._playwright:
                 self._browser = self._playwright.chromium.connect_over_cdp(self._connect_url)
-            context = self._browser.contexts[0] if self._browser else ""
-            self._page = context.pages[0] or context.new_page()  # type: ignore
+            if not self._browser:
+                raise RuntimeError("Browser failed to connect")
+            context = self._browser.contexts[0]
+            self._page = context.pages[0] if context.pages else context.new_page()
 
     def _cleanup(self):
         """Clean up sync browser resources."""
@@ -305,7 +307,7 @@ class BrowserbaseTools(Toolkit):
             )
 
         if connect_url:
-            self._connect_url = connect_url if connect_url else ""  # type: ignore
+            self._connect_url = connect_url
         elif not self._connect_url:
             self._ensure_session()
 
@@ -313,9 +315,10 @@ class BrowserbaseTools(Toolkit):
             self._async_playwright = await async_playwright().start()  # type: ignore
             if self._async_playwright:
                 self._async_browser = await self._async_playwright.chromium.connect_over_cdp(self._connect_url)
-            context = self._async_browser.contexts[0] if self._async_browser else None
-            if context:
-                self._async_page = context.pages[0] if context.pages else await context.new_page()
+            if not self._async_browser:
+                raise RuntimeError("Browser failed to connect")
+            context = self._async_browser.contexts[0]
+            self._async_page = context.pages[0] if context.pages else await context.new_page()
 
     async def _acleanup(self):
         """Clean up async browser resources."""
