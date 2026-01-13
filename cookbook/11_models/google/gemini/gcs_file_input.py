@@ -13,19 +13,16 @@ Requirements:
 Supported formats: PDF, JSON, HTML, CSS, XML, images (PNG, JPEG, WebP, GIF)
 """
 
-from os import getenv
-
 from agno.agent import Agent
 from agno.media import File
 from agno.models.google import Gemini
 
 # GCS requires Vertex AI (OAuth credentials), not API keys
+# Set GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION env vars
 agent = Agent(
     model=Gemini(
         id="gemini-2.0-flash",
         vertexai=True,
-        project_id=getenv("GOOGLE_CLOUD_PROJECT"),
-        location=getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
     ),
     markdown=True,
 )
