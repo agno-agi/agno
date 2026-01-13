@@ -12,8 +12,14 @@ Read more here to find out how to pull model and setup API keys https://docs.oll
 from agno.agent import Agent
 from agno.models.ollama import Ollama
 
+# Option 1: Using cloud_model parameter (recommended)
 agent = Agent(
-    model=Ollama(id="kimi-k2:1t-cloud", cloud_model=True, host="https://ollama.com"),
+    model=Ollama(id="kimi-k2:1t-cloud", cloud_model=True),
 )
+
+# Option 2: Using host parameter (cloud auto-detected)
+# agent = Agent(
+#     model=Ollama(id="kimi-k2:1t-cloud", host="https://ollama.com"),
+# )
 
 agent.print_response("What is the capital of France?", stream=True)

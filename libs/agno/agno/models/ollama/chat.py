@@ -63,6 +63,7 @@ class Ollama(Model):
         headers = {}
 
         # Auto-detect cloud usage if cloud_model is True or host is exactly https://ollama.com
+        # Note: rstrip('/') handles trailing slashes for better UX
         is_cloud = self.cloud_model or (host and host.rstrip("/") == "https://ollama.com")
 
         if self.api_key and is_cloud:
