@@ -9883,16 +9883,24 @@ class Agent:
 
             field_value = getattr(self, f.name)
             if field_value is not None:
-                fields_for_new_agent[f.name] = self._deep_copy_field(f.name, field_value)
+                try:
+                    fields_for_new_agent[f.name] = self._deep_copy_field(f.name, field_value)
+                except Exception as e:
+                    log_warning(f"Failed to deep copy field '{f.name}': {e}. Using original value.")
+                    fields_for_new_agent[f.name] = field_value
 
         # Update fields if provided
         if update:
             fields_for_new_agent.update(update)
 
         # Create a new Agent
-        new_agent = self.__class__(**fields_for_new_agent)
-        log_debug(f"Created new {self.__class__.__name__}")
-        return new_agent
+        try:
+            new_agent = self.__class__(**fields_for_new_agent)
+            log_debug(f"Created new {self.__class__.__name__}")
+            return new_agent
+        except Exception as e:
+            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
+            raise
 
     def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
         """Helper method to deep copy a field based on its type."""
@@ -9918,6 +9926,7 @@ class Agent:
                             try:
                                 copied_tools.append(deepcopy(tool))
                             except Exception:
+                                # Tool can't be deep copied, share by reference
                                 copied_tools.append(tool)
                     except Exception:
                         # MCP detection failed, share tool by reference to be safe
@@ -9938,6 +9947,10 @@ class Agent:
             "parser_model",
             "output_model",
             "session_summary_manager",
+            "culture_manager",
+            "compression_manager",
+            "learning",
+            "skills",
         ):
             return field_value
 

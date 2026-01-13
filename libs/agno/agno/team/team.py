@@ -9418,16 +9418,24 @@ class Team:
 
             field_value = getattr(self, f.name)
             if field_value is not None:
-                fields_for_new_team[f.name] = self._deep_copy_field(f.name, field_value)
+                try:
+                    fields_for_new_team[f.name] = self._deep_copy_field(f.name, field_value)
+                except Exception as e:
+                    log_warning(f"Failed to deep copy field '{f.name}': {e}. Using original value.")
+                    fields_for_new_team[f.name] = field_value
 
         # Update fields if provided
         if update:
             fields_for_new_team.update(update)
 
         # Create a new Team
-        new_team = self.__class__(**fields_for_new_team)
-        log_debug(f"Created new {self.__class__.__name__}")
-        return new_team
+        try:
+            new_team = self.__class__(**fields_for_new_team)
+            log_debug(f"Created new {self.__class__.__name__}")
+            return new_team
+        except Exception as e:
+            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
+            raise
 
     def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
         """Helper method to deep copy a field based on its type."""
@@ -9459,8 +9467,10 @@ class Team:
                             try:
                                 copied_tools.append(deepcopy(tool))
                             except Exception:
+                                # Tool can't be deep copied, share by reference
                                 copied_tools.append(tool)
                     except Exception:
+                        # MCP detection failed, share tool by reference to be safe
                         copied_tools.append(tool)
                 return copied_tools
             except Exception as e:
@@ -9478,6 +9488,10 @@ class Team:
             "parser_model",
             "output_model",
             "session_summary_manager",
+            "culture_manager",
+            "compression_manager",
+            "learning",
+            "skills",
         ):
             return field_value
 

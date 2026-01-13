@@ -4553,9 +4553,14 @@ class Workflow:
             fields_for_new_workflow.update(update)
 
         # Create a new Workflow
-        new_workflow = self.__class__(**fields_for_new_workflow)
-        log_debug(f"Created new {self.__class__.__name__}")
-        return new_workflow
+        try:
+            new_workflow = self.__class__(**fields_for_new_workflow)
+            log_debug(f"Created new {self.__class__.__name__}")
+            return new_workflow
+        except Exception as e:
+            from agno.utils.log import log_error
+            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
+            raise
 
     def _deep_copy_steps(self, steps: Any) -> Any:
         """Deep copy workflow steps, handling nested agents and teams."""
