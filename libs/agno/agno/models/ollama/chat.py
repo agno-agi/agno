@@ -28,6 +28,11 @@ class Ollama(Model):
     A class for interacting with Ollama models.
 
     For more information, see: https://github.com/ollama/ollama/blob/main/docs/api.md
+
+    Attributes:
+        cloud_model: When True, uses Ollama cloud endpoint (https://ollama.com) with API key authentication.
+                     When False (default), uses local Ollama instance. The cloud endpoint is also
+                     auto-detected when host is set to https://ollama.com.
     """
 
     id: str = "llama3.1"
@@ -47,7 +52,7 @@ class Ollama(Model):
     timeout: Optional[Any] = None
     api_key: Optional[str] = field(default_factory=lambda: getenv("OLLAMA_API_KEY"))
     client_params: Optional[Dict[str, Any]] = None
-    cloud_model: Optional[bool] = False
+    cloud_model: bool = False
 
     # Ollama clients
     client: Optional[OllamaClient] = None
@@ -57,11 +62,26 @@ class Ollama(Model):
         host = self.host
         headers = {}
 
-        if self.api_key and self.cloud_model:
+        # Auto-detect cloud usage if cloud_model is True or host is exactly https://ollama.com
+        is_cloud = self.cloud_model or (host and host.rstrip("/") == "https://ollama.com")
+
+        if self.api_key and is_cloud:
             if not host:
                 host = "https://ollama.com"
-            headers["authorization"] = f"Bearer {self.api_key}"
-            log_debug(f"Using Ollama cloud endpoint: {host}")
+            # Security: Ensure cloud endpoints use HTTPS to protect API keys
+            elif not host.startswith("https://"):
+                log_warning(
+                    f"Cloud mode enabled but host '{host}' does not use HTTPS. "
+                    "API keys should only be sent over secure connections. "
+                    "Using local mode instead."
+                )
+                is_cloud = False
+
+            if is_cloud:
+                headers["authorization"] = f"Bearer {self.api_key}"
+                log_debug(f"Using Ollama cloud endpoint: {host}")
+        elif self.api_key and not is_cloud:
+            log_debug(f"Using local Ollama instance: {host or 'default host'}")
 
         base_params = {
             "host": host,
