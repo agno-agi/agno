@@ -62,8 +62,8 @@ class Ollama(Model):
         host = self.host
         headers = {}
 
-        # Auto-detect cloud usage if cloud_model is True or host points to ollama.com via HTTPS
-        is_cloud = self.cloud_model or (host and host.startswith("https://ollama.com"))
+        # Auto-detect cloud usage if cloud_model is True or host is exactly https://ollama.com
+        is_cloud = self.cloud_model or (host and host.rstrip("/") == "https://ollama.com")
 
         if self.api_key and is_cloud:
             if not host:
@@ -71,7 +71,7 @@ class Ollama(Model):
             headers["authorization"] = f"Bearer {self.api_key}"
             log_debug(f"Using Ollama cloud endpoint: {host}")
         elif self.api_key and not is_cloud:
-            log_debug("API key is set but cloud_model=False. Using local Ollama instance.")
+            log_debug(f"API key is set but cloud_model=False. Using local Ollama instance at {host or 'default host'}.")
 
         base_params = {
             "host": host,
