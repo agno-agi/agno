@@ -13,7 +13,7 @@ Requirements:
 Supported formats: PDF, JSON, HTML, CSS, XML, images (PNG, JPEG, WebP, GIF)
 """
 
-import os
+from os import getenv
 
 from agno.agent import Agent
 from agno.media import File
@@ -24,8 +24,8 @@ agent = Agent(
     model=Gemini(
         id="gemini-2.0-flash",
         vertexai=True,
-        project_id=os.getenv("GOOGLE_CLOUD_PROJECT"),
-        location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
+        project_id=getenv("GOOGLE_CLOUD_PROJECT"),
+        location=getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
     ),
     markdown=True,
 )
