@@ -4601,8 +4601,6 @@ class Workflow:
             step_kwargs: Dict[str, Any] = {}
             if step.name:
                 step_kwargs["name"] = step.name
-            if step.step_id:
-                step_kwargs["step_id"] = step.step_id
             if step.description:
                 step_kwargs["description"] = step.description
             if step.executor:
