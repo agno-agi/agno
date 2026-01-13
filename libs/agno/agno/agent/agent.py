@@ -9904,19 +9904,29 @@ class Agent:
 
         # For tools, share MCP tools but copy others
         if field_name == "tools" and field_value is not None:
-            copied_tools = []
-            for tool in field_value:
-                # Share MCP tools (they maintain server connections)
-                if hasattr(type(tool), "__mro__") and any(
-                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-                ):
-                    copied_tools.append(tool)
-                else:
+            try:
+                copied_tools = []
+                for tool in field_value:
                     try:
-                        copied_tools.append(deepcopy(tool))
+                        # Share MCP tools (they maintain server connections)
+                        is_mcp_tool = hasattr(type(tool), "__mro__") and any(
+                            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                        )
+                        if is_mcp_tool:
+                            copied_tools.append(tool)
+                        else:
+                            try:
+                                copied_tools.append(deepcopy(tool))
+                            except Exception:
+                                copied_tools.append(tool)
                     except Exception:
+                        # MCP detection failed, share tool by reference to be safe
                         copied_tools.append(tool)
-            return copied_tools
+                return copied_tools
+            except Exception as e:
+                # If entire tools processing fails, log and return original list
+                log_warning(f"Failed to process tools for deep copy: {e}")
+                return field_value
 
         # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
         if field_name in ("db", "model", "reasoning_model", "knowledge", "memory_manager"):

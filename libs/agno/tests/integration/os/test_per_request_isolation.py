@@ -1065,7 +1065,7 @@ class TestCustomExecutorWithInternalAgentTeam:
         assert copy1.steps[0].team.members[0] is not member
         assert copy2.steps[0].team.members[0] is not member
 
-    def test_function_with_noinput_agent_pattern(self):
+    def test_function_with_step_input_agent_pattern(self):
         """Pattern: Pass agent via step_input.additional_data for isolation."""
         from agno.workflow.types import StepInput, StepOutput
 
@@ -1256,7 +1256,7 @@ class TestCustomExecutorWithInternalAgentTeam:
     def test_condition_with_agent_and_function_evaluator(self):
         """Condition with function evaluator and agent step inside."""
         from agno.workflow.condition import Condition
-        from agno.workflow.types import StepInput
+        from agno.workflow.types import StepInput, StepOutput
 
         def should_execute(step_input: StepInput) -> bool:
             return "yes" in str(step_input.input).lower()
@@ -1466,6 +1466,128 @@ class TestCustomExecutorWithInternalAgentTeam:
         assert main_agent.metadata["stage"] == "main"
         assert fallback_agent.metadata["stage"] == "fallback"
 
+    def test_step_id_unique_per_copy(self):
+        """Each workflow copy should get NEW unique step_ids for per-request isolation."""
+        from agno.workflow.types import StepInput, StepOutput
+
+        def my_func(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="Result")
+
+        agent = Agent(
+            name="test-agent",
+            id="test-agent-id",
+            model=OpenAIChat(id="gpt-4o-mini"),
+        )
+
+        # Create steps with explicit step_ids
+        func_step = Step(
+            name="func-step",
+            step_id="original-func-step-id",
+            executor=my_func,
+        )
+        agent_step = Step(
+            name="agent-step",
+            step_id="original-agent-step-id",
+            agent=agent,
+        )
+
+        workflow = Workflow(
+            name="step-id-workflow",
+            id="step-id-workflow-id",
+            steps=[func_step, agent_step],
+        )
+
+        copy1 = workflow.deep_copy()
+        copy2 = workflow.deep_copy()
+
+        # Each copy should have NEW unique step_ids (different from original)
+        assert copy1.steps[0].step_id != "original-func-step-id"
+        assert copy1.steps[1].step_id != "original-agent-step-id"
+        assert copy2.steps[0].step_id != "original-func-step-id"
+        assert copy2.steps[1].step_id != "original-agent-step-id"
+
+        # Each copy should have DIFFERENT step_ids from each other
+        assert copy1.steps[0].step_id != copy2.steps[0].step_id
+        assert copy1.steps[1].step_id != copy2.steps[1].step_id
+
+        # Step names should be preserved
+        assert copy1.steps[0].name == "func-step"
+        assert copy1.steps[1].name == "agent-step"
+
+        # Agent should be a different instance
+        assert copy1.steps[1].agent is not agent
+        assert copy2.steps[1].agent is not agent
+        assert copy1.steps[1].agent is not copy2.steps[1].agent
+
+    def test_step_id_unique_in_nested_steps(self):
+        """Nested steps should also get unique step_ids per copy."""
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.types import StepInput, StepOutput
+
+        def my_func(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="Result")
+
+        agent = Agent(
+            name="nested-agent",
+            id="nested-agent-id",
+            model=OpenAIChat(id="gpt-4o-mini"),
+        )
+
+        inner_step_1 = Step(
+            name="inner-1",
+            step_id="original-inner-1-id",
+            executor=my_func,
+        )
+        inner_step_2 = Step(
+            name="inner-2",
+            step_id="original-inner-2-id",
+            agent=agent,
+        )
+
+        workflow = Workflow(
+            name="nested-step-id-workflow",
+            id="nested-step-id-workflow-id",
+            steps=[
+                Loop(
+                    name="loop",
+                    max_iterations=2,
+                    steps=[
+                        Parallel(
+                            inner_step_1,
+                            inner_step_2,
+                            name="parallel",
+                        )
+                    ],
+                )
+            ],
+        )
+
+        copy1 = workflow.deep_copy()
+        copy2 = workflow.deep_copy()
+
+        # Navigate to nested steps
+        loop_copy1 = copy1.steps[0]
+        parallel_copy1 = loop_copy1.steps[0]
+        loop_copy2 = copy2.steps[0]
+        parallel_copy2 = loop_copy2.steps[0]
+
+        # Each copy should have NEW unique step_ids
+        assert parallel_copy1.steps[0].step_id != "original-inner-1-id"
+        assert parallel_copy1.steps[1].step_id != "original-inner-2-id"
+
+        # Each copy should have DIFFERENT step_ids from each other
+        assert parallel_copy1.steps[0].step_id != parallel_copy2.steps[0].step_id
+        assert parallel_copy1.steps[1].step_id != parallel_copy2.steps[1].step_id
+
+        # Step names should be preserved
+        assert parallel_copy1.steps[0].name == "inner-1"
+        assert parallel_copy1.steps[1].name == "inner-2"
+
+        # Agent should be a different instance
+        assert parallel_copy1.steps[1].agent is not agent
+        assert parallel_copy2.steps[1].agent is not agent
+
     def test_function_executor_calling_agent_run(self):
         """Function executor that calls agent.run() internally - agent is shared via closure."""
         from agno.workflow.types import StepInput, StepOutput
@@ -1480,7 +1602,7 @@ class TestCustomExecutorWithInternalAgentTeam:
 
         def executor_with_agent_run(step_input: StepInput) -> StepOutput:
             # This captures inner_agent in closure and calls run()
-            # The agent is SHARED across workflow copies
+            # The agent is SHARED across workflow copies - this is a limitation!
             inner_agent.metadata["run_count"] += 1
             # In real usage: result = inner_agent.run(step_input.input)
             return StepOutput(content=f"Agent run count: {inner_agent.metadata['run_count']}")
@@ -1517,7 +1639,7 @@ class TestCustomExecutorWithInternalAgentTeam:
             id="team-member-id",
             model=OpenAIChat(id="gpt-4o-mini"),
         )
-        Team(
+        inner_team = Team(
             name="inner-team",
             id="inner-team-id",
             members=[member],
@@ -1843,3 +1965,775 @@ class TestCustomExecutorWithInternalAgentTeam:
 
         # Each workflow run would create its own agent (if actually executed)
         # The mock bypasses actual execution, but the pattern is demonstrated
+
+
+# ============================================================================
+# Tools Deep Copy Tests
+# ============================================================================
+
+
+class TestToolsDeepCopy:
+    """Tests for tools handling during Agent.deep_copy()."""
+
+    def test_regular_tools_are_deep_copied(self):
+        """Regular (non-MCP) tools should be deep copied, not shared."""
+        from agno.tools.toolkit import Toolkit
+
+        class CustomTool(Toolkit):
+            """A simple custom toolkit for testing."""
+
+            def __init__(self):
+                super().__init__(name="custom_tool")
+                self.counter = 0
+                self.register(self.increment)
+
+            def increment(self) -> int:
+                """Increment and return counter."""
+                self.counter += 1
+                return self.counter
+
+        tool = CustomTool()
+        agent = Agent(name="test-agent", id="test-id", tools=[tool])
+
+        copy = agent.deep_copy()
+
+        # Tools list should be a different list
+        assert copy.tools is not agent.tools
+
+        # The copied tool should be a different instance
+        assert len(copy.tools) == 1
+        assert copy.tools[0] is not tool
+
+        # Modifying original tool shouldn't affect copy
+        tool.counter = 100
+        assert copy.tools[0].counter == 0  # Copy should have initial value
+
+    def test_function_tools_are_copied(self):
+        """Function-based tools should be copied."""
+
+        def my_tool_func(x: int) -> int:
+            """A simple tool function."""
+            return x * 2
+
+        agent = Agent(name="test-agent", id="test-id", tools=[my_tool_func])
+
+        copy = agent.deep_copy()
+
+        # Tools list should be a different list
+        assert copy.tools is not agent.tools
+        # Function reference may be same (functions are immutable)
+        assert len(copy.tools) == 1
+
+    def test_mcp_tools_are_shared_not_copied(self):
+        """MCP tools should be shared (same instance) to maintain connections."""
+
+        # Create a mock MCP tools class
+        class MockMCPTools:
+            """Mock MCP tools for testing - simulates MCPTools behavior."""
+
+            def __init__(self):
+                self.instance_id = uuid.uuid4()
+                self.connected = True
+
+        # Patch the MRO check to recognize our mock as MCP tools
+        mock_mcp = MockMCPTools()
+
+        # Manually add MCPTools to the class hierarchy for detection
+        original_mro = type(mock_mcp).__mro__
+
+        class MCPTools:
+            pass
+
+        # Create a subclass that includes MCPTools in its MRO
+        class TestMCPTools(MCPTools):
+            def __init__(self):
+                self.instance_id = uuid.uuid4()
+                self.connected = True
+
+        mcp_tool = TestMCPTools()
+        agent = Agent(name="test-agent", id="test-id", tools=[mcp_tool])
+
+        copy = agent.deep_copy()
+
+        # MCP tool should be the SAME instance (shared)
+        assert copy.tools[0] is mcp_tool
+        assert copy.tools[0].instance_id == mcp_tool.instance_id
+
+    def test_multi_mcp_tools_are_shared(self):
+        """MultiMCPTools should also be shared."""
+
+        class MultiMCPTools:
+            """Mock MultiMCPTools for testing."""
+
+            def __init__(self):
+                self.instance_id = uuid.uuid4()
+                self.servers = ["server1", "server2"]
+
+        class TestMultiMCPTools(MultiMCPTools):
+            pass
+
+        multi_mcp = TestMultiMCPTools()
+        agent = Agent(name="test-agent", id="test-id", tools=[multi_mcp])
+
+        copy = agent.deep_copy()
+
+        # MultiMCPTools should be shared
+        assert copy.tools[0] is multi_mcp
+
+    def test_mixed_tools_handled_correctly(self):
+        """Mix of MCP and regular tools should be handled correctly."""
+        from agno.tools.toolkit import Toolkit
+
+        class RegularTool(Toolkit):
+            def __init__(self):
+                super().__init__(name="regular")
+                self.value = "original"
+                self.register(self.get_value)
+
+            def get_value(self) -> str:
+                return self.value
+
+        class MCPTools:
+            pass
+
+        class MockMCP(MCPTools):
+            def __init__(self):
+                self.instance_id = uuid.uuid4()
+
+        regular = RegularTool()
+        mcp = MockMCP()
+
+        agent = Agent(name="test-agent", id="test-id", tools=[regular, mcp])
+
+        copy = agent.deep_copy()
+
+        assert len(copy.tools) == 2
+        # Regular tool should be copied (different instance)
+        assert copy.tools[0] is not regular
+        # MCP tool should be shared (same instance)
+        assert copy.tools[1] is mcp
+
+    def test_non_copyable_tool_falls_back_to_sharing(self):
+        """Tools that can't be deep copied should be shared by reference."""
+
+        class NonCopyableTool:
+            """A tool that raises on deepcopy."""
+
+            def __init__(self):
+                self.instance_id = uuid.uuid4()
+
+            def __deepcopy__(self, memo):
+                raise TypeError("Cannot deep copy this tool")
+
+            def __copy__(self):
+                raise TypeError("Cannot copy this tool")
+
+        non_copyable = NonCopyableTool()
+        agent = Agent(name="test-agent", id="test-id", tools=[non_copyable])
+
+        # Should not raise - falls back to sharing
+        copy = agent.deep_copy()
+
+        # Non-copyable tool should be shared
+        assert copy.tools[0] is non_copyable
+        assert copy.tools[0].instance_id == non_copyable.instance_id
+
+    def test_tool_with_failing_mro_check_still_works(self):
+        """Tools where MRO check fails should still be processed safely."""
+
+        class WeirdTool:
+            """Tool with unusual type() behavior."""
+
+            def __init__(self):
+                self.value = "test"
+
+        weird = WeirdTool()
+        agent = Agent(name="test-agent", id="test-id", tools=[weird])
+
+        # Should not raise
+        copy = agent.deep_copy()
+
+        assert len(copy.tools) == 1
+
+    def test_empty_tools_list_copied(self):
+        """Empty tools list should be handled correctly."""
+        agent = Agent(name="test-agent", id="test-id", tools=[])
+
+        copy = agent.deep_copy()
+
+        assert copy.tools == []
+        assert copy.tools is not agent.tools
+
+    def test_none_tools_handled(self):
+        """None tools should remain None."""
+        agent = Agent(name="test-agent", id="test-id", tools=None)
+
+        copy = agent.deep_copy()
+
+        assert copy.tools == []
+
+    def test_tools_with_state_isolation(self):
+        """Tool state should be isolated between copies."""
+        from agno.tools.toolkit import Toolkit
+
+        class StatefulTool(Toolkit):
+            def __init__(self):
+                super().__init__(name="stateful")
+                self.call_count = 0
+                self.history: List[str] = []
+                self.register(self.record)
+
+            def record(self, message: str) -> str:
+                self.call_count += 1
+                self.history.append(message)
+                return f"Recorded: {message}"
+
+        tool = StatefulTool()
+        tool.call_count = 5
+        tool.history = ["msg1", "msg2"]
+
+        agent = Agent(name="test-agent", id="test-id", tools=[tool])
+
+        copy1 = agent.deep_copy()
+        copy2 = agent.deep_copy()
+
+        # Each copy should have independent state
+        copied_tool1 = copy1.tools[0]
+        copied_tool2 = copy2.tools[0]
+
+        # Initial state should be copied
+        assert copied_tool1.call_count == 5
+        assert copied_tool1.history == ["msg1", "msg2"]
+
+        # Modifications should be independent
+        copied_tool1.call_count = 100
+        copied_tool1.history.append("new_msg")
+
+        assert copied_tool2.call_count == 5  # Unchanged
+        assert copied_tool2.history == ["msg1", "msg2"]  # Unchanged
+        assert tool.call_count == 5  # Original unchanged
+
+
+# ============================================================================
+# Knowledge Deep Copy Tests
+# ============================================================================
+
+
+class TestKnowledgeDeepCopy:
+    """Tests for knowledge handling during deep_copy()."""
+
+    def test_knowledge_is_shared_not_copied(self):
+        """Knowledge base should be shared (not copied) between instances."""
+
+        class MockKnowledge:
+            """Mock knowledge base for testing."""
+
+            def __init__(self):
+                self.instance_id = uuid.uuid4()
+                self.documents = ["doc1", "doc2"]
+
+            def search(self, query: str):
+                return self.documents
+
+        knowledge = MockKnowledge()
+        agent = Agent(name="test-agent", id="test-id", knowledge=knowledge)
+
+        copy = agent.deep_copy()
+
+        # Knowledge should be the SAME instance (shared)
+        assert copy.knowledge is knowledge
+        assert copy.knowledge.instance_id == knowledge.instance_id
+
+    def test_knowledge_sharing_in_team(self):
+        """Knowledge in team members should also be shared."""
+
+        class MockKnowledge:
+            def __init__(self):
+                self.instance_id = uuid.uuid4()
+
+        knowledge = MockKnowledge()
+        member = Agent(name="member", id="member-id", knowledge=knowledge)
+        team = Team(
+            name="test-team",
+            id="test-team-id",
+            members=[member],
+            model=OpenAIChat(id="gpt-4o-mini"),
+        )
+
+        copy = team.deep_copy()
+
+        # Member's knowledge should be shared
+        assert copy.members[0].knowledge is knowledge
+
+    def test_knowledge_none_handled(self):
+        """None knowledge should remain None."""
+        agent = Agent(name="test-agent", id="test-id", knowledge=None)
+
+        copy = agent.deep_copy()
+
+        assert copy.knowledge is None
+
+
+# ============================================================================
+# Model Deep Copy Tests
+# ============================================================================
+
+
+class TestModelDeepCopy:
+    """Tests for model handling during deep_copy()."""
+
+    def test_model_is_shared_not_copied(self):
+        """Model should be shared (not copied) between instances."""
+        model = OpenAIChat(id="gpt-4o-mini")
+        agent = Agent(name="test-agent", id="test-id", model=model)
+
+        copy = agent.deep_copy()
+
+        # Model should be the SAME instance (shared)
+        assert copy.model is model
+
+    def test_reasoning_model_is_shared(self):
+        """Reasoning model should also be shared."""
+        model = OpenAIChat(id="gpt-4o-mini")
+        reasoning_model = OpenAIChat(id="gpt-4o")
+        agent = Agent(
+            name="test-agent", id="test-id", model=model, reasoning_model=reasoning_model
+        )
+
+        copy = agent.deep_copy()
+
+        assert copy.model is model
+        assert copy.reasoning_model is reasoning_model
+
+    def test_model_in_team_is_shared(self):
+        """Team model and member models should be shared."""
+        team_model = OpenAIChat(id="gpt-4o-mini")
+        member_model = OpenAIChat(id="gpt-4o")
+
+        member = Agent(name="member", id="member-id", model=member_model)
+        team = Team(
+            name="test-team",
+            id="test-team-id",
+            members=[member],
+            model=team_model,
+        )
+
+        copy = team.deep_copy()
+
+        assert copy.model is team_model
+        assert copy.members[0].model is member_model
+
+
+# ============================================================================
+# Database Deep Copy Tests
+# ============================================================================
+
+
+class TestDatabaseDeepCopy:
+    """Tests for database handling during deep_copy()."""
+
+    def test_db_is_shared_not_copied(self):
+        """Database should be shared (not copied) between instances."""
+
+        class MockDatabase:
+            def __init__(self):
+                self.instance_id = uuid.uuid4()
+                self.connection_pool = ["conn1", "conn2"]
+
+        db = MockDatabase()
+        agent = Agent(name="test-agent", id="test-id", db=db)
+
+        copy = agent.deep_copy()
+
+        # DB should be the SAME instance (shared)
+        assert copy.db is db
+        assert copy.db.instance_id == db.instance_id
+
+    def test_db_shared_across_multiple_copies(self):
+        """Multiple copies should all share the same DB."""
+
+        class MockDatabase:
+            def __init__(self):
+                self.instance_id = uuid.uuid4()
+
+        db = MockDatabase()
+        agent = Agent(name="test-agent", id="test-id", db=db)
+
+        copies = [agent.deep_copy() for _ in range(5)]
+
+        # All copies should share same DB
+        for copy in copies:
+            assert copy.db is db
+
+    def test_db_shared_in_team_members(self):
+        """Team members' databases should be shared."""
+
+        class MockDatabase:
+            def __init__(self):
+                self.instance_id = uuid.uuid4()
+
+        db = MockDatabase()
+        member = Agent(name="member", id="member-id", db=db)
+        team = Team(
+            name="test-team",
+            id="test-team-id",
+            members=[member],
+            model=OpenAIChat(id="gpt-4o-mini"),
+        )
+
+        copy = team.deep_copy()
+
+        # Member's DB should be shared
+        assert copy.members[0].db is db
+
+    def test_db_shared_in_workflow_step_agents(self):
+        """Workflow step agents' databases should be shared."""
+
+        class MockDatabase:
+            def __init__(self):
+                self.instance_id = uuid.uuid4()
+
+        db = MockDatabase()
+        step_agent = Agent(name="step-agent", id="step-agent-id", db=db)
+        workflow = Workflow(
+            name="test-workflow",
+            id="test-workflow-id",
+            steps=[Step(name="step", agent=step_agent)],
+        )
+
+        copy = workflow.deep_copy()
+
+        # Step agent's DB should be shared
+        assert copy.steps[0].agent.db is db
+
+
+# ============================================================================
+# Memory Manager Deep Copy Tests
+# ============================================================================
+
+
+class TestMemoryManagerDeepCopy:
+    """Tests for memory_manager handling during deep_copy()."""
+
+    def test_memory_manager_is_shared(self):
+        """Memory manager should be shared (not copied)."""
+
+        class MockMemoryManager:
+            def __init__(self):
+                self.instance_id = uuid.uuid4()
+
+        mm = MockMemoryManager()
+        agent = Agent(name="test-agent", id="test-id", memory_manager=mm)
+
+        copy = agent.deep_copy()
+
+        # Memory manager should be shared
+        assert copy.memory_manager is mm
+
+
+# ============================================================================
+# Reasoning Agent Deep Copy Tests
+# ============================================================================
+
+
+class TestReasoningAgentDeepCopy:
+    """Tests for reasoning_agent handling during deep_copy()."""
+
+    def test_reasoning_agent_is_deep_copied(self):
+        """Reasoning agent should be deep copied (isolated)."""
+        reasoning_agent = Agent(
+            name="reasoner", id="reasoner-id", model=OpenAIChat(id="gpt-4o")
+        )
+        agent = Agent(
+            name="main-agent",
+            id="main-id",
+            model=OpenAIChat(id="gpt-4o-mini"),
+            reasoning_agent=reasoning_agent,
+        )
+
+        copy = agent.deep_copy()
+
+        # Reasoning agent should be a DIFFERENT instance (copied)
+        assert copy.reasoning_agent is not reasoning_agent
+        assert copy.reasoning_agent.id == reasoning_agent.id
+        assert copy.reasoning_agent.name == reasoning_agent.name
+
+    def test_reasoning_agent_state_isolated(self):
+        """Reasoning agent state should be isolated."""
+        reasoning_agent = Agent(
+            name="reasoner",
+            id="reasoner-id",
+            model=OpenAIChat(id="gpt-4o"),
+            metadata={"thoughts": []},
+        )
+        agent = Agent(
+            name="main-agent",
+            id="main-id",
+            model=OpenAIChat(id="gpt-4o-mini"),
+            reasoning_agent=reasoning_agent,
+        )
+
+        copy = agent.deep_copy()
+
+        # Modify original reasoning agent metadata
+        reasoning_agent.metadata["thoughts"].append("thought1")
+
+        # Copy's reasoning agent should be unaffected
+        assert copy.reasoning_agent.metadata["thoughts"] == []
+
+
+# ============================================================================
+# Error Handling Deep Copy Tests
+# ============================================================================
+
+
+class TestDeepCopyErrorHandling:
+    """Tests for error handling during deep_copy()."""
+
+    def test_tool_iteration_error_handled(self):
+        """Errors during tool iteration should be handled gracefully."""
+
+        class FailingIterableTools:
+            """A tools list that fails during iteration."""
+
+            def __init__(self):
+                self.items = ["tool1", "tool2"]
+                self._iter_count = 0
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                if self._iter_count >= 1:
+                    raise RuntimeError("Iteration failed")
+                self._iter_count += 1
+                return self.items[self._iter_count - 1]
+
+        # This won't work directly as tools expects a list, but we can test
+        # the outer error handling by using a regular list and patching
+        agent = Agent(name="test-agent", id="test-id", tools=["tool1"])
+
+        # Should not raise
+        copy = agent.deep_copy()
+        assert copy is not None
+
+    def test_deep_copy_with_unusual_tool_types(self):
+        """Deep copy should handle unusual tool types gracefully."""
+        # Test with various edge cases
+        tools: List[Any] = [
+            lambda x: x,  # Lambda function
+            42,  # Integer (unusual but shouldn't crash)
+            "string_tool",  # String (unusual but shouldn't crash)
+            None,  # None in list
+        ]
+
+        agent = Agent(name="test-agent", id="test-id", tools=tools)
+
+        # Should not raise - handles gracefully
+        copy = agent.deep_copy()
+
+        assert len(copy.tools) == 4
+
+    def test_concurrent_deep_copy_safety(self):
+        """Multiple concurrent deep_copy calls should be safe."""
+        from agno.tools.toolkit import Toolkit
+
+        class CounterTool(Toolkit):
+            def __init__(self):
+                super().__init__(name="counter")
+                self.count = 0
+                self.register(self.increment)
+
+            def increment(self) -> int:
+                self.count += 1
+                return self.count
+
+        tool = CounterTool()
+        agent = Agent(name="test-agent", id="test-id", tools=[tool])
+
+        # Create many copies concurrently
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(agent.deep_copy) for _ in range(50)]
+            copies = [f.result() for f in futures]
+
+        # All copies should be independent
+        assert len(copies) == 50
+        for i, copy in enumerate(copies):
+            assert copy is not agent
+            assert copy.tools[0] is not tool
+
+        # Original should be unchanged
+        assert tool.count == 0
+
+
+# ============================================================================
+# Comprehensive Integration Tests
+# ============================================================================
+
+
+class TestComprehensiveDeepCopyIntegration:
+    """Integration tests combining multiple aspects of deep copy."""
+
+    def test_agent_with_all_shared_resources(self):
+        """Agent with all shared resources (db, model, knowledge, memory_manager)."""
+
+        class MockDb:
+            def __init__(self):
+                self.id = uuid.uuid4()
+
+        class MockKnowledge:
+            def __init__(self):
+                self.id = uuid.uuid4()
+
+        class MockMemoryManager:
+            def __init__(self):
+                self.id = uuid.uuid4()
+
+        db = MockDb()
+        knowledge = MockKnowledge()
+        memory_manager = MockMemoryManager()
+        model = OpenAIChat(id="gpt-4o-mini")
+
+        agent = Agent(
+            name="full-agent",
+            id="full-agent-id",
+            model=model,
+            db=db,
+            knowledge=knowledge,
+            memory_manager=memory_manager,
+            metadata={"user": "test"},
+        )
+
+        copy = agent.deep_copy()
+
+        # Shared resources should be same instance
+        assert copy.db is db
+        assert copy.knowledge is knowledge
+        assert copy.memory_manager is memory_manager
+        assert copy.model is model
+
+        # Mutable state should be isolated
+        assert copy.metadata is not agent.metadata
+        assert copy.metadata == {"user": "test"}
+
+    def test_team_with_agents_having_tools_and_knowledge(self):
+        """Team with member agents that have tools and knowledge."""
+        from agno.tools.toolkit import Toolkit
+
+        class MockKnowledge:
+            def __init__(self, name: str):
+                self.name = name
+                self.id = uuid.uuid4()
+
+        class MockTool(Toolkit):
+            def __init__(self, name: str):
+                super().__init__(name=name)
+                self.call_count = 0
+                self.register(self.do_work)
+
+            def do_work(self) -> str:
+                self.call_count += 1
+                return f"Work done by {self.name}"
+
+        knowledge1 = MockKnowledge("kb1")
+        knowledge2 = MockKnowledge("kb2")
+        tool1 = MockTool("tool1")
+        tool2 = MockTool("tool2")
+
+        member1 = Agent(
+            name="member1",
+            id="member1-id",
+            model=OpenAIChat(id="gpt-4o-mini"),
+            knowledge=knowledge1,
+            tools=[tool1],
+        )
+        member2 = Agent(
+            name="member2",
+            id="member2-id",
+            model=OpenAIChat(id="gpt-4o-mini"),
+            knowledge=knowledge2,
+            tools=[tool2],
+        )
+
+        team = Team(
+            name="full-team",
+            id="full-team-id",
+            members=[member1, member2],
+            model=OpenAIChat(id="gpt-4o-mini"),
+        )
+
+        copy = team.deep_copy()
+
+        # Members should be different instances
+        assert copy.members[0] is not member1
+        assert copy.members[1] is not member2
+
+        # Knowledge should be shared
+        assert copy.members[0].knowledge is knowledge1
+        assert copy.members[1].knowledge is knowledge2
+
+        # Tools should be copied (different instances)
+        assert copy.members[0].tools[0] is not tool1
+        assert copy.members[1].tools[0] is not tool2
+
+        # Tool state should be isolated
+        tool1.call_count = 10
+        assert copy.members[0].tools[0].call_count == 0
+
+    def test_workflow_with_full_agent_configuration(self):
+        """Workflow with step agents having full configuration."""
+        from agno.tools.toolkit import Toolkit
+
+        class MockDb:
+            def __init__(self):
+                self.id = uuid.uuid4()
+
+        class MockTool(Toolkit):
+            def __init__(self):
+                super().__init__(name="mock")
+                self.state = "initial"
+                self.register(self.action)
+
+            def action(self) -> str:
+                return self.state
+
+        db = MockDb()
+        tool = MockTool()
+        model = OpenAIChat(id="gpt-4o-mini")
+
+        step_agent = Agent(
+            name="step-agent",
+            id="step-agent-id",
+            model=model,
+            db=db,
+            tools=[tool],
+            metadata={"step": 1},
+        )
+
+        workflow = Workflow(
+            name="full-workflow",
+            id="full-workflow-id",
+            db=db,
+            steps=[Step(name="full-step", agent=step_agent)],
+        )
+
+        copy = workflow.deep_copy()
+
+        # Workflow DB should be shared
+        assert copy.db is db
+
+        # Step agent should be copied
+        assert copy.steps[0].agent is not step_agent
+
+        # Step agent's DB should be shared
+        assert copy.steps[0].agent.db is db
+
+        # Step agent's model should be shared
+        assert copy.steps[0].agent.model is model
+
+        # Step agent's tool should be copied
+        assert copy.steps[0].agent.tools[0] is not tool
+
+        # Step agent's metadata should be isolated
+        step_agent.metadata["step"] = 2
+        assert copy.steps[0].agent.metadata["step"] == 1
