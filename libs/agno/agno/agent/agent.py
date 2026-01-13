@@ -11794,7 +11794,6 @@ class Agent:
             log_debug(f"Could not create Agent run telemetry event: {e}")
 
 
-# TODO: Look into where this function should exist
 def get_agent_by_id(
     db: "BaseDb",
     id: str,

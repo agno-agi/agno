@@ -330,10 +330,7 @@ class Workflow:
 
         # Handle steps reconstruction
         if "steps" in config and config["steps"]:
-            steps = [
-                Step.from_dict(step_data, db=db, refs=refs, registry=registry)
-                for step_data in config["steps"]
-            ]
+            steps = [Step.from_dict(step_data, db=db, refs=refs, registry=registry) for step_data in config["steps"]]
 
         return cls(
             name=config.get("name"),
@@ -4244,7 +4241,7 @@ class Workflow:
                 **kwargs,
             )
 
-    #TODO: This is a temporary method to convert the workflow to a dictionary for steps. We need to find a better way to do this.
+    # TODO: This is a temporary method to convert the workflow to a dictionary for steps. We need to find a better way to do this.
     def to_dict_for_steps(self) -> Dict[str, Any]:
         """Convert workflow to dictionary representation"""
 

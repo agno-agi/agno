@@ -18,6 +18,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db
+from agno.registry import Registry
 from agno.remote.base import RemoteDb
 from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_id_from_name
@@ -31,7 +32,9 @@ logger = logging.getLogger(__name__)
 
 
 class PrimitiveCreate(BaseModel):
-    entity_id: Optional[str] = Field(None, description="Unique identifier for the entity. Auto-generated from name if not provided.")
+    entity_id: Optional[str] = Field(
+        None, description="Unique identifier for the entity. Auto-generated from name if not provided."
+    )
     entity_type: str = Field(..., description="Type of entity: agent, team, or workflow")
     name: str = Field(..., description="Display name")
     description: Optional[str] = Field(None, description="Optional description")
@@ -80,8 +83,8 @@ class ConfigResponse(BaseModel):
 # ============================================
 
 
-def get_primitives_router(
-    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], settings: AgnoAPISettings = AgnoAPISettings()
+def get_components_router(
+    os_db: Union[BaseDb, AsyncBaseDb, RemoteDb], registry: Registry, settings: AgnoAPISettings = AgnoAPISettings()
 ) -> APIRouter:
     """Create entities and configs router."""
     router = APIRouter(
@@ -95,12 +98,12 @@ def get_primitives_router(
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
         },
     )
-    return attach_routes(router=router, dbs=dbs)
+    return attach_routes(router=router, os_db=os_db, registry=registry)
 
 
-def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> APIRouter:
+def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb, RemoteDb], registry: Registry) -> APIRouter:
     # ============================================
-    # ENTITY ENDPOINTS
+    # COMPONENT ENDPOINTS
     # ============================================
 
     @router.get(
@@ -119,11 +122,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         limit: int = Query(20, ge=1, le=100, description="Items per page"),
         db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> PaginatedResponse[PrimitiveResponse]:
-        db = await get_db(dbs, db_id)
-
         try:
             start_time_ms = time.time() * 1000
-            entities = db.list_entities(entity_type=entity_type)
+            entities = os_db.list_entities(entity_type=entity_type)
 
             total_count = len(entities)
             total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
@@ -158,27 +159,44 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         body: PrimitiveCreate,
         db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> PrimitiveResponse:
-        db = await get_db(dbs, db_id)
-
         try:
             # Auto-generate entity_id if not provided
             entity_id = body.entity_id
             if entity_id is None:
                 entity_id = generate_id_from_name(body.name)
-            
-            entity = db.upsert_entity(
+
+            entity = os_db.upsert_entity(
                 entity_id=entity_id,
                 entity_type=body.entity_type,
                 name=body.name,
                 description=body.description,
                 metadata=body.metadata,
             )
-            
+
             # Prepare config - ensure it's a dict
             config = body.config or {}
-            
+
+            db_dict: Dict[str, Any] = {}
+            try:
+                component_db = config.get("db")
+                if component_db is not None:
+                    component_db_id = component_db.get("id")
+                    if component_db_id is not None and component_db_id == db_id:
+                        db_dict = os_db.to_dict()
+                    else:
+                        if registry.dbs is not None and len(registry.dbs) > 0:
+                            for db in registry.dbs:
+                                if db.id == component_db_id:
+                                    db_dict = db.to_dict()
+                                    break
+            except Exception as e:
+                log_error(f"Error getting OS Database: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+            config["db"] = db_dict
+
             # Create the initial config
-            db.upsert_config(
+            os_db.upsert_config(
                 entity_id=entity_id,
                 config=config,
                 version_label=body.version_label,
@@ -187,8 +205,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 set_current=body.set_current,
             )
             return PrimitiveResponse(**entity)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             log_error(f"Error creating entity: {e}")
             raise HTTPException(status_code=500, detail=str(e))
@@ -207,10 +223,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         entity_id: str = Path(description="Entity ID"),
         db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> PrimitiveResponse:
-        db = await get_db(dbs, db_id)
-
         try:
-            entity = db.get_entity(entity_id)
+            entity = os_db.get_entity(entity_id)
             if entity is None:
                 raise HTTPException(status_code=404, detail=f"Entity {entity_id} not found")
             return PrimitiveResponse(**entity)
@@ -232,10 +246,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         entity_id: str = Path(description="Entity ID"),
         db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> None:
-        db = await get_db(dbs, db_id)
-
         try:
-            deleted = db.delete_entity(entity_id)
+            deleted = os_db.delete_entity(entity_id)
             if not deleted:
                 raise HTTPException(status_code=404, detail=f"Entity {entity_id} not found")
         except HTTPException:
@@ -262,10 +274,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         entity_id: str = Path(description="Entity ID"),
         db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> List[ConfigResponse]:
-        db = await get_db(dbs, db_id)
-
         try:
-            configs = db.list_config_versions(entity_id)
+            configs = os_db.list_config_versions(entity_id)
             return [ConfigResponse(**c) for c in configs]
         except Exception as e:
             log_error(f"Error listing configs: {e}")
@@ -286,17 +296,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         body: ConfigCreate = Body(description="Config data"),
         db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> ConfigResponse:
-        db = await get_db(dbs, db_id)
-
         try:
             # Determine version to update (if overwriting)
             version_to_update = None
             if body.upsert_version:
-                entity = db.get_entity(entity_id)
+                entity = os_db.get_entity(entity_id)
                 if entity and entity.get("current_version"):
                     version_to_update = entity["current_version"]
 
-            config = db.upsert_config(
+            config = os_db.upsert_config(
                 entity_id=entity_id,
                 version=version_to_update,
                 config=body.config,
@@ -326,10 +334,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         entity_id: str = Path(description="Entity ID"),
         db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> ConfigResponse:
-        db = await get_db(dbs, db_id)
-
         try:
-            config = db.get_config(entity_id)
+            config = os_db.get_config(entity_id)
             if config is None:
                 raise HTTPException(status_code=404, detail=f"No config found for {entity_id}")
             return ConfigResponse(**config)
@@ -348,19 +354,17 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         summary="Get Config Version",
         description="Get a specific config version by number or label.",
     )
-    async def get_config(
+    async def get_component_config(
         request: Request,
         entity_id: str = Path(description="Entity ID"),
         version: str = Path(description="Version number or label"),
         db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> ConfigResponse:
-        db = await get_db(dbs, db_id)
-
         try:
             try:
-                config = db.get_config(entity_id, version=int(version))
+                config = os_db.get_config(entity_id, version=int(version))
             except ValueError:
-                config = db.get_config(entity_id, label=version)
+                config = os_db.get_config(entity_id, label=version)
 
             if config is None:
                 raise HTTPException(status_code=404, detail=f"Config {entity_id} v{version} not found")

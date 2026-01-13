@@ -1,12 +1,14 @@
 """
-This cookbook demonstrates how to use a registry in an AgentOS app.
+This cookbook demonstrates how to use a registry with the AgentOS app.
 """
 
-from agno.agent.agent import Agent, get_agent_by_id  # noqa: F401
+from agno.agent.agent import Agent
 from agno.db.postgres import PostgresDb
+from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.registry import Registry
+from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -18,15 +20,18 @@ def sample_tool():
 
 registry = Registry(
     name="Agno Registry",
-    description="Registry for Agno",
-    tools=[DuckDuckGoTools(), sample_tool],
-    models=[OpenAIChat(id="gpt-5-mini")],
+    tools=[DuckDuckGoTools(), sample_tool, CalculatorTools()],
+    models=[
+        OpenAIChat(id="gpt-5-mini"),
+        OpenAIChat(id="gpt-5"),
+        Claude(id="claude-sonnet-4-5"),
+    ],
     dbs=[db],
 )
 
 agent = Agent(
     id="registry-agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=Claude(id="claude-sonnet-4-5"),
     db=db,
 )
 

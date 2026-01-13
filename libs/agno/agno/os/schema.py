@@ -143,7 +143,8 @@ class ConfigResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the OS instance")
     description: Optional[str] = Field(None, description="Description of the OS instance")
     available_models: Optional[List[str]] = Field(None, description="List of available models")
-    databases: List[str] = Field(..., description="List of database IDs")
+    os_database: Optional[str] = Field(None, description="ID of the database used for the OS instance")
+    databases: List[str] = Field(..., description="List of database IDs used by the components of the OS instance")
     chat: Optional[ChatConfig] = Field(None, description="Chat configuration")
 
     session: Optional[SessionConfig] = Field(None, description="Session configuration")

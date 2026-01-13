@@ -149,7 +149,7 @@ class Function(BaseModel):
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Function":
         """Reconstruct a Function from a dictionary."""
-        
+
         return cls(
             name=data.get("name"),
             description=data.get("description"),

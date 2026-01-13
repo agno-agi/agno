@@ -13,14 +13,12 @@ hackernews_agent = Agent(
     name="Hackernews Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     role="Extract key insights and content from Hackernews posts",
-    db=db,
 )
 web_agent = Agent(
     id="web-agent",
     name="Web Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     role="Search the web for the latest news and trends",
-    db=db,
 )
 
 # Define steps
@@ -43,6 +41,4 @@ content_creation_workflow = Workflow(
 )
 
 # Save the workflow to the database
-# workflow_id = content_creation_workflow.save(db=db)
-
-content_creation_workflow.print_response(input="AI trends in 2024", markdown=True)
+workflow_id = content_creation_workflow.save(db=db)

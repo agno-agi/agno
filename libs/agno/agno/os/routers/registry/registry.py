@@ -122,13 +122,13 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     # First check function-level settings, then toolkit-level settings
                     requires_confirmation = getattr(func, "requires_confirmation", None)
                     external_execution = getattr(func, "external_execution", None)
-                    
+
                     # If not set on function, check toolkit settings
                     if requires_confirmation is None and hasattr(tool, "requires_confirmation_tools"):
                         requires_confirmation = func_name in (tool.requires_confirmation_tools or [])
                     if external_execution is None and hasattr(tool, "external_execution_required_tools"):
                         external_execution = func_name in (tool.external_execution_required_tools or [])
-                    
+
                     # Get parameters - ensure they're processed if needed
                     func_params = func.parameters
                     # If parameters are empty/default and function has entrypoint, try to process it
@@ -142,7 +142,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                         except Exception:
                             # If processing fails, use original parameters
                             pass
-                    
+
                     components.append(
                         ComponentResponse(
                             name=func_name,
@@ -163,7 +163,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 func_name = _safe_name(tool, fallback=getattr(tool, "name", None) or tool.__class__.__name__)
                 requires_confirmation = getattr(tool, "requires_confirmation", None)
                 external_execution = getattr(tool, "external_execution", None)
-                
+
                 # Get parameters - ensure they're processed if needed
                 func_params = tool.parameters
                 # If parameters are empty/default and function has entrypoint, try to process it
@@ -177,7 +177,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     except Exception:
                         # If processing fails, use original parameters
                         pass
-                
+
                 components.append(
                     ComponentResponse(
                         name=func_name,
