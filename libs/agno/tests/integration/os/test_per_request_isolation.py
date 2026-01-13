@@ -359,6 +359,7 @@ class TestSharedResources:
 
     def test_agent_db_shared_in_copy(self):
         """Database should be shared (not copied) between agent instances."""
+
         # Create a mock DB that we can track
         class MockDb:
             def __init__(self):
@@ -1687,7 +1688,9 @@ class TestCustomExecutorWithInternalAgentTeam:
 
         async def executor_with_async_agent(step_input: StepInput) -> StepOutput:
             # Simulate modifying agent state before run
-            inner_agent.metadata["user_id"] = step_input.additional_data.get("user_id") if step_input.additional_data else None
+            inner_agent.metadata["user_id"] = (
+                step_input.additional_data.get("user_id") if step_input.additional_data else None
+            )
             # In real usage: result = await inner_agent.arun(step_input.input)
             return StepOutput(content=f"Processed for user: {inner_agent.metadata['user_id']}")
 
@@ -1708,15 +1711,11 @@ class TestCustomExecutorWithInternalAgentTeam:
 
         async def simulate_requests():
             # Request 1 sets user_id to "alice"
-            await copy1.steps[0].executor(
-                StepInput(input="hello", additional_data={"user_id": "alice"})
-            )
+            await copy1.steps[0].executor(StepInput(input="hello", additional_data={"user_id": "alice"}))
             alice_user_id = inner_agent.metadata["user_id"]
 
             # Request 2 sets user_id to "bob"
-            await copy2.steps[0].executor(
-                StepInput(input="hello", additional_data={"user_id": "bob"})
-            )
+            await copy2.steps[0].executor(StepInput(input="hello", additional_data={"user_id": "bob"}))
             bob_user_id = inner_agent.metadata["user_id"]
 
             return alice_user_id, bob_user_id
@@ -1739,12 +1738,16 @@ class TestCustomExecutorWithInternalAgentTeam:
                 name="local-agent",
                 id="local-agent-id",
                 model=OpenAIChat(id="gpt-4o-mini"),
-                metadata={"request_id": step_input.additional_data.get("request_id") if step_input.additional_data else None},
+                metadata={
+                    "request_id": step_input.additional_data.get("request_id") if step_input.additional_data else None
+                },
             )
-            execution_log.append({
-                "request_id": local_agent.metadata["request_id"],
-                "agent_id": id(local_agent),
-            })
+            execution_log.append(
+                {
+                    "request_id": local_agent.metadata["request_id"],
+                    "agent_id": id(local_agent),
+                }
+            )
             # In real usage: result = local_agent.run(step_input.input)
             return StepOutput(content=f"Processed request: {local_agent.metadata['request_id']}")
 
@@ -1784,7 +1787,9 @@ class TestCustomExecutorWithInternalAgentTeam:
         def safe_executor_with_deep_copy(step_input: StepInput) -> StepOutput:
             # SAFE: Create isolated copy from template
             local_agent = template_agent.deep_copy()
-            local_agent.metadata["user_id"] = step_input.additional_data.get("user_id") if step_input.additional_data else None
+            local_agent.metadata["user_id"] = (
+                step_input.additional_data.get("user_id") if step_input.additional_data else None
+            )
             local_agent.metadata["processed"] = True
             execution_agents.append(local_agent)
             # In real usage: result = local_agent.run(step_input.input)
@@ -2035,9 +2040,6 @@ class TestToolsDeepCopy:
             def __init__(self):
                 self.instance_id = uuid.uuid4()
                 self.connected = True
-
-        # Patch the MRO check to recognize our mock as MCP tools
-        mock_mcp = MockMCPTools()
 
         # Create a subclass that includes MCPTools in its MRO for detection
         class MCPTools:
@@ -2296,9 +2298,7 @@ class TestModelDeepCopy:
         """Reasoning model should also be shared."""
         model = OpenAIChat(id="gpt-4o-mini")
         reasoning_model = OpenAIChat(id="gpt-4o")
-        agent = Agent(
-            name="test-agent", id="test-id", model=model, reasoning_model=reasoning_model
-        )
+        agent = Agent(name="test-agent", id="test-id", model=model, reasoning_model=reasoning_model)
 
         copy = agent.deep_copy()
 
@@ -2327,9 +2327,7 @@ class TestModelDeepCopy:
         """Parser model should be shared (not copied) between instances."""
         model = OpenAIChat(id="gpt-4o-mini")
         parser_model = OpenAIChat(id="gpt-4o")
-        agent = Agent(
-            name="test-agent", id="test-id", model=model, parser_model=parser_model
-        )
+        agent = Agent(name="test-agent", id="test-id", model=model, parser_model=parser_model)
 
         copy = agent.deep_copy()
 
@@ -2340,9 +2338,7 @@ class TestModelDeepCopy:
         """Output model should be shared (not copied) between instances."""
         model = OpenAIChat(id="gpt-4o-mini")
         output_model = OpenAIChat(id="gpt-4o")
-        agent = Agent(
-            name="test-agent", id="test-id", model=model, output_model=output_model
-        )
+        agent = Agent(name="test-agent", id="test-id", model=model, output_model=output_model)
 
         copy = agent.deep_copy()
 
@@ -2519,9 +2515,7 @@ class TestReasoningAgentDeepCopy:
 
     def test_reasoning_agent_is_deep_copied(self):
         """Reasoning agent should be deep copied (isolated)."""
-        reasoning_agent = Agent(
-            name="reasoner", id="reasoner-id", model=OpenAIChat(id="gpt-4o")
-        )
+        reasoning_agent = Agent(name="reasoner", id="reasoner-id", model=OpenAIChat(id="gpt-4o"))
         agent = Agent(
             name="main-agent",
             id="main-id",

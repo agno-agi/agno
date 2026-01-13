@@ -29,7 +29,7 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     format_sse_event,
     get_request_kwargs,
-    get_team_for_request,
+    get_team_by_id,
     process_audio,
     process_document,
     process_image,
@@ -194,7 +194,7 @@ def get_team_router(
 
         logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
 
-        team = get_team_for_request(team_id, os.teams, create_fresh=True)
+        team = get_team_by_id(team_id, os.teams, create_fresh=True)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -321,7 +321,7 @@ def get_team_router(
         team_id: str,
         run_id: str,
     ):
-        team = get_team_for_request(team_id, os.teams, create_fresh=True)
+        team = get_team_by_id(team_id, os.teams, create_fresh=True)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -526,7 +526,7 @@ def get_team_router(
         dependencies=[Depends(require_resource_access("teams", "read", "team_id"))],
     )
     async def get_team(team_id: str, request: Request) -> TeamResponse:
-        team = get_team_for_request(team_id, os.teams, create_fresh=True)
+        team = get_team_by_id(team_id, os.teams, create_fresh=True)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 

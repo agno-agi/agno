@@ -1,7 +1,7 @@
 """Unit tests for per-request isolation feature.
 
 This module tests:
-- Factory functions (get_agent_for_request, get_team_for_request, get_workflow_for_request)
+- Factory functions (get_agent_by_id, get_team_by_id, get_workflow_by_id with create_fresh=True)
 - Deep copying of Agent, Team, and Workflow classes
 - Complex workflow structures including nested step containers
 - State isolation between copies
@@ -12,9 +12,9 @@ import pytest
 
 from agno.agent import Agent
 from agno.os.utils import (
-    get_agent_for_request,
-    get_team_for_request,
-    get_workflow_for_request,
+    get_agent_by_id,
+    get_team_by_id,
+    get_workflow_by_id,
 )
 from agno.team import Team
 from agno.workflow import Workflow
@@ -25,7 +25,6 @@ from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
 from agno.workflow.types import StepInput, StepOutput
-
 
 # ============================================================================
 # Fixtures
@@ -52,14 +51,14 @@ def basic_team():
 
 
 class TestGetAgentForRequest:
-    """Tests for get_agent_for_request factory function."""
+    """Tests for get_agent_by_id factory function."""
 
     def test_returns_same_instance_when_create_fresh_false(self):
         """When create_fresh=False, returns the exact same agent instance."""
         agent = Agent(name="test-agent", id="test-id")
         agents = [agent]
 
-        result = get_agent_for_request("test-id", agents, create_fresh=False)
+        result = get_agent_by_id("test-id", agents, create_fresh=False)
 
         assert result is agent
 
@@ -68,7 +67,7 @@ class TestGetAgentForRequest:
         agent = Agent(name="test-agent", id="test-id")
         agents = [agent]
 
-        result = get_agent_for_request("test-id", agents, create_fresh=True)
+        result = get_agent_by_id("test-id", agents, create_fresh=True)
 
         assert result is not agent
         assert result.id == agent.id
@@ -79,7 +78,7 @@ class TestGetAgentForRequest:
         agent = Agent(name="test-agent", id="test-id")
         agents = [agent]
 
-        result = get_agent_for_request("unknown-id", agents, create_fresh=True)
+        result = get_agent_by_id("unknown-id", agents, create_fresh=True)
 
         assert result is None
 
@@ -88,7 +87,7 @@ class TestGetAgentForRequest:
         agent = Agent(name="test-agent", id="test-id")
         agents = [agent]
 
-        result = get_agent_for_request("test-id", agents, create_fresh=True)
+        result = get_agent_by_id("test-id", agents, create_fresh=True)
 
         assert result.id == "test-id"
 
@@ -97,7 +96,7 @@ class TestGetAgentForRequest:
         agent = Agent(name="test-agent", id="test-id", metadata={"key": "original"})
         agents = [agent]
 
-        copy = get_agent_for_request("test-id", agents, create_fresh=True)
+        copy = get_agent_by_id("test-id", agents, create_fresh=True)
 
         # Modify the copy's metadata
         copy.metadata["key"] = "modified"
@@ -112,14 +111,14 @@ class TestGetAgentForRequest:
         agent._cached_session = "some_cached_value"  # type: ignore
         agents = [agent]
 
-        copy = get_agent_for_request("test-id", agents, create_fresh=True)
+        copy = get_agent_by_id("test-id", agents, create_fresh=True)
 
         # Internal state should be reset to initial values
         assert copy._cached_session is None
 
 
 class TestGetTeamForRequest:
-    """Tests for get_team_for_request factory function."""
+    """Tests for get_team_by_id factory function."""
 
     def test_returns_same_instance_when_create_fresh_false(self):
         """When create_fresh=False, returns the exact same team instance."""
@@ -127,7 +126,7 @@ class TestGetTeamForRequest:
         team = Team(name="test-team", id="test-id", members=[member])
         teams = [team]
 
-        result = get_team_for_request("test-id", teams, create_fresh=False)
+        result = get_team_by_id("test-id", teams, create_fresh=False)
 
         assert result is team
 
@@ -137,7 +136,7 @@ class TestGetTeamForRequest:
         team = Team(name="test-team", id="test-id", members=[member])
         teams = [team]
 
-        result = get_team_for_request("test-id", teams, create_fresh=True)
+        result = get_team_by_id("test-id", teams, create_fresh=True)
 
         assert result is not team
         assert result.id == team.id
@@ -149,7 +148,7 @@ class TestGetTeamForRequest:
         team = Team(name="test-team", id="test-id", members=[member])
         teams = [team]
 
-        result = get_team_for_request("test-id", teams, create_fresh=True)
+        result = get_team_by_id("test-id", teams, create_fresh=True)
 
         # Members should be different instances
         assert result.members[0] is not member
@@ -161,20 +160,20 @@ class TestGetTeamForRequest:
         team = Team(name="test-team", id="test-id", members=[member])
         teams = [team]
 
-        result = get_team_for_request("unknown-id", teams, create_fresh=True)
+        result = get_team_by_id("unknown-id", teams, create_fresh=True)
 
         assert result is None
 
 
 class TestGetWorkflowForRequest:
-    """Tests for get_workflow_for_request factory function."""
+    """Tests for get_workflow_by_id factory function."""
 
     def test_returns_same_instance_when_create_fresh_false(self):
         """When create_fresh=False, returns the exact same workflow instance."""
         workflow = Workflow(name="test-workflow", id="test-id")
         workflows = [workflow]
 
-        result = get_workflow_for_request("test-id", workflows, create_fresh=False)
+        result = get_workflow_by_id("test-id", workflows, create_fresh=False)
 
         assert result is workflow
 
@@ -183,7 +182,7 @@ class TestGetWorkflowForRequest:
         workflow = Workflow(name="test-workflow", id="test-id")
         workflows = [workflow]
 
-        result = get_workflow_for_request("test-id", workflows, create_fresh=True)
+        result = get_workflow_by_id("test-id", workflows, create_fresh=True)
 
         assert result is not workflow
         assert result.id == workflow.id
@@ -194,7 +193,7 @@ class TestGetWorkflowForRequest:
         workflow = Workflow(name="test-workflow", id="test-id")
         workflows = [workflow]
 
-        result = get_workflow_for_request("unknown-id", workflows, create_fresh=True)
+        result = get_workflow_by_id("unknown-id", workflows, create_fresh=True)
 
         assert result is None
 
@@ -794,7 +793,7 @@ class TestAgentStateIsolation:
         )
         agents = [agent]
 
-        copy = get_agent_for_request("isolation-id", agents, create_fresh=True)
+        copy = get_agent_by_id("isolation-id", agents, create_fresh=True)
 
         # Modify the copy
         copy.metadata["counter"] = 100
@@ -813,7 +812,7 @@ class TestAgentStateIsolation:
         agent._mcp_tools_initialized_on_run = ["tool1", "tool2"]
         agents = [agent]
 
-        copy = get_agent_for_request("list-id", agents, create_fresh=True)
+        copy = get_agent_by_id("list-id", agents, create_fresh=True)
 
         # Copy should have empty/reset lists
         assert copy._mcp_tools_initialized_on_run == []
@@ -826,7 +825,7 @@ class TestAgentStateIsolation:
         agent._cached_session = "cached_value"  # type: ignore
         agents = [agent]
 
-        copy = get_agent_for_request("session-id", agents, create_fresh=True)
+        copy = get_agent_by_id("session-id", agents, create_fresh=True)
 
         assert copy._cached_session is None
         assert agent._cached_session == "cached_value"
@@ -841,7 +840,7 @@ class TestTeamStateIsolation:
         team = Team(name="team", id="team-id", members=[member])
         teams = [team]
 
-        copy = get_team_for_request("team-id", teams, create_fresh=True)
+        copy = get_team_by_id("team-id", teams, create_fresh=True)
 
         # Modify the copied member
         copy.members[0].metadata["role"] = "leader"
@@ -856,7 +855,7 @@ class TestTeamStateIsolation:
         outer_team = Team(name="outer-team", id="outer-team-id", members=[inner_team])
         teams = [outer_team]
 
-        copy = get_team_for_request("outer-team-id", teams, create_fresh=True)
+        copy = get_team_by_id("outer-team-id", teams, create_fresh=True)
 
         # The inner team should be different
         copied_inner = copy.members[0]
@@ -1063,9 +1062,9 @@ class TestConcurrentRequestSimulation:
         agents = [template]
 
         # Simulate 3 concurrent requests
-        copy1 = get_agent_for_request("template-id", agents, create_fresh=True)
-        copy2 = get_agent_for_request("template-id", agents, create_fresh=True)
-        copy3 = get_agent_for_request("template-id", agents, create_fresh=True)
+        copy1 = get_agent_by_id("template-id", agents, create_fresh=True)
+        copy2 = get_agent_by_id("template-id", agents, create_fresh=True)
+        copy3 = get_agent_by_id("template-id", agents, create_fresh=True)
 
         # Modify each copy
         copy1.metadata["request_id"] = "request-1"
@@ -1093,8 +1092,8 @@ class TestConcurrentRequestSimulation:
         )
         workflows = [template]
 
-        copy1 = get_workflow_for_request("template-workflow-id", workflows, create_fresh=True)
-        copy2 = get_workflow_for_request("template-workflow-id", workflows, create_fresh=True)
+        copy1 = get_workflow_by_id("template-workflow-id", workflows, create_fresh=True)
+        copy2 = get_workflow_by_id("template-workflow-id", workflows, create_fresh=True)
 
         # Verify independence
         assert copy1 is not copy2
@@ -1125,3 +1124,302 @@ class TestSharedResources:
         # Orchestrator agent should be copied
         assert copy.agent is not orchestrator
         assert copy.agent.id == orchestrator.id
+
+
+# ============================================================================
+# Tools Deep Copy Unit Tests
+# ============================================================================
+
+
+class TestToolsDeepCopyUnit:
+    """Unit tests for tools handling during Agent.deep_copy()."""
+
+    def test_regular_toolkit_is_deep_copied(self):
+        """Regular Toolkit should be deep copied."""
+        from agno.tools.toolkit import Toolkit
+
+        class SimpleTool(Toolkit):
+            def __init__(self):
+                super().__init__(name="simple")
+                self.value = 0
+                self.register(self.get_value)
+
+            def get_value(self) -> int:
+                return self.value
+
+        tool = SimpleTool()
+        agent = Agent(name="test", id="test-id", tools=[tool])
+
+        copy = agent.deep_copy()
+
+        # Tool should be copied (different instance)
+        assert copy.tools[0] is not tool
+        # State should be independent
+        tool.value = 100
+        assert copy.tools[0].value == 0
+
+    def test_function_tool_in_list(self):
+        """Function tools should be handled."""
+
+        def my_func() -> str:
+            return "hello"
+
+        agent = Agent(name="test", id="test-id", tools=[my_func])
+        copy = agent.deep_copy()
+
+        assert len(copy.tools) == 1
+
+    def test_mcp_tools_class_detection(self):
+        """MCPTools class should be detected and shared."""
+
+        # Create a mock class hierarchy
+        class MCPTools:
+            pass
+
+        class MyMCPTool(MCPTools):
+            def __init__(self):
+                self.instance_id = "mcp-123"
+
+        mcp = MyMCPTool()
+        agent = Agent(name="test", id="test-id", tools=[mcp])
+
+        copy = agent.deep_copy()
+
+        # MCP tool should be shared (same instance)
+        assert copy.tools[0] is mcp
+
+    def test_multi_mcp_tools_class_detection(self):
+        """MultiMCPTools class should be detected and shared."""
+
+        class MultiMCPTools:
+            pass
+
+        class MyMultiMCP(MultiMCPTools):
+            def __init__(self):
+                self.servers = ["s1", "s2"]
+
+        multi = MyMultiMCP()
+        agent = Agent(name="test", id="test-id", tools=[multi])
+
+        copy = agent.deep_copy()
+
+        # MultiMCPTools should be shared
+        assert copy.tools[0] is multi
+
+    def test_non_copyable_tool_shared(self):
+        """Tool that can't be copied should be shared."""
+
+        class UnpicklableTool:
+            def __init__(self):
+                self.id = "unpicklable"
+
+            def __deepcopy__(self, memo):
+                raise TypeError("Cannot copy")
+
+        tool = UnpicklableTool()
+        agent = Agent(name="test", id="test-id", tools=[tool])
+
+        # Should not raise
+        copy = agent.deep_copy()
+
+        # Should fall back to sharing
+        assert copy.tools[0] is tool
+
+    def test_empty_tools_list(self):
+        """Empty tools list should be copied as empty list."""
+        agent = Agent(name="test", id="test-id", tools=[])
+        copy = agent.deep_copy()
+
+        assert copy.tools == []
+        assert copy.tools is not agent.tools
+
+    def test_none_tools(self):
+        """None tools gets normalized to empty list by Agent."""
+        agent = Agent(name="test", id="test-id", tools=None)
+        copy = agent.deep_copy()
+
+        # Agent normalizes None to empty list
+        assert copy.tools == []
+
+    def test_multiple_tools_mixed(self):
+        """Multiple tools of different types should be handled correctly."""
+        from agno.tools.toolkit import Toolkit
+
+        class RegularTool(Toolkit):
+            def __init__(self):
+                super().__init__(name="regular")
+                self.count = 0
+                self.register(self.inc)
+
+            def inc(self) -> int:
+                self.count += 1
+                return self.count
+
+        class MCPTools:
+            pass
+
+        class MockMCP(MCPTools):
+            def __init__(self):
+                self.id = "mcp"
+
+        regular = RegularTool()
+        mcp = MockMCP()
+
+        agent = Agent(name="test", id="test-id", tools=[regular, mcp])
+        copy = agent.deep_copy()
+
+        assert len(copy.tools) == 2
+        assert copy.tools[0] is not regular  # Copied
+        assert copy.tools[1] is mcp  # Shared
+
+
+# ============================================================================
+# Heavy Resources Unit Tests
+# ============================================================================
+
+
+class TestHeavyResourcesUnit:
+    """Unit tests for heavy resources (db, model, knowledge, memory_manager)."""
+
+    def test_db_is_shared(self):
+        """Database should be shared."""
+
+        class MockDb:
+            pass
+
+        db = MockDb()
+        agent = Agent(name="test", id="test-id", db=db)
+        copy = agent.deep_copy()
+
+        assert copy.db is db
+
+    def test_knowledge_is_shared(self):
+        """Knowledge should be shared."""
+
+        class MockKnowledge:
+            pass
+
+        knowledge = MockKnowledge()
+        agent = Agent(name="test", id="test-id", knowledge=knowledge)
+        copy = agent.deep_copy()
+
+        assert copy.knowledge is knowledge
+
+    def test_memory_manager_is_shared(self):
+        """Memory manager should be shared."""
+
+        class MockMM:
+            pass
+
+        mm = MockMM()
+        agent = Agent(name="test", id="test-id", memory_manager=mm)
+        copy = agent.deep_copy()
+
+        assert copy.memory_manager is mm
+
+    def test_model_is_shared(self):
+        """Model should be shared."""
+        from agno.models.openai import OpenAIChat
+
+        model = OpenAIChat(id="gpt-4o-mini")
+        agent = Agent(name="test", id="test-id", model=model)
+        copy = agent.deep_copy()
+
+        assert copy.model is model
+
+    def test_reasoning_model_is_shared(self):
+        """Reasoning model should be shared."""
+        from agno.models.openai import OpenAIChat
+
+        reasoning_model = OpenAIChat(id="gpt-4o")
+        agent = Agent(name="test", id="test-id", reasoning_model=reasoning_model)
+        copy = agent.deep_copy()
+
+        assert copy.reasoning_model is reasoning_model
+
+
+# ============================================================================
+# Reasoning Agent Unit Tests
+# ============================================================================
+
+
+class TestReasoningAgentUnit:
+    """Unit tests for reasoning_agent deep copy."""
+
+    def test_reasoning_agent_is_copied(self):
+        """Reasoning agent should be deep copied (not shared)."""
+        reasoner = Agent(name="reasoner", id="reasoner-id")
+        agent = Agent(name="main", id="main-id", reasoning_agent=reasoner)
+        copy = agent.deep_copy()
+
+        # Should be a different instance
+        assert copy.reasoning_agent is not reasoner
+        assert copy.reasoning_agent.id == reasoner.id
+
+    def test_reasoning_agent_state_isolated(self):
+        """Reasoning agent state should be isolated."""
+        reasoner = Agent(name="reasoner", id="reasoner-id", metadata={"count": 0})
+        agent = Agent(name="main", id="main-id", reasoning_agent=reasoner)
+        copy = agent.deep_copy()
+
+        # Modify original
+        reasoner.metadata["count"] = 10
+
+        # Copy should be unaffected
+        assert copy.reasoning_agent.metadata["count"] == 0
+
+    def test_reasoning_agent_none(self):
+        """None reasoning_agent should remain None."""
+        agent = Agent(name="test", id="test-id", reasoning_agent=None)
+        copy = agent.deep_copy()
+
+        assert copy.reasoning_agent is None
+
+
+# ============================================================================
+# Error Handling Unit Tests
+# ============================================================================
+
+
+class TestDeepCopyErrorHandlingUnit:
+    """Unit tests for error handling in deep_copy."""
+
+    def test_graceful_handling_of_weird_tool_types(self):
+        """Unusual tool types should be handled gracefully."""
+        # These are unusual but shouldn't crash
+        tools = [
+            lambda: "hi",  # Lambda
+            42,  # Not really a tool
+            {"key": "value"},  # Dict
+        ]
+
+        agent = Agent(name="test", id="test-id", tools=tools)
+
+        # Should not raise
+        copy = agent.deep_copy()
+        assert len(copy.tools) == 3
+
+    def test_tool_with_complex_state(self):
+        """Tool with complex nested state should be copied correctly."""
+        from agno.tools.toolkit import Toolkit
+
+        class ComplexTool(Toolkit):
+            def __init__(self):
+                super().__init__(name="complex")
+                self.nested = {"level1": {"level2": [1, 2, 3]}}
+                self.items = [{"a": 1}, {"b": 2}]
+                self.register(self.get_data)
+
+            def get_data(self) -> dict:
+                return self.nested
+
+        tool = ComplexTool()
+        agent = Agent(name="test", id="test-id", tools=[tool])
+        copy = agent.deep_copy()
+
+        # Nested state should be independent
+        tool.nested["level1"]["level2"].append(4)
+        tool.items.append({"c": 3})
+
+        assert copy.tools[0].nested["level1"]["level2"] == [1, 2, 3]
+        assert len(copy.tools[0].items) == 2
