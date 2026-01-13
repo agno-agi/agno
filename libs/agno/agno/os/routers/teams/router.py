@@ -194,7 +194,7 @@ def get_team_router(
 
         logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
 
-        team = get_team_by_id(team_id, os.teams)
+        team = get_team_by_id(team_id, os.teams, create_fresh=True)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -321,7 +321,7 @@ def get_team_router(
         team_id: str,
         run_id: str,
     ):
-        team = get_team_by_id(team_id, os.teams)
+        team = get_team_by_id(team_id, os.teams, create_fresh=True)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -526,7 +526,7 @@ def get_team_router(
         dependencies=[Depends(require_resource_access("teams", "read", "team_id"))],
     )
     async def get_team(team_id: str, request: Request) -> TeamResponse:
-        team = get_team_by_id(team_id, os.teams)
+        team = get_team_by_id(team_id, os.teams, create_fresh=True)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
