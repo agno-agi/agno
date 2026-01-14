@@ -1,5 +1,7 @@
 from agno.agent import Agent
-from agno.cli.console import console
+from rich.console import Console
+
+console = Console()
 from agno.models.openai import OpenAIChat
 
 task = "9.11 and 9.9 -- which is bigger?"

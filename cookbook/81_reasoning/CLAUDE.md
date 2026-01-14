@@ -22,7 +22,7 @@ This folder contains **reasoning model** examples - how to use chain-of-thought,
 
 **Run a cookbook:**
 ```bash
-.venvs/demo/bin/python cookbook/10_reasoning/agents/default_chain_of_thought.py
+.venvs/demo/bin/python cookbook/81_reasoning/agents/default_chain_of_thought.py
 ```
 
 ---

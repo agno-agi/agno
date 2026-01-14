@@ -1,7 +1,9 @@
 import asyncio
 
 from agno.agent import Agent
-from agno.cli.console import console
+from rich.console import Console
+
+console = Console()
 from agno.models.openai import OpenAIChat
 
 task = "How many 'r' are in the word 'strawberry'?"
