@@ -69,9 +69,7 @@ finance_agent = Agent(
     role="Get financial data",
     id="finance_agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        YFinanceTools()
-    ],
+    tools=[YFinanceTools()],
     instructions=[
         "You are a skilled financial analyst with expertise in market data! 📊",
         "Follow these steps when analyzing financial data:",
