@@ -9,17 +9,17 @@ Each example can be run independently and contains detailed comments to help you
 | # | File | What You'll Learn | Key Features |
 |:--|:---------|:------------------|:-------------|
 | 01 | `agent_with_tools.py` | Give an agent tools to fetch real-time data | Tool Calling, Data Fetching |
-| 02 | `agent_with_storage.py` | Persist conversations across runs | Persistent Storage, Session Management |
-| 03 | `agent_search_over_knowledge.py` | Load documents into a knowledge base and search with hybrid search | Chunking, Embedding, Hybrid Search, Agentic Retrieval |
-| 04 | `custom_tool_for_self_learning.py` | How to write your own tools and add self-learning capabilities | Custom Tools, Self-Learning |
-| 05 | `agent_with_structured_output.py` | Return typed Pydantic objects | Structured Output, Type Safety |
-| 06 | `agent_with_typed_input_output.py` | Full type safety on input and output | Input Schema, Output Schema |
-| 07 | `agent_with_memory.py` | Remember user preferences across sessions | Memory Manager, Personalization |
-| 08 | `agent_with_state_management.py` | Track, modify, and persist structured state | Session State, State Management |
-| 09 | `multi_agent_team.py` | Coordinate multiple agents by organizing them into a team | Multi-Agent Team, Dynamic Collaboration |
-| 10 | `sequential_workflow.py` | Sequentially execute agents/teams/functions | Agentic Workflow, Pipelines |
-| 11 | `agent_with_guardrails.py` | Add input validation and safety checks | Guardrails, PII Detection, Prompt Injection |
-| 12 | `human_in_the_loop.py` | Require user confirmation before executing tools | Human in the Loop, Tool Confirmation |
+| 02 | `agent_with_structured_output.py` | Return typed Pydantic objects | Structured Output, Type Safety |
+| 03 | `agent_with_typed_input_output.py` | Full type safety on input and output | Input Schema, Output Schema |
+| 04 | `agent_with_storage.py` | Persist conversations across runs | Persistent Storage, Session Management |
+| 05 | `agent_with_memory.py` | Remember user preferences across sessions | Memory Manager, Personalization |
+| 06 | `agent_with_state_management.py` | Track, modify, and persist structured state | Session State, State Management |
+| 07 | `agent_search_over_knowledge.py` | Load documents into a knowledge base and search with hybrid search | Chunking, Embedding, Hybrid Search, Agentic Retrieval |
+| 08 | `custom_tool_for_self_learning.py` | How to write your own tools and add self-learning capabilities | Custom Tools, Self-Learning |
+| 09 | `agent_with_guardrails.py` | Add input validation and safety checks | Guardrails, PII Detection, Prompt Injection |
+| 10 | `human_in_the_loop.py` | Require user confirmation before executing tools | Human in the Loop, Tool Confirmation |
+| 11 | `multi_agent_team.py` | Coordinate multiple agents by organizing them into a team | Multi-Agent Team, Dynamic Collaboration |
+| 12 | `sequential_workflow.py` | Sequentially execute agents/teams/functions | Agentic Workflow, Pipelines |
 
 ## Key Concepts
 
@@ -59,7 +59,7 @@ source .getting-started/bin/activate
 
 ### 3. Install dependencies
 ```bash
-uv pip install -r cookbook/00_getting_started/requirements.txt
+uv pip install -r cookbook/00_quickstart/requirements.txt
 ```
 
 ### 4. Set your API key
@@ -69,7 +69,7 @@ export GOOGLE_API_KEY=your-google-api-key
 
 ### 5. Run any cookbook
 ```bash
-python cookbook/00_getting_started/agent_with_tools.py
+python cookbook/00_quickstart/agent_with_tools.py
 ```
 
 **That's it.** No Docker, no Postgres — just Python and an API key.
@@ -78,7 +78,7 @@ python cookbook/00_getting_started/agent_with_tools.py
 
 Agent OS provides a web interface for interacting with your agents. Start the server:
 ```bash
-python cookbook/00_getting_started/run.py
+python cookbook/00_quickstart/run.py
 ```
 
 Then visit [os.agno.com](https://os.agno.com) and add `http://localhost:7777` as an endpoint.
@@ -90,7 +90,7 @@ https://github.com/user-attachments/assets/aae0086b-86f6-4939-a0ce-e1ec9b87ba1f
 > [!TIP]
 > To run the agent-with-knowledge, remember to load the knowledge base first using:
 > ```bash
-> python cookbook/00_getting_started/agent_search_over_knowledge.py
+> python cookbook/00_quickstart/agent_search_over_knowledge.py
 > ```
 
 ## Swap Models Anytime
@@ -113,45 +113,45 @@ model = Claude(id="claude-sonnet-4-5")
 ## Run Cookbooks Individually
 ```bash
 # 01 - Tools: Fetch real market data
-python cookbook/00_getting_started/agent_with_tools.py
+python cookbook/00_quickstart/agent_with_tools.py
 
-# 02 - Storage: Remember conversations
-python cookbook/00_getting_started/agent_with_storage.py
+# 02 - Structured Output: Get typed responses
+python cookbook/00_quickstart/agent_with_structured_output.py
 
-# 03 - Knowledge: Search your documents
-python cookbook/00_getting_started/agent_search_over_knowledge.py
+# 03 - Typed I/O: Full type safety
+python cookbook/00_quickstart/agent_with_typed_input_output.py
 
-# 04 - Custom Tools: Write your own
-python cookbook/00_getting_started/custom_tool_for_self_learning.py
+# 04 - Storage: Remember conversations
+python cookbook/00_quickstart/agent_with_storage.py
 
-# 05 - Structured Output: Get typed responses
-python cookbook/00_getting_started/agent_with_structured_output.py
+# 05 - Memory: Remember user preferences
+python cookbook/00_quickstart/agent_with_memory.py
 
-# 06 - Typed I/O: Full type safety
-python cookbook/00_getting_started/agent_with_typed_input_output.py
+# 06 - State: Manage watchlists
+python cookbook/00_quickstart/agent_with_state_management.py
 
-# 07 - Memory: Remember user preferences
-python cookbook/00_getting_started/agent_with_memory.py
+# 07 - Knowledge: Search your documents
+python cookbook/00_quickstart/agent_search_over_knowledge.py
 
-# 08 - State: Manage watchlists
-python cookbook/00_getting_started/agent_with_state_management.py
+# 08 - Custom Tools: Write your own
+python cookbook/00_quickstart/custom_tool_for_self_learning.py
 
-# 09 - Teams: Bull vs Bear analysis
-python cookbook/00_getting_started/multi_agent_team.py
+# 09 - Guardrails: Input validation and safety
+python cookbook/00_quickstart/agent_with_guardrails.py
 
-# 10 - Workflows: Research pipeline
-python cookbook/00_getting_started/sequential_workflow.py
+# 10 - Human in the Loop: Confirm before executing
+python cookbook/00_quickstart/human_in_the_loop.py
 
-# 11 - Guardrails: Input validation and safety
-python cookbook/00_getting_started/agent_with_guardrails.py
+# 11 - Teams: Bull vs Bear analysis
+python cookbook/00_quickstart/multi_agent_team.py
 
-# 12 - Human in the Loop: Confirm before executing
-python cookbook/00_getting_started/human_in_the_loop.py
+# 12 - Workflows: Research pipeline
+python cookbook/00_quickstart/sequential_workflow.py
 ```
 
 ## File Structure
 ```
-cookbook/00_getting_started/
+cookbook/00_quickstart/
 ├── agent_with_tools.py                 # Tools and data fetching
 ├── agent_with_storage.py               # Conversation persistence
 ├── agent_search_over_knowledge.py      # Knowledge base + hybrid search
@@ -170,9 +170,13 @@ cookbook/00_getting_started/
 └── README.md
 ```
 
+## Async Patterns
+
+All examples in this Quick Start use synchronous code for simplicity. For async/await patterns (recommended for production), see `cookbook/02_agents/` which includes async variants of most features.
+
 ## Learn More
 
 - [Agno Documentation](https://docs.agno.com)
 - [Agent OS Overview](https://docs.agno.com/agent-os/overview)
 
-Built with 💜 by the Agno team
+Built with love by the Agno team

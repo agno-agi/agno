@@ -1,6 +1,6 @@
-# Getting Started Cookbook Testing Log
+# Quick Start Cookbook Test Log
 
-Testing all cookbooks in `cookbook/00_getting_started/` to verify they work as expected.
+Testing results for `cookbook/00_quickstart/` examples.
 
 **Test Environment:**
 - Python: `.venvs/demo/bin/python`
@@ -9,7 +9,24 @@ Testing all cookbooks in `cookbook/00_getting_started/` to verify they work as e
 
 ---
 
-## Basic Agent Tests
+## Test Summary
+
+| Phase | Tests | Passed | Status |
+|:------|:------|:-------|:-------|
+| Phase 1: Basic | 3 | 3 | PASS |
+| Phase 2: Persistence | 3 | 3 | PASS |
+| Phase 3: Knowledge | 2 | 2 | PASS |
+| Phase 4: Safety | 1 | 1 | PASS |
+| Phase 5: Multi-Agent | 2 | 2 | PASS |
+| **Total** | **11** | **11** | **ALL PASS** |
+
+**Skipped:** 2 (interactive/server)
+- `human_in_the_loop.py` - Requires user input
+- `run.py` - Server entrypoint
+
+---
+
+## Phase 1: Basic (No DB)
 
 ### agent_with_tools.py
 
@@ -17,7 +34,7 @@ Testing all cookbooks in `cookbook/00_getting_started/` to verify they work as e
 
 **Description:** Basic agent with YFinanceTools for fetching stock data.
 
-**Result:** Agent fetched NVIDIA stock data (price $185.81, market cap $4.52T, P/E 46.11) and provided comprehensive investment brief with key drivers, risks, and analyst sentiment.
+**Result:** Agent fetched NVIDIA stock data (price $182.41, market cap $4.44T, P/E 45.26) and provided comprehensive investment brief with key drivers, risks, and analyst sentiment.
 
 ---
 
@@ -25,9 +42,9 @@ Testing all cookbooks in `cookbook/00_getting_started/` to verify they work as e
 
 **Status:** PASS
 
-**Description:** Agent returns typed Pydantic objects.
+**Description:** Agent returns typed Pydantic objects (StockAnalysis).
 
-**Result:** Agent returned structured StockAnalysis object with all typed fields (ticker, company_name, current_price, market_cap, pe_ratio, summary, key_drivers, key_risks, recommendation).
+**Result:** Agent returned structured StockAnalysis object with all typed fields including current_price ($182.37), key_drivers, key_risks, and recommendation (Strong Buy).
 
 ---
 
@@ -35,11 +52,81 @@ Testing all cookbooks in `cookbook/00_getting_started/` to verify they work as e
 
 **Status:** PASS
 
-**Description:** Full type safety on input and output schemas.
+**Description:** Full type safety on input (StockQuery) and output (StockAnalysis) schemas.
 
-**Result:** Agent accepted typed StockQuery input and returned typed StockAnalysis output for Apple (AAPL).
+**Result:** Agent accepted typed StockQuery input and returned typed StockAnalysis output for Apple (AAPL) at $260.24 with Buy recommendation.
 
 ---
+
+## Phase 2: Persistence (SQLite)
+
+### agent_with_storage.py
+
+**Status:** PASS
+
+**Description:** Persistent conversations across runs using SQLite.
+
+**Result:**
+- Turn 1: Analyzed NVIDIA (comprehensive brief)
+- Turn 2: Compared to Tesla (remembered NVDA context)
+- Turn 3: Provided recommendation based on full conversation (NVIDIA recommended for fundamentals)
+
+---
+
+### agent_with_memory.py
+
+**Status:** PASS
+
+**Description:** MemoryManager for storing and recalling user preferences.
+
+**Result:**
+- Agent learned user preferences (AI/semiconductor stocks, moderate risk)
+- Recommendations tailored to preferences (MSFT, AVGO, TSM, ASML suggested)
+- Memory stored and retrieved successfully
+
+---
+
+### agent_with_state_management.py
+
+**Status:** PASS
+
+**Description:** Session state management for tracking structured data (watchlist).
+
+**Result:**
+- Added NVDA, AAPL, GOOGL to watchlist via state management
+- Agent queried prices for all watched stocks
+- Final state: `Watchlist: ['NVDA', 'AAPL', 'GOOGL']`
+
+---
+
+## Phase 3: Knowledge (ChromaDb)
+
+### agent_search_over_knowledge.py
+
+**Status:** PASS
+
+**Description:** Knowledge base with hybrid search over Agno documentation.
+
+**Result:**
+- Loaded Agno documentation into ChromaDb
+- Searched knowledge base for "What is Agno?"
+- Provided comprehensive answer about Framework, AgentOS Runtime, and Control Plane
+
+---
+
+### custom_tool_for_self_learning.py
+
+**Status:** PASS
+
+**Description:** Custom tools for saving and searching learnings in knowledge base.
+
+**Result:**
+- Retrieved existing learnings (P/E benchmarks, PEG ratio, interest rate impact)
+- Successfully searched and returned 3 saved learnings from knowledge base
+
+---
+
+## Phase 4: Safety
 
 ### agent_with_guardrails.py
 
@@ -55,89 +142,19 @@ Testing all cookbooks in `cookbook/00_getting_started/` to verify they work as e
 
 ---
 
-## Storage Tests (SQLite)
-
-### agent_with_storage.py
-
-**Status:** PASS
-
-**Description:** Persistent conversations across runs using SQLite.
-
-**Result:**
-- Turn 1: Analyzed NVIDIA (comprehensive brief)
-- Turn 2: Compared to Tesla (remembered NVDA context)
-- Turn 3: Provided recommendation based on full conversation (NVIDIA recommended for fundamentals, Tesla for speculative)
-
----
-
-### agent_with_memory.py
-
-**Status:** PASS
-
-**Description:** MemoryManager for user preferences.
-
-**Result:**
-- Agent learned user preferences (AI/semiconductor stocks, moderate risk)
-- Recommendations tailored to preferences (MSFT, AVGO, TSM, ASML suggested as lower-volatility options)
-- Memory stored: "The user is interested in AI and semiconductor stocks and has a moderate risk tolerance."
-
----
-
-### agent_with_state_management.py
-
-**Status:** PASS
-
-**Description:** Session state management for tracking structured data.
-
-**Result:**
-- Added NVDA, AAPL, GOOGL to watchlist via state management
-- Agent queried prices for all watched stocks
-- Final state: `Watchlist: ['NVDA', 'AAPL', 'GOOGL']`
-
----
-
-## Knowledge Tests (ChromaDb)
-
-### agent_search_over_knowledge.py
-
-**Status:** PASS
-
-**Description:** Knowledge base with hybrid search.
-
-**Result:**
-- Loaded Agno documentation into ChromaDb
-- Searched knowledge base for "What is Agno?"
-- Provided comprehensive answer about Agno's three pillars (Framework, AgentOS Runtime, Control Plane)
-
----
-
-### custom_tool_for_self_learning.py
-
-**Status:** PASS
-
-**Description:** Custom tools for saving and searching learnings.
-
-**Result:**
-- Agent proposed learning about P/E benchmarks
-- User confirmed "yes" to save
-- Learning saved: "Tech Sector P/E Benchmarks"
-- Successfully retrieved learning when asked "What learnings do we have saved?"
-
----
-
-## Multi-Agent Tests
+## Phase 5: Multi-Agent
 
 ### multi_agent_team.py
 
 **Status:** PASS
 
-**Description:** Multi-agent team with Bull and Bear analysts.
+**Description:** Multi-agent team with Bull and Bear analysts coordinated by team leader.
 
 **Result:**
 - Bull Analyst provided optimistic case for NVIDIA
 - Bear Analyst provided cautionary perspective
-- Team synthesized both views with comparison table (NVDA vs AMD)
-- Final recommendation: "NVIDIA is a bet on dominance; AMD is a bet on market expansion"
+- Team synthesized both views into NVDA vs AMD comparison
+- Final recommendation with key metrics table
 
 ---
 
@@ -145,62 +162,40 @@ Testing all cookbooks in `cookbook/00_getting_started/` to verify they work as e
 
 **Status:** PASS
 
-**Description:** Sequential workflow pipeline with 3 steps.
+**Description:** Sequential workflow pipeline with 3 steps (Data → Analysis → Report).
 
 **Result:**
 - Step 1 (Data Collection): Fetched NVIDIA fundamentals
 - Step 2 (Analysis): Deep-dive on strengths/weaknesses
-- Step 3 (Report Writing): Final recommendation with metrics table
-- Completed in 32.2s
+- Step 3 (Report Writing): Final BUY recommendation with metrics table
+- Completed in 32.6s
 
 **Note:** Debug warnings "Failed to broadcast through manager: no running event loop" appeared but did not affect execution.
 
 ---
 
-## Interactive Tests
+## Skipped Tests
 
 ### human_in_the_loop.py
 
-**Status:** NOT TESTED (Interactive)
+**Status:** SKIPPED (Interactive)
 
-**Description:** Requires user confirmation before executing tools.
-
-**Note:** This test requires interactive input - cannot be fully automated.
+**Reason:** Requires user confirmation prompts - cannot be fully automated.
 
 ---
-
-## Other Tests
 
 ### run.py
 
-**Status:** NOT TESTED
+**Status:** SKIPPED (Server)
 
-**Description:** Agent OS entrypoint for web interface.
-
-**Note:** This starts a server - test by checking if it starts without errors.
+**Reason:** Agent OS entrypoint - starts a server for web UI interaction.
 
 ---
 
-## TESTING SUMMARY
+## Notes
 
-**Summary:**
-- Total cookbooks: 13
-- Tested: 11/13
-- Passed: 11/11
-- Skipped: 2 (interactive/special requirements)
-
-**Phases Completed:**
-- Phase 1 (Basic): 4/4 passed
-- Phase 2 (Storage): 3/3 passed
-- Phase 3 (Knowledge): 2/2 passed
-- Phase 4 (Multi-agent): 2/2 passed
-
-**Skipped Tests:**
-- `human_in_the_loop.py` - Requires interactive input
-- `run.py` - Server startup test
-
-**Notes:**
-- All Gemini-based tests passing
+- All Gemini-based tests passing with `gemini-3-flash-preview` model
 - Storage (SQLite), Knowledge (ChromaDb), Memory, State all working correctly
 - Multi-agent teams and workflows functioning as expected
 - Guardrails correctly blocking PII, injection, and spam
+- Debug warning in workflows is non-blocking (known issue)

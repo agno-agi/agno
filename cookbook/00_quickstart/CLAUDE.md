@@ -1,6 +1,6 @@
-# CLAUDE.md - Getting Started Cookbook
+# CLAUDE.md - Quick Start Cookbook
 
-Instructions for Claude Code when testing the Getting Started cookbook.
+Instructions for Claude Code when testing the Quick Start cookbook.
 
 ---
 
@@ -20,12 +20,12 @@ export GOOGLE_API_KEY=your-google-api-key
 
 **Run a cookbook:**
 ```bash
-python cookbook/00_getting_started/agent_with_tools.py
+python cookbook/00_quickstart/agent_with_tools.py
 ```
 
 **Test results file:**
 ```
-cookbook/00_getting_started/TEST_LOG.md
+cookbook/00_quickstart/TEST_LOG.md
 ```
 
 ---
@@ -39,7 +39,7 @@ Ensure environment is set up:
 # Option A: Use README instructions
 uv venv .getting-started --python 3.12
 source .getting-started/bin/activate
-uv pip install -r cookbook/00_getting_started/requirements.txt
+uv pip install -r cookbook/00_quickstart/requirements.txt
 
 # Option B: Use demo environment (already has dependencies)
 source .venvs/demo/bin/activate
@@ -54,17 +54,17 @@ export GOOGLE_API_KEY=your-key
 
 Run individual cookbooks:
 ```bash
-python cookbook/00_getting_started/agent_with_tools.py
+python cookbook/00_quickstart/agent_with_tools.py
 ```
 
 For long outputs:
 ```bash
-python cookbook/00_getting_started/agent_with_tools.py 2>&1 | tail -100
+python cookbook/00_quickstart/agent_with_tools.py 2>&1 | tail -100
 ```
 
 ### 3. Updating TEST_LOG.md
 
-After each test, update `cookbook/00_getting_started/TEST_LOG.md` with:
+After each test, update `cookbook/00_quickstart/TEST_LOG.md` with:
 - Test name and path
 - Status: PASS or FAIL
 - Brief description of what was tested
@@ -77,18 +77,18 @@ After each test, update `cookbook/00_getting_started/TEST_LOG.md` with:
 | # | File | Dependencies | Notes |
 |:--|:-----|:-------------|:------|
 | 01 | `agent_with_tools.py` | Gemini, yfinance | Basic agent with tools |
-| 02 | `agent_with_storage.py` | Gemini, yfinance, SQLite | Persistent conversations |
-| 03 | `agent_search_over_knowledge.py` | Gemini, ChromaDb | Knowledge base + hybrid search |
-| 04 | `custom_tool_for_self_learning.py` | Gemini, yfinance, ChromaDb | Custom tools |
-| 05 | `agent_with_structured_output.py` | Gemini, yfinance | Pydantic output |
-| 06 | `agent_with_typed_input_output.py` | Gemini, yfinance | Full type safety |
-| 07 | `agent_with_memory.py` | Gemini, yfinance, SQLite | MemoryManager |
-| 08 | `agent_with_state_management.py` | Gemini, yfinance, SQLite | Session state |
-| 09 | `multi_agent_team.py` | Gemini, yfinance, duckduckgo | Multi-agent teams |
-| 10 | `sequential_workflow.py` | Gemini, yfinance, duckduckgo | Workflows |
-| 11 | `agent_with_guardrails.py` | Gemini, yfinance | Guardrails |
-| 12 | `human_in_the_loop.py` | Gemini, yfinance, ChromaDb | Confirmation (interactive) |
-| -- | `run.py` | All | Agent OS entrypoint |
+| 02 | `agent_with_structured_output.py` | Gemini, yfinance | Pydantic output |
+| 03 | `agent_with_typed_input_output.py` | Gemini, yfinance | Full type safety |
+| 04 | `agent_with_storage.py` | Gemini, yfinance, SQLite | Persistent conversations |
+| 05 | `agent_with_memory.py` | Gemini, yfinance, SQLite | MemoryManager |
+| 06 | `agent_with_state_management.py` | Gemini, yfinance, SQLite | Session state |
+| 07 | `agent_search_over_knowledge.py` | Gemini, ChromaDb | Knowledge base + hybrid search |
+| 08 | `custom_tool_for_self_learning.py` | Gemini, yfinance, ChromaDb | Custom tools |
+| 09 | `agent_with_guardrails.py` | Gemini, yfinance | Guardrails |
+| 10 | `human_in_the_loop.py` | Gemini, yfinance, ChromaDb | Confirmation (interactive) |
+| 11 | `multi_agent_team.py` | Gemini, yfinance, duckduckgo | Multi-agent teams |
+| 12 | `sequential_workflow.py` | Gemini, yfinance, duckduckgo | Workflows |
+| -- | `run.py` | All | Agent OS entrypoint (see docstring) |
 
 ---
 
@@ -110,28 +110,30 @@ After each test, update `cookbook/00_getting_started/TEST_LOG.md` with:
 
 ## Test Categories
 
-### Basic (No DB)
-- `agent_with_tools.py`
-- `agent_with_structured_output.py`
-- `agent_with_typed_input_output.py`
-- `agent_with_guardrails.py`
+### Phase 1: Basic (No DB)
+- `agent_with_tools.py` - Tools and data fetching
+- `agent_with_structured_output.py` - Pydantic output
+- `agent_with_typed_input_output.py` - Full type safety
 
-### Storage (SQLite)
-- `agent_with_storage.py`
-- `agent_with_memory.py`
-- `agent_with_state_management.py`
+### Phase 2: Persistence (SQLite)
+- `agent_with_storage.py` - Conversation persistence
+- `agent_with_memory.py` - User preferences
+- `agent_with_state_management.py` - Session state
 
-### Knowledge (ChromaDb)
-- `agent_search_over_knowledge.py`
-- `custom_tool_for_self_learning.py`
-- `human_in_the_loop.py`
+### Phase 3: Knowledge (ChromaDb)
+- `agent_search_over_knowledge.py` - RAG search
+- `custom_tool_for_self_learning.py` - Custom tools
 
-### Multi-Agent
-- `multi_agent_team.py`
-- `sequential_workflow.py`
+### Phase 4: Safety
+- `agent_with_guardrails.py` - Input validation
+- `human_in_the_loop.py` - User confirmation (interactive)
+
+### Phase 5: Multi-Agent
+- `multi_agent_team.py` - Team coordination
+- `sequential_workflow.py` - Pipeline orchestration
 
 ### Interactive (requires user input)
-- `human_in_the_loop.py` - Requires confirmation prompts
+- `human_in_the_loop.py` - Requires confirmation prompts, manual testing only
 
 ---
 
