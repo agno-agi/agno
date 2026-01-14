@@ -43,7 +43,7 @@ knowledge = Knowledge(
 )
 
 # Add content from URL
-knowledge.add_content(
+knowledge.insert(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 )
 

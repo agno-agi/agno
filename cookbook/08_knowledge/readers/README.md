@@ -7,19 +7,37 @@ Readers transform raw data into structured, searchable knowledge for your agents
 Readers integrate with the Knowledge system to process different data sources:
 
 ```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
 from agno.knowledge.knowledge import Knowledge
+from agno.vectordb.pgvector import PgVector
 from agno.knowledge.reader.pdf_reader import PDFReader
 
-knowledge = Knowledge(vector_db=your_vector_db)
-knowledge.add_content(
+# Create knowledge base
+knowledge = Knowledge(
+    vector_db=PgVector(
+        table_name="docs",
+        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
+    )
+)
+
+# Add documents with specific reader
+knowledge.insert(
     path="documents/",
     reader=PDFReader(),
     metadata={"source": "docs"}
 )
 
+# Create agent
 agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
     knowledge=knowledge,
     search_knowledge=True,
+)
+
+agent.print_response(
+    "What are the key concepts covered in this document?",
+    markdown=True
 )
 ```
 
