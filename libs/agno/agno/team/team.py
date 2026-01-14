@@ -261,6 +261,8 @@ class Team:
     read_chat_history: bool = False
 
     # --- System message settings ---
+    # A description of the Team (used for API/display purposes, not included in the system message).
+    description: Optional[str] = None
     # List of instructions for the team.
     instructions: Optional[Union[str, List[str], Callable]] = None
     # If True, wrap instructions in <instructions> tags. Default is False.
@@ -492,6 +494,7 @@ class Team:
         num_team_history_runs: int = 3,
         search_session_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
+        description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         add_instruction_tags: bool = False,
         expected_output: Optional[str] = None,
@@ -609,6 +612,8 @@ class Team:
         self.num_team_history_runs = num_team_history_runs
         self.search_session_history = search_session_history
         self.num_history_sessions = num_history_sessions
+
+        self.description = description
         self.instructions = instructions
         self.add_instruction_tags = add_instruction_tags
         self.expected_output = expected_output

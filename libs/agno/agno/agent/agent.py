@@ -337,6 +337,8 @@ class Agent:
     build_context: bool = True
 
     # --- Settings for building the default system message ---
+    # A description of the Agent (used for API/display purposes, not included in the system message).
+    description: Optional[str] = None
     # List of instructions for the agent.
     instructions: Optional[Union[str, List[str], Callable]] = None
     # If True, wrap instructions in <instructions> tags. Default is False.
@@ -521,6 +523,7 @@ class Agent:
         system_message_role: str = "system",
         introduction: Optional[str] = None,
         build_context: bool = True,
+        description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         add_instruction_tags: bool = False,
         expected_output: Optional[str] = None,
@@ -650,7 +653,7 @@ class Agent:
         self.system_message = system_message
         self.system_message_role = system_message_role
         self.build_context = build_context
-
+        self.description = description
         self.instructions = instructions
         self.add_instruction_tags = add_instruction_tags
         self.expected_output = expected_output
