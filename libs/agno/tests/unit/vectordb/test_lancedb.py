@@ -14,13 +14,17 @@ TEST_TABLE = "test_table"
 TEST_PATH = "tmp/test_lancedb"
 
 
+def _prepare_test_directory(path: str) -> None:
+    """Ensure a clean directory exists for tests by removing and recreating it."""
+    if os.path.exists(path):
+        shutil.rmtree(path)
+    os.makedirs(path, exist_ok=True)
+
+
 @pytest.fixture
 def lance_db(mock_embedder):
     """Fixture to create and clean up a LanceDb instance"""
-    os.makedirs(TEST_PATH, exist_ok=True)
-    if os.path.exists(TEST_PATH):
-        shutil.rmtree(TEST_PATH)
-        os.makedirs(TEST_PATH)
+    _prepare_test_directory(TEST_PATH)
 
     db = LanceDb(uri=TEST_PATH, table_name=TEST_TABLE, embedder=mock_embedder)
     db.create()
@@ -29,6 +33,7 @@ def lance_db(mock_embedder):
     try:
         db.drop()
     except Exception:
+        # Best-effort teardown: ignore errors if the database/table was already dropped
         pass
 
     if os.path.exists(TEST_PATH):
@@ -464,10 +469,7 @@ def test_content_hash_exists(lance_db, sample_documents):
 def async_lance_db(mock_embedder):
     """Fixture to create and clean up a LanceDb instance for async tests."""
     async_test_path = "tmp/test_lancedb_async"
-    os.makedirs(async_test_path, exist_ok=True)
-    if os.path.exists(async_test_path):
-        shutil.rmtree(async_test_path)
-        os.makedirs(async_test_path)
+    _prepare_test_directory(async_test_path)
 
     db = LanceDb(uri=async_test_path, table_name="async_test_table", embedder=mock_embedder)
     db.create()
@@ -476,6 +478,7 @@ def async_lance_db(mock_embedder):
     try:
         db.drop()
     except Exception:
+        # Best-effort teardown: ignore errors if the database/table was already dropped
         pass
 
     if os.path.exists(async_test_path):
@@ -520,10 +523,7 @@ def tracking_embedder():
 async def test_async_search_uses_async_embedder(tracking_embedder):
     """Test that async_search uses async embedder, not sync embedder (Issue #5974)."""
     async_test_path = "tmp/test_async_embedder"
-    os.makedirs(async_test_path, exist_ok=True)
-    if os.path.exists(async_test_path):
-        shutil.rmtree(async_test_path)
-        os.makedirs(async_test_path)
+    _prepare_test_directory(async_test_path)
 
     try:
         db = LanceDb(uri=async_test_path, table_name="async_embedder_test", embedder=tracking_embedder)
@@ -562,10 +562,7 @@ async def test_async_search_uses_async_embedder(tracking_embedder):
 async def test_async_vector_search_uses_async_embedder(tracking_embedder):
     """Test that async_vector_search uses async embedder."""
     async_test_path = "tmp/test_async_vector"
-    os.makedirs(async_test_path, exist_ok=True)
-    if os.path.exists(async_test_path):
-        shutil.rmtree(async_test_path)
-        os.makedirs(async_test_path)
+    _prepare_test_directory(async_test_path)
 
     try:
         db = LanceDb(uri=async_test_path, table_name="async_vector_test", embedder=tracking_embedder)

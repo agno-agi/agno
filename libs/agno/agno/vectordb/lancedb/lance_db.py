@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 from hashlib import md5
 from os import getenv
 from typing import Any, Dict, List, Optional, Union
@@ -145,6 +146,7 @@ class LanceDb(VectorDb):
         self.on_bad_vectors: Optional[str] = on_bad_vectors
         self.fill_value: Optional[float] = fill_value
         self.fts_index_exists = False
+        self._fts_lock = threading.Lock()  # Lock for thread-safe FTS index creation
         self.use_tantivy = use_tantivy
 
         if self.use_tantivy and (self.search_type in [SearchType.keyword, SearchType.hybrid]):
@@ -501,7 +503,8 @@ class LanceDb(VectorDb):
             List[Document]: List of matching documents
         """
         if self.connection:
-            self.table = self.connection.open_table(name=self.table_name)
+            # Run open_table in thread to avoid blocking the event loop
+            self.table = await asyncio.to_thread(self.connection.open_table, name=self.table_name)
 
         results = None
 
@@ -623,7 +626,7 @@ class LanceDb(VectorDb):
 
     async def async_vector_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-    ) -> List[Document]:
+    ):
         """
         Asynchronously perform vector similarity search.
 
@@ -636,17 +639,17 @@ class LanceDb(VectorDb):
             filters: Not used, included for API consistency
 
         Returns:
-            Search results as pandas DataFrame
+            Search results as pandas DataFrame, or None on error
         """
         # Use async embedder to avoid blocking the event loop
         query_embedding = await self.embedder.async_get_embedding(query)
         if query_embedding is None or len(query_embedding) == 0:
             logger.error(f"Error getting embedding for Query: {query}")
-            return None  # type: ignore
+            return None
 
         if self.table is None:
             logger.error("Table not initialized. Please create the table first")
-            return None  # type: ignore
+            return None
 
         # Run table search in thread to avoid blocking (LanceDB table ops are sync)
         def _do_search():
@@ -664,7 +667,7 @@ class LanceDb(VectorDb):
 
     async def async_hybrid_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-    ) -> List[Document]:
+    ):
         """
         Asynchronously perform hybrid search combining vector and full-text search.
 
@@ -677,23 +680,25 @@ class LanceDb(VectorDb):
             filters: Not used, included for API consistency
 
         Returns:
-            Search results as pandas DataFrame
+            Search results as pandas DataFrame, or None on error
         """
         # Use async embedder to avoid blocking the event loop
         query_embedding = await self.embedder.async_get_embedding(query)
         if query_embedding is None or len(query_embedding) == 0:
             logger.error(f"Error getting embedding for Query: {query}")
-            return []
+            return None
 
         if self.table is None:
             logger.error("Table not initialized. Please create the table first")
-            return []
+            return None
 
         # Run table search in thread to avoid blocking (LanceDB table ops are sync)
         def _do_search():
-            if not self.fts_index_exists:
-                self.table.create_fts_index("payload", use_tantivy=self.use_tantivy, replace=True)
-                self.fts_index_exists = True
+            # Use lock to prevent race condition when creating FTS index
+            with self._fts_lock:
+                if not self.fts_index_exists:
+                    self.table.create_fts_index("payload", use_tantivy=self.use_tantivy, replace=True)
+                    self.fts_index_exists = True
 
             results = (
                 self.table.search(
