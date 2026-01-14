@@ -1,7 +1,7 @@
 """
 Test script to verify compression events are working correctly.
 
-Run: `python libs/agno/agno/test.py`
+Run: `python cookbook/03_agents/context_compression/compression_events.py`
 """
 
 import asyncio
@@ -21,7 +21,7 @@ agent = Agent(
 
 
 async def main():
-    print("--- Running agent with compression events ---\n")
+    print("--- Running agent with compression events ---")
 
     stream = agent.arun(
         """
@@ -42,9 +42,7 @@ async def main():
             print(f"[LLMRequestStarted] model={chunk.model}")
 
         elif chunk.event == RunEvent.llm_request_completed.value:
-            print(
-                f"[LLMRequestCompleted] tokens: in={chunk.input_tokens}, out={chunk.output_tokens}"
-            )
+            print(f"[LLMRequestCompleted] model={chunk.model}")
 
         elif chunk.event == RunEvent.tool_call_started.value:
             print(f"[ToolCallStarted] {chunk.tool.tool_name}")

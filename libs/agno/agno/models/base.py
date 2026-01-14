@@ -1247,6 +1247,10 @@ class Model(ABC):
                 # Create assistant message and stream data
                 stream_data = MessageData()
                 model_response = ModelResponse()
+
+                # Emit LLM request started event
+                yield ModelResponse(event=ModelResponseEvent.llm_request_started.value)
+
                 if stream_model_response:
                     # Generate response
                     for response in self.process_response_stream(
@@ -1281,6 +1285,9 @@ class Model(ABC):
                 # Add assistant message to messages
                 messages.append(assistant_message)
                 assistant_message.log(metrics=True)
+
+                # Emit LLM request completed event
+                yield ModelResponse(event=ModelResponseEvent.llm_request_completed.value)
 
                 # Handle tool calls if present
                 if assistant_message.tool_calls is not None:
@@ -1474,6 +1481,10 @@ class Model(ABC):
                 assistant_message = Message(role=self.assistant_message_role)
                 stream_data = MessageData()
                 model_response = ModelResponse()
+
+                # Emit LLM request started event
+                yield ModelResponse(event=ModelResponseEvent.llm_request_started.value)
+
                 if stream_model_response:
                     # Generate response
                     async for model_response in self.aprocess_response_stream(
@@ -1508,6 +1519,9 @@ class Model(ABC):
                 # Add assistant message to messages
                 messages.append(assistant_message)
                 assistant_message.log(metrics=True)
+
+                # Emit LLM request completed event
+                yield ModelResponse(event=ModelResponseEvent.llm_request_completed.value)
 
                 # Handle tool calls if present
                 if assistant_message.tool_calls is not None:

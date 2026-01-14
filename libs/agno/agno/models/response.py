@@ -18,6 +18,8 @@ class ModelResponseEvent(str, Enum):
     assistant_response = "AssistantResponse"
     compression_started = "CompressionStarted"
     compression_completed = "CompressionCompleted"
+    llm_request_started = "LLMRequestStarted"
+    llm_request_completed = "LLMRequestCompleted"
 
 
 @dataclass

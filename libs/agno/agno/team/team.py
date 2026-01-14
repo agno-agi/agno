@@ -3305,19 +3305,6 @@ class Team:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
-        # Emit LLMRequestStarted event
-        if stream_events:
-            yield handle_event(  # type: ignore
-                create_team_llm_request_started_event(
-                    from_run_response=run_response,
-                    model=self.model.id,
-                    model_provider=self.model.provider,
-                ),
-                run_response,
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events,
-            )
-
         full_model_response = ModelResponse()
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
@@ -3329,6 +3316,36 @@ class Team:
             send_media_to_model=self.send_media_to_model,
             compression_manager=self.compression_manager if self.compress_tool_results else None,
         ):
+            # Handle LLM request events
+            if isinstance(model_response_event, ModelResponse):
+                if model_response_event.event == ModelResponseEvent.llm_request_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_llm_request_started_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.llm_request_completed.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_llm_request_completed_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
             yield from self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
@@ -3380,22 +3397,6 @@ class Team:
             messages_for_run_response, current_run_metrics=run_response.metrics
         )
 
-        # Emit LLMRequestCompleted event
-        if stream_events:
-            yield handle_event(  # type: ignore
-                create_team_llm_request_completed_event(
-                    from_run_response=run_response,
-                    model=self.model.id,
-                    model_provider=self.model.provider,
-                    input_tokens=run_response.metrics.input_tokens if run_response.metrics else None,
-                    output_tokens=run_response.metrics.output_tokens if run_response.metrics else None,
-                    total_tokens=run_response.metrics.total_tokens if run_response.metrics else None,
-                ),
-                run_response,
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events,
-            )
-
         # Update the run_response audio if streaming
         if full_model_response.audio is not None:
             run_response.response_audio = full_model_response.audio
@@ -3427,19 +3428,6 @@ class Team:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
-        # Emit LLMRequestStarted event
-        if stream_events:
-            yield handle_event(  # type: ignore
-                create_team_llm_request_started_event(
-                    from_run_response=run_response,
-                    model=self.model.id,
-                    model_provider=self.model.provider,
-                ),
-                run_response,
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events,
-            )
-
         full_model_response = ModelResponse()
         model_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
@@ -3453,6 +3441,36 @@ class Team:
             compression_manager=self.compression_manager if self.compress_tool_results else None,
         )  # type: ignore
         async for model_response_event in model_stream:
+            # Handle LLM request events
+            if isinstance(model_response_event, ModelResponse):
+                if model_response_event.event == ModelResponseEvent.llm_request_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_llm_request_started_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.llm_request_completed.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_llm_request_completed_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
             for event in self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
@@ -3494,22 +3512,6 @@ class Team:
         run_response.metrics = self._calculate_metrics(
             messages_for_run_response, current_run_metrics=run_response.metrics
         )
-
-        # Emit LLMRequestCompleted event
-        if stream_events:
-            yield handle_event(  # type: ignore
-                create_team_llm_request_completed_event(
-                    from_run_response=run_response,
-                    model=self.model.id,
-                    model_provider=self.model.provider,
-                    input_tokens=run_response.metrics.input_tokens if run_response.metrics else None,
-                    output_tokens=run_response.metrics.output_tokens if run_response.metrics else None,
-                    total_tokens=run_response.metrics.total_tokens if run_response.metrics else None,
-                ),
-                run_response,
-                events_to_skip=self.events_to_skip,
-                store_events=self.store_events,
-            )
 
         if stream_events and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
