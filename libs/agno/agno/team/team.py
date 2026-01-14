@@ -261,10 +261,10 @@ class Team:
     read_chat_history: bool = False
 
     # --- System message settings ---
-    # A description of the Team that is added to the start of the system message.
-    description: Optional[str] = None
     # List of instructions for the team.
     instructions: Optional[Union[str, List[str], Callable]] = None
+    # If True, wrap instructions in <instructions> tags. Default is False.
+    add_instruction_tags: bool = False
     # Provide the expected output from the Team.
     expected_output: Optional[str] = None
     # Additional context added to the end of the system message.
@@ -492,8 +492,8 @@ class Team:
         num_team_history_runs: int = 3,
         search_session_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
-        description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
+        add_instruction_tags: bool = False,
         expected_output: Optional[str] = None,
         additional_context: Optional[str] = None,
         markdown: bool = False,
@@ -609,9 +609,8 @@ class Team:
         self.num_team_history_runs = num_team_history_runs
         self.search_session_history = search_session_history
         self.num_history_sessions = num_history_sessions
-
-        self.description = description
         self.instructions = instructions
+        self.add_instruction_tags = add_instruction_tags
         self.expected_output = expected_output
         self.additional_context = additional_context
         self.markdown = markdown
@@ -5629,21 +5628,25 @@ class Team:
                 "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
             )
 
-        if self.description is not None:
-            system_message_content += f"<description>\n{self.description}\n</description>\n\n"
-
         if self.role is not None:
             system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
 
-        # 3.3.5 Then add instructions for the Agent
+        # 3.3.5 Then add instructions for the Team
         if len(instructions) > 0:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
+            if self.add_instruction_tags:
+                system_message_content += "<instructions>"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"\n- {_upi}"
+                else:
+                    system_message_content += "\n" + instructions[0]
+                system_message_content += "\n</instructions>\n\n"
             else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"- {_upi}\n"
+                else:
+                    system_message_content += instructions[0] + "\n\n"
         # 3.3.6 Add additional information
         if len(additional_information) > 0:
             system_message_content += "<additional_information>"
@@ -5934,21 +5937,25 @@ class Team:
                 "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
             )
 
-        if self.description is not None:
-            system_message_content += f"<description>\n{self.description}\n</description>\n\n"
-
         if self.role is not None:
             system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
 
-        # 3.3.5 Then add instructions for the Agent
+        # 3.3.5 Then add instructions for the Team
         if len(instructions) > 0:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
+            if self.add_instruction_tags:
+                system_message_content += "<instructions>"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"\n- {_upi}"
+                else:
+                    system_message_content += "\n" + instructions[0]
+                system_message_content += "\n</instructions>\n\n"
             else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"- {_upi}\n"
+                else:
+                    system_message_content += instructions[0] + "\n\n"
         # 3.3.6 Add additional information
         if len(additional_information) > 0:
             system_message_content += "<additional_information>"
