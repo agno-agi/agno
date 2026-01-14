@@ -22,7 +22,7 @@ This folder contains **workflow patterns** - multi-step pipelines that orchestra
 
 **Run a cookbook:**
 ```bash
-.venvs/demo/bin/python cookbook/05_workflows/_01_basic_workflows/_01_sequence_of_steps/sync/sequence_of_steps.py
+.venvs/demo/bin/python cookbook/04_workflows/_01_basic_workflows/_01_sequence_of_steps/sync/sequence_of_steps.py
 ```
 
 ---
