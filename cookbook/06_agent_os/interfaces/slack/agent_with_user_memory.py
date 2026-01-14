@@ -31,7 +31,7 @@ personal_agent = Agent(
     markdown=True,
     db=agent_db,
     memory_manager=memory_manager,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     instructions=dedent("""
         You are a personal AI friend in a slack chat, your purpose is to chat with the user about things and make them feel good.
         First introduce yourself and ask for their name then, ask about themeselves, their hobbies, what they like to do and what they like to talk about.

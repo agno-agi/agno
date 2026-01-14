@@ -25,7 +25,7 @@ DB_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 agent = Agent(
     model=VLLM(id="microsoft/Phi-3-mini-128k-instruct"),
     db=PostgresDb(db_url=DB_URL),
-    enable_user_memories=True,
+    update_memory_on_run=True,
     enable_session_summaries=True,
 )
 

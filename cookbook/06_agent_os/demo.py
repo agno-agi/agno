@@ -40,7 +40,7 @@ agno_agent = Agent(
     model=OpenAIChat(id="gpt-4.1"),
     tools=[MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")],
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     knowledge=knowledge,
     markdown=True,
 )
@@ -52,7 +52,7 @@ simple_agent = Agent(
     model=OpenAIChat(id="gpt-5-mini"),
     instructions=["You are a simple agent"],
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
 )
 
 research_agent = Agent(
@@ -63,7 +63,7 @@ research_agent = Agent(
     instructions=["You are a research agent"],
     tools=[DuckDuckGoTools()],
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
 )
 
 # Create a team
@@ -77,7 +77,7 @@ research_team = Team(
         "You are the lead researcher of a research team! 🔍",
     ],
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     add_datetime_to_context=True,
     markdown=True,
 )

@@ -65,7 +65,7 @@ class TeamResponse(BaseModel):
             "enable_agentic_knowledge_filters": False,
             # Memory defaults
             "enable_agentic_memory": False,
-            "enable_user_memories": False,
+            "update_memory_on_run": False,
             # Reasoning defaults
             "reasoning": False,
             "reasoning_min_steps": 1,
@@ -149,9 +149,9 @@ class TeamResponse(BaseModel):
         if team.memory_manager is not None:
             memory_info = {
                 "enable_agentic_memory": team.enable_agentic_memory,
-                "enable_user_memories": team.enable_user_memories,
+                "update_memory_on_run": team.update_memory_on_run,
                 "metadata": team.metadata,
-                "memory_table": team.db.memory_table_name if team.db and team.enable_user_memories else None,
+                "memory_table": team.db.memory_table_name if team.db and team.update_memory_on_run else None,
             }
 
             if team.memory_manager.model is not None:

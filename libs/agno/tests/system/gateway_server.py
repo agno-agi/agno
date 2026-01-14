@@ -61,7 +61,7 @@ local_agent = Agent(
     db=db,
     knowledge=knowledge,
     instructions=["You are a helpful assistant on the gateway server."],
-    enable_user_memories=True,
+    update_memory_on_run=True,
     markdown=True,
 )
 

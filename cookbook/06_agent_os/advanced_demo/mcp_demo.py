@@ -62,7 +62,7 @@ agent = Agent(
     """),
     model=OpenAIChat(id="gpt-4o"),
     db=SqliteDb(db_file=agent_storage_file),
-    enable_user_memories=True,
+    update_memory_on_run=True,
     enable_session_summaries=True,
     add_history_to_context=True,
     num_history_runs=3,
