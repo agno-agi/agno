@@ -117,6 +117,8 @@ from agno.utils.agent import (
 from agno.utils.common import is_typed_dict
 from agno.utils.events import (
     add_team_error_event,
+    create_team_compression_completed_event,
+    create_team_compression_started_event,
     create_team_parser_model_response_completed_event,
     create_team_parser_model_response_started_event,
     create_team_post_hook_completed_event,
@@ -412,7 +414,9 @@ class Team:
     # --- Context Compression ---
     # If True, compress tool call results to save context
     compress_tool_results: bool = False
-    # Compression manager for compressing tool call results
+    # If True, compress entire context when token limit is hit
+    compress_context: bool = False
+    # Compression manager for compressing tool call results and context
     compression_manager: Optional["CompressionManager"] = None
 
     # --- Team History ---
@@ -553,6 +557,7 @@ class Team:
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_session_summary_to_context: Optional[bool] = None,
         compress_tool_results: bool = False,
+        compress_context: bool = False,
         compression_manager: Optional["CompressionManager"] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning: bool = False,
@@ -678,8 +683,9 @@ class Team:
         self.session_summary_manager = session_summary_manager
         self.add_session_summary_to_context = add_session_summary_to_context
 
-        # Context compression settings
+        # Compression settings
         self.compress_tool_results = compress_tool_results
+        self.compress_context = compress_context
         self.compression_manager = compression_manager
 
         self.metadata = metadata
@@ -880,19 +886,40 @@ class Team:
             )
 
     def _set_compression_manager(self) -> None:
-        if self.compress_tool_results and self.compression_manager is None:
+        # Create compression manager if any compression is enabled
+        if (self.compress_tool_results or self.compress_context) and self.compression_manager is None:
             self.compression_manager = CompressionManager(
                 model=self.model,
+                compress_tool_results=self.compress_tool_results,
+                compress_context=self.compress_context,
             )
-        elif self.compression_manager is not None and self.compression_manager.model is None:
-            # If compression manager exists but has no model, use the team's model
-            self.compression_manager.model = self.model
 
         if self.compression_manager is not None:
+            # Warn if team flags conflict with passed manager settings
+            if (self.compress_tool_results or self.compress_context) and (
+                self.compress_tool_results != self.compression_manager.compress_tool_results
+                or self.compress_context != self.compression_manager.compress_context
+            ):
+                log_warning(
+                    "Team compression settings differ from CompressionManager settings. "
+                    "Team settings will override the manager."
+                )
+
+            # Ensure model is set
             if self.compression_manager.model is None:
                 self.compression_manager.model = self.model
+
+            # Sync compression settings from team to manager
+            if self.compress_tool_results:
+                self.compression_manager.compress_tool_results = True
+            if self.compress_context:
+                self.compression_manager.compress_context = True
+
+            # Sync compression settings from manager to team
             if self.compression_manager.compress_tool_results:
                 self.compress_tool_results = True
+            if self.compression_manager.compress_context:
+                self.compress_context = True
 
     def _initialize_session(
         self,
@@ -1526,6 +1553,8 @@ class Team:
 
                     # 6. Get the model response for the team leader
                     self.model = cast(Model, self.model)
+                    compression_enabled = self.compress_tool_results or self.compress_context
+
                     model_response: ModelResponse = self.model.response(
                         messages=run_messages.messages,
                         response_format=response_format,
@@ -1534,8 +1563,13 @@ class Team:
                         tool_call_limit=self.tool_call_limit,
                         run_response=run_response,
                         send_media_to_model=self.send_media_to_model,
-                        compression_manager=self.compression_manager if self.compress_tool_results else None,
+                        compression_manager=self.compression_manager if compression_enabled else None,
+                        compression_context=session.get_compression_context() if self.compress_context else None,
                     )
+
+                    # Store compressed context if compression occurred
+                    if model_response.compression_context:
+                        session.set_compression_context(model_response.compression_context)
 
                     # Check for cancellation after model call
                     raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2419,6 +2453,8 @@ class Team:
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 8. Get the model response for the team leader
+                    compression_enabled = self.compress_tool_results or self.compress_context
+
                     model_response = await self.model.aresponse(
                         messages=run_messages.messages,
                         tools=_tools,
@@ -2427,8 +2463,13 @@ class Team:
                         response_format=response_format,
                         send_media_to_model=self.send_media_to_model,
                         run_response=run_response,
-                        compression_manager=self.compression_manager if self.compress_tool_results else None,
+                        compression_manager=self.compression_manager if compression_enabled else None,
+                        compression_context=team_session.get_compression_context() if self.compress_context else None,
                     )  # type: ignore
+
+                    # Store compressed context if compression occurred
+                    if model_response.compression_context:
+                        team_session.set_compression_context(model_response.compression_context)
 
                     # Check for cancellation after model call
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3294,6 +3335,8 @@ class Team:
             stream_model_response = False
 
         full_model_response = ModelResponse()
+        compression_enabled = self.compress_tool_results or self.compress_context
+
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -3303,7 +3346,8 @@ class Team:
             stream_model_response=stream_model_response,
             run_response=run_response,
             send_media_to_model=self.send_media_to_model,
-            compression_manager=self.compression_manager if self.compress_tool_results else None,
+            compression_manager=self.compression_manager if compression_enabled else None,
+            compression_context=session.get_compression_context() if self.compress_context else None,
         ):
             yield from self._handle_model_response_chunk(
                 session=session,
@@ -3388,6 +3432,8 @@ class Team:
             stream_model_response = False
 
         full_model_response = ModelResponse()
+        compression_enabled = self.compress_tool_results or self.compress_context
+
         model_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -3397,7 +3443,8 @@ class Team:
             stream_model_response=stream_model_response,
             send_media_to_model=self.send_media_to_model,
             run_response=run_response,
-            compression_manager=self.compression_manager if self.compress_tool_results else None,
+            compression_manager=self.compression_manager if compression_enabled else None,
+            compression_context=session.get_compression_context() if self.compress_context else None,
         )  # type: ignore
         async for model_response_event in model_stream:
             for event in self._handle_model_response_chunk(
@@ -3772,6 +3819,37 @@ class Team:
                             events_to_skip=self.events_to_skip,
                             store_events=self.store_events,
                         )
+
+            # Handle compression events
+            elif model_response_event.event == ModelResponseEvent.compression_started.value:
+                if stream_events and model_response_event.compression_type:
+                    yield handle_event(  # type: ignore
+                        create_team_compression_started_event(
+                            from_run_response=run_response,
+                            compression_type=model_response_event.compression_type,
+                        ),
+                        run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                    )
+
+            elif model_response_event.event == ModelResponseEvent.compression_completed.value:
+                if stream_events and model_response_event.compression_type:
+                    stats = model_response_event.extra.get("stats", {}) if model_response_event.extra else {}
+                    yield handle_event(  # type: ignore
+                        create_team_compression_completed_event(
+                            from_run_response=run_response,
+                            compression_type=model_response_event.compression_type,
+                            stats=stats,
+                        ),
+                        run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                    )
+
+                # Store compressed context
+                if model_response_event.compression_context:
+                    session.set_compression_context(model_response_event.compression_context)
 
     def _convert_response_to_structured_format(
         self, run_response: Union[TeamRunOutput, RunOutput, ModelResponse], run_context: Optional[RunContext] = None

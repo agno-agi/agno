@@ -7,6 +7,8 @@ from agno.agent.agent import (
 )
 from agno.agent.remote import RemoteAgent
 from agno.run.agent import (
+    CompressionCompletedEvent,
+    CompressionStartedEvent,
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
     ReasoningCompletedEvent,
@@ -50,4 +52,6 @@ __all__ = [
     "ReasoningCompletedEvent",
     "ToolCallStartedEvent",
     "ToolCallCompletedEvent",
+    "CompressionStartedEvent",
+    "CompressionCompletedEvent",
 ]

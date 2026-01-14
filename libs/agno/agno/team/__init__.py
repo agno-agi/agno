@@ -1,4 +1,6 @@
 from agno.run.team import (
+    CompressionCompletedEvent,
+    CompressionStartedEvent,
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
     ReasoningCompletedEvent,
@@ -36,4 +38,6 @@ __all__ = [
     "ReasoningCompletedEvent",
     "ToolCallStartedEvent",
     "ToolCallCompletedEvent",
+    "CompressionStartedEvent",
+    "CompressionCompletedEvent",
 ]
