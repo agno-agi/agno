@@ -138,7 +138,7 @@ learning_machine.learned_knowledge_store.print(query="...")
 
 ## Known Issues
 
-1. **Design docs missing**: The `projects/learning-machine/` directory referenced in the main CLAUDE.md doesn't exist.
+1. **Design docs missing**: The `specs/learning-machine/` directory referenced in the main CLAUDE.md doesn't exist.
 
 2. **HITL mode**: Not implemented in any store - warnings are logged but no actual human-in-the-loop functionality.
 
