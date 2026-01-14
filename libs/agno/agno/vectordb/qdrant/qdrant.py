@@ -634,7 +634,7 @@ class Qdrant(VectorDb):
         limit: int,
         formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
-        dense_embedding = self.embedder.get_embedding(query)
+        dense_embedding = await self.embedder.async_get_embedding(query)
 
         # TODO(v2.0.0): Remove this conditional and always use named vectors
         if self.use_named_vectors:
@@ -683,7 +683,7 @@ class Qdrant(VectorDb):
         limit: int,
         formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
-        dense_embedding = self.embedder.get_embedding(query)
+        dense_embedding = await self.embedder.async_get_embedding(query)
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
         call = await self.async_client.query_points(
             collection_name=self.collection,
