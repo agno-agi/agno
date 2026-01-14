@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from agno.tools.websearch import WebSearchTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 
 reasoning_agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),

@@ -15,11 +15,11 @@ from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
-from agno.tools.websearch import WebSearchTools
 from agno.tools.e2b import E2BTools
 from agno.tools.knowledge import KnowledgeTools
 from agno.tools.pubmed import PubmedTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.lancedb.lance_db import LanceDb
 from agno.vectordb.search import SearchType

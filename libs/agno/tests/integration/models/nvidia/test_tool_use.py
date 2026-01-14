@@ -4,8 +4,8 @@ import pytest
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.nvidia import Nvidia
-from agno.tools.websearch import WebSearchTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 

@@ -4,8 +4,8 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.vllm import VLLM
-from agno.tools.websearch import WebSearchTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 VLLM_MODEL_ID = "Qwen/Qwen2.5-7B-Instruct"

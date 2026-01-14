@@ -3,8 +3,8 @@ from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.anthropic.claude import Claude
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack.slack import Slack
-from agno.tools.websearch import WebSearchTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 
 agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/persistent_memory.db")
 

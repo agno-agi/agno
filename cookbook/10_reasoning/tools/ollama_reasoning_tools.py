@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.ollama.chat import Ollama
-from agno.tools.websearch import WebSearchTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 
 reasoning_agent = Agent(
     model=Ollama(id="llama3.2:latest"),

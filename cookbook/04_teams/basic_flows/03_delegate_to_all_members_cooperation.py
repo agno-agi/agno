@@ -26,8 +26,8 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.websearch import WebSearchTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 
 reddit_researcher = Agent(
     name="Reddit Researcher",

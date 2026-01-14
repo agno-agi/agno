@@ -6,9 +6,9 @@ from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team import Team
-from agno.tools.websearch import WebSearchTools
 from agno.tools.knowledge import KnowledgeTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"

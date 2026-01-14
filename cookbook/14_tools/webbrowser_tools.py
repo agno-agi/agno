@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.google import Gemini
-from agno.tools.websearch import WebSearchTools
 from agno.tools.webbrowser import WebBrowserTools
+from agno.tools.websearch import WebSearchTools
 
 # Example 1: Enable specific WebBrowser functions
 agent = Agent(

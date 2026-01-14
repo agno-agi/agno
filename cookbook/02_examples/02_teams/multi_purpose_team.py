@@ -6,8 +6,8 @@ from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
 from agno.tools.dalle import DalleTools
-from agno.tools.websearch import WebSearchTools
 from agno.tools.e2b import E2BTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 web_agent = Agent(

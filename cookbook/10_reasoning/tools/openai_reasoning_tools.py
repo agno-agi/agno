@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.websearch import WebSearchTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 
 reasoning_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),

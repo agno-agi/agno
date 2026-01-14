@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.azure.openai_chat import AzureOpenAI
-from agno.tools.websearch import WebSearchTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 
 reasoning_agent = Agent(
     model=AzureOpenAI(id="gpt-4o-mini"),

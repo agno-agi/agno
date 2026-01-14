@@ -23,13 +23,13 @@ from agno.models.anthropic import Claude
 from agno.models.openai.chat import OpenAIChat
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
-from agno.tools.websearch import WebSearchTools
 from agno.tools.file import FileTools
 from agno.tools.github import GithubTools
 from agno.tools.knowledge import KnowledgeTools
 from agno.tools.pubmed import PubmedTools
 from agno.tools.python import PythonTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.lancedb.lance_db import LanceDb
 from agno.vectordb.search import SearchType

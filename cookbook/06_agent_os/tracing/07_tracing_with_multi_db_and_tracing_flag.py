@@ -8,8 +8,8 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.tools.websearch import WebSearchTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 
 # Set up databases - each agent has its own db
 db1 = SqliteDb(db_file="tmp/db1.db", id="db1")

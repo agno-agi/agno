@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.websearch import WebSearchTools
 from agno.tools.firecrawl import FirecrawlTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.wikipedia import WikipediaTools
 from prompts import (
     COMPETITOR_INSTRUCTIONS,

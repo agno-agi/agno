@@ -5,8 +5,8 @@ from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
-from agno.tools.websearch import WebSearchTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"

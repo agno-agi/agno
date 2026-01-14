@@ -2,8 +2,8 @@ import pytest
 
 from agno.agent import Agent, ToolCallCompletedEvent, ToolCallStartedEvent
 from agno.models.huggingface import HuggingFace
-from agno.tools.websearch import WebSearchTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 

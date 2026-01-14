@@ -9,8 +9,8 @@ import asyncio
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.tools.websearch import WebSearchTools
 from agno.tools.memory import MemoryTools
+from agno.tools.websearch import WebSearchTools
 
 db = SqliteDb(db_file="tmp/memory.db")
 

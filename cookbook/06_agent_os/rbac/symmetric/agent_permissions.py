@@ -18,8 +18,8 @@ from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
-from agno.tools.websearch import WebSearchTools
 from agno.tools.mcp import MCPTools
+from agno.tools.websearch import WebSearchTools
 
 # JWT Secret (use environment variable in production)
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")

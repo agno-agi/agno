@@ -7,9 +7,9 @@ from agno.db.postgres import PostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic.claude import Claude
-from agno.tools.websearch import WebSearchTools
 from agno.tools.exa import ExaTools
 from agno.tools.file import FileTools
+from agno.tools.websearch import WebSearchTools
 from agno.vectordb.pgvector.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"

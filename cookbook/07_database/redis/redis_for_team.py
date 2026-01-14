@@ -16,8 +16,8 @@ from agno.agent import Agent
 from agno.db.redis import RedisDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
-from agno.tools.websearch import WebSearchTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel
 
 db = RedisDb(db_url="redis://localhost:6379")

@@ -9,8 +9,8 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
-from agno.tools.websearch import WebSearchTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"

@@ -3,9 +3,9 @@ from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.website_reader import WebsiteReader
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.websearch import WebSearchTools
 from agno.tools.exa import ExaTools
 from agno.tools.slack import SlackTools
+from agno.tools.websearch import WebSearchTools
 from agno.vectordb.pgvector.pgvector import PgVector
 
 knowledge = Knowledge(

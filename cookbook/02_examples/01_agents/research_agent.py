@@ -27,8 +27,8 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.tools.websearch import WebSearchTools
 from agno.tools.newspaper4k import Newspaper4kTools
+from agno.tools.websearch import WebSearchTools
 
 # Initialize the research agent with advanced journalistic capabilities
 research_agent = Agent(

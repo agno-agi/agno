@@ -8,8 +8,8 @@ from agno.models.anthropic.claude import Claude
 # from agno.models.mistral.mistral import MistralChat
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team, TeamRunEvent
-from agno.tools.websearch import WebSearchTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 
 wikipedia_agent = Agent(
     id="hacker-news-agent",

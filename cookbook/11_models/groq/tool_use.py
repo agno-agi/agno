@@ -4,8 +4,8 @@ pip install openai ddgs newspaper4k lxml_html_clean agno
 
 from agno.agent import Agent
 from agno.models.groq import Groq
-from agno.tools.websearch import WebSearchTools
 from agno.tools.newspaper4k import Newspaper4kTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=Groq(id="llama-3.3-70b-versatile"),
