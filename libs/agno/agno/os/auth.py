@@ -1,5 +1,5 @@
 from os import getenv
-from typing import List, Set
+from typing import List, Optional, Set
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -9,6 +9,30 @@ from agno.os.settings import AgnoAPISettings
 
 # Create a global HTTPBearer instance
 security = HTTPBearer(auto_error=False)
+
+
+def get_auth_token_from_request(request: Request) -> Optional[str]:
+    """
+    Extract the JWT/Bearer token from the Authorization header.
+
+    This is used to forward the auth token to remote agents/teams/workflows
+    when making requests through the gateway.
+
+    Args:
+        request: The FastAPI request object
+
+    Returns:
+        The bearer token string if present, None otherwise
+
+    Usage:
+        auth_token = get_auth_token_from_request(request)
+        if auth_token and isinstance(agent, RemoteAgent):
+            await agent.arun(message, auth_token=auth_token)
+    """
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        return auth_header[7:]  # Remove "Bearer " prefix
+    return None
 
 
 def _is_jwt_configured() -> bool:

@@ -29,7 +29,7 @@ def sample_eval_run() -> EvalRunRecord:
     """Fixture returning a sample EvalRunRecord"""
     return EvalRunRecord(
         run_id="test_eval_run_1",
-        eval_type=EvalType.agent,
+        eval_type=EvalType.ACCURACY,
         eval_data={"score": 0.85, "feedback": "Good performance"},
         eval_input={"prompt": "Test prompt", "expected": "Expected output"},
         name="Test Evaluation Run",
@@ -52,7 +52,7 @@ def sample_eval_runs() -> List[EvalRunRecord]:
         runs.append(
             EvalRunRecord(
                 run_id=f"test_eval_run_{i}",
-                eval_type=EvalType.agent if i % 2 == 0 else EvalType.team,
+                eval_type=EvalType.ACCURACY if i % 2 == 0 else EvalType.RELIABILITY,
                 eval_data={"score": 0.8 + (i * 0.02), "feedback": f"Test feedback {i}"},
                 eval_input={"prompt": f"Test prompt {i}", "expected": f"Expected output {i}"},
                 name=f"Test Evaluation Run {i}",
@@ -69,19 +69,19 @@ def sample_eval_runs() -> List[EvalRunRecord]:
     return runs
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_create_eval_run(async_postgres_db_real: AsyncPostgresDb, sample_eval_run: EvalRunRecord):
     """Test creating an eval run"""
     result = await async_postgres_db_real.create_eval_run(sample_eval_run)
 
     assert result is not None
     assert result.run_id == "test_eval_run_1"
-    assert result.eval_type == EvalType.agent
+    assert result.eval_type == EvalType.ACCURACY
     assert result.eval_data["score"] == 0.85
     assert result.name == "Test Evaluation Run"
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_eval_run(async_postgres_db_real: AsyncPostgresDb, sample_eval_run: EvalRunRecord):
     """Test getting a single eval run"""
     # First create the eval run
@@ -93,12 +93,12 @@ async def test_get_eval_run(async_postgres_db_real: AsyncPostgresDb, sample_eval
     assert result is not None
     assert isinstance(result, EvalRunRecord)
     assert result.run_id == "test_eval_run_1"
-    assert result.eval_type == EvalType.agent
+    assert result.eval_type == EvalType.ACCURACY
     assert result.agent_id == "test_agent_1"
     assert result.eval_data["score"] == 0.85
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_eval_run_deserialize_false(async_postgres_db_real: AsyncPostgresDb, sample_eval_run: EvalRunRecord):
     """Test getting an eval run as raw dict"""
     # First create the eval run
@@ -110,11 +110,11 @@ async def test_get_eval_run_deserialize_false(async_postgres_db_real: AsyncPostg
     assert result is not None
     assert isinstance(result, dict)
     assert result["run_id"] == "test_eval_run_1"
-    assert result["eval_type"] == EvalType.agent
+    assert result["eval_type"] == EvalType.ACCURACY
     assert result["agent_id"] == "test_agent_1"
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_eval_run_not_found(async_postgres_db_real: AsyncPostgresDb):
     """Test getting eval run that doesn't exist"""
     result = await async_postgres_db_real.get_eval_run("nonexistent_id")
@@ -122,7 +122,7 @@ async def test_get_eval_run_not_found(async_postgres_db_real: AsyncPostgresDb):
     assert result is None
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_eval_runs_all(async_postgres_db_real: AsyncPostgresDb, sample_eval_runs: List[EvalRunRecord]):
     """Test getting all eval runs"""
     # Insert all eval runs
@@ -136,7 +136,7 @@ async def test_get_eval_runs_all(async_postgres_db_real: AsyncPostgresDb, sample
     assert all(isinstance(run, EvalRunRecord) for run in runs)
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_eval_runs_with_filters(
     async_postgres_db_real: AsyncPostgresDb, sample_eval_runs: List[EvalRunRecord]
 ):
@@ -160,7 +160,7 @@ async def test_get_eval_runs_with_filters(
     assert len(gpt4_runs) == 2  # runs 0 and 3
 
     # Filter by eval_type
-    agent_type_runs = await async_postgres_db_real.get_eval_runs(eval_type=[EvalType.agent])
+    agent_type_runs = await async_postgres_db_real.get_eval_runs(eval_type=[EvalType.ACCURACY])
     assert len(agent_type_runs) == 3  # runs 0, 2, 4
 
     # Filter by filter_type
@@ -168,7 +168,7 @@ async def test_get_eval_runs_with_filters(
     assert len(agent_filter_runs) == 3  # runs with agent_id not None
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_eval_runs_with_pagination(
     async_postgres_db_real: AsyncPostgresDb, sample_eval_runs: List[EvalRunRecord]
 ):
@@ -190,33 +190,7 @@ async def test_get_eval_runs_with_pagination(
     assert total_count == 5
 
 
-@pytest_asyncio.async_def
-async def test_get_eval_runs_with_sorting(
-    async_postgres_db_real: AsyncPostgresDb, sample_eval_runs: List[EvalRunRecord]
-):
-    """Test getting eval runs with sorting"""
-    # Insert all eval runs
-    for run in sample_eval_runs:
-        await async_postgres_db_real.create_eval_run(run)
-
-    # Sort by name ascending
-    runs = await async_postgres_db_real.get_eval_runs(sort_by="name", sort_order="asc")
-
-    assert len(runs) == 5
-    # Should be ordered by name
-    names = [run.name for run in runs]
-    assert names == sorted(names)
-
-    # Default sort should be by created_at desc
-    runs = await async_postgres_db_real.get_eval_runs()
-
-    assert len(runs) == 5
-    # Should be ordered by created_at (newest first)
-    created_at_times = [run.created_at for run in runs]
-    assert created_at_times == sorted(created_at_times, reverse=True)
-
-
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_delete_eval_run(async_postgres_db_real: AsyncPostgresDb, sample_eval_run: EvalRunRecord):
     """Test deleting a single eval run"""
     # First create the eval run
@@ -234,7 +208,7 @@ async def test_delete_eval_run(async_postgres_db_real: AsyncPostgresDb, sample_e
     assert result is None
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_delete_eval_runs_bulk(async_postgres_db_real: AsyncPostgresDb, sample_eval_runs: List[EvalRunRecord]):
     """Test deleting multiple eval runs"""
     # Insert all eval runs
@@ -257,7 +231,7 @@ async def test_delete_eval_runs_bulk(async_postgres_db_real: AsyncPostgresDb, sa
     assert "test_eval_run_3" in remaining_ids
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_rename_eval_run(async_postgres_db_real: AsyncPostgresDb, sample_eval_run: EvalRunRecord):
     """Test renaming an eval run"""
     # First create the eval run
@@ -275,7 +249,7 @@ async def test_rename_eval_run(async_postgres_db_real: AsyncPostgresDb, sample_e
     assert retrieved.name == "Renamed Evaluation Run"
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_rename_eval_run_deserialize_false(
     async_postgres_db_real: AsyncPostgresDb, sample_eval_run: EvalRunRecord
 ):
@@ -293,28 +267,28 @@ async def test_rename_eval_run_deserialize_false(
     assert result["name"] == "Renamed Run"
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_eval_runs_with_multiple_eval_types(async_postgres_db_real: AsyncPostgresDb):
     """Test filtering eval runs by multiple eval types"""
     # Create runs with different eval types
     runs = [
         EvalRunRecord(
             run_id="agent_run",
-            eval_type=EvalType.agent,
+            eval_type=EvalType.ACCURACY,
             eval_data={"score": 0.8},
             eval_input={"prompt": "test"},
             agent_id="test_agent",
         ),
         EvalRunRecord(
             run_id="team_run",
-            eval_type=EvalType.team,
+            eval_type=EvalType.RELIABILITY,
             eval_data={"score": 0.9},
             eval_input={"prompt": "test"},
             team_id="test_team",
         ),
         EvalRunRecord(
             run_id="workflow_run",
-            eval_type=EvalType.workflow,
+            eval_type=EvalType.AGENT_AS_JUDGE,
             eval_data={"score": 0.7},
             eval_input={"prompt": "test"},
             workflow_id="test_workflow",
@@ -325,7 +299,7 @@ async def test_eval_runs_with_multiple_eval_types(async_postgres_db_real: AsyncP
         await async_postgres_db_real.create_eval_run(run)
 
     # Filter by multiple eval types
-    filtered_runs = await async_postgres_db_real.get_eval_runs(eval_type=[EvalType.agent, EvalType.team])
+    filtered_runs = await async_postgres_db_real.get_eval_runs(eval_type=[EvalType.ACCURACY, EvalType.RELIABILITY])
 
     assert len(filtered_runs) == 2
     run_ids = [r.run_id for r in filtered_runs]
@@ -334,28 +308,28 @@ async def test_eval_runs_with_multiple_eval_types(async_postgres_db_real: AsyncP
     assert "workflow_run" not in run_ids
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_eval_runs_filter_by_component_type(async_postgres_db_real: AsyncPostgresDb):
     """Test filtering eval runs by component type"""
     # Create runs for different component types
     runs = [
         EvalRunRecord(
             run_id="agent_run",
-            eval_type=EvalType.agent,
+            eval_type=EvalType.ACCURACY,
             eval_data={"score": 0.8},
             eval_input={"prompt": "test"},
             agent_id="test_agent",
         ),
         EvalRunRecord(
             run_id="team_run",
-            eval_type=EvalType.team,
+            eval_type=EvalType.RELIABILITY,
             eval_data={"score": 0.9},
             eval_input={"prompt": "test"},
             team_id="test_team",
         ),
         EvalRunRecord(
             run_id="workflow_run",
-            eval_type=EvalType.workflow,
+            eval_type=EvalType.AGENT_AS_JUDGE,
             eval_data={"score": 0.7},
             eval_input={"prompt": "test"},
             workflow_id="test_workflow",

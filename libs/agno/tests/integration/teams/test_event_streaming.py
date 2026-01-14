@@ -1091,8 +1091,9 @@ def test_tool_parent_run_id():
     assert len(events[TeamRunEvent.run_started]) == 1
     assert len(events[TeamRunEvent.run_completed]) == 1
 
-    assert len(events[TeamRunEvent.tool_call_started]) == 1
-    assert len(events[TeamRunEvent.tool_call_completed]) == 1
+    # Model may delegate multiple times depending on its behavior
+    assert len(events[TeamRunEvent.tool_call_started]) >= 1
+    assert len(events[TeamRunEvent.tool_call_completed]) >= 1
 
     team_session = team.get_session(session_id="test_session")
     assert team_session is not None
@@ -1102,7 +1103,7 @@ def test_tool_parent_run_id():
     assert member_run is not None
     assert member_run.parent_run_id == team_run.run_id
 
-    # Assert expected tool call events
+    # Assert expected tool call events - check the first delegate call
     assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "delegate_task_to_member"
     assert events[TeamRunEvent.tool_call_started][0].run_id == member_run.parent_run_id
     assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "delegate_task_to_member"

@@ -12,7 +12,7 @@ class Metrics:
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
-    
+
     # Cost of the run
     # Currently only supported by some providers
     cost: Optional[float] = None
@@ -69,7 +69,7 @@ class Metrics:
             cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
             reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
         )
-        
+
         if self.cost is not None and other.cost is not None:
             result.cost = self.cost + other.cost
         elif self.cost is not None:

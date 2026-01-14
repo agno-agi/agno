@@ -1,5 +1,7 @@
 """Integration tests for WorkflowAgent functionality in workflows."""
 
+import uuid
+
 import pytest
 
 from agno.agent import Agent
@@ -101,6 +103,7 @@ def test_workflow_agent_answers_from_history(shared_db):
 def test_workflow_agent_new_topic_runs_workflow(shared_db):
     """Test that WorkflowAgent runs workflow again for new topics."""
     workflow_agent = WorkflowAgent(model=OpenAIChat(id="gpt-4o-mini"))
+    session_id = str(uuid.uuid4())
 
     workflow = Workflow(
         name="Story Workflow",
@@ -111,6 +114,7 @@ def test_workflow_agent_new_topic_runs_workflow(shared_db):
             Step(name="format", executor=format_step),
         ],
         db=shared_db,
+        session_id=session_id,
     )
 
     # First call - dog story

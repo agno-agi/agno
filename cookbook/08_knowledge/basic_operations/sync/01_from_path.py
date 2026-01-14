@@ -22,7 +22,7 @@ knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
     description="Agno 2.0 Knowledge Implementation",
     vector_db=vector_db,
-    contents_db=contents_db,
+    # contents_db=contents_db,
 )
 
 knowledge.add_content(

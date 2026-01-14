@@ -307,6 +307,9 @@ class LiteLLM(Model):
         if response_message.content is not None:
             model_response.content = response_message.content
 
+        if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
+            model_response.reasoning_content = response_message.reasoning_content
+
         if hasattr(response_message, "tool_calls") and response_message.tool_calls:
             model_response.tool_calls = []
             for tool_call in response_message.tool_calls:
@@ -333,6 +336,9 @@ class LiteLLM(Model):
             if choice_delta:
                 if hasattr(choice_delta, "content") and choice_delta.content is not None:
                     model_response.content = choice_delta.content
+
+                if hasattr(choice_delta, "reasoning_content") and choice_delta.reasoning_content is not None:
+                    model_response.reasoning_content = choice_delta.reasoning_content
 
                 if hasattr(choice_delta, "tool_calls") and choice_delta.tool_calls:
                     processed_tool_calls = []

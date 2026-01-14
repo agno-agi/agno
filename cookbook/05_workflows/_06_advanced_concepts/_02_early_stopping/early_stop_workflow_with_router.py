@@ -30,10 +30,17 @@ content_agent = Agent(
 # Custom safety checker function
 def content_safety_checker(step_input: StepInput) -> StepOutput:
     """Safety checker that can stop the router if inappropriate content is detected"""
+    # Check both the original input AND the research output
     content = step_input.previous_step_content or ""
+    original_input = step_input.input or ""
 
     # Simulate detecting inappropriate content that requires stopping
-    if "controversial" in content.lower() or "sensitive" in content.lower():
+    if (
+        "controversial" in content.lower()
+        or "sensitive" in content.lower()
+        or "controversial" in original_input.lower()
+        or "sensitive" in original_input.lower()
+    ):
         return StepOutput(
             step_name="Content Safety Checker",
             content="🚨 CONTENT SAFETY VIOLATION! Research contains controversial or sensitive material. Stopping workflow for manual review.",
