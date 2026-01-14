@@ -102,7 +102,7 @@ Check out these example agents and teams:
 ## Environment Variables
 
 - `OPENAI_API_KEY=your_key` - Required for OpenAI models
-- `AGNO_API_KEY=your_key` - Optional, for Agno platform integration
+
 
 ## API Endpoints
 

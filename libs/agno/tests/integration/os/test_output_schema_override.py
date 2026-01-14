@@ -50,6 +50,7 @@ def test_agent_with_output_schema(test_os_client: TestClient, test_agent: Agent)
         data={
             "message": "Write a movie about AI",
             "output_schema": json.dumps(schema),
+            "stream": "false",
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
@@ -92,6 +93,7 @@ def test_agent_with_nested_schema(test_os_client: TestClient, test_agent: Agent)
         data={
             "message": "Create a product: laptop from a tech supplier in USA",
             "output_schema": json.dumps(schema),
+            "stream": "false",
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
@@ -127,6 +129,7 @@ def test_agent_with_array_schema(test_os_client: TestClient, test_agent: Agent):
         data={
             "message": "Give me a simple pasta recipe",
             "output_schema": json.dumps(schema),
+            "stream": "false",
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
@@ -159,6 +162,7 @@ def test_agent_with_optional_fields(test_os_client: TestClient, test_agent: Agen
         data={
             "message": "Create a server config for localhost:8080",
             "output_schema": json.dumps(schema),
+            "stream": "false",
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
@@ -204,6 +208,7 @@ def test_agent_with_invalid_schema(test_os_client: TestClient, test_agent: Agent
         data={
             "message": "Write a story",
             "output_schema": "not valid json{",
+            "stream": "false",
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
@@ -242,6 +247,7 @@ def test_agent_with_array_of_objects(test_os_client: TestClient, test_agent: Age
         data={
             "message": "Create a cast for a space movie with 2 actors",
             "output_schema": json.dumps(schema),
+            "stream": "false",
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
@@ -271,7 +277,7 @@ def test_agent_preconfigured_vs_dynamic_schema(test_os_client: TestClient, test_
     with TestClient(app1) as client1:
         response1 = client1.post(
             f"/agents/{agent_with_schema.id}/runs",
-            data={"message": "Write a sci-fi movie about AI"},
+            data={"message": "Write a sci-fi movie about AI", "stream": "false"},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
 
@@ -290,6 +296,7 @@ def test_agent_preconfigured_vs_dynamic_schema(test_os_client: TestClient, test_
         data={
             "message": "Write a sci-fi movie about AI",
             "output_schema": json.dumps(schema),
+            "stream": "false",
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
@@ -630,6 +637,7 @@ def test_agent_use_json_schema_true_keeps_dict(test_os_client: TestClient, test_
             "message": "Person named Alice age 30",
             "output_schema": json.dumps(schema),
             "use_json_schema": "true",
+            "stream": "false",
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
@@ -654,6 +662,7 @@ def test_agent_use_json_schema_false_converts_to_pydantic(test_os_client: TestCl
             "message": "City: Paris, Country: France",
             "output_schema": json.dumps(schema),
             "use_json_schema": "false",
+            "stream": "false",
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
@@ -673,6 +682,7 @@ def test_agent_json_object_format_passthrough(test_os_client: TestClient, test_a
             "message": "Return JSON with name=Charlie and age=35",
             "output_schema": json.dumps(schema),
             "use_json_schema": "true",
+            "stream": "false",
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )

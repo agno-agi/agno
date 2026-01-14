@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import Engine, create_engine, text
 
 from agno.agent.agent import Agent
@@ -67,12 +68,16 @@ def shared_db(temp_storage_db_file):
     return db
 
 
-@pytest.fixture
-def async_shared_db(temp_storage_db_file):
-    """Create a SQLite storage for sessions."""
+@pytest_asyncio.fixture
+async def async_shared_db(temp_storage_db_file):
+    """Create an async SQLite storage for sessions."""
     # Use a unique table name for each test run
     table_name = f"sessions_{uuid.uuid4().hex[:8]}"
     db = AsyncSqliteDb(session_table=table_name, db_file=temp_storage_db_file)
+
+    # Initialize tables before using
+    await db._create_all_tables()
+
     return db
 
 

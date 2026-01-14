@@ -3,6 +3,7 @@ import uuid
 from typing import List
 
 import pytest
+import pytest_asyncio
 
 from agno.agent.agent import Agent
 from agno.db.json import JsonDb
@@ -53,12 +54,16 @@ def agent_with_db(tmp_path):
     return Agent(name="Test Agent with DB", instructions="Test agent for testing.", db=db)
 
 
-@pytest.fixture
-def async_shared_db(temp_storage_db_file):
-    """Create a SQLite storage for sessions."""
+@pytest_asyncio.fixture
+async def async_shared_db(temp_storage_db_file):
+    """Create an async SQLite storage for sessions."""
     # Use a unique table name for each test run
     table_name = f"sessions_{uuid.uuid4().hex[:8]}"
     db = AsyncSqliteDb(session_table=table_name, db_file=temp_storage_db_file)
+
+    # Initialize tables before using
+    await db._create_all_tables()
+
     return db
 
 

@@ -10,10 +10,10 @@ import pytest
 from agno.agent import Agent
 from agno.exceptions import CheckTrigger, InputCheckError, OutputCheckError
 from agno.models.base import Model
-from agno.run import RunStatus
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
+from agno.run import RunStatus
 from agno.run.agent import RunEvent, RunInput, RunOutput
 from agno.session.agent import AgentSession
 

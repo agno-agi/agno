@@ -1,6 +1,14 @@
 """Test Router functionality in workflows."""
 
-from agno.run.workflow import WorkflowCompletedEvent
+import pytest
+
+from agno.run.workflow import (
+    RouterExecutionCompletedEvent,
+    StepCompletedEvent,
+    StepStartedEvent,
+    WorkflowCompletedEvent,
+    WorkflowRunOutput,
+)
 from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
@@ -385,3 +393,208 @@ def test_route_steps(shared_db):
     assert len(router_results.steps) >= 1  # Steps component should have nested results
     assert find_content_in_steps(router_results, "Research output")
     assert find_content_in_steps(router_results, "Analysis output")
+
+
+# ============================================================================
+# EARLY TERMINATION / STOP PROPAGATION TESTS
+# ============================================================================
+
+
+def early_stop_step(step_input: StepInput) -> StepOutput:
+    """Step that requests early termination."""
+    return StepOutput(
+        content="Early stop requested",
+        success=True,
+        stop=True,
+    )
+
+
+def should_not_run_step(step_input: StepInput) -> StepOutput:
+    """Step that should not run after early stop."""
+    return StepOutput(
+        content="This step should not have run",
+        success=True,
+    )
+
+
+def normal_step(step_input: StepInput) -> StepOutput:
+    """Normal step that doesn't request stop."""
+    return StepOutput(
+        content="Normal step output",
+        success=True,
+    )
+
+
+def test_router_propagates_stop_flag():
+    """Test that Router propagates stop flag from inner steps."""
+    step_stop = Step(name="stop_step", executor=early_stop_step)
+    step_normal = Step(name="normal_step", executor=normal_step)
+
+    def selector(step_input: StepInput):
+        return [step_stop]
+
+    router = Router(
+        name="Stop Router",
+        selector=selector,
+        choices=[step_stop, step_normal],
+    )
+    step_input = StepInput(input="test")
+
+    result = router.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is True, "Router should propagate stop=True from inner step"
+
+
+def test_router_stop_propagation_in_workflow(shared_db):
+    """Test that workflow stops when Router's inner step returns stop=True."""
+    step_stop = Step(name="stop_step", executor=early_stop_step)
+    step_normal = Step(name="normal_step", executor=normal_step)
+
+    def selector(step_input: StepInput):
+        return [step_stop]
+
+    workflow = Workflow(
+        name="Router Stop Propagation Test",
+        db=shared_db,
+        steps=[
+            Router(
+                name="stop_router",
+                selector=selector,
+                choices=[step_stop, step_normal],
+            ),
+            should_not_run_step,  # This should NOT execute
+        ],
+    )
+
+    response = workflow.run(input="test")
+
+    assert isinstance(response, WorkflowRunOutput)
+    # Should only have 1 step result (the Router), not 2
+    assert len(response.step_results) == 1, "Workflow should stop after Router with stop=True"
+    assert response.step_results[0].stop is True
+
+
+def test_router_stops_inner_steps_on_stop_flag():
+    """Test that Router stops executing remaining inner steps when one returns stop=True."""
+    step_stop = Step(name="stop_step", executor=early_stop_step)
+    step_after = Step(name="after_stop", executor=should_not_run_step)
+
+    def selector(step_input: StepInput):
+        return [step_stop, step_after]  # stop_step should stop before after_stop runs
+
+    router = Router(
+        name="Inner Stop Router",
+        selector=selector,
+        choices=[step_stop, step_after],
+    )
+    step_input = StepInput(input="test")
+
+    result = router.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is True
+    # Should only have 1 step result (stop_step), not 2
+    assert len(result.steps) == 1, "Router should stop after inner step with stop=True"
+    assert "Early stop requested" in result.steps[0].content
+
+
+def test_router_streaming_propagates_stop(shared_db):
+    """Test that streaming Router propagates stop flag and stops workflow."""
+    step_stop = Step(name="stop_step", executor=early_stop_step)
+    step_normal = Step(name="normal_step", executor=normal_step)
+
+    def selector(step_input: StepInput):
+        return [step_stop]
+
+    workflow = Workflow(
+        name="Streaming Router Stop Test",
+        db=shared_db,
+        steps=[
+            Router(
+                name="stop_router",
+                selector=selector,
+                choices=[step_stop, step_normal],
+            ),
+            should_not_run_step,
+        ],
+    )
+
+    events = list(workflow.run(input="test", stream=True, stream_events=True))
+
+    # Verify that the Router completed with stop propagation
+    router_completed = [e for e in events if isinstance(e, RouterExecutionCompletedEvent)]
+    assert len(router_completed) == 1
+
+    # Check that inner step has stop=True in results
+    step_results = router_completed[0].step_results or []
+    assert len(step_results) == 1
+    assert step_results[0].stop is True
+
+    # Most importantly: verify should_not_run_step was NOT executed
+    step_events = [e for e in events if isinstance(e, (StepStartedEvent, StepCompletedEvent))]
+    step_names = [e.step_name for e in step_events]
+    assert "should_not_run_step" not in step_names, "Workflow should have stopped before should_not_run_step"
+
+
+@pytest.mark.asyncio
+async def test_async_router_propagates_stop():
+    """Test that async Router propagates stop flag."""
+    step_stop = Step(name="stop_step", executor=early_stop_step)
+    step_normal = Step(name="normal_step", executor=normal_step)
+
+    def selector(step_input: StepInput):
+        return [step_stop]
+
+    router = Router(
+        name="Async Stop Router",
+        selector=selector,
+        choices=[step_stop, step_normal],
+    )
+    step_input = StepInput(input="test")
+
+    result = await router.aexecute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is True, "Async Router should propagate stop=True from inner step"
+
+
+@pytest.mark.asyncio
+async def test_async_router_streaming_propagates_stop(shared_db):
+    """Test that async streaming Router propagates stop flag and stops workflow."""
+    step_stop = Step(name="stop_step", executor=early_stop_step)
+    step_normal = Step(name="normal_step", executor=normal_step)
+
+    def selector(step_input: StepInput):
+        return [step_stop]
+
+    workflow = Workflow(
+        name="Async Streaming Router Stop Test",
+        db=shared_db,
+        steps=[
+            Router(
+                name="stop_router",
+                selector=selector,
+                choices=[step_stop, step_normal],
+            ),
+            should_not_run_step,
+        ],
+    )
+
+    events = []
+    async for event in workflow.arun(input="test", stream=True, stream_events=True):
+        events.append(event)
+
+    # Verify that the Router completed with stop propagation
+    router_completed = [e for e in events if isinstance(e, RouterExecutionCompletedEvent)]
+    assert len(router_completed) == 1
+
+    # Check that inner step has stop=True in results
+    step_results = router_completed[0].step_results or []
+    assert len(step_results) == 1
+    assert step_results[0].stop is True
+
+    # Most importantly: verify should_not_run_step was NOT executed
+    step_events = [e for e in events if isinstance(e, (StepStartedEvent, StepCompletedEvent))]
+    step_names = [e.step_name for e in step_events]
+    assert "should_not_run_step" not in step_names, "Workflow should have stopped before should_not_run_step"

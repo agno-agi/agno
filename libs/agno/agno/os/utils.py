@@ -7,21 +7,21 @@ from fastapi.routing import APIRoute, APIRouter
 from pydantic import BaseModel, create_model
 from starlette.middleware.cors import CORSMiddleware
 
-from agno.agent.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
+from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
-from agno.team.team import Team
-from agno.tools import Toolkit
-from agno.tools.function import Function
+from agno.team import RemoteTeam, Team
+from agno.tools import Function, Toolkit
 from agno.utils.log import log_warning, logger
-from agno.workflow.workflow import Workflow
+from agno.workflow import RemoteWorkflow, Workflow
 
 
 async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
@@ -177,14 +177,14 @@ def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRu
 
 
 async def get_db(
-    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]], db_id: Optional[str] = None, table: Optional[str] = None
-) -> Union[BaseDb, AsyncBaseDb]:
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], db_id: Optional[str] = None, table: Optional[str] = None
+) -> Union[BaseDb, AsyncBaseDb, RemoteDb]:
     """Return the database with the given ID and/or table, or the first database if no ID/table is provided."""
 
     if table and not db_id:
         raise HTTPException(status_code=400, detail="The db_id query parameter is required when passing a table")
 
-    async def _has_table(db: Union[BaseDb, AsyncBaseDb], table_name: str) -> bool:
+    async def _has_table(db: Union[BaseDb, AsyncBaseDb, RemoteDb], table_name: str) -> bool:
         """Check if this database has the specified table (configured and actually exists)."""
         # First check if table name is configured
         is_configured = (
@@ -202,6 +202,10 @@ async def get_db(
 
         if not is_configured:
             return False
+
+        if isinstance(db, RemoteDb):
+            # We have to assume remote DBs are always configured and exist
+            return True
 
         # Then check if table actually exists in the database
         try:
@@ -241,7 +245,9 @@ async def get_db(
     return next(db for dbs in dbs.values() for db in dbs)
 
 
-def get_knowledge_instance_by_db_id(knowledge_instances: List[Knowledge], db_id: Optional[str] = None) -> Knowledge:
+def get_knowledge_instance_by_db_id(
+    knowledge_instances: List[Union[Knowledge, RemoteKnowledge]], db_id: Optional[str] = None
+) -> Union[Knowledge, RemoteKnowledge]:
     """Return the knowledge instance with the given ID, or the first knowledge instance if no ID is provided."""
     if not db_id and len(knowledge_instances) == 1:
         return next(iter(knowledge_instances))
@@ -337,7 +343,7 @@ def get_session_name(session: Dict[str, Any]) -> str:
 
         run_input = r.get("input")
         if run_input is not None:
-            return run_input.get("input_content")
+            return stringify_input_content(run_input)
 
     return ""
 
@@ -350,11 +356,12 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
         "files": [],
     }
 
-    input = run_dict.get("input", {})
-    input_media["images"].extend(input.get("images", []))
-    input_media["videos"].extend(input.get("videos", []))
-    input_media["audios"].extend(input.get("audios", []))
-    input_media["files"].extend(input.get("files", []))
+    input_data = run_dict.get("input", {})
+    if isinstance(input_data, dict):
+        input_media["images"].extend(input_data.get("images", []))
+        input_media["videos"].extend(input_data.get("videos", []))
+        input_media["audios"].extend(input_data.get("audios", []))
+        input_media["files"].extend(input_data.get("files", []))
 
     return input_media
 
@@ -406,156 +413,92 @@ def extract_format(file: UploadFile) -> Optional[str]:
     return None
 
 
-def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):
-    formatted_tools: List[Dict] = []
-    if agent_tools is not None:
-        for tool in agent_tools:
-            if isinstance(tool, dict):
-                formatted_tools.append(tool)
-            elif isinstance(tool, Toolkit):
-                for _, f in tool.functions.items():
-                    formatted_tools.append(f.to_dict())
-            elif isinstance(tool, Function):
-                formatted_tools.append(tool.to_dict())
-            elif callable(tool):
-                func = Function.from_callable(tool)
-                formatted_tools.append(func.to_dict())
-            else:
-                logger.warning(f"Unknown tool type: {type(tool)}")
-    return formatted_tools
+def get_agent_by_id(
+    agent_id: str,
+    agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    create_fresh: bool = False,
+) -> Optional[Union[Agent, RemoteAgent]]:
+    """Get an agent by ID, optionally creating a fresh instance for request isolation.
 
+    When create_fresh=True, creates a new agent instance using deep_copy() to prevent
+    state contamination between concurrent requests. The new instance shares heavy
+    resources (db, model, MCP tools) but has isolated mutable state.
 
-def format_team_tools(team_tools: List[Union[Function, dict]]):
-    formatted_tools: List[Dict] = []
-    if team_tools is not None:
-        for tool in team_tools:
-            if isinstance(tool, dict):
-                formatted_tools.append(tool)
-            elif isinstance(tool, Function):
-                formatted_tools.append(tool.to_dict())
-    return formatted_tools
+    Args:
+        agent_id: The agent ID to look up
+        agents: List of agents to search
+        create_fresh: If True, creates a new instance using deep_copy()
 
-
-def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Optional[Agent]:
+    Returns:
+        The agent instance (shared or fresh copy based on create_fresh)
+    """
     if agent_id is None or agents is None:
         return None
 
     for agent in agents:
         if agent.id == agent_id:
+            if create_fresh and isinstance(agent, Agent):
+                return agent.deep_copy()
             return agent
     return None
 
 
-def get_team_by_id(team_id: str, teams: Optional[List[Team]] = None) -> Optional[Team]:
+def get_team_by_id(
+    team_id: str,
+    teams: Optional[List[Union[Team, RemoteTeam]]] = None,
+    create_fresh: bool = False,
+) -> Optional[Union[Team, RemoteTeam]]:
+    """Get a team by ID, optionally creating a fresh instance for request isolation.
+
+    When create_fresh=True, creates a new team instance using deep_copy() to prevent
+    state contamination between concurrent requests. Member agents are also deep copied.
+
+    Args:
+        team_id: The team ID to look up
+        teams: List of teams to search
+        create_fresh: If True, creates a new instance using deep_copy()
+
+    Returns:
+        The team instance (shared or fresh copy based on create_fresh)
+    """
     if team_id is None or teams is None:
         return None
 
     for team in teams:
         if team.id == team_id:
+            if create_fresh and isinstance(team, Team):
+                return team.deep_copy()
             return team
     return None
 
 
-def get_workflow_by_id(workflow_id: str, workflows: Optional[List[Workflow]] = None) -> Optional[Workflow]:
+def get_workflow_by_id(
+    workflow_id: str,
+    workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
+    create_fresh: bool = False,
+) -> Optional[Union[Workflow, RemoteWorkflow]]:
+    """Get a workflow by ID, optionally creating a fresh instance for request isolation.
+
+    When create_fresh=True, creates a new workflow instance using deep_copy() to prevent
+    state contamination between concurrent requests. Steps containing agents/teams are also deep copied.
+
+    Args:
+        workflow_id: The workflow ID to look up
+        workflows: List of workflows to search
+        create_fresh: If True, creates a new instance using deep_copy()
+
+    Returns:
+        The workflow instance (shared or fresh copy based on create_fresh)
+    """
     if workflow_id is None or workflows is None:
         return None
 
     for workflow in workflows:
         if workflow.id == workflow_id:
+            if create_fresh and isinstance(workflow, Workflow):
+                return workflow.deep_copy()
             return workflow
     return None
-
-
-#  INPUT SCHEMA VALIDATIONS
-
-
-def get_agent_input_schema_dict(agent: Agent) -> Optional[Dict[str, Any]]:
-    """Get input schema as dictionary for API responses"""
-
-    if agent.input_schema is not None:
-        try:
-            return agent.input_schema.model_json_schema()
-        except Exception:
-            return None
-
-    return None
-
-
-def get_team_input_schema_dict(team: Team) -> Optional[Dict[str, Any]]:
-    """Get input schema as dictionary for API responses"""
-
-    if team.input_schema is not None:
-        try:
-            return team.input_schema.model_json_schema()
-        except Exception:
-            return None
-
-    return None
-
-
-def get_workflow_input_schema_dict(workflow: Workflow) -> Optional[Dict[str, Any]]:
-    """Get input schema as dictionary for API responses"""
-
-    # Priority 1: Explicit input_schema (Pydantic model)
-    if workflow.input_schema is not None:
-        try:
-            return workflow.input_schema.model_json_schema()
-        except Exception:
-            return None
-
-    # Priority 2: Auto-generate from custom kwargs
-    if workflow.steps and callable(workflow.steps):
-        custom_params = workflow.run_parameters
-        if custom_params and len(custom_params) > 1:  # More than just 'message'
-            return _generate_schema_from_params(custom_params)
-
-    # Priority 3: No schema (expects string message)
-    return None
-
-
-def _generate_schema_from_params(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert function parameters to JSON schema"""
-    properties: Dict[str, Any] = {}
-    required: List[str] = []
-
-    for param_name, param_info in params.items():
-        # Skip the default 'message' parameter for custom kwargs workflows
-        if param_name == "message":
-            continue
-
-        # Map Python types to JSON schema types
-        param_type = param_info.get("annotation", "str")
-        default_value = param_info.get("default")
-        is_required = param_info.get("required", False)
-
-        # Convert Python type annotations to JSON schema types
-        if param_type == "str":
-            properties[param_name] = {"type": "string"}
-        elif param_type == "bool":
-            properties[param_name] = {"type": "boolean"}
-        elif param_type == "int":
-            properties[param_name] = {"type": "integer"}
-        elif param_type == "float":
-            properties[param_name] = {"type": "number"}
-        elif "List" in str(param_type):
-            properties[param_name] = {"type": "array", "items": {"type": "string"}}
-        else:
-            properties[param_name] = {"type": "string"}  # fallback
-
-        # Add default value if present
-        if default_value is not None:
-            properties[param_name]["default"] = default_value
-
-        # Add to required if no default value
-        if is_required and default_value is None:
-            required.append(param_name)
-
-    schema = {"type": "object", "properties": properties}
-
-    if required:
-        schema["required"] = required
-
-    return schema
 
 
 def resolve_origins(user_origins: Optional[List[str]] = None, default_origins: Optional[List[str]] = None) -> List[str]:
@@ -783,32 +726,6 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         collect_mcp_tools_from_workflow(step, mcp_tools)
 
 
-def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any], BaseModel]) -> str:
-    """Convert any given input_content into its string representation.
-
-    This handles both serialized (dict) and live (object) input_content formats.
-    """
-    import json
-
-    if isinstance(input_content, str):
-        return input_content
-    elif isinstance(input_content, Message):
-        return json.dumps(input_content.to_dict())
-    elif isinstance(input_content, dict):
-        return json.dumps(input_content, indent=2, default=str)
-    elif isinstance(input_content, list):
-        if input_content:
-            # Handle live Message objects
-            if isinstance(input_content[0], Message):
-                return json.dumps([m.to_dict() for m in input_content])
-            # Handle serialized Message dicts
-            elif isinstance(input_content[0], dict) and input_content[0].get("role") == "user":
-                return input_content[0].get("content", str(input_content))
-        return str(input_content)
-    else:
-        return str(input_content)
-
-
 def _get_python_type_from_json_schema(field_schema: Dict[str, Any], field_name: str = "NestedModel") -> Type:
     """Map JSON schema type to Python type with recursive handling.
 
@@ -925,7 +842,7 @@ def json_schema_to_pydantic_model(schema: Dict[str, Any]) -> Type[BaseModel]:
         return create_model(model_name)
 
 
-def setup_tracing_for_os(db: Union[BaseDb, AsyncBaseDb]) -> None:
+def setup_tracing_for_os(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> None:
     """Set up OpenTelemetry tracing for this agent/team/workflow."""
     try:
         from agno.tracing import setup_tracing
@@ -979,3 +896,59 @@ def parse_datetime_to_utc(datetime_str: str, param_name: str = "datetime") -> "d
             status_code=400,
             detail=f"Invalid {param_name} format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z' or '2025-11-19T10:00:00+05:30'): {e}",
         )
+
+
+def format_team_tools(team_tools: List[Union[Function, dict]]):
+    formatted_tools: List[Dict] = []
+    if team_tools is not None:
+        for tool in team_tools:
+            if isinstance(tool, dict):
+                formatted_tools.append(tool)
+            elif isinstance(tool, Function):
+                formatted_tools.append(tool.to_dict())
+    return formatted_tools
+
+
+def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):
+    formatted_tools: List[Dict] = []
+    if agent_tools is not None:
+        for tool in agent_tools:
+            if isinstance(tool, dict):
+                formatted_tools.append(tool)
+            elif isinstance(tool, Toolkit):
+                for _, f in tool.functions.items():
+                    formatted_tools.append(f.to_dict())
+            elif isinstance(tool, Function):
+                formatted_tools.append(tool.to_dict())
+            elif callable(tool):
+                func = Function.from_callable(tool)
+                formatted_tools.append(func.to_dict())
+            else:
+                logger.warning(f"Unknown tool type: {type(tool)}")
+    return formatted_tools
+
+
+def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any], BaseModel]) -> str:
+    """Convert any given input_content into its string representation.
+
+    This handles both serialized (dict) and live (object) input_content formats.
+    """
+    import json
+
+    if isinstance(input_content, str):
+        return input_content
+    elif isinstance(input_content, Message):
+        return json.dumps(input_content.to_dict())
+    elif isinstance(input_content, dict):
+        return json.dumps(input_content, indent=2, default=str)
+    elif isinstance(input_content, list):
+        if input_content:
+            # Handle live Message objects
+            if isinstance(input_content[0], Message):
+                return json.dumps([m.to_dict() for m in input_content])
+            # Handle serialized Message dicts
+            elif isinstance(input_content[0], dict) and input_content[0].get("role") == "user":
+                return input_content[0].get("content", str(input_content))
+        return str(input_content)
+    else:
+        return str(input_content)

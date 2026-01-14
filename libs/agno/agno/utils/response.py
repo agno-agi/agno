@@ -1,4 +1,4 @@
-from typing import AsyncIterator, Iterator, List, Set, Union
+from typing import List, Set, Union
 
 from agno.exceptions import RunCancelledException
 from agno.models.response import ToolExecution
@@ -149,15 +149,3 @@ def get_paused_content(run_output: RunOutput) -> str:
         elif external_execution_required:
             paused_content = "I have tools to execute, but it needs external execution."
     return paused_content
-
-
-def generator_wrapper(
-    event: Union[RunOutputEvent, TeamRunOutputEvent],
-) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]:
-    yield event
-
-
-async def async_generator_wrapper(
-    event: Union[RunOutputEvent, TeamRunOutputEvent],
-) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]:
-    yield event

@@ -102,8 +102,8 @@ class Claude(Model):
         # Claude Sonnet 4.x family (versions before 4.5)
         "claude-sonnet-4-20250514",
         "claude-sonnet-4",
-        # Claude Opus 4.x family (versions before 4.1)
-        # (Add any Opus 4.x models released before 4.1 if they exist)
+        # Claude Opus 4.x family (versions before 4.1 and 4.5)
+        # (Add any Opus 4.x models released before 4.1/4.5 if they exist)
     }
 
     id: str = "claude-sonnet-4-5-20250929"
@@ -191,7 +191,9 @@ class Claude(Model):
             return False
         if self.id.startswith("claude-sonnet-4-") and not self.id.startswith("claude-sonnet-4-5"):
             return False
-        if self.id.startswith("claude-opus-4-") and not self.id.startswith("claude-opus-4-1"):
+        if self.id.startswith("claude-opus-4-") and not (
+            self.id.startswith("claude-opus-4-1") or self.id.startswith("claude-opus-4-5")
+        ):
             return False
 
         return True

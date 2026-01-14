@@ -22,7 +22,7 @@ chat:
 
     self-learning-agent:
       - "Analyze nvidia and tsla performance and suggest a rule of thumb for when to buy or sell."
-      - "What's a reliable way to evaluate AI stocks today?"
+      - "Analyze AMD stock for me."
       - "What prior learnings can I use?"
 
     plan-and-learn-agent:

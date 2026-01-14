@@ -1,5 +1,6 @@
-from agno.vectordb.qdrant.qdrant import Qdrant
+from agno.vectordb.qdrant.qdrant import Qdrant, SearchType
 
 __all__ = [
     "Qdrant",
+    "SearchType",
 ]

@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.3.14"
+version = "2.3.26"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -61,11 +61,11 @@ dev = [
   "uvicorn",
   "PyJWT",
   "mcp",
-  "openai"
+  "openai",
+  "fakeredis",
 ]
 
 os = ["fastapi", "uvicorn", "PyJWT"]
-
 
 # Dependencies for Telemetry
 opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]
@@ -119,7 +119,7 @@ googlemaps = ["googlemaps", "google-maps-places"]
 matplotlib = ["matplotlib"]
 mcp = ["mcp>=1.9.2"]
 mem0 = ["mem0ai"]
-memori = ["memorisdk==3.0.5"]
+memori = ["memori>=3.0.5"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 notion = ["notion-client"]
 opencv = ["opencv-python"]
@@ -174,7 +174,7 @@ pptx = ["python-pptx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
 markdown = ["unstructured", "markdown", "aiofiles"]
-chonkie = ["chonkie[st]", "chonkie"]
+chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol"]
@@ -340,6 +340,32 @@ integration-tests = [
     "sqlalchemy",
     "Pillow",
     "fastmcp"
+]
+
+# Dependencies for demo application
+demo = [
+    "agno[dev]",
+    "anthropic",
+    "chromadb",
+    "ddgs",
+    "fastapi[standard]",
+    "google-genai",
+    "matplotlib",
+    "mcp",
+    "nest_asyncio",
+    "openai",
+    "openinference-instrumentation-agno",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    "pandas",
+    "parallel-web",
+    "pgvector",
+    "pillow",
+    "psycopg[binary]",
+    "pypdf",
+    "sqlalchemy",
+    "yfinance",
+    "youtube-transcript-api",
 ]
 
 [project.urls]

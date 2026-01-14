@@ -13,7 +13,20 @@ knowledge.add_content(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
     reader=PDFReader(
         name="Semantic Chunking Reader",
-        chunking_strategy=SemanticChunking(similarity_threshold=0.5),
+        chunking_strategy=SemanticChunking(
+            embedder="text-embedding-3-small",  # When a string is provided, it is used as the model ID for chonkie's built-in embedders
+            chunk_size=500,
+            similarity_threshold=0.5,
+            similarity_window=3,
+            min_sentences_per_chunk=1,
+            min_characters_per_sentence=24,
+            delimiters=[". ", "! ", "? ", "\n"],
+            include_delimiters="prev",
+            skip_window=0,
+            filter_window=5,
+            filter_polyorder=3,
+            filter_tolerance=0.2,
+        ),
     ),
 )
 

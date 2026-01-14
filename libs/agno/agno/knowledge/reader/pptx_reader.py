@@ -27,6 +27,7 @@ class PPTXReader(Reader):
         """Get the list of supported chunking strategies for PPTX readers."""
         return [
             ChunkingStrategyType.DOCUMENT_CHUNKER,
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.SEMANTIC_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
@@ -47,11 +48,9 @@ class PPTXReader(Reader):
                 presentation = Presentation(str(file))
                 doc_name = name or file.stem
             else:
-                log_debug(f"Reading uploaded file: {getattr(file, 'name', 'pptx_file')}")
+                log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
                 presentation = Presentation(file)
-                doc_name = name or (
-                    getattr(file, "name", "pptx_file").split(".")[0] if hasattr(file, "name") else "pptx_file"
-                )
+                doc_name = name or getattr(file, "name", "pptx_file").split(".")[0]
 
             # Extract text from all slides
             slide_texts = []

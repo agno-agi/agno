@@ -122,7 +122,7 @@ class PgVector(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -642,6 +642,13 @@ class PgVector(VectorDb):
                                 # This allows the same URL/content to be inserted with different descriptions
                                 base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
                                 record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+
+                                if (
+                                    doc.embedding is not None
+                                    and isinstance(doc.embedding, list)
+                                    and len(doc.embedding) == 0
+                                ):
+                                    log_warning(f"Document {idx} '{doc.name}' has empty embedding (length 0)")
 
                                 if (
                                     doc.embedding is not None
