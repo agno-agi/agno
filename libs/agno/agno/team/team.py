@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import json
 import time
+import warnings
 from collections import ChainMap, deque
 from concurrent.futures import Future
 from copy import copy
@@ -544,6 +545,7 @@ class Team:
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         enable_agentic_memory: bool = False,
         update_memory_on_run: bool = False,
+        enable_user_memories: Optional[bool] = None,  # Deprecated: use update_memory_on_run
         add_memories_to_context: Optional[bool] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_session_summaries: bool = False,
@@ -667,7 +669,19 @@ class Team:
         self.db = db
 
         self.enable_agentic_memory = enable_agentic_memory
-        self.update_memory_on_run = update_memory_on_run
+
+        if enable_user_memories is not None:
+            warnings.warn(
+                "The 'enable_user_memories' parameter is deprecated and will be removed in future versions. "
+                "Use 'update_memory_on_run' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.update_memory_on_run = enable_user_memories
+        else:
+            self.update_memory_on_run = update_memory_on_run
+        self.enable_user_memories = self.update_memory_on_run  # Deprecated
+
         self.add_memories_to_context = add_memories_to_context
         self.memory_manager = memory_manager
         self.enable_session_summaries = enable_session_summaries
