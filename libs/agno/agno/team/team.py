@@ -266,7 +266,7 @@ class Team:
     # List of instructions for the team.
     instructions: Optional[Union[str, List[str], Callable]] = None
     # If True, wrap instructions in <instructions> tags. Default is False.
-    add_instruction_tags: bool = False
+    use_instruction_tags: bool = False
     # Provide the expected output from the Team.
     expected_output: Optional[str] = None
     # Additional context added to the end of the system message.
@@ -496,7 +496,7 @@ class Team:
         num_history_sessions: Optional[int] = None,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
-        add_instruction_tags: bool = False,
+        use_instruction_tags: bool = False,
         expected_output: Optional[str] = None,
         additional_context: Optional[str] = None,
         markdown: bool = False,
@@ -615,7 +615,7 @@ class Team:
 
         self.description = description
         self.instructions = instructions
-        self.add_instruction_tags = add_instruction_tags
+        self.use_instruction_tags = use_instruction_tags
         self.expected_output = expected_output
         self.additional_context = additional_context
         self.markdown = markdown
@@ -5641,7 +5641,7 @@ class Team:
 
         # 3.3.5 Then add instructions for the Team
         if len(instructions) > 0:
-            if self.add_instruction_tags:
+            if self.use_instruction_tags:
                 system_message_content += "<instructions>"
                 if len(instructions) > 1:
                     for _upi in instructions:
@@ -5953,7 +5953,7 @@ class Team:
 
         # 3.3.5 Then add instructions for the Team
         if len(instructions) > 0:
-            if self.add_instruction_tags:
+            if self.use_instruction_tags:
                 system_message_content += "<instructions>"
                 if len(instructions) > 1:
                     for _upi in instructions:

@@ -1,7 +1,7 @@
-"""Example demonstrating the add_instruction_tags parameter.
+"""Example demonstrating the use_instruction_tags parameter.
 
 By default, instructions are added directly to the system message without XML tags.
-Set add_instruction_tags=True to wrap instructions in <instructions> tags for
+Set use_instruction_tags=True to wrap instructions in <instructions> tags for
 models that respond better to structured prompts.
 
 Run: `pip install openai agno` to install the dependencies
@@ -30,7 +30,7 @@ agent_with_tags = Agent(
         "Always be concise and clear.",
         "Use bullet points when listing items.",
     ],
-    add_instruction_tags=True,
+    use_instruction_tags=True,
 )
 
 print("=== Agent without instruction tags (default) ===")

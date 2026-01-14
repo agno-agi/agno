@@ -342,7 +342,7 @@ class Agent:
     # List of instructions for the agent.
     instructions: Optional[Union[str, List[str], Callable]] = None
     # If True, wrap instructions in <instructions> tags. Default is False.
-    add_instruction_tags: bool = False
+    use_instruction_tags: bool = False
     # Provide the expected output from the Agent.
     expected_output: Optional[str] = None
     # Additional context added to the end of the system message.
@@ -525,7 +525,7 @@ class Agent:
         build_context: bool = True,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
-        add_instruction_tags: bool = False,
+        use_instruction_tags: bool = False,
         expected_output: Optional[str] = None,
         additional_context: Optional[str] = None,
         markdown: bool = False,
@@ -655,7 +655,7 @@ class Agent:
         self.build_context = build_context
         self.description = description
         self.instructions = instructions
-        self.add_instruction_tags = add_instruction_tags
+        self.use_instruction_tags = use_instruction_tags
         self.expected_output = expected_output
         self.additional_context = additional_context
         self.markdown = markdown
@@ -8069,7 +8069,7 @@ class Agent:
             system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
         # 3.3.3 Then add instructions for the Agent
         if len(instructions) > 0:
-            if self.add_instruction_tags:
+            if self.use_instruction_tags:
                 system_message_content += "<instructions>"
                 if len(instructions) > 1:
                     for _upi in instructions:
@@ -8423,7 +8423,7 @@ class Agent:
             system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
         # 3.3.3 Then add instructions for the Agent
         if len(instructions) > 0:
-            if self.add_instruction_tags:
+            if self.use_instruction_tags:
                 system_message_content += "<instructions>"
                 if len(instructions) > 1:
                     for _upi in instructions:
