@@ -22,6 +22,6 @@ agent = Agent(
 # Save the agent to the database
 agent.save()
 
-agent.load(version=1)
+agent.load(agent_id="agno-agent", db=db, version=1)
 
 agent.print_response("How many people live in Canada?")
