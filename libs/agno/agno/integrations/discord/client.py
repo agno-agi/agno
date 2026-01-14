@@ -128,7 +128,7 @@ class DiscordClient:
                     )
                     if agent_response.status=="ERROR":
                         log_error(agent_response.content)
-                        agent_response.content="sorry an error occured"
+                        agent_response.content="Sorry, there was an error processing your message. Please try again later."
                         await self._handle_response_in_thread(agent_response, thread)
                     else:
                         await self._handle_response_in_thread(agent_response, thread)
@@ -143,7 +143,12 @@ class DiscordClient:
                         audio=[Audio(url=message_audio)] if message_audio else None,
                         files=[File(content=message_file)] if message_file else None,
                     )
-                    await self._handle_response_in_thread(team_response, thread)
+                    if team_response.status=="ERROR":
+                        log_error(team_response.content)
+                        team_response.content="Sorry, there was an error processing your message. Please try again later."
+                        await self._handle_response_in_thread(team_response, thread)
+                    else:
+                        await self._handle_response_in_thread(team_response, thread)
 
     async def handle_hitl(
         self, run_response: RunOutput, thread: Union[discord.Thread, discord.TextChannel]

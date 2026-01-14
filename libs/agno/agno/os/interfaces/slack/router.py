@@ -112,6 +112,11 @@ def attach_routes(
             response = await workflow.arun(message_text, user_id=user, session_id=session_id)  # type: ignore
 
         if response:
+            if response.status == "ERROR":
+                log_info(f"Error processing message: {response.content}")
+                _send_slack_message(channel=channel_id, message="Sorry, there was an error processing your message. Please try again later.", thread_ts=ts)
+                return
+
             if hasattr(response, "reasoning_content") and response.reasoning_content:
                 _send_slack_message(
                     channel=channel_id,
