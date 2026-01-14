@@ -150,7 +150,7 @@ class TeamResponse(BaseModel):
             memory_info = {
                 "enable_agentic_memory": team.enable_agentic_memory,
                 "update_memory_on_run": team.update_memory_on_run,
-                "enable_user_memories": team.enable_user_memories,  # Deprecated
+                "enable_user_memories": team.enable_user_memories,  # Soon to be deprecated. Use update_memory_on_run
                 "metadata": team.metadata,
                 "memory_table": team.db.memory_table_name if team.db and team.update_memory_on_run else None,
             }

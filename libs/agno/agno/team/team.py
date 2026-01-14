@@ -396,6 +396,8 @@ class Team:
     enable_agentic_memory: bool = False
     # If True, the agent creates/updates user memories at the end of runs
     update_memory_on_run: bool = False
+    # Soon to be deprecated. Use update_memory_on_run
+    enable_user_memories: Optional[bool] = None
     # If True, the agent adds a reference to the user memories in the response
     add_memories_to_context: Optional[bool] = None
     # If True, the agent creates/updates session summaries at the end of runs
@@ -545,7 +547,7 @@ class Team:
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         enable_agentic_memory: bool = False,
         update_memory_on_run: bool = False,
-        enable_user_memories: Optional[bool] = None,  # Deprecated: use update_memory_on_run
+        enable_user_memories: Optional[bool] = None,  # Soon to be deprecated. Use update_memory_on_run
         add_memories_to_context: Optional[bool] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_session_summaries: bool = False,
@@ -680,7 +682,7 @@ class Team:
             self.update_memory_on_run = enable_user_memories
         else:
             self.update_memory_on_run = update_memory_on_run
-        self.enable_user_memories = self.update_memory_on_run  # Deprecated
+        self.enable_user_memories = self.update_memory_on_run  # Soon to be deprecated. Use update_memory_on_run
 
         self.add_memories_to_context = add_memories_to_context
         self.memory_manager = memory_manager

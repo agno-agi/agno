@@ -164,7 +164,7 @@ class AgentResponse(BaseModel):
             memory_info = {
                 "enable_agentic_memory": agent.enable_agentic_memory,
                 "update_memory_on_run": agent.update_memory_on_run,
-                "enable_user_memories": agent.enable_user_memories,  # Deprecated
+                "enable_user_memories": agent.enable_user_memories,  # Soon to be deprecated. Use update_memory_on_run
                 "metadata": agent.metadata,
                 "memory_table": agent.db.memory_table_name if agent.db and agent.update_memory_on_run else None,
             }
