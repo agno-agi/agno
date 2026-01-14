@@ -165,8 +165,8 @@ class TeamRunEvent(str, Enum):
     output_model_response_started = "TeamOutputModelResponseStarted"
     output_model_response_completed = "TeamOutputModelResponseCompleted"
 
-    llm_request_started = "TeamLLMRequestStarted"
-    llm_request_completed = "TeamLLMRequestCompleted"
+    model_request_started = "TeamModelRequestStarted"
+    model_request_completed = "TeamModelRequestCompleted"
 
     compression_started = "TeamCompressionStarted"
     compression_completed = "TeamCompressionCompleted"
@@ -414,19 +414,19 @@ class OutputModelResponseCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
-class LLMRequestStartedEvent(BaseTeamRunEvent):
-    """Event sent when an LLM request is about to be made"""
+class ModelRequestStartedEvent(BaseTeamRunEvent):
+    """Event sent when a model request is about to be made"""
 
-    event: str = TeamRunEvent.llm_request_started.value
+    event: str = TeamRunEvent.model_request_started.value
     model: Optional[str] = None
     model_provider: Optional[str] = None
 
 
 @dataclass
-class LLMRequestCompletedEvent(BaseTeamRunEvent):
-    """Event sent when an LLM request has completed"""
+class ModelRequestCompletedEvent(BaseTeamRunEvent):
+    """Event sent when a model request has completed"""
 
-    event: str = TeamRunEvent.llm_request_completed.value
+    event: str = TeamRunEvent.model_request_completed.value
     model: Optional[str] = None
     model_provider: Optional[str] = None
     input_tokens: Optional[int] = None
@@ -490,8 +490,8 @@ TeamRunOutputEvent = Union[
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     OutputModelResponseCompletedEvent,
-    LLMRequestStartedEvent,
-    LLMRequestCompletedEvent,
+    ModelRequestStartedEvent,
+    ModelRequestCompletedEvent,
     CompressionStartedEvent,
     CompressionCompletedEvent,
     CustomEvent,
@@ -525,8 +525,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     TeamRunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
     TeamRunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
-    TeamRunEvent.llm_request_started.value: LLMRequestStartedEvent,
-    TeamRunEvent.llm_request_completed.value: LLMRequestCompletedEvent,
+    TeamRunEvent.model_request_started.value: ModelRequestStartedEvent,
+    TeamRunEvent.model_request_completed.value: ModelRequestCompletedEvent,
     TeamRunEvent.compression_started.value: CompressionStartedEvent,
     TeamRunEvent.compression_completed.value: CompressionCompletedEvent,
     TeamRunEvent.custom_event.value: CustomEvent,

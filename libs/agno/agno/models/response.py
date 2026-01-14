@@ -18,8 +18,8 @@ class ModelResponseEvent(str, Enum):
     assistant_response = "AssistantResponse"
     compression_started = "CompressionStarted"
     compression_completed = "CompressionCompleted"
-    llm_request_started = "LLMRequestStarted"
-    llm_request_completed = "LLMRequestCompleted"
+    model_request_started = "ModelRequestStarted"
+    model_request_completed = "ModelRequestCompleted"
 
 
 @dataclass
@@ -131,7 +131,7 @@ class ModelResponse:
     # Compression stats
     compression_stats: Optional[Dict[str, Any]] = None
 
-    # LLM request metrics (for llm_request_completed events)
+    # Model request metrics (for model_request_completed events)
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
     total_tokens: Optional[int] = None

@@ -1308,7 +1308,7 @@ class Model(ABC):
                 model_response = ModelResponse()
 
                 # Emit LLM request started event
-                yield ModelResponse(event=ModelResponseEvent.llm_request_started.value)
+                yield ModelResponse(event=ModelResponseEvent.model_request_started.value)
 
                 if stream_model_response:
                     # Generate response
@@ -1348,7 +1348,7 @@ class Model(ABC):
                 # Emit LLM request completed event with metrics
                 llm_metrics = assistant_message.metrics
                 yield ModelResponse(
-                    event=ModelResponseEvent.llm_request_completed.value,
+                    event=ModelResponseEvent.model_request_completed.value,
                     input_tokens=llm_metrics.input_tokens if llm_metrics else None,
                     output_tokens=llm_metrics.output_tokens if llm_metrics else None,
                     total_tokens=llm_metrics.total_tokens if llm_metrics else None,
@@ -1552,7 +1552,7 @@ class Model(ABC):
                 model_response = ModelResponse()
 
                 # Emit LLM request started event
-                yield ModelResponse(event=ModelResponseEvent.llm_request_started.value)
+                yield ModelResponse(event=ModelResponseEvent.model_request_started.value)
 
                 if stream_model_response:
                     # Generate response
@@ -1592,7 +1592,7 @@ class Model(ABC):
                 # Emit LLM request completed event with metrics
                 llm_metrics = assistant_message.metrics
                 yield ModelResponse(
-                    event=ModelResponseEvent.llm_request_completed.value,
+                    event=ModelResponseEvent.model_request_completed.value,
                     input_tokens=llm_metrics.input_tokens if llm_metrics else None,
                     output_tokens=llm_metrics.output_tokens if llm_metrics else None,
                     total_tokens=llm_metrics.total_tokens if llm_metrics else None,

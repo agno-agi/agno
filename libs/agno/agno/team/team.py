@@ -119,8 +119,8 @@ from agno.utils.events import (
     add_team_error_event,
     create_team_compression_completed_event,
     create_team_compression_started_event,
-    create_team_llm_request_completed_event,
-    create_team_llm_request_started_event,
+    create_team_model_request_completed_event,
+    create_team_model_request_started_event,
     create_team_parser_model_response_completed_event,
     create_team_parser_model_response_started_event,
     create_team_post_hook_completed_event,
@@ -1887,6 +1887,7 @@ class Team:
                         stream_events=stream_events,
                         events_to_skip=self.events_to_skip,  # type: ignore
                         store_events=self.store_events,
+                        get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
                     )
 
                     raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2823,6 +2824,7 @@ class Team:
                         stream_events=stream_events,
                         events_to_skip=self.events_to_skip,  # type: ignore
                         store_events=self.store_events,
+                        get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
                     ):
                         yield event
 
@@ -3311,10 +3313,10 @@ class Team:
         ):
             # Handle LLM request events and compression events from ModelResponse
             if isinstance(model_response_event, ModelResponse):
-                if model_response_event.event == ModelResponseEvent.llm_request_started.value:
+                if model_response_event.event == ModelResponseEvent.model_request_started.value:
                     if stream_events:
                         yield handle_event(  # type: ignore
-                            create_team_llm_request_started_event(
+                            create_team_model_request_started_event(
                                 from_run_response=run_response,
                                 model=self.model.id,
                                 model_provider=self.model.provider,
@@ -3325,10 +3327,10 @@ class Team:
                         )
                     continue
 
-                if model_response_event.event == ModelResponseEvent.llm_request_completed.value:
+                if model_response_event.event == ModelResponseEvent.model_request_completed.value:
                     if stream_events:
                         yield handle_event(  # type: ignore
-                            create_team_llm_request_completed_event(
+                            create_team_model_request_completed_event(
                                 from_run_response=run_response,
                                 model=self.model.id,
                                 model_provider=self.model.provider,
@@ -3470,10 +3472,10 @@ class Team:
         async for model_response_event in model_stream:
             # Handle LLM request events and compression events from ModelResponse
             if isinstance(model_response_event, ModelResponse):
-                if model_response_event.event == ModelResponseEvent.llm_request_started.value:
+                if model_response_event.event == ModelResponseEvent.model_request_started.value:
                     if stream_events:
                         yield handle_event(  # type: ignore
-                            create_team_llm_request_started_event(
+                            create_team_model_request_started_event(
                                 from_run_response=run_response,
                                 model=self.model.id,
                                 model_provider=self.model.provider,
@@ -3484,10 +3486,10 @@ class Team:
                         )
                     continue
 
-                if model_response_event.event == ModelResponseEvent.llm_request_completed.value:
+                if model_response_event.event == ModelResponseEvent.model_request_completed.value:
                     if stream_events:
                         yield handle_event(  # type: ignore
-                            create_team_llm_request_completed_event(
+                            create_team_model_request_completed_event(
                                 from_run_response=run_response,
                                 model=self.model.id,
                                 model_provider=self.model.provider,

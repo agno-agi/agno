@@ -123,8 +123,8 @@ from agno.utils.events import (
     add_error_event,
     create_compression_completed_event,
     create_compression_started_event,
-    create_llm_request_completed_event,
-    create_llm_request_started_event,
+    create_model_request_completed_event,
+    create_model_request_started_event,
     create_parser_model_response_completed_event,
     create_parser_model_response_started_event,
     create_post_hook_completed_event,
@@ -1524,6 +1524,7 @@ class Agent:
                             run_response=run_response,
                             events_to_skip=self.events_to_skip,
                             store_events=self.store_events,
+                            get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
                         )
 
                         # Handle the paused run
@@ -1562,6 +1563,9 @@ class Agent:
                         learning_future=learning_future,  # type: ignore
                         stream_events=stream_events,
                         run_response=run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                        get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
                     )
 
                     # 9. Create session summary
@@ -2565,6 +2569,9 @@ class Agent:
                             learning_task=learning_task,
                             stream_events=stream_events,
                             run_response=run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                            get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
                         ):
                             yield item
 
@@ -2598,6 +2605,7 @@ class Agent:
                         run_response=run_response,
                         events_to_skip=self.events_to_skip,
                         store_events=self.store_events,
+                        get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
                     ):
                         yield item
 
@@ -5574,10 +5582,10 @@ class Agent:
         ):
             # Handle LLM request events and compression events from ModelResponse
             if isinstance(model_response_event, ModelResponse):
-                if model_response_event.event == ModelResponseEvent.llm_request_started.value:
+                if model_response_event.event == ModelResponseEvent.model_request_started.value:
                     if stream_events:
                         yield handle_event(  # type: ignore
-                            create_llm_request_started_event(
+                            create_model_request_started_event(
                                 from_run_response=run_response,
                                 model=self.model.id,
                                 model_provider=self.model.provider,
@@ -5588,10 +5596,10 @@ class Agent:
                         )
                     continue
 
-                if model_response_event.event == ModelResponseEvent.llm_request_completed.value:
+                if model_response_event.event == ModelResponseEvent.model_request_completed.value:
                     if stream_events:
                         yield handle_event(  # type: ignore
-                            create_llm_request_completed_event(
+                            create_model_request_completed_event(
                                 from_run_response=run_response,
                                 model=self.model.id,
                                 model_provider=self.model.provider,
@@ -5727,10 +5735,10 @@ class Agent:
         async for model_response_event in model_response_stream:  # type: ignore
             # Handle LLM request events and compression events from ModelResponse
             if isinstance(model_response_event, ModelResponse):
-                if model_response_event.event == ModelResponseEvent.llm_request_started.value:
+                if model_response_event.event == ModelResponseEvent.model_request_started.value:
                     if stream_events:
                         yield handle_event(  # type: ignore
-                            create_llm_request_started_event(
+                            create_model_request_started_event(
                                 from_run_response=run_response,
                                 model=self.model.id,
                                 model_provider=self.model.provider,
@@ -5741,10 +5749,10 @@ class Agent:
                         )
                     continue
 
-                if model_response_event.event == ModelResponseEvent.llm_request_completed.value:
+                if model_response_event.event == ModelResponseEvent.model_request_completed.value:
                     if stream_events:
                         yield handle_event(  # type: ignore
-                            create_llm_request_completed_event(
+                            create_model_request_completed_event(
                                 from_run_response=run_response,
                                 model=self.model.id,
                                 model_provider=self.model.provider,

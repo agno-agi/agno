@@ -36,12 +36,12 @@ def run_with_events(message: str):
         elif chunk.event == RunEvent.run_completed.value:
             print("[RunCompleted]")
 
-        elif chunk.event == RunEvent.llm_request_started.value:
-            print(f"[LLMRequestStarted] model={chunk.model}")
+        elif chunk.event == RunEvent.model_request_started.value:
+            print(f"[ModelRequestStarted] model={chunk.model}")
 
-        elif chunk.event == RunEvent.llm_request_completed.value:
+        elif chunk.event == RunEvent.model_request_completed.value:
             print(
-                f"[LLMRequestCompleted] tokens: in={chunk.input_tokens}, out={chunk.output_tokens}"
+                f"[ModelRequestCompleted] tokens: in={chunk.input_tokens}, out={chunk.output_tokens}"
             )
 
         elif chunk.event == RunEvent.memory_update_started.value:

@@ -66,8 +66,8 @@ def test_basic_intermediate_steps_events(shared_db):
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.llm_request_started,
-        RunEvent.llm_request_completed,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.run_content,
         RunEvent.run_content_completed,
         RunEvent.run_completed,
@@ -80,8 +80,8 @@ def test_basic_intermediate_steps_events(shared_db):
     assert events[RunEvent.run_started][0].agent_id is not None
     assert events[RunEvent.run_started][0].run_id is not None
     assert events[RunEvent.run_started][0].created_at is not None
-    assert len(events[RunEvent.llm_request_started]) == 1
-    assert len(events[RunEvent.llm_request_completed]) == 1
+    assert len(events[RunEvent.model_request_started]) == 1
+    assert len(events[RunEvent.model_request_completed]) == 1
     assert len(events[RunEvent.run_content]) > 1
     assert len(events[RunEvent.run_content_completed]) == 1
     assert len(events[RunEvent.run_completed]) == 1
@@ -101,8 +101,8 @@ def test_basic_intermediate_steps_events(shared_db):
         "We should have run_started, llm events, and run completed events"
     )
     assert run_response_from_storage.events[0].event == RunEvent.run_started
-    assert run_response_from_storage.events[1].event == RunEvent.llm_request_started
-    assert run_response_from_storage.events[2].event == RunEvent.llm_request_completed
+    assert run_response_from_storage.events[1].event == RunEvent.model_request_started
+    assert run_response_from_storage.events[2].event == RunEvent.model_request_completed
     assert run_response_from_storage.events[3].event == RunEvent.run_content_completed
     assert run_response_from_storage.events[4].event == RunEvent.run_completed
 
@@ -134,8 +134,8 @@ def test_intermediate_steps_with_tools(shared_db):
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.llm_request_started,
-        RunEvent.llm_request_completed,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.tool_call_started,
         RunEvent.tool_call_completed,
         RunEvent.run_content,
@@ -144,8 +144,8 @@ def test_intermediate_steps_with_tools(shared_db):
     }
 
     assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.llm_request_started]) >= 1
-    assert len(events[RunEvent.llm_request_completed]) >= 1
+    assert len(events[RunEvent.model_request_started]) >= 1
+    assert len(events[RunEvent.model_request_completed]) >= 1
     assert len(events[RunEvent.run_content]) > 1
     assert len(events[RunEvent.run_content_completed]) == 1
     assert len(events[RunEvent.run_completed]) == 1
@@ -165,7 +165,7 @@ def test_intermediate_steps_with_tools(shared_db):
     assert run_response_from_storage.events is not None
     assert len(run_response_from_storage.events) >= 7
     assert run_response_from_storage.events[0].event == RunEvent.run_started
-    assert run_response_from_storage.events[1].event == RunEvent.llm_request_started
+    assert run_response_from_storage.events[1].event == RunEvent.model_request_started
 
 
 def test_intermediate_steps_with_custom_events():
@@ -195,8 +195,8 @@ def test_intermediate_steps_with_custom_events():
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.llm_request_started,
-        RunEvent.llm_request_completed,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.tool_call_started,
         RunEvent.custom_event,
         RunEvent.tool_call_completed,
@@ -236,8 +236,8 @@ def test_intermediate_steps_with_reasoning():
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.llm_request_started,
-        RunEvent.llm_request_completed,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.tool_call_started,
         RunEvent.tool_call_completed,
         RunEvent.reasoning_started,
@@ -249,8 +249,8 @@ def test_intermediate_steps_with_reasoning():
     }
 
     assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.llm_request_started]) >= 1
-    assert len(events[RunEvent.llm_request_completed]) >= 1
+    assert len(events[RunEvent.model_request_started]) >= 1
+    assert len(events[RunEvent.model_request_completed]) >= 1
     assert len(events[RunEvent.run_content]) > 1
     assert len(events[RunEvent.run_content_completed]) == 1
     assert len(events[RunEvent.run_completed]) == 1
@@ -294,8 +294,8 @@ def test_intermediate_steps_with_user_confirmation(shared_db):
     run_response = agent.get_last_run_output()
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.llm_request_started,
-        RunEvent.llm_request_completed,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.run_paused,
     }
     assert len(events[RunEvent.run_started]) == 1
@@ -316,8 +316,8 @@ def test_intermediate_steps_with_user_confirmation(shared_db):
     assert stored_session.runs[0].events is not None
     assert len(stored_session.runs[0].events) == 4
     assert stored_session.runs[0].events[0].event == RunEvent.run_started
-    assert stored_session.runs[0].events[1].event == RunEvent.llm_request_started
-    assert stored_session.runs[0].events[2].event == RunEvent.llm_request_completed
+    assert stored_session.runs[0].events[1].event == RunEvent.model_request_started
+    assert stored_session.runs[0].events[2].event == RunEvent.model_request_completed
     assert stored_session.runs[0].events[3].event == RunEvent.run_paused
 
     # Then we continue the run
@@ -334,8 +334,8 @@ def test_intermediate_steps_with_user_confirmation(shared_db):
 
     assert events.keys() == {
         RunEvent.run_continued,
-        RunEvent.llm_request_started,
-        RunEvent.llm_request_completed,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.tool_call_started,
         RunEvent.tool_call_completed,
         RunEvent.run_content,
@@ -360,14 +360,14 @@ def test_intermediate_steps_with_user_confirmation(shared_db):
     assert stored_session.runs[0].events is not None
     assert len(stored_session.runs[0].events) == 11
     assert stored_session.runs[0].events[0].event == RunEvent.run_started
-    assert stored_session.runs[0].events[1].event == RunEvent.llm_request_started
-    assert stored_session.runs[0].events[2].event == RunEvent.llm_request_completed
+    assert stored_session.runs[0].events[1].event == RunEvent.model_request_started
+    assert stored_session.runs[0].events[2].event == RunEvent.model_request_completed
     assert stored_session.runs[0].events[3].event == RunEvent.run_paused
     assert stored_session.runs[0].events[4].event == RunEvent.run_continued
     assert stored_session.runs[0].events[5].event == RunEvent.tool_call_started
     assert stored_session.runs[0].events[6].event == RunEvent.tool_call_completed
-    assert stored_session.runs[0].events[7].event == RunEvent.llm_request_started
-    assert stored_session.runs[0].events[8].event == RunEvent.llm_request_completed
+    assert stored_session.runs[0].events[7].event == RunEvent.model_request_started
+    assert stored_session.runs[0].events[8].event == RunEvent.model_request_completed
     assert stored_session.runs[0].events[9].event == RunEvent.run_content_completed
     assert stored_session.runs[0].events[10].event == RunEvent.run_completed
 
@@ -391,8 +391,8 @@ def test_intermediate_steps_with_memory(shared_db):
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.llm_request_started,
-        RunEvent.llm_request_completed,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.run_content,
         RunEvent.run_content_completed,
         RunEvent.run_completed,
@@ -401,8 +401,8 @@ def test_intermediate_steps_with_memory(shared_db):
     }
 
     assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.llm_request_started]) == 1
-    assert len(events[RunEvent.llm_request_completed]) == 1
+    assert len(events[RunEvent.model_request_started]) == 1
+    assert len(events[RunEvent.model_request_completed]) == 1
     assert len(events[RunEvent.run_content]) > 1
     assert len(events[RunEvent.run_content_completed]) == 1
     assert len(events[RunEvent.run_completed]) == 1
@@ -429,8 +429,8 @@ def test_intermediate_steps_with_session_summary(shared_db):
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.llm_request_started,
-        RunEvent.llm_request_completed,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.run_content,
         RunEvent.run_content_completed,
         RunEvent.run_completed,
@@ -439,8 +439,8 @@ def test_intermediate_steps_with_session_summary(shared_db):
     }
 
     assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.llm_request_started]) == 1
-    assert len(events[RunEvent.llm_request_completed]) == 1
+    assert len(events[RunEvent.model_request_started]) == 1
+    assert len(events[RunEvent.model_request_completed]) == 1
     assert len(events[RunEvent.run_content]) > 1
     assert len(events[RunEvent.run_content_completed]) == 1
     assert len(events[RunEvent.run_completed]) == 1
@@ -474,8 +474,8 @@ def test_pre_hook_events_are_emitted(shared_db):
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.llm_request_started,
-        RunEvent.llm_request_completed,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.pre_hook_started,
         RunEvent.pre_hook_completed,
         RunEvent.run_content,
@@ -484,8 +484,8 @@ def test_pre_hook_events_are_emitted(shared_db):
     }
 
     assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.llm_request_started]) == 1
-    assert len(events[RunEvent.llm_request_completed]) == 1
+    assert len(events[RunEvent.model_request_started]) == 1
+    assert len(events[RunEvent.model_request_completed]) == 1
     assert len(events[RunEvent.run_content]) > 1
     assert len(events[RunEvent.run_content_completed]) == 1
     assert len(events[RunEvent.run_completed]) == 1
@@ -535,8 +535,8 @@ async def test_async_pre_hook_events_are_emitted(shared_db):
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.llm_request_started,
-        RunEvent.llm_request_completed,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.pre_hook_started,
         RunEvent.pre_hook_completed,
         RunEvent.run_content,
@@ -545,8 +545,8 @@ async def test_async_pre_hook_events_are_emitted(shared_db):
     }
 
     assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.llm_request_started]) == 1
-    assert len(events[RunEvent.llm_request_completed]) == 1
+    assert len(events[RunEvent.model_request_started]) == 1
+    assert len(events[RunEvent.model_request_completed]) == 1
     assert len(events[RunEvent.run_content]) > 1
     assert len(events[RunEvent.run_content_completed]) == 1
     assert len(events[RunEvent.run_completed]) == 1
@@ -595,8 +595,8 @@ def test_post_hook_events_are_emitted(shared_db):
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.llm_request_started,
-        RunEvent.llm_request_completed,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.run_content,
         RunEvent.run_content_completed,
         RunEvent.post_hook_started,
@@ -605,8 +605,8 @@ def test_post_hook_events_are_emitted(shared_db):
     }
 
     assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.llm_request_started]) == 1
-    assert len(events[RunEvent.llm_request_completed]) == 1
+    assert len(events[RunEvent.model_request_started]) == 1
+    assert len(events[RunEvent.model_request_completed]) == 1
     assert len(events[RunEvent.run_content]) > 1
     assert len(events[RunEvent.run_content_completed]) == 1
     assert len(events[RunEvent.run_completed]) == 1
@@ -654,8 +654,8 @@ async def test_async_post_hook_events_are_emitted(shared_db):
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.llm_request_started,
-        RunEvent.llm_request_completed,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.run_content,
         RunEvent.run_content_completed,
         RunEvent.post_hook_started,
@@ -664,8 +664,8 @@ async def test_async_post_hook_events_are_emitted(shared_db):
     }
 
     assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.llm_request_started]) == 1
-    assert len(events[RunEvent.llm_request_completed]) == 1
+    assert len(events[RunEvent.model_request_started]) == 1
+    assert len(events[RunEvent.model_request_completed]) == 1
     assert len(events[RunEvent.run_content]) > 1
     assert len(events[RunEvent.run_content_completed]) == 1
     assert len(events[RunEvent.run_completed]) == 1
@@ -713,8 +713,8 @@ def test_pre_and_post_hook_events_are_emitted(shared_db):
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.llm_request_started,
-        RunEvent.llm_request_completed,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.pre_hook_started,
         RunEvent.pre_hook_completed,
         RunEvent.run_content,
@@ -767,16 +767,16 @@ def test_intermediate_steps_with_structured_output(shared_db):
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.llm_request_started,
-        RunEvent.llm_request_completed,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.run_content,
         RunEvent.run_content_completed,
         RunEvent.run_completed,
     }
 
     assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.llm_request_started]) == 1
-    assert len(events[RunEvent.llm_request_completed]) == 1
+    assert len(events[RunEvent.model_request_started]) == 1
+    assert len(events[RunEvent.model_request_completed]) == 1
     assert len(events[RunEvent.run_content]) == 1
     assert len(events[RunEvent.run_content_completed]) == 1
     assert len(events[RunEvent.run_completed]) == 1
@@ -827,8 +827,8 @@ def test_intermediate_steps_with_parser_model(shared_db):
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.llm_request_started,
-        RunEvent.llm_request_completed,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.parser_model_response_started,
         RunEvent.parser_model_response_completed,
         RunEvent.run_content,
@@ -837,8 +837,8 @@ def test_intermediate_steps_with_parser_model(shared_db):
     }
 
     assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.llm_request_started]) == 1
-    assert len(events[RunEvent.llm_request_completed]) == 1
+    assert len(events[RunEvent.model_request_started]) == 1
+    assert len(events[RunEvent.model_request_completed]) == 1
     assert len(events[RunEvent.parser_model_response_started]) == 1
     assert len(events[RunEvent.parser_model_response_completed]) == 1
     assert (
@@ -907,8 +907,8 @@ def test_run_completed_event_metrics_validation(shared_db):
     assert stored_run.metrics.total_tokens > 0
 
 
-def test_llm_request_events(shared_db):
-    """Test that LLM request started and completed events are emitted."""
+def test_model_request_events(shared_db):
+    """Test that model request started and completed events are emitted."""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
@@ -926,40 +926,40 @@ def test_llm_request_events(shared_db):
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.llm_request_started,
-        RunEvent.llm_request_completed,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.run_content,
         RunEvent.run_content_completed,
         RunEvent.run_completed,
     }
 
-    # Verify LLM request started event
-    assert len(events[RunEvent.llm_request_started]) == 1
-    llm_started = events[RunEvent.llm_request_started][0]
-    assert llm_started.model == "gpt-4o-mini"
-    assert llm_started.model_provider == "OpenAI"
+    # Verify model request started event
+    assert len(events[RunEvent.model_request_started]) == 1
+    model_started = events[RunEvent.model_request_started][0]
+    assert model_started.model == "gpt-4o-mini"
+    assert model_started.model_provider == "OpenAI"
 
-    # Verify LLM request completed event
-    assert len(events[RunEvent.llm_request_completed]) == 1
-    llm_completed = events[RunEvent.llm_request_completed][0]
-    assert llm_completed.model == "gpt-4o-mini"
-    assert llm_completed.model_provider == "OpenAI"
-    assert llm_completed.input_tokens is not None
-    assert llm_completed.input_tokens > 0
-    assert llm_completed.output_tokens is not None
-    assert llm_completed.output_tokens > 0
-    assert llm_completed.total_tokens is not None
-    assert llm_completed.total_tokens == llm_completed.input_tokens + llm_completed.output_tokens
+    # Verify model request completed event
+    assert len(events[RunEvent.model_request_completed]) == 1
+    model_completed = events[RunEvent.model_request_completed][0]
+    assert model_completed.model == "gpt-4o-mini"
+    assert model_completed.model_provider == "OpenAI"
+    assert model_completed.input_tokens is not None
+    assert model_completed.input_tokens > 0
+    assert model_completed.output_tokens is not None
+    assert model_completed.output_tokens > 0
+    assert model_completed.total_tokens is not None
+    assert model_completed.total_tokens == model_completed.input_tokens + model_completed.output_tokens
     # Verify new metrics fields exist (may be None)
-    assert hasattr(llm_completed, "time_to_first_token")
-    assert hasattr(llm_completed, "reasoning_tokens")
-    assert hasattr(llm_completed, "cache_read_tokens")
-    assert hasattr(llm_completed, "cache_write_tokens")
+    assert hasattr(model_completed, "time_to_first_token")
+    assert hasattr(model_completed, "reasoning_tokens")
+    assert hasattr(model_completed, "cache_read_tokens")
+    assert hasattr(model_completed, "cache_write_tokens")
 
 
 @pytest.mark.asyncio
-async def test_async_llm_request_events(shared_db):
-    """Test that async LLM request started and completed events are emitted."""
+async def test_async_model_request_events(shared_db):
+    """Test that async model request started and completed events are emitted."""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
@@ -975,39 +975,39 @@ async def test_async_llm_request_events(shared_db):
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.llm_request_started,
-        RunEvent.llm_request_completed,
+        RunEvent.model_request_started,
+        RunEvent.model_request_completed,
         RunEvent.run_content,
         RunEvent.run_content_completed,
         RunEvent.run_completed,
     }
 
-    # Verify LLM request started event
-    assert len(events[RunEvent.llm_request_started]) == 1
-    llm_started = events[RunEvent.llm_request_started][0]
-    assert llm_started.model == "gpt-4o-mini"
-    assert llm_started.model_provider == "OpenAI"
+    # Verify model request started event
+    assert len(events[RunEvent.model_request_started]) == 1
+    model_started = events[RunEvent.model_request_started][0]
+    assert model_started.model == "gpt-4o-mini"
+    assert model_started.model_provider == "OpenAI"
 
-    # Verify LLM request completed event
-    assert len(events[RunEvent.llm_request_completed]) == 1
-    llm_completed = events[RunEvent.llm_request_completed][0]
-    assert llm_completed.model == "gpt-4o-mini"
-    assert llm_completed.model_provider == "OpenAI"
-    assert llm_completed.input_tokens is not None
-    assert llm_completed.input_tokens > 0
-    assert llm_completed.output_tokens is not None
-    assert llm_completed.output_tokens > 0
-    assert llm_completed.total_tokens is not None
-    assert llm_completed.total_tokens == llm_completed.input_tokens + llm_completed.output_tokens
+    # Verify model request completed event
+    assert len(events[RunEvent.model_request_completed]) == 1
+    model_completed = events[RunEvent.model_request_completed][0]
+    assert model_completed.model == "gpt-4o-mini"
+    assert model_completed.model_provider == "OpenAI"
+    assert model_completed.input_tokens is not None
+    assert model_completed.input_tokens > 0
+    assert model_completed.output_tokens is not None
+    assert model_completed.output_tokens > 0
+    assert model_completed.total_tokens is not None
+    assert model_completed.total_tokens == model_completed.input_tokens + model_completed.output_tokens
     # Verify new metrics fields exist (may be None)
-    assert hasattr(llm_completed, "time_to_first_token")
-    assert hasattr(llm_completed, "reasoning_tokens")
-    assert hasattr(llm_completed, "cache_read_tokens")
-    assert hasattr(llm_completed, "cache_write_tokens")
+    assert hasattr(model_completed, "time_to_first_token")
+    assert hasattr(model_completed, "reasoning_tokens")
+    assert hasattr(model_completed, "cache_read_tokens")
+    assert hasattr(model_completed, "cache_write_tokens")
 
 
-def test_llm_request_events_with_tools(shared_db):
-    """Test that multiple LLM request events are emitted when tools are used."""
+def test_model_request_events_with_tools(shared_db):
+    """Test that multiple model request events are emitted when tools are used."""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
@@ -1024,24 +1024,24 @@ def test_llm_request_events_with_tools(shared_db):
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
-    assert RunEvent.llm_request_started in events.keys()
-    assert RunEvent.llm_request_completed in events.keys()
+    assert RunEvent.model_request_started in events.keys()
+    assert RunEvent.model_request_completed in events.keys()
 
-    # With tools, there should be at least 2 LLM requests (one for tool call, one for response)
-    assert len(events[RunEvent.llm_request_started]) >= 2, (
-        f"Expected at least 2 LLM request started events, got {len(events[RunEvent.llm_request_started])}"
+    # With tools, there should be at least 2 model requests (one for tool call, one for response)
+    assert len(events[RunEvent.model_request_started]) >= 2, (
+        f"Expected at least 2 model request started events, got {len(events[RunEvent.model_request_started])}"
     )
-    assert len(events[RunEvent.llm_request_completed]) >= 2, (
-        f"Expected at least 2 LLM request completed events, got {len(events[RunEvent.llm_request_completed])}"
+    assert len(events[RunEvent.model_request_completed]) >= 2, (
+        f"Expected at least 2 model request completed events, got {len(events[RunEvent.model_request_completed])}"
     )
 
     # Verify all LLM completed events have model info and token counts
-    for llm_completed in events[RunEvent.llm_request_completed]:
-        assert llm_completed.model == "gpt-4o-mini"
-        assert llm_completed.model_provider == "OpenAI"
-        assert llm_completed.input_tokens is not None
-        assert llm_completed.output_tokens is not None
-        assert llm_completed.total_tokens is not None
+    for model_completed in events[RunEvent.model_request_completed]:
+        assert model_completed.model == "gpt-4o-mini"
+        assert model_completed.model_provider == "OpenAI"
+        assert model_completed.input_tokens is not None
+        assert model_completed.output_tokens is not None
+        assert model_completed.total_tokens is not None
 
 
 def test_memory_update_completed_contains_memories(shared_db):

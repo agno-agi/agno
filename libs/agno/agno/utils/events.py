@@ -7,10 +7,10 @@ from agno.reasoning.step import ReasoningStep
 from agno.run.agent import (
     CompressionCompletedEvent,
     CompressionStartedEvent,
-    LLMRequestCompletedEvent,
-    LLMRequestStartedEvent,
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
+    ModelRequestCompletedEvent,
+    ModelRequestStartedEvent,
     OutputModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
@@ -44,10 +44,10 @@ from agno.run.agent import (
 from agno.run.requirement import RunRequirement
 from agno.run.team import CompressionCompletedEvent as TeamCompressionCompletedEvent
 from agno.run.team import CompressionStartedEvent as TeamCompressionStartedEvent
-from agno.run.team import LLMRequestCompletedEvent as TeamLLMRequestCompletedEvent
-from agno.run.team import LLMRequestStartedEvent as TeamLLMRequestStartedEvent
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
+from agno.run.team import ModelRequestCompletedEvent as TeamModelRequestCompletedEvent
+from agno.run.team import ModelRequestStartedEvent as TeamModelRequestStartedEvent
 from agno.run.team import OutputModelResponseCompletedEvent as TeamOutputModelResponseCompletedEvent
 from agno.run.team import OutputModelResponseStartedEvent as TeamOutputModelResponseStartedEvent
 from agno.run.team import ParserModelResponseCompletedEvent as TeamParserModelResponseCompletedEvent
@@ -773,12 +773,12 @@ def create_team_output_model_response_completed_event(
     )
 
 
-def create_llm_request_started_event(
+def create_model_request_started_event(
     from_run_response: RunOutput,
     model: Optional[str] = None,
     model_provider: Optional[str] = None,
-) -> LLMRequestStartedEvent:
-    return LLMRequestStartedEvent(
+) -> ModelRequestStartedEvent:
+    return ModelRequestStartedEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
@@ -788,7 +788,7 @@ def create_llm_request_started_event(
     )
 
 
-def create_llm_request_completed_event(
+def create_model_request_completed_event(
     from_run_response: RunOutput,
     model: Optional[str] = None,
     model_provider: Optional[str] = None,
@@ -799,8 +799,8 @@ def create_llm_request_completed_event(
     reasoning_tokens: Optional[int] = None,
     cache_read_tokens: Optional[int] = None,
     cache_write_tokens: Optional[int] = None,
-) -> LLMRequestCompletedEvent:
-    return LLMRequestCompletedEvent(
+) -> ModelRequestCompletedEvent:
+    return ModelRequestCompletedEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
@@ -817,12 +817,12 @@ def create_llm_request_completed_event(
     )
 
 
-def create_team_llm_request_started_event(
+def create_team_model_request_started_event(
     from_run_response: TeamRunOutput,
     model: Optional[str] = None,
     model_provider: Optional[str] = None,
-) -> TeamLLMRequestStartedEvent:
-    return TeamLLMRequestStartedEvent(
+) -> TeamModelRequestStartedEvent:
+    return TeamModelRequestStartedEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
@@ -832,7 +832,7 @@ def create_team_llm_request_started_event(
     )
 
 
-def create_team_llm_request_completed_event(
+def create_team_model_request_completed_event(
     from_run_response: TeamRunOutput,
     model: Optional[str] = None,
     model_provider: Optional[str] = None,
@@ -843,8 +843,8 @@ def create_team_llm_request_completed_event(
     reasoning_tokens: Optional[int] = None,
     cache_read_tokens: Optional[int] = None,
     cache_write_tokens: Optional[int] = None,
-) -> TeamLLMRequestCompletedEvent:
-    return TeamLLMRequestCompletedEvent(
+) -> TeamModelRequestCompletedEvent:
+    return TeamModelRequestCompletedEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
