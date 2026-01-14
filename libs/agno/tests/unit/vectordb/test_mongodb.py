@@ -540,8 +540,8 @@ async def test_async_search(
     mock_cursor = AsyncCursor(mock_results)
     mock_collection.aggregate = AsyncMock(return_value=mock_cursor)
 
-    # Mock embedder.get_embedding to ensure it returns consistent results
-    mock_embedder.get_embedding.return_value = [0.1] * 384
+    # Mock embedder.async_get_embedding to ensure it returns consistent results
+    mock_embedder.async_get_embedding = AsyncMock(return_value=[0.1] * 384)
 
     # Perform the search
     results = await async_vector_db.async_search("test query", limit=5)
