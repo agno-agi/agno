@@ -1,5 +1,4 @@
 import asyncio
-import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from os import getenv
@@ -192,9 +191,6 @@ class Workflow:
     # Number of historical runs to include in the messages
     num_history_runs: int = 3
 
-    # Deprecated. Use stream_events instead.
-    stream_intermediate_steps: bool = False
-
     # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
     _run_hooks_in_background: bool = False
 
@@ -214,7 +210,6 @@ class Workflow:
         debug_mode: Optional[bool] = False,
         stream: Optional[bool] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         store_events: bool = False,
         events_to_skip: Optional[List[Union[WorkflowRunEvent, RunEvent, TeamRunEvent]]] = None,
@@ -250,14 +245,7 @@ class Workflow:
         self.add_workflow_history_to_steps = add_workflow_history_to_steps
         self.num_history_runs = num_history_runs
         self._workflow_session: Optional[WorkflowSession] = None
-
-        if stream_intermediate_steps:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        self.stream_events = stream_events or stream_intermediate_steps
+        self.stream_events = stream_events
 
         # Warn if workflow history is enabled without a database
         if self.add_workflow_history_to_steps and self.db is None:
@@ -350,31 +338,11 @@ class Workflow:
 
         return session_id, user_id
 
-    def _initialize_session_state(
-        self,
-        session_state: Dict[str, Any],
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        run_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    def _initialize_session_state(self, session_state: Dict[str, Any]) -> Dict[str, Any]:
         """Initialize the session state for the workflow."""
-        if user_id:
-            session_state["current_user_id"] = user_id
-        if session_id is not None:
-            session_state["current_session_id"] = session_id
-        if run_id is not None:
-            session_state["current_run_id"] = run_id
-
-        session_state.update(
-            {
-                "workflow_id": self.id,
-                "run_id": run_id,
-                "session_id": session_id,
-            }
-        )
+        session_state["workflow_id"] = self.id
         if self.name:
             session_state["workflow_name"] = self.name
-
         return session_state
 
     def _generate_workflow_session_name(self) -> str:
@@ -2744,6 +2712,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         run_context: RunContext,
         stream: bool = False,
+        stream_events: bool = False,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """
@@ -2757,7 +2726,7 @@ class Workflow:
             execution_input: The execution input
             run_context: The run context
             stream: Whether to stream the response
-            stream_intermediate_steps: Whether to stream intermediate steps
+            stream_events: Whether to stream all events
 
         Returns:
             WorkflowRunOutput if stream=False, Iterator[WorkflowRunOutputEvent] if stream=True
@@ -2769,6 +2738,7 @@ class Workflow:
                 execution_input=execution_input,
                 run_context=run_context,
                 stream=stream,
+                stream_events=stream_events,
                 **kwargs,
             )
         else:
@@ -2803,7 +2773,7 @@ class Workflow:
 
         from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutputEvent
 
-        # Initialize agent with stream_intermediate_steps=True so tool yields events
+        # Initialize agent with stream_events=True so tool yields events
         self._initialize_workflow_agent(session, execution_input, run_context=run_context, stream=stream)
 
         # Build dependencies with workflow context
@@ -2843,8 +2813,8 @@ class Workflow:
         for event in self.agent.run(  # type: ignore[union-attr]
             input=agent_input,
             stream=True,
-            stream_intermediate_steps=True,
-            yield_run_response=True,
+            stream_events=True,
+            yield_run_output=True,
             session_id=session.session_id,
             dependencies=run_context.dependencies,  # Pass context dynamically per-run
             session_state=run_context.session_state,  # Pass session state dynamically per-run
@@ -3232,8 +3202,8 @@ class Workflow:
         async for event in self.agent.arun(  # type: ignore[union-attr]
             input=agent_input,
             stream=True,
-            stream_intermediate_steps=True,
-            yield_run_response=True,
+            stream_events=True,
+            yield_run_output=True,
             session_id=session.session_id,
             dependencies=run_context.dependencies,  # Pass context dynamically per-run
             session_state=run_context.session_state,  # Pass session state dynamically per-run
@@ -3525,7 +3495,6 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
     ) -> WorkflowRunOutput: ...
@@ -3545,7 +3514,6 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
@@ -3564,7 +3532,6 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: bool = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         background_tasks: Optional[Any] = None,
         **kwargs: Any,
@@ -3593,23 +3560,17 @@ class Workflow:
         workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=workflow_session)
 
-        # Initialize session state
-        session_state = self._initialize_session_state(
+        # Initialize session state. Get it from DB if relevant.
+        session_state = self._load_session_state(
+            session=workflow_session,
             session_state=session_state if session_state is not None else {},
-            user_id=user_id,
-            session_id=session_id,
-            run_id=run_id,
         )
-        # Update session state from DB
-        session_state = self._load_session_state(session=workflow_session, session_state=session_state)
 
         log_debug(f"Workflow Run Start: {self.name}", center=True)
 
         # Use simple defaults
         stream = stream or self.stream or False
-        stream_events = (stream_events or stream_intermediate_steps) or (
-            self.stream_events or self.stream_intermediate_steps
-        )
+        stream_events = stream_events or self.stream_events
 
         # Can't stream events if streaming is disabled
         if stream is False:
@@ -3641,6 +3602,8 @@ class Workflow:
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
+            workflow_id=self.id,
+            workflow_name=self.name,
         )
 
         # Execute workflow agent if configured
@@ -3651,6 +3614,7 @@ class Workflow:
                 execution_input=inputs,
                 run_context=run_context,
                 stream=stream,
+                stream_events=stream_events,
                 **kwargs,
             )
 
@@ -3704,7 +3668,6 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
@@ -3725,7 +3688,6 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
@@ -3745,7 +3707,6 @@ class Workflow:
         files: Optional[List[File]] = None,
         stream: bool = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = False,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
         background_tasks: Optional[Any] = None,
@@ -3766,15 +3727,7 @@ class Workflow:
 
         if background:
             if stream and websocket:
-                # Consider both stream_events and stream_intermediate_steps (deprecated)
-                if stream_intermediate_steps is not None:
-                    warnings.warn(
-                        "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                        DeprecationWarning,
-                        stacklevel=2,
-                    )
-                stream_events = stream_events or stream_intermediate_steps or False
-
+                stream_events = stream_events or False
                 # Background + Streaming + WebSocket = Real-time events
                 return self._arun_background_stream(  # type: ignore
                     input=input,
@@ -3828,9 +3781,7 @@ class Workflow:
 
         # Use simple defaults
         stream = stream or self.stream or False
-        stream_events = (stream_events or stream_intermediate_steps) or (
-            self.stream_events or self.stream_intermediate_steps
-        )
+        stream_events = stream_events or self.stream_events
 
         # Can't stream events if streaming is disabled
         if stream is False:
@@ -4481,3 +4432,201 @@ class Workflow:
                 session_id=session_id,
                 **kwargs,
             )
+
+    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> "Workflow":
+        """Create and return a deep copy of this Workflow, optionally updating fields.
+
+        This creates a fresh Workflow instance with isolated mutable state while sharing
+        heavy resources like database connections. Steps containing agents/teams are also
+        deep copied to ensure complete isolation.
+
+        Args:
+            update: Optional dictionary of fields to override in the new Workflow.
+
+        Returns:
+            Workflow: A new Workflow instance with copied state.
+        """
+        from copy import copy, deepcopy
+        from dataclasses import fields
+
+        from agno.utils.log import log_debug, log_warning
+
+        # Extract the fields to set for the new Workflow
+        fields_for_new_workflow: Dict[str, Any] = {}
+
+        for f in fields(self):
+            # Skip private fields (not part of __init__ signature)
+            if f.name.startswith("_"):
+                continue
+
+            field_value = getattr(self, f.name)
+            if field_value is not None:
+                # Special handling for steps that may contain agents/teams
+                if f.name == "steps" and field_value is not None:
+                    fields_for_new_workflow[f.name] = self._deep_copy_steps(field_value)
+                # Special handling for workflow agent
+                elif f.name == "agent" and field_value is not None:
+                    if hasattr(field_value, "deep_copy"):
+                        fields_for_new_workflow[f.name] = field_value.deep_copy()
+                    else:
+                        fields_for_new_workflow[f.name] = field_value
+                # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
+                elif f.name == "db":
+                    fields_for_new_workflow[f.name] = field_value
+                # For compound types, attempt a deep copy
+                elif isinstance(field_value, (list, dict, set)):
+                    try:
+                        fields_for_new_workflow[f.name] = deepcopy(field_value)
+                    except Exception:
+                        try:
+                            fields_for_new_workflow[f.name] = copy(field_value)
+                        except Exception as e:
+                            log_warning(f"Failed to copy field: {f.name} - {e}")
+                            fields_for_new_workflow[f.name] = field_value
+                # For pydantic models, attempt a model_copy
+                elif isinstance(field_value, BaseModel):
+                    try:
+                        fields_for_new_workflow[f.name] = field_value.model_copy(deep=True)
+                    except Exception:
+                        try:
+                            fields_for_new_workflow[f.name] = field_value.model_copy(deep=False)
+                        except Exception:
+                            fields_for_new_workflow[f.name] = field_value
+                # For other types, attempt a shallow copy
+                else:
+                    try:
+                        fields_for_new_workflow[f.name] = copy(field_value)
+                    except Exception:
+                        fields_for_new_workflow[f.name] = field_value
+
+        # Update fields if provided
+        if update:
+            fields_for_new_workflow.update(update)
+
+        # Create a new Workflow
+        try:
+            new_workflow = self.__class__(**fields_for_new_workflow)
+            log_debug(f"Created new {self.__class__.__name__}")
+            return new_workflow
+        except Exception as e:
+            from agno.utils.log import log_error
+            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
+            raise
+
+    def _deep_copy_steps(self, steps: Any) -> Any:
+        """Deep copy workflow steps, handling nested agents and teams."""
+        from agno.workflow.steps import Steps
+
+        if steps is None:
+            return None
+
+        # Handle Steps container
+        if isinstance(steps, Steps):
+            copied_steps = []
+            if steps.steps:
+                for step in steps.steps:
+                    copied_steps.append(self._deep_copy_single_step(step))
+            return Steps(steps=copied_steps)
+
+        # Handle list of steps
+        if isinstance(steps, list):
+            return [self._deep_copy_single_step(step) for step in steps]
+
+        # Handle callable steps
+        if callable(steps):
+            return steps
+
+        # Handle single step
+        return self._deep_copy_single_step(steps)
+
+    def _deep_copy_single_step(self, step: Any) -> Any:
+        """Deep copy a single step, handling nested agents and teams."""
+        from copy import copy, deepcopy
+
+        from agno.agent import Agent
+        from agno.team import Team
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.router import Router
+        from agno.workflow.step import Step
+        from agno.workflow.steps import Steps
+
+        # Handle Step with agent or team
+        if isinstance(step, Step):
+            step_kwargs: Dict[str, Any] = {}
+            if step.name:
+                step_kwargs["name"] = step.name
+            if step.description:
+                step_kwargs["description"] = step.description
+            if step.executor:
+                step_kwargs["executor"] = step.executor
+            if step.agent:
+                step_kwargs["agent"] = step.agent.deep_copy() if hasattr(step.agent, "deep_copy") else step.agent
+            if step.team:
+                step_kwargs["team"] = step.team.deep_copy() if hasattr(step.team, "deep_copy") else step.team
+            # Copy Step configuration attributes
+            for attr in [
+                "max_retries",
+                "timeout_seconds",
+                "skip_on_failure",
+                "strict_input_validation",
+                "add_workflow_history",
+                "num_history_runs",
+            ]:
+                if hasattr(step, attr):
+                    value = getattr(step, attr)
+                    # Only include non-default values to avoid overriding defaults
+                    if value is not None:
+                        step_kwargs[attr] = value
+            return Step(**step_kwargs)
+
+        # Handle direct Agent
+        if isinstance(step, Agent):
+            return step.deep_copy() if hasattr(step, "deep_copy") else step
+
+        # Handle direct Team
+        if isinstance(step, Team):
+            return step.deep_copy() if hasattr(step, "deep_copy") else step
+
+        # Handle Parallel steps
+        if isinstance(step, Parallel):
+            copied_parallel_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            return Parallel(*copied_parallel_steps, name=step.name, description=step.description)
+
+        # Handle Loop steps
+        if isinstance(step, Loop):
+            copied_loop_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            return Loop(
+                steps=copied_loop_steps,
+                name=step.name,
+                description=step.description,
+                max_iterations=step.max_iterations,
+                end_condition=step.end_condition,
+            )
+
+        # Handle Condition steps
+        if isinstance(step, Condition):
+            copied_condition_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            return Condition(
+                evaluator=step.evaluator, steps=copied_condition_steps, name=step.name, description=step.description
+            )
+
+        # Handle Router steps
+        if isinstance(step, Router):
+            copied_choices = [self._deep_copy_single_step(s) for s in step.choices] if step.choices else []
+            return Router(choices=copied_choices, name=step.name, description=step.description, selector=step.selector)
+
+        # Handle Steps container
+        if isinstance(step, Steps):
+            copied_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            return Steps(name=step.name, description=step.description, steps=copied_steps)
+
+        # For other types, attempt deep copy
+        try:
+            return deepcopy(step)
+        except Exception:
+            try:
+                return copy(step)
+            except Exception:
+                return step

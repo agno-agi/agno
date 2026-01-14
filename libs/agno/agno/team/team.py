@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import json
 import time
-import warnings
 from collections import ChainMap, deque
 from concurrent.futures import Future
 from copy import copy
@@ -440,8 +439,6 @@ class Team:
     stream: Optional[bool] = None
     # Stream the intermediate steps from the Agent
     stream_events: Optional[bool] = None
-    # [Deprecated] Stream the intermediate steps from the Agent
-    stream_intermediate_steps: Optional[bool] = None
     # Stream the member events from the Team
     stream_member_events: bool = True
 
@@ -473,9 +470,6 @@ class Team:
     # This helps us improve the Teams implementation and provide better support
     telemetry: bool = True
 
-    # Deprecated. Use delegate_to_all_members instead.
-    delegate_task_to_all_members: bool = False
-
     def __init__(
         self,
         members: List[Union[Agent, "Team"]],
@@ -485,7 +479,6 @@ class Team:
         role: Optional[str] = None,
         respond_directly: bool = False,
         determine_input_for_members: bool = True,
-        delegate_task_to_all_members: bool = False,
         delegate_to_all_members: bool = False,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -566,7 +559,6 @@ class Team:
         reasoning_max_steps: int = 10,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         store_events: bool = False,
         events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
         store_member_responses: bool = False,
@@ -579,13 +571,6 @@ class Team:
         exponential_backoff: bool = False,
         telemetry: bool = True,
     ):
-        if delegate_task_to_all_members:
-            warnings.warn(
-                "The 'delegate_task_to_all_members' parameter is deprecated and will be removed in future versions. Use 'delegate_to_all_members' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         self.members = members
 
         self.model = model  # type: ignore[assignment]
@@ -596,7 +581,7 @@ class Team:
 
         self.respond_directly = respond_directly
         self.determine_input_for_members = determine_input_for_members
-        self.delegate_to_all_members = delegate_to_all_members or delegate_task_to_all_members
+        self.delegate_to_all_members = delegate_to_all_members
 
         self.user_id = user_id
         self.session_id = session_id
@@ -702,7 +687,7 @@ class Team:
         self.reasoning_max_steps = reasoning_max_steps
 
         self.stream = stream
-        self.stream_events = stream_events or stream_intermediate_steps
+        self.stream_events = stream_events
         self.store_events = store_events
         self.store_member_responses = store_member_responses
 
@@ -928,22 +913,6 @@ class Team:
 
         return session_id, user_id
 
-    def _initialize_session_state(
-        self,
-        session_state: Dict[str, Any],
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        run_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Initialize the session state for the team."""
-        if user_id:
-            session_state["current_user_id"] = user_id
-        if session_id is not None:
-            session_state["current_session_id"] = session_id
-        if run_id is not None:
-            session_state["current_run_id"] = run_id
-        return session_state
-
     def _has_async_db(self) -> bool:
         """Return True if the db the team is equipped with is an Async implementation"""
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
@@ -1102,9 +1071,6 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
-            "metadata": run_context.metadata,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
             "debug_mode": debug_mode or self.debug_mode,
         }
 
@@ -1194,9 +1160,6 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
-            "metadata": run_context.metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
 
@@ -1291,9 +1254,6 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
-            "metadata": run_context.metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
 
@@ -1377,9 +1337,6 @@ class Team:
             "team": self,
             "session": session,
             "user_id": user_id,
-            "session_state": run_context.session_state,
-            "dependencies": run_context.dependencies,
-            "metadata": run_context.metadata,
             "debug_mode": debug_mode or self.debug_mode,
         }
 
@@ -1556,7 +1513,9 @@ class Team:
                     raise_if_cancelled(run_response.run_id)  # type: ignore
 
                     # 5. Reason about the task if reasoning is enabled
-                    self._handle_reasoning(run_response=run_response, run_messages=run_messages)
+                    self._handle_reasoning(
+                        run_response=run_response, run_messages=run_messages, run_context=run_context
+                    )
 
                     # Check for cancellation before model call
                     raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1829,6 +1788,7 @@ class Team:
                     yield from self._handle_reasoning_stream(
                         run_response=run_response,
                         run_messages=run_messages,
+                        run_context=run_context,
                         stream_events=stream_events,
                     )
 
@@ -2061,7 +2021,6 @@ class Team:
         *,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
@@ -2088,7 +2047,6 @@ class Team:
         *,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
@@ -2105,7 +2063,6 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
@@ -2117,7 +2074,6 @@ class Team:
         *,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
@@ -2134,7 +2090,6 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
@@ -2153,14 +2108,6 @@ class Team:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
             )
-
-        if yield_run_response is not None:
-            warnings.warn(
-                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         # Register run for cancellation tracking
         register_run(run_id)  # type: ignore
@@ -2201,15 +2148,11 @@ class Team:
         team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=team_session)
 
-        # Initialize session state
-        session_state = self._initialize_session_state(
+        # Initialize session state. Get it from DB if relevant.
+        session_state = self._load_session_state(
+            session=team_session,
             session_state=session_state if session_state is not None else {},
-            user_id=user_id,
-            session_id=session_id,
-            run_id=run_id,
         )
-        # Update session state from DB
-        session_state = self._load_session_state(session=team_session, session_state=session_state)
 
         # Determine runtime dependencies
         dependencies = dependencies if dependencies is not None else self.dependencies
@@ -2252,9 +2195,6 @@ class Team:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
         if stream is False:
@@ -2386,18 +2326,12 @@ class Team:
 
                     # 2. Update metadata and session state
                     self._update_metadata(session=team_session)
-                    # Initialize session state
-                    run_context.session_state = self._initialize_session_state(
+
+                    # Initialize session state. Get it from DB if relevant.
+                    run_context.session_state = self._load_session_state(
+                        session=team_session,
                         session_state=run_context.session_state if run_context.session_state is not None else {},
-                        user_id=user_id,
-                        session_id=session_id,
-                        run_id=run_response.run_id,
                     )
-                    # Update session state from DB
-                    if run_context.session_state is not None:
-                        run_context.session_state = self._load_session_state(
-                            session=team_session, session_state=run_context.session_state
-                        )
 
                     run_input = cast(TeamRunInput, run_response.input)
 
@@ -2473,7 +2407,9 @@ class Team:
 
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
                     # 7. Reason about the task if reasoning is enabled
-                    await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
+                    await self._ahandle_reasoning(
+                        run_response=run_response, run_messages=run_messages, run_context=run_context
+                    )
 
                     # Check for cancellation before model call
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2640,7 +2576,6 @@ class Team:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         yield_run_output: bool = False,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -2692,18 +2627,12 @@ class Team:
 
                     # 3. Update metadata and session state
                     self._update_metadata(session=team_session)
-                    # Initialize session state
-                    run_context.session_state = self._initialize_session_state(
+
+                    # Initialize session state. Get it from DB if relevant.
+                    run_context.session_state = self._load_session_state(
+                        session=team_session,
                         session_state=run_context.session_state if run_context.session_state is not None else {},
-                        user_id=user_id,
-                        session_id=session_id,
-                        run_id=run_response.run_id,
                     )
-                    # Update session state from DB
-                    if run_context.session_state is not None:
-                        run_context.session_state = self._load_session_state(
-                            session=team_session, session_state=run_context.session_state
-                        )  # type: ignore
 
                     # 4. Execute pre-hooks
                     run_input = cast(TeamRunInput, run_response.input)
@@ -2774,9 +2703,6 @@ class Team:
                         existing_task=memory_task,
                     )
 
-                    # Considering both stream_events and stream_intermediate_steps (deprecated)
-                    stream_events = stream_events or stream_intermediate_steps
-
                     # Yield the run started event
                     if stream_events:
                         yield handle_event(  # type: ignore
@@ -2790,6 +2716,7 @@ class Team:
                     async for item in self._ahandle_reasoning_stream(
                         run_response=run_response,
                         run_messages=run_messages,
+                        run_context=run_context,
                         stream_events=stream_events,
                     ):
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3032,7 +2959,6 @@ class Team:
         *,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_id: Optional[str] = None,
@@ -3060,7 +2986,6 @@ class Team:
         *,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_id: Optional[str] = None,
@@ -3077,7 +3002,6 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
@@ -3089,7 +3013,6 @@ class Team:
         *,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         run_id: Optional[str] = None,
@@ -3106,7 +3029,6 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        yield_run_response: Optional[bool] = None,  # To be deprecated: use yield_run_output instead
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         **kwargs: Any,
@@ -3120,15 +3042,6 @@ class Team:
             log_warning(
                 "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
             )
-
-        if yield_run_response is not None:
-            warnings.warn(
-                "The 'yield_run_response' parameter is deprecated and will be removed in future versions. Use 'yield_run_output' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-            yield_run_output = yield_run_output or yield_run_response  # For backwards compatibility
 
         background_tasks = kwargs.pop("background_tasks", None)
         if background_tasks is not None:
@@ -3180,15 +3093,6 @@ class Team:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         # Can't stream events if streaming is disabled
         if stream is False:
@@ -3252,7 +3156,7 @@ class Team:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        yield_run_output = bool(yield_run_output or yield_run_response)  # For backwards compatibility
+        yield_run_output = yield_run_output
 
         if stream:
             return self._arun_stream(  # type: ignore
@@ -4497,8 +4401,6 @@ class Team:
         add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -4508,20 +4410,6 @@ class Team:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
-        if stream_events is not None:
-            warnings.warn(
-                "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the print_response function.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the print_response function.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         if self._has_async_db():
             raise Exception(
                 "This method is not supported with an async DB. Please use the async version of this method."
@@ -4623,8 +4511,6 @@ class Team:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        stream_events: Optional[bool] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -4634,20 +4520,6 @@ class Team:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
-        if stream_events is not None:
-            warnings.warn(
-                "The 'stream_events' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the aprint_response function.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Event streaming is always enabled using the aprint_response function.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -4861,40 +4733,56 @@ class Team:
     # Helpers
     ###########################################################################
 
-    def _handle_reasoning(self, run_response: TeamRunOutput, run_messages: RunMessages):
+    def _handle_reasoning(
+        self, run_response: TeamRunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    ) -> None:
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self._reason(
-                run_response=run_response, run_messages=run_messages, stream_events=False
+                run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
             )
 
             # Consume the generator without yielding
             deque(reasoning_generator, maxlen=0)
 
     def _handle_reasoning_stream(
-        self, run_response: TeamRunOutput, run_messages: RunMessages, stream_events: bool
+        self,
+        run_response: TeamRunOutput,
+        run_messages: RunMessages,
+        run_context: Optional[RunContext] = None,
+        stream_events: bool = False,
     ) -> Iterator[TeamRunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self._reason(
                 run_response=run_response,
                 run_messages=run_messages,
+                run_context=run_context,
                 stream_events=stream_events,
             )
             yield from reasoning_generator
 
-    async def _ahandle_reasoning(self, run_response: TeamRunOutput, run_messages: RunMessages) -> None:
+    async def _ahandle_reasoning(
+        self, run_response: TeamRunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    ) -> None:
         if self.reasoning or self.reasoning_model is not None:
-            reason_generator = self._areason(run_response=run_response, run_messages=run_messages, stream_events=False)
+            reason_generator = self._areason(
+                run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
+            )
             # Consume the generator without yielding
             async for _ in reason_generator:
                 pass
 
     async def _ahandle_reasoning_stream(
-        self, run_response: TeamRunOutput, run_messages: RunMessages, stream_events: bool
+        self,
+        run_response: TeamRunOutput,
+        run_messages: RunMessages,
+        run_context: Optional[RunContext] = None,
+        stream_events: bool = False,
     ) -> AsyncIterator[TeamRunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
             reason_generator = self._areason(
                 run_response=run_response,
                 run_messages=run_messages,
+                run_context=run_context,
                 stream_events=stream_events,
             )
             async for item in reason_generator:
@@ -4937,14 +4825,6 @@ class Team:
         session_metrics.time_to_first_token = None
         if session.session_data is not None:
             session.session_data["session_metrics"] = session_metrics
-
-    def _get_reasoning_agent(self, reasoning_model: Model) -> Optional[Agent]:
-        return Agent(
-            model=reasoning_model,
-            telemetry=self.telemetry,
-            debug_mode=self.debug_mode,
-            debug_level=self.debug_level,
-        )
 
     def _format_reasoning_step_content(self, run_response: TeamRunOutput, reasoning_step: ReasoningStep) -> str:
         """Format content for a reasoning step without changing any existing logic."""
@@ -5054,7 +4934,8 @@ class Team:
         self,
         run_response: TeamRunOutput,
         run_messages: RunMessages,
-        stream_events: bool,
+        run_context: Optional[RunContext] = None,
+        stream_events: bool = False,
     ) -> Iterator[TeamRunOutputEvent]:
         """
         Run reasoning using the ReasoningManager.
@@ -5084,9 +4965,7 @@ class Team:
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
-                session_state=self.session_state,
-                dependencies=self.dependencies,
-                metadata=self.metadata,
+                run_context=run_context,
             )
         )
 
@@ -5098,7 +4977,8 @@ class Team:
         self,
         run_response: TeamRunOutput,
         run_messages: RunMessages,
-        stream_events: bool,
+        run_context: Optional[RunContext] = None,
+        stream_events: bool = False,
     ) -> AsyncIterator[TeamRunOutputEvent]:
         """
         Run reasoning asynchronously using the ReasoningManager.
@@ -5128,9 +5008,7 @@ class Team:
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
-                session_state=self.session_state,
-                dependencies=self.dependencies,
-                metadata=self.metadata,
+                run_context=run_context,
             )
         )
 
@@ -5466,8 +5344,6 @@ class Team:
             for func in _functions:  # type: ignore
                 if isinstance(func, Function):
                     func._run_context = run_context
-                    func._session_state = run_context.session_state
-                    func._dependencies = run_context.dependencies
                     func._images = joint_images
                     func._files = joint_files
                     func._audios = joint_audios
@@ -5515,16 +5391,12 @@ class Team:
         self,
         session: TeamSession,
         run_context: Optional[RunContext] = None,
-        user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
-        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
-        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
-        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
     ) -> Optional[Message]:
         """Get the system message for the team.
 
@@ -5533,11 +5405,9 @@ class Team:
         3. Build and return the default system message for the Team.
         """
 
-        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
-        if run_context is not None:
-            session_state = run_context.session_state or session_state
-            dependencies = run_context.dependencies or dependencies
-            metadata = run_context.metadata or metadata
+        # Extract values from run_context
+        session_state = run_context.session_state if run_context else None
+        user_id = run_context.user_id if run_context else None
 
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
@@ -5565,10 +5435,7 @@ class Team:
             if self.resolve_in_context:
                 sys_message_content = self._format_message_with_state_variables(
                     sys_message_content,
-                    user_id=user_id,
-                    session_state=session_state,
-                    dependencies=dependencies,
-                    metadata=metadata,
+                    run_context=run_context,
                 )
 
             # type: ignore
@@ -5792,10 +5659,7 @@ class Team:
         if self.resolve_in_context:
             system_message_content = self._format_message_with_state_variables(
                 system_message_content,
-                user_id=user_id,
-                session_state=session_state,
-                dependencies=dependencies,
-                metadata=metadata,
+                run_context=run_context,
             )
 
         system_message_from_model = self.model.get_system_message_for_model(tools)
@@ -5832,24 +5696,18 @@ class Team:
         self,
         session: TeamSession,
         run_context: Optional[RunContext] = None,
-        user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
-        session_state: Optional[Dict[str, Any]] = None,  # Deprecated
-        dependencies: Optional[Dict[str, Any]] = None,  # Deprecated
-        metadata: Optional[Dict[str, Any]] = None,  # Deprecated
     ) -> Optional[Message]:
         """Get the system message for the team."""
 
-        # Consider both run_context and session_state, dependencies, metadata (deprecated fields)
-        if run_context is not None:
-            session_state = run_context.session_state or session_state
-            dependencies = run_context.dependencies or dependencies
-            metadata = run_context.metadata or metadata
+        # Extract values from run_context
+        session_state = run_context.session_state if run_context else None
+        user_id = run_context.user_id if run_context else None
 
         # Get output_schema from run_context
         output_schema = run_context.output_schema if run_context else None
@@ -5877,10 +5735,7 @@ class Team:
             if self.resolve_in_context:
                 sys_message_content = self._format_message_with_state_variables(
                     sys_message_content,
-                    user_id=user_id,
-                    session_state=session_state,
-                    dependencies=dependencies,
-                    metadata=metadata,
+                    run_context=run_context,
                 )
 
             # type: ignore
@@ -6109,10 +5964,7 @@ class Team:
         if self.resolve_in_context:
             system_message_content = self._format_message_with_state_variables(
                 system_message_content,
-                user_id=user_id,
-                session_state=session_state,
-                dependencies=dependencies,
-                metadata=metadata,
+                run_context=run_context,
             )
 
         system_message_from_model = self.model.get_system_message_for_model(tools)
@@ -6186,7 +6038,6 @@ class Team:
         system_message = self.get_system_message(
             session=session,
             run_context=run_context,
-            user_id=user_id,
             images=images,
             audio=audio,
             videos=videos,
@@ -6319,7 +6170,6 @@ class Team:
         system_message = await self.aget_system_message(
             session=session,
             run_context=run_context,
-            user_id=user_id,
             images=images,
             audio=audio,
             videos=videos,
@@ -6419,7 +6269,6 @@ class Team:
         run_response: TeamRunOutput,
         run_context: RunContext,
         input_message: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
-        user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -6531,10 +6380,7 @@ class Team:
                 if self.resolve_in_context:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
-                        user_id=user_id,
-                        session_state=run_context.session_state,
-                        dependencies=run_context.dependencies,
-                        metadata=run_context.metadata,
+                        run_context=run_context,
                     )
 
                 # Convert to string for concatenation operations
@@ -6577,7 +6423,6 @@ class Team:
         run_response: TeamRunOutput,
         run_context: RunContext,
         input_message: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
-        user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -6689,10 +6534,7 @@ class Team:
                 if self.resolve_in_context:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
-                        user_id=user_id,
-                        session_state=run_context.session_state,
-                        dependencies=run_context.dependencies,
-                        metadata=run_context.metadata,
+                        run_context=run_context,
                     )
 
                 # Convert to string for concatenation operations
@@ -6802,17 +6644,21 @@ class Team:
     def _format_message_with_state_variables(
         self,
         message: Any,
-        session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
+        run_context: Optional[RunContext] = None,
     ) -> Any:
-        """Format a message with the session state variables."""
+        """Format a message with the session state variables from run_context."""
         import re
         import string
 
         if not isinstance(message, str):
             return message
+
+        # Extract values from run_context
+        session_state = run_context.session_state if run_context else None
+        dependencies = run_context.dependencies if run_context else None
+        metadata = run_context.metadata if run_context else None
+        user_id = run_context.user_id if run_context else None
+
         # Should already be resolved and passed from run() method
         format_variables = ChainMap(
             session_state if session_state is not None else {},
@@ -9392,3 +9238,134 @@ class Team:
             )
         except Exception as e:
             log_debug(f"Could not create Team run telemetry event: {e}")
+
+    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> "Team":
+        """Create and return a deep copy of this Team, optionally updating fields.
+
+        This creates a fresh Team instance with isolated mutable state while sharing
+        heavy resources like database connections and models. Member agents are also
+        deep copied to ensure complete isolation.
+
+        Args:
+            update: Optional dictionary of fields to override in the new Team.
+
+        Returns:
+            Team: A new Team instance with copied state.
+        """
+        from dataclasses import fields
+
+        # Extract the fields to set for the new Team
+        fields_for_new_team: Dict[str, Any] = {}
+
+        for f in fields(self):
+            # Skip private fields (not part of __init__ signature)
+            if f.name.startswith("_"):
+                continue
+
+            field_value = getattr(self, f.name)
+            if field_value is not None:
+                try:
+                    fields_for_new_team[f.name] = self._deep_copy_field(f.name, field_value)
+                except Exception as e:
+                    log_warning(f"Failed to deep copy field '{f.name}': {e}. Using original value.")
+                    fields_for_new_team[f.name] = field_value
+
+        # Update fields if provided
+        if update:
+            fields_for_new_team.update(update)
+
+        # Create a new Team
+        try:
+            new_team = self.__class__(**fields_for_new_team)
+            log_debug(f"Created new {self.__class__.__name__}")
+            return new_team
+        except Exception as e:
+            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
+            raise
+
+    def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
+        """Helper method to deep copy a field based on its type."""
+        from copy import copy, deepcopy
+
+        # For members, deep copy each agent/team
+        if field_name == "members" and field_value is not None:
+            copied_members = []
+            for member in field_value:
+                if hasattr(member, "deep_copy"):
+                    copied_members.append(member.deep_copy())
+                else:
+                    copied_members.append(member)
+            return copied_members
+
+        # For tools, share MCP tools but copy others
+        if field_name == "tools" and field_value is not None:
+            try:
+                copied_tools = []
+                for tool in field_value:
+                    try:
+                        # Share MCP tools (they maintain server connections)
+                        is_mcp_tool = hasattr(type(tool), "__mro__") and any(
+                            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                        )
+                        if is_mcp_tool:
+                            copied_tools.append(tool)
+                        else:
+                            try:
+                                copied_tools.append(deepcopy(tool))
+                            except Exception:
+                                # Tool can't be deep copied, share by reference
+                                copied_tools.append(tool)
+                    except Exception:
+                        # MCP detection failed, share tool by reference to be safe
+                        copied_tools.append(tool)
+                return copied_tools
+            except Exception as e:
+                # If entire tools processing fails, log and return original list
+                log_warning(f"Failed to process tools for deep copy: {e}")
+                return field_value
+
+        # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
+        if field_name in (
+            "db",
+            "model",
+            "reasoning_model",
+            "knowledge",
+            "memory_manager",
+            "parser_model",
+            "output_model",
+            "session_summary_manager",
+            "culture_manager",
+            "compression_manager",
+            "learning",
+            "skills",
+        ):
+            return field_value
+
+        # For compound types, attempt a deep copy
+        if isinstance(field_value, (list, dict, set)):
+            try:
+                return deepcopy(field_value)
+            except Exception:
+                try:
+                    return copy(field_value)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
+
+        # For pydantic models, attempt a model_copy
+        if isinstance(field_value, BaseModel):
+            try:
+                return field_value.model_copy(deep=True)
+            except Exception:
+                try:
+                    return field_value.model_copy(deep=False)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
+
+        # For other types, attempt a shallow copy first
+        try:
+            return copy(field_value)
+        except Exception:
+            # If copy fails, return as is
+            return field_value
