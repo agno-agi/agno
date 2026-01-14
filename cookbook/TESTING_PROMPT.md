@@ -9,9 +9,9 @@ Your task is to test the cookbooks in `cookbook/15_learning`.
 
 1. Read `cookbook/15_learning/README.md` to understand the cookbook structure and purpose.
 2. Check `cookbook/15_learning/CLAUDE.md` to understand the testing workflow.
-3. Check `cookbook/15_learning/TESTING.md` to understand the past test results log.
+3. Check `cookbook/15_learning/TEST_LOG.md` to understand the past test results log.
 4. Confirm the test plan with me.
-5. Run all tests and update `cookbook/15_learning/TESTING.md` with the results.
+5. Run all tests and update `cookbook/15_learning/TEST_LOG.md` with the results.
 ```
 
 ## Full Prompt
@@ -31,9 +31,9 @@ Your task is to test the cookbooks in `cookbook/<FOLDER_NAME>`.
 1. Read `cookbook/<FOLDER_NAME>/CLAUDE.md` if it exists
 2. If missing, ask if I should create one using `cookbook/15_learning/CLAUDE.md` as reference
 
-### Step 3: Check TESTING.md
-1. Read `cookbook/<FOLDER_NAME>/TESTING.md` if it exists
-2. If missing, create it using `cookbook/15_learning/TESTING.md` as reference
+### Step 3: Check TEST_LOG.md
+1. Read `cookbook/<FOLDER_NAME>/TEST_LOG.md` if it exists
+2. If missing, create it using `cookbook/15_learning/TEST_LOG.md` as reference
 
 ### Step 4: Test Plan
 Provide a prioritized test plan with:
@@ -46,7 +46,7 @@ Provide a prioritized test plan with:
 When asked, run tests using:
 .venvs/demo/bin/python cookbook/<FOLDER_NAME>/<file>.py
 
-Update TESTING.md after each test with PASS/FAIL and observations.
+Update TEST_LOG.md after each test with PASS/FAIL and observations.
 
 Do not run tests until I confirm the plan.
 ```
@@ -55,7 +55,7 @@ Do not run tests until I confirm the plan.
 
 Reference implementations in `cookbook/15_learning/`:
 - `CLAUDE.md` — Testing instructions template
-- `TESTING.md` — Test log template
+- `TEST_LOG.md` — Test log template
 
 ## Test Environment
 

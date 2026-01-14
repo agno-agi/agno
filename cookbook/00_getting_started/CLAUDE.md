@@ -1,4 +1,4 @@
-# CLAUDE.md - Getting Started Cookbook Testing
+# CLAUDE.md - Getting Started Cookbook
 
 Instructions for Claude Code when testing the Getting Started cookbook.
 
@@ -25,7 +25,7 @@ python cookbook/00_getting_started/agent_with_tools.py
 
 **Test results file:**
 ```
-cookbook/00_getting_started/TESTING.md
+cookbook/00_getting_started/TEST_LOG.md
 ```
 
 ---
@@ -62,9 +62,9 @@ For long outputs:
 python cookbook/00_getting_started/agent_with_tools.py 2>&1 | tail -100
 ```
 
-### 3. Updating TESTING.md
+### 3. Updating TEST_LOG.md
 
-After each test, update `cookbook/00_getting_started/TESTING.md` with:
+After each test, update `cookbook/00_getting_started/TEST_LOG.md` with:
 - Test name and path
 - Status: PASS or FAIL
 - Brief description of what was tested
@@ -88,7 +88,6 @@ After each test, update `cookbook/00_getting_started/TESTING.md` with:
 | 10 | `sequential_workflow.py` | Gemini, yfinance, duckduckgo | Workflows |
 | 11 | `agent_with_guardrails.py` | Gemini, yfinance | Guardrails |
 | 12 | `human_in_the_loop.py` | Gemini, yfinance, ChromaDb | Confirmation (interactive) |
-| -- | `readme_examples.py` | OpenAI, yfinance, duckduckgo, LanceDb | README examples |
 | -- | `run.py` | All | Agent OS entrypoint |
 
 ---
@@ -101,7 +100,6 @@ After each test, update `cookbook/00_getting_started/TESTING.md` with:
 - `chromadb` - Vector storage (local, no server)
 
 **Optional (for specific cookbooks):**
-- `OPENAI_API_KEY` - For `readme_examples.py`
 - `duckduckgo-search` - For teams/workflows
 
 **No external services required:**
@@ -147,7 +145,6 @@ After each test, update `cookbook/00_getting_started/TESTING.md` with:
 
 4. **tmp/ directory**: Tests create files in `tmp/` - this is expected and can be cleaned up.
 
-5. **readme_examples.py**: Uses OpenAI, not Gemini - requires different API key.
 
 ---
 
