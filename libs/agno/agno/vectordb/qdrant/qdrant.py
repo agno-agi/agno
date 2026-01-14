@@ -423,12 +423,12 @@ class Qdrant(VectorDb):
                         # Fall back to individual embedding
                         for doc in documents:
                             if self.search_type in [SearchType.vector, SearchType.hybrid]:
-                                doc.embed(embedder=self.embedder)
+                                await doc.async_embed(embedder=self.embedder)
             else:
                 # Use individual embedding
                 for doc in documents:
                     if self.search_type in [SearchType.vector, SearchType.hybrid]:
-                        doc.embed(embedder=self.embedder)
+                        await doc.async_embed(embedder=self.embedder)
 
         async def process_document(document):
             cleaned_content = document.content.replace("\x00", "\ufffd")
