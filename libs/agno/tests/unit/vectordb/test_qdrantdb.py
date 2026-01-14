@@ -432,11 +432,6 @@ def test_delete_by_metadata_complex(qdrant_db, mock_qdrant_client):
         mock_delete_by_metadata.assert_called_once_with({"spicy": False})
 
 
-# ============================================================================
-# Async embedder tests - verify async methods use async embedder
-# ============================================================================
-
-
 @pytest.fixture
 def tracking_embedder():
     """
@@ -539,10 +534,7 @@ async def test_concurrent_async_searches_no_blocking(tracking_embedder):
     db._async_client = mock_async_client
 
     # Run multiple concurrent searches
-    tasks = [
-        db._run_vector_search_async(f"query {i}", limit=5, formatted_filters=None)
-        for i in range(5)
-    ]
+    tasks = [db._run_vector_search_async(f"query {i}", limit=5, formatted_filters=None) for i in range(5)]
     await asyncio.gather(*tasks)
 
     # All should use async embedder
