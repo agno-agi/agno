@@ -4,7 +4,7 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.xai import xAI
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 
@@ -98,7 +98,7 @@ async def test_async_tool_use_stream():
 def test_multiple_tool_calls():
     agent = Agent(
         model=xAI(id="grok-2-1212"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         instructions=[
             "Use YFinance for stock price queries",
             "Use DuckDuckGo for news and general information",

@@ -4,7 +4,7 @@ import pytest
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.deepseek import DeepSeek
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -116,7 +116,7 @@ def test_parallel_tool_calls():
 def test_multiple_tool_calls():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )
@@ -189,7 +189,7 @@ def test_tool_call_custom_tool_optional_parameters():
 def test_tool_call_list_parameters():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         instructions="Use a single tool call if possible",
         markdown=True,
         telemetry=False,

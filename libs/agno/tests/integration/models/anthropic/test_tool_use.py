@@ -4,7 +4,7 @@ import pytest
 
 from agno.agent import Agent  # noqa
 from agno.models.anthropic import Claude
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 
@@ -167,7 +167,7 @@ def test_parallel_tool_calls():
 def test_multiple_tool_calls():
     agent = Agent(
         model=Claude(id="claude-3-5-haiku-20241022"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )

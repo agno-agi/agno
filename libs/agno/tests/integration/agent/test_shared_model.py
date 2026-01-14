@@ -14,13 +14,13 @@ def shared_model():
 @pytest.fixture
 def web_agent(shared_model):
     """Create a web agent for testing."""
-    from agno.tools.duckduckgo import DuckDuckGoTools
+    from agno.tools.websearch import WebSearchTools
 
     return Agent(
         name="Web Agent",
         model=shared_model,
         role="Search the web for information",
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
     )
 
 
