@@ -9,7 +9,7 @@ Instructions for Claude Code when testing the Quick Start cookbook.
 **Test Environment:**
 ```bash
 # Virtual environment (as per README)
-source .getting-started/bin/activate
+source .quickstart/bin/activate
 
 # Or use demo environment
 .venvs/demo/bin/python
@@ -37,8 +37,8 @@ cookbook/00_quickstart/TEST_LOG.md
 Ensure environment is set up:
 ```bash
 # Option A: Use README instructions
-uv venv .getting-started --python 3.12
-source .getting-started/bin/activate
+uv venv .quickstart --python 3.12
+source .quickstart/bin/activate
 uv pip install -r cookbook/00_quickstart/requirements.txt
 
 # Option B: Use demo environment (already has dependencies)

@@ -53,8 +53,8 @@ cd agno
 
 ### 2. Create and activate a virtual environment
 ```bash
-uv venv .getting-started --python 3.12
-source .getting-started/bin/activate
+uv venv .quickstart --python 3.12
+source .quickstart/bin/activate
 ```
 
 ### 3. Install dependencies
