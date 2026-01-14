@@ -2,7 +2,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
-from agno.utils import pprint
+from rich.pretty import pprint
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),

@@ -8,7 +8,7 @@ from agno.tools.yfinance import YFinanceTools
 
 agent = Agent(
     model=Claude(id="claude-3-5-haiku-20241022"),
-    tools=[YFinanceTools(company_news=True, cache_results=True)],
+    tools=[YFinanceTools()],
     tool_call_limit=1,
 )
 

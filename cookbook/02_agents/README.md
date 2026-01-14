@@ -32,7 +32,7 @@ Welcome to the **Agno Agents Cookbook** - your comprehensive guide to building i
 Agents can use Agno ToolKits, custom functions, or build custom Toolkit classes for complex integrations.
 
 **Examples:**
-- [`cookbook/agents/tool_concepts`](cookbook/agents/tool_concepts)
+- See `cookbook/90_tools/` for tool integration patterns
 
 ### RAG & Knowledge
 **Retrieval-Augmented Generation and knowledge systems**

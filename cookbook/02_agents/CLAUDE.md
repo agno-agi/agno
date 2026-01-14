@@ -26,12 +26,12 @@ This folder contains **feature documentation examples** - small, focused example
 
 **Run a cookbook:**
 ```bash
-.venvs/demo/bin/python cookbook/03_agents/<subfolder>/<file>.py
+.venvs/demo/bin/python cookbook/02_agents/<subfolder>/<file>.py
 ```
 
 **Test results file:**
 ```
-cookbook/03_agents/TEST_LOG.md
+cookbook/02_agents/TEST_LOG.md
 ```
 
 ---
@@ -113,16 +113,16 @@ cookbook/03_agents/TEST_LOG.md
 
 ```bash
 # Basic test
-.venvs/demo/bin/python cookbook/03_agents/state/session_state_basic.py
+.venvs/demo/bin/python cookbook/02_agents/state/session_state_basic.py
 
 # Culture examples (run in sequence)
-.venvs/demo/bin/python cookbook/03_agents/culture/01_create_cultural_knowledge.py
-.venvs/demo/bin/python cookbook/03_agents/culture/02_use_cultural_knowledge_in_agent.py
+.venvs/demo/bin/python cookbook/02_agents/culture/01_create_cultural_knowledge.py
+.venvs/demo/bin/python cookbook/02_agents/culture/02_use_cultural_knowledge_in_agent.py
 ```
 
 ### 3. Updating TEST_LOG.md
 
-Document results in `cookbook/03_agents/TEST_LOG.md`.
+Document results in `cookbook/02_agents/TEST_LOG.md`.
 
 ---
 

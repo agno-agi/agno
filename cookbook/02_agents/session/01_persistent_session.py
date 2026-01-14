@@ -1,3 +1,13 @@
+"""Persistent Session Example
+
+Demonstrates how to create an agent with persistent session storage using PostgreSQL.
+The agent will remember conversation history across runs when using the same session_id.
+
+Requirements:
+- PostgreSQL with PgVector running (./cookbook/scripts/run_pgvector.sh)
+- OPENAI_API_KEY environment variable
+"""
+
 from agno.agent.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat

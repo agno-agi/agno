@@ -1,3 +1,15 @@
+"""Concurrent Agent Execution with asyncio.gather
+
+Demonstrates how to run multiple agent tasks concurrently using asyncio.gather.
+This pattern is useful when you need to execute multiple independent tasks in parallel.
+
+Note: The agent is created ONCE and reused for all tasks. Creating agents in loops
+is an anti-pattern that wastes resources.
+
+Requirements:
+- OPENAI_API_KEY environment variable
+"""
+
 import asyncio
 
 from agno.agent import Agent
@@ -11,19 +23,20 @@ instructions = [
     "The report should be unbiased and factual.",
 ]
 
+# Create the agent ONCE outside the loop - this is the correct pattern
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o-mini"),
+    instructions=instructions,
+    tools=[DuckDuckGoTools()],
+)
+
 
 async def get_reports():
-    tasks = []
-    for provider in providers:
-        agent = Agent(
-            model=OpenAIChat(id="gpt-4"),
-            instructions=instructions,
-            tools=[DuckDuckGoTools()],
-        )
-        tasks.append(
-            agent.arun(f"Write a report on the following AI provider: {provider}")
-        )
-
+    """Run multiple research tasks concurrently using the same agent instance."""
+    tasks = [
+        agent.arun(f"Write a report on the following AI provider: {provider}")
+        for provider in providers
+    ]
     results = await asyncio.gather(*tasks)
     return results
 

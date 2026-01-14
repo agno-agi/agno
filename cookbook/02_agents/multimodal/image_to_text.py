@@ -1,3 +1,13 @@
+"""Image to Text Example
+
+Demonstrates how to pass an image to an agent for analysis and description.
+The agent uses a multimodal model (GPT-4o) to understand and describe image content.
+
+Requirements:
+- OPENAI_API_KEY environment variable
+- A sample.jpg file in the same directory (or modify the path)
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
