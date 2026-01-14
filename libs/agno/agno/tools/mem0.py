@@ -2,7 +2,7 @@ import json
 from os import getenv
 from typing import Any, Dict, List, Optional, Union
 
-from agno.run.base import RunContext
+from agno.run import RunContext
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -74,7 +74,10 @@ class Mem0Tools(Toolkit):
         """Resolve the user ID"""
         resolved_user_id = self.user_id
         if not resolved_user_id:
-            resolved_user_id = run_context.user_id
+            try:
+                resolved_user_id = run_context.user_id
+            except Exception:
+                pass
         if not resolved_user_id:
             error_msg = f"Error in {method_name}: A user_id must be provided in the method call."
             log_error(error_msg)
@@ -84,7 +87,7 @@ class Mem0Tools(Toolkit):
     def add_memory(
         self,
         run_context: RunContext,
-        content: Union[str, dict],
+        content: Union[str, Dict[str, str]],
     ) -> str:
         """Add facts to the user's memory.
         Args:

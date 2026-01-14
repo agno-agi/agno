@@ -4,7 +4,7 @@ from typing import Any, List, Optional
 
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
-from agno.run.base import RunContext
+from agno.run import RunContext
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
 
@@ -71,16 +71,14 @@ class KnowledgeTools(Toolkit):
         try:
             log_debug(f"Thought: {thought}")
 
-            # Extract session_state from run_context
-            session_state = run_context.session_state if run_context.session_state is not None else {}
-
             # Add the thought to the Agent state
+            session_state = run_context.session_state
+            if session_state is None:
+                session_state = {}
+                run_context.session_state = session_state
             if "thoughts" not in session_state:
                 session_state["thoughts"] = []
             session_state["thoughts"].append(thought)
-
-            # Update run_context.session_state
-            run_context.session_state = session_state
 
             # Return the full log of thoughts and the new thought
             thoughts = "\n".join([f"- {t}" for t in session_state["thoughts"]])
@@ -94,7 +92,7 @@ class KnowledgeTools(Toolkit):
             log_error(f"Error recording thought: {e}")
             return f"Error recording thought: {e}"
 
-    def search_knowledge(self, query: str) -> str:
+    def search_knowledge(self, run_context: RunContext, query: str) -> str:
         """Use this tool to search the knowledge base for relevant information.
         After thinking through the question, use this tool as many times as needed to search for relevant information.
 
@@ -129,22 +127,20 @@ class KnowledgeTools(Toolkit):
         try:
             log_debug(f"Analysis: {analysis}")
 
-            # Extract session_state from run_context
-            session_state = run_context.session_state if run_context.session_state is not None else {}
-
             # Add the thought to the Agent state
+            session_state = run_context.session_state
+            if session_state is None:
+                session_state = {}
+                run_context.session_state = session_state
             if "analysis" not in session_state:
                 session_state["analysis"] = []
             session_state["analysis"].append(analysis)
 
-            # Update run_context.session_state
-            run_context.session_state = session_state
-
             # Return the full log of thoughts and the new thought
-            analysis_log = "\n".join([f"- {a}" for a in session_state["analysis"]])
+            analysis = "\n".join([f"- {a}" for a in session_state["analysis"]])
             formatted_analysis = dedent(
                 f"""Analysis:
-                {analysis_log}
+                {analysis}
                 """
             ).strip()
             return formatted_analysis
