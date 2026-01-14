@@ -20,7 +20,7 @@ knowledge.add_contents(
     [
         {
             "name": "CV's",
-            "path": "cookbook/08_knowledge/testing_resources/cv_1.pdf",
+            "path": "cookbook/07_knowledge/testing_resources/cv_1.pdf",
             "metadata": {"user_tag": "Engineering candidates"},
         },
         {

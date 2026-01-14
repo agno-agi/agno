@@ -23,7 +23,7 @@ This folder contains **knowledge and RAG** examples - everything related to vect
 
 **Run a cookbook:**
 ```bash
-.venvs/demo/bin/python cookbook/08_knowledge/basic_operations/sync/01_from_path.py
+.venvs/demo/bin/python cookbook/07_knowledge/basic_operations/sync/01_from_path.py
 ```
 
 ---

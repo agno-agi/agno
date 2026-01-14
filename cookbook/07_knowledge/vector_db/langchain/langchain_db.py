@@ -18,7 +18,7 @@ chroma_db_dir = pathlib.Path("./chroma_db")
 
 # Define the path to the document to be loaded into the knowledge base
 state_of_the_union = pathlib.Path(
-    "cookbook/08_knowledge/testing_resources/state_of_the_union.txt"
+    "cookbook/07_knowledge/testing_resources/state_of_the_union.txt"
 )
 
 # Load the document

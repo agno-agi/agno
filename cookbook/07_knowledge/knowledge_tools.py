@@ -3,7 +3,7 @@ Here is a tool with reasoning capabilities to allow agents to search and analyze
 
 1. Run: `pip install openai agno lancedb tantivy sqlalchemy` to install the dependencies
 2. Export your OPENAI_API_KEY
-3. Run: `python cookbook/08_knowledge/knowledge_tools.py` to run the agent
+3. Run: `python cookbook/07_knowledge/knowledge_tools.py` to run the agent
 """
 
 from agno.agent import Agent

@@ -19,7 +19,7 @@ knowledge = Knowledge(
 # Add from local file to the knowledge base
 knowledge.add_content(
     name="CV",
-    path="cookbook/08_knowledge/testing_resources",
+    path="cookbook/07_knowledge/testing_resources",
     metadata={"user_tag": "Engineering Candidates"},
     # Only include PDF files
     include=["*.pdf"],

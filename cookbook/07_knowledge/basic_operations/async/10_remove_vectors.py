@@ -22,7 +22,7 @@ knowledge = Knowledge(
 asyncio.run(
     knowledge.add_content_async(
         name="CV",
-        path="cookbook/08_knowledge/testing_resources/cv_1.pdf",
+        path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
         metadata={"user_tag": "Engineering Candidates"},
     )
 )
@@ -34,7 +34,7 @@ knowledge.remove_vectors_by_metadata({"user_tag": "Engineering Candidates"})
 asyncio.run(
     knowledge.add_content_async(
         name="CV",
-        path="cookbook/08_knowledge/testing_resources/cv_1.pdf",
+        path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
         metadata={"user_tag": "Engineering Candidates"},
     )
 )
