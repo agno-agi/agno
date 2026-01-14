@@ -3,6 +3,7 @@
 import time
 from datetime import date
 
+import pytest
 import pytest_asyncio
 
 from agno.db.postgres import AsyncPostgresDb
@@ -17,22 +18,28 @@ async def cleanup_metrics_and_sessions(async_postgres_db_real: AsyncPostgresDb):
     yield
 
     try:
-        # Clean up metrics
-        metrics_table = await async_postgres_db_real._get_table("metrics")
-        async with async_postgres_db_real.async_session_factory() as session:
-            await session.execute(metrics_table.delete())
-            await session.commit()
+        # Clean up metrics (create table if needed for cleanup)
+        try:
+            metrics_table = await async_postgres_db_real._get_table("metrics", create_table_if_not_found=True)
+            async with async_postgres_db_real.async_session_factory() as session:
+                await session.execute(metrics_table.delete())
+                await session.commit()
+        except Exception:
+            pass  # Ignore cleanup errors for metrics table
 
         # Clean up sessions
-        sessions_table = await async_postgres_db_real._get_table("sessions")
-        async with async_postgres_db_real.async_session_factory() as session:
-            await session.execute(sessions_table.delete())
-            await session.commit()
+        try:
+            sessions_table = await async_postgres_db_real._get_table("sessions", create_table_if_not_found=True)
+            async with async_postgres_db_real.async_session_factory() as session:
+                await session.execute(sessions_table.delete())
+                await session.commit()
+        except Exception:
+            pass  # Ignore cleanup errors for sessions table
     except Exception:
         pass  # Ignore cleanup errors
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_metrics_empty(async_postgres_db_real: AsyncPostgresDb):
     """Test getting metrics when none exist"""
     metrics, latest_updated_at = await async_postgres_db_real.get_metrics()
@@ -41,7 +48,7 @@ async def test_get_metrics_empty(async_postgres_db_real: AsyncPostgresDb):
     assert latest_updated_at is None
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_calculate_metrics_no_sessions(async_postgres_db_real: AsyncPostgresDb):
     """Test calculating metrics when no sessions exist"""
     result = await async_postgres_db_real.calculate_metrics()
@@ -50,7 +57,7 @@ async def test_calculate_metrics_no_sessions(async_postgres_db_real: AsyncPostgr
     assert result is None
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_calculate_metrics_with_sessions(async_postgres_db_real: AsyncPostgresDb):
     """Test calculating metrics when sessions exist"""
     # Create a test session with runs
@@ -106,7 +113,7 @@ async def test_calculate_metrics_with_sessions(async_postgres_db_real: AsyncPost
     assert metrics_record["token_metrics"]["total_tokens"] == 150
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_metrics_with_date_filter(async_postgres_db_real: AsyncPostgresDb):
     """Test getting metrics with date filtering"""
     # First, we need to create some sessions and calculate metrics
@@ -144,10 +151,10 @@ async def test_get_metrics_with_date_filter(async_postgres_db_real: AsyncPostgre
     assert latest_updated_at is not None
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_metrics_calculation_starting_date(async_postgres_db_real: AsyncPostgresDb):
     """Test getting metrics calculation starting date"""
-    metrics_table = await async_postgres_db_real._get_table("metrics")
+    metrics_table = await async_postgres_db_real._get_table("metrics", create_table_if_not_found=True)
 
     # When no metrics exist, should look at first session
     starting_date = await async_postgres_db_real._get_metrics_calculation_starting_date(metrics_table)
@@ -182,7 +189,7 @@ async def test_metrics_calculation_starting_date(async_postgres_db_real: AsyncPo
     assert isinstance(starting_date, date)
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_multiple_session_types_metrics(async_postgres_db_real: AsyncPostgresDb):
     """Test metrics calculation with multiple session types"""
     current_time = int(time.time())
@@ -219,7 +226,7 @@ async def test_multiple_session_types_metrics(async_postgres_db_real: AsyncPostg
     assert metrics_record["users_count"] == 1
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_all_sessions_for_metrics_calculation(async_postgres_db_real: AsyncPostgresDb):
     """Test getting sessions for metrics calculation"""
     current_time = int(time.time())
@@ -253,7 +260,7 @@ async def test_get_all_sessions_for_metrics_calculation(async_postgres_db_real: 
     assert all("runs" in session for session in sessions)
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_sessions_for_metrics_with_timestamp_filter(async_postgres_db_real: AsyncPostgresDb):
     """Test getting sessions for metrics with timestamp filtering"""
     current_time = int(time.time())
@@ -292,7 +299,7 @@ async def test_get_sessions_for_metrics_with_timestamp_filter(async_postgres_db_
     assert len(sessions) == 2
 
     # Get sessions with both start and end timestamps
-    end_timestamp = current_time - 1800
+    end_timestamp = current_time - 1801
     sessions = await async_postgres_db_real._get_all_sessions_for_metrics_calculation(
         start_timestamp=start_timestamp, end_timestamp=end_timestamp
     )

@@ -18,6 +18,11 @@ from agno.tools.browserbase import BrowserbaseTools
 #   - Optional: Defaults to https://api.browserbase.com if not specified
 #   - Only change this if you're using a custom API endpoint or proxy
 
+# ==================== Usage ====================
+# BrowserbaseTools automatically uses the correct implementation based on context:
+# - Sync tools when using agent.run() or agent.print_response()
+# - Async tools when using agent.arun() or agent.aprint_response()
+
 agent = Agent(
     name="Web Automation Assistant",
     tools=[BrowserbaseTools()],
@@ -32,6 +37,9 @@ agent = Agent(
     markdown=True,
 )
 
+# ==================== Sync Usage ====================
+# Use this for regular scripts and synchronous execution
+
 # Content Extraction and SS
 # agent.print_response("""
 #     Go to https://news.ycombinator.com and extract:
@@ -45,3 +53,24 @@ agent.print_response("""
     2. Navigate to page 2
     3. Extract the first 5 quotes from page 2
 """)
+
+
+# ==================== Async Usage ====================
+# Use this for FastAPI, async frameworks, or when using agent.arun()
+# The same agent instance works for both sync and async - just use arun/aprint_response!
+
+# import asyncio
+#
+#
+# async def main():
+#     # Same agent, just use async methods - it will automatically use async tools
+#     await agent.aprint_response("""
+#         Visit https://quotes.toscrape.com and:
+#         1. Extract the first 5 quotes and their authors
+#         2. Navigate to page 2
+#         3. Extract the first 5 quotes from page 2
+#     """)
+#
+#
+# if __name__ == "__main__":
+#     asyncio.run(main())

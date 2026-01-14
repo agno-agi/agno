@@ -61,7 +61,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             return
 
         # Get workflow from OS
-        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        workflow = get_workflow_by_id(workflow_id, os.workflows, create_fresh=True)
         if not workflow:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
             return
@@ -141,7 +141,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
         if buffer_status is None:
             # Run not in buffer - check database
             if workflow_id and session_id:
-                workflow = get_workflow_by_id(workflow_id, os.workflows)
+                workflow = get_workflow_by_id(workflow_id, os.workflows, create_fresh=True)
                 if workflow and isinstance(workflow, Workflow):
                     workflow_run = await workflow.aget_run_output(run_id, session_id)
 
@@ -571,7 +571,7 @@ def get_workflow_router(
         dependencies=[Depends(require_resource_access("workflows", "read", "workflow_id"))],
     )
     async def get_workflow(workflow_id: str, request: Request) -> WorkflowResponse:
-        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        workflow = get_workflow_by_id(workflow_id, os.workflows, create_fresh=True)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
         if isinstance(workflow, RemoteWorkflow):
@@ -626,11 +626,11 @@ def get_workflow_router(
         kwargs = await get_request_kwargs(request, create_workflow_run)
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            if user_id:
+            if user_id and user_id != request.state.user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = request.state.user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
-            if session_id:
+            if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
             session_id = request.state.session_id
         if hasattr(request.state, "session_state") and request.state.session_state is not None:
@@ -650,7 +650,7 @@ def get_workflow_router(
             kwargs["metadata"] = metadata
 
         # Retrieve the workflow by ID
-        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        workflow = get_workflow_by_id(workflow_id, os.workflows, create_fresh=True)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
@@ -716,12 +716,12 @@ def get_workflow_router(
         dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
     )
     async def cancel_workflow_run(workflow_id: str, run_id: str):
-        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        workflow = get_workflow_by_id(workflow_id, os.workflows, create_fresh=True)
 
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        cancelled = workflow.cancel_run(run_id=run_id)
+        cancelled = await workflow.acancel_run(run_id=run_id)
         if not cancelled:
             raise HTTPException(status_code=500, detail="Failed to cancel run - run not found or already completed")
 
