@@ -5,7 +5,7 @@ The "summarize" strategy combines all memories into a single comprehensive summa
 achieving maximum compression. This is useful when you need aggressive token
 reduction and can accept losing the individual memory structure.
 
-Run: python cookbook/memory/09_memory_summarize_strategy.py
+Run: python cookbook/80_memory/optimize_memories/01_memory_summarize_strategy.py
 """
 
 from agno.agent import Agent

@@ -3,7 +3,7 @@ Here is a tool with reasoning capabilities to allow agents to manage user memori
 
 1. Run: `pip install openai agno lancedb tantivy sqlalchemy` to install the dependencies
 2. Export your OPENAI_API_KEY
-3. Run: `python cookbook/reasoning/tools/knowledge_tools.py` to run the agent
+3. Run: `python cookbook/80_memory/08_memory_tools.py` to run the agent
 """
 
 import asyncio

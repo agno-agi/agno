@@ -22,5 +22,5 @@ pip install -U psycopg sqlalchemy openai agno
 ### 3. Run a cookbook
 
 ```shell
-python cookbook/memory/memory_manager/01_standalone_memory.py
+python cookbook/80_memory/memory_manager/01_standalone_memory.py
 ```

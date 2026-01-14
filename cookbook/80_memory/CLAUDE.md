@@ -22,7 +22,7 @@ This folder contains **memory management** examples - how agents remember user i
 
 **Run a cookbook:**
 ```bash
-.venvs/demo/bin/python cookbook/09_memory/01_agent_with_memory.py
+.venvs/demo/bin/python cookbook/80_memory/01_agent_with_memory.py
 ```
 
 ---

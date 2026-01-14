@@ -5,7 +5,7 @@ This cookbook shows how to create your own memory optimization strategy by
 subclassing MemoryOptimizationStrategy. This is useful when you need custom
 logic that the built-in "summarize" and "merge" strategies don't provide.
 
-Run: python cookbook/memory/10_custom_memory_strategy.py
+Run: python cookbook/80_memory/optimize_memories/02_custom_memory_strategy.py
 """
 
 from datetime import datetime
