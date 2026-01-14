@@ -186,7 +186,7 @@ class Skills:
                 {
                     "error": f"Skill '{skill_name}' not found",
                     "available_skills": available,
-                }
+                }, ensure_ascii=False
             )
 
         return json.dumps(
@@ -196,7 +196,7 @@ class Skills:
                 "instructions": skill.instructions,
                 "available_scripts": skill.scripts,
                 "available_references": skill.references,
-            }
+            }, ensure_ascii=False
         )
 
     def _get_skill_reference(self, skill_name: str, reference_path: str) -> str:
@@ -216,7 +216,7 @@ class Skills:
                 {
                     "error": f"Skill '{skill_name}' not found",
                     "available_skills": available,
-                }
+                }, ensure_ascii=False
             )
 
         if reference_path not in skill.references:
@@ -224,7 +224,7 @@ class Skills:
                 {
                     "error": f"Reference '{reference_path}' not found in skill '{skill_name}'",
                     "available_references": skill.references,
-                }
+                }, ensure_ascii=False
             )
 
         # Validate path to prevent path traversal attacks
@@ -234,7 +234,7 @@ class Skills:
                 {
                     "error": f"Invalid reference path: '{reference_path}'",
                     "skill_name": skill_name,
-                }
+                }, ensure_ascii=False
             )
 
         # Load the reference file
@@ -246,7 +246,7 @@ class Skills:
                     "skill_name": skill_name,
                     "reference_path": reference_path,
                     "content": content,
-                }
+                }, ensure_ascii=False
             )
         except Exception as e:
             return json.dumps(
@@ -254,7 +254,7 @@ class Skills:
                     "error": f"Error reading reference file: {e}",
                     "skill_name": skill_name,
                     "reference_path": reference_path,
-                }
+                }, ensure_ascii=False
             )
 
     def _get_skill_script(
@@ -284,7 +284,7 @@ class Skills:
                 {
                     "error": f"Skill '{skill_name}' not found",
                     "available_skills": available,
-                }
+                }, ensure_ascii=False
             )
 
         if script_path not in skill.scripts:
@@ -292,7 +292,7 @@ class Skills:
                 {
                     "error": f"Script '{script_path}' not found in skill '{skill_name}'",
                     "available_scripts": skill.scripts,
-                }
+                }, ensure_ascii=False
             )
 
         # Validate path to prevent path traversal attacks
@@ -302,7 +302,7 @@ class Skills:
                 {
                     "error": f"Invalid script path: '{script_path}'",
                     "skill_name": skill_name,
-                }
+                }, ensure_ascii=False
             )
 
         script_file = scripts_dir / script_path
@@ -316,7 +316,7 @@ class Skills:
                         "skill_name": skill_name,
                         "script_path": script_path,
                         "content": content,
-                    }
+                    }, ensure_ascii=False
                 )
             except Exception as e:
                 return json.dumps(
@@ -324,7 +324,7 @@ class Skills:
                         "error": f"Error reading script file: {e}",
                         "skill_name": skill_name,
                         "script_path": script_path,
-                    }
+                    }, ensure_ascii=False
                 )
 
         # Execute mode: run the script
@@ -342,7 +342,7 @@ class Skills:
                     "stdout": result.stdout,
                     "stderr": result.stderr,
                     "returncode": result.returncode,
-                }
+                }, ensure_ascii=False
             )
         except subprocess.TimeoutExpired:
             return json.dumps(
@@ -350,7 +350,7 @@ class Skills:
                     "error": f"Script execution timed out after {timeout} seconds",
                     "skill_name": skill_name,
                     "script_path": script_path,
-                }
+                }, ensure_ascii=False
             )
         except FileNotFoundError as e:
             return json.dumps(
@@ -358,7 +358,7 @@ class Skills:
                     "error": f"Interpreter or script not found: {e}",
                     "skill_name": skill_name,
                     "script_path": script_path,
-                }
+                }, ensure_ascii=False
             )
         except Exception as e:
             return json.dumps(
@@ -366,5 +366,5 @@ class Skills:
                     "error": f"Error executing script: {e}",
                     "skill_name": skill_name,
                     "script_path": script_path,
-                }
+                }, ensure_ascii=False
             )
