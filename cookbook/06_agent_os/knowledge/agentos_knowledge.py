@@ -1,8 +1,10 @@
 from textwrap import dedent
 
+from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
+from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.vectordb.pgvector import PgVector, SearchType
 
@@ -40,10 +42,27 @@ faq_knowledge = Knowledge(
     contents_db=faq_db,
 )
 
+# ************* Create Knowledge Agent *************
+knowledge_agent = Agent(
+    name="Knowledge Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    knowledge=documents_knowledge,
+    search_knowledge=True,
+    db=documents_db,
+    enable_user_memories=True,
+    add_history_to_context=True,
+    markdown=True,
+    instructions=[
+        "You are a helpful assistant with access to Agno documentation.",
+        "Search the knowledge base to answer questions about Agno.",
+    ],
+)
+# *******************************
+
 agent_os = AgentOS(
     description="Example app with AgentOS Knowledge",
-    # Add the knowledge bases to AgentOS
-    knowledge=[documents_knowledge, faq_knowledge],
+    agents=[knowledge_agent],
+    knowledge=[faq_knowledge],
 )
 
 
