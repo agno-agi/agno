@@ -672,7 +672,6 @@ class Gemini(Model):
             compress_tool_results: Whether to compress tool results.
         """
         formatted_messages: List = []
-        file_content: Optional[Union[GeminiFile, Part]] = None
         system_message = None
 
         for message in messages:
@@ -795,13 +794,10 @@ class Gemini(Model):
                     for file in message.files:
                         file_content = self._format_file_for_message(file)
                         if isinstance(file_content, Part):
-                            formatted_messages.append(file_content)
+                            message_parts.append(file_content)
 
             final_message = Content(role=role, parts=message_parts)
             formatted_messages.append(final_message)
-
-            if isinstance(file_content, GeminiFile):
-                formatted_messages.insert(0, file_content)
 
         return formatted_messages, system_message
 
