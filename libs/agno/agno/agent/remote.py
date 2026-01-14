@@ -23,9 +23,6 @@ class RemoteAgent(BaseRemote):
     # Private cache for agent config with TTL: (config, timestamp)
     _cached_agent_config: Optional[Tuple["AgentResponse", float]] = field(default=None, init=False, repr=False)
 
-    # --- Attributes required for Team compatibility ---
-    # These attributes are accessed by Team when delegating tasks to member agents.
-    # They provide sensible defaults so RemoteAgent can be used as a Team member.
     knowledge_filters: Optional[Dict[str, Any]] = None
     enable_agentic_knowledge_filters: Optional[bool] = False
     output_schema: Optional[Any] = None
