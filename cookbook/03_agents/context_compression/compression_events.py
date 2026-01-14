@@ -42,7 +42,9 @@ async def main():
             print(f"[LLMRequestStarted] model={chunk.model}")
 
         elif chunk.event == RunEvent.llm_request_completed.value:
-            print(f"[LLMRequestCompleted] model={chunk.model}")
+            print(
+                f"[LLMRequestCompleted] tokens: in={chunk.input_tokens}, out={chunk.output_tokens}"
+            )
 
         elif chunk.event == RunEvent.tool_call_started.value:
             print(f"[ToolCallStarted] {chunk.tool.tool_name}")

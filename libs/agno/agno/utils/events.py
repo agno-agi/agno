@@ -795,6 +795,10 @@ def create_llm_request_completed_event(
     input_tokens: Optional[int] = None,
     output_tokens: Optional[int] = None,
     total_tokens: Optional[int] = None,
+    time_to_first_token: Optional[float] = None,
+    reasoning_tokens: Optional[int] = None,
+    cache_read_tokens: Optional[int] = None,
+    cache_write_tokens: Optional[int] = None,
 ) -> LLMRequestCompletedEvent:
     return LLMRequestCompletedEvent(
         session_id=from_run_response.session_id,
@@ -806,6 +810,10 @@ def create_llm_request_completed_event(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
+        time_to_first_token=time_to_first_token,
+        reasoning_tokens=reasoning_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
     )
 
 
@@ -831,6 +839,10 @@ def create_team_llm_request_completed_event(
     input_tokens: Optional[int] = None,
     output_tokens: Optional[int] = None,
     total_tokens: Optional[int] = None,
+    time_to_first_token: Optional[float] = None,
+    reasoning_tokens: Optional[int] = None,
+    cache_read_tokens: Optional[int] = None,
+    cache_write_tokens: Optional[int] = None,
 ) -> TeamLLMRequestCompletedEvent:
     return TeamLLMRequestCompletedEvent(
         session_id=from_run_response.session_id,
@@ -842,6 +854,10 @@ def create_team_llm_request_completed_event(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
+        time_to_first_token=time_to_first_token,
+        reasoning_tokens=reasoning_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
     )
 
 

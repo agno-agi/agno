@@ -944,6 +944,17 @@ def test_llm_request_events(shared_db):
     llm_completed = events[RunEvent.llm_request_completed][0]
     assert llm_completed.model == "gpt-4o-mini"
     assert llm_completed.model_provider == "OpenAI"
+    assert llm_completed.input_tokens is not None
+    assert llm_completed.input_tokens > 0
+    assert llm_completed.output_tokens is not None
+    assert llm_completed.output_tokens > 0
+    assert llm_completed.total_tokens is not None
+    assert llm_completed.total_tokens == llm_completed.input_tokens + llm_completed.output_tokens
+    # Verify new metrics fields exist (may be None)
+    assert hasattr(llm_completed, "time_to_first_token")
+    assert hasattr(llm_completed, "reasoning_tokens")
+    assert hasattr(llm_completed, "cache_read_tokens")
+    assert hasattr(llm_completed, "cache_write_tokens")
 
 
 @pytest.mark.asyncio
@@ -982,6 +993,17 @@ async def test_async_llm_request_events(shared_db):
     llm_completed = events[RunEvent.llm_request_completed][0]
     assert llm_completed.model == "gpt-4o-mini"
     assert llm_completed.model_provider == "OpenAI"
+    assert llm_completed.input_tokens is not None
+    assert llm_completed.input_tokens > 0
+    assert llm_completed.output_tokens is not None
+    assert llm_completed.output_tokens > 0
+    assert llm_completed.total_tokens is not None
+    assert llm_completed.total_tokens == llm_completed.input_tokens + llm_completed.output_tokens
+    # Verify new metrics fields exist (may be None)
+    assert hasattr(llm_completed, "time_to_first_token")
+    assert hasattr(llm_completed, "reasoning_tokens")
+    assert hasattr(llm_completed, "cache_read_tokens")
+    assert hasattr(llm_completed, "cache_write_tokens")
 
 
 def test_llm_request_events_with_tools(shared_db):
@@ -1013,10 +1035,13 @@ def test_llm_request_events_with_tools(shared_db):
         f"Expected at least 2 LLM request completed events, got {len(events[RunEvent.llm_request_completed])}"
     )
 
-    # Verify all LLM completed events have model info
+    # Verify all LLM completed events have model info and token counts
     for llm_completed in events[RunEvent.llm_request_completed]:
         assert llm_completed.model == "gpt-4o-mini"
         assert llm_completed.model_provider == "OpenAI"
+        assert llm_completed.input_tokens is not None
+        assert llm_completed.output_tokens is not None
+        assert llm_completed.total_tokens is not None
 
 
 def test_memory_update_completed_contains_memories(shared_db):

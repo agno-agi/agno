@@ -1286,8 +1286,18 @@ class Model(ABC):
                 messages.append(assistant_message)
                 assistant_message.log(metrics=True)
 
-                # Emit LLM request completed event
-                yield ModelResponse(event=ModelResponseEvent.llm_request_completed.value)
+                # Emit LLM request completed event with metrics
+                llm_metrics = assistant_message.metrics
+                yield ModelResponse(
+                    event=ModelResponseEvent.llm_request_completed.value,
+                    input_tokens=llm_metrics.input_tokens if llm_metrics else None,
+                    output_tokens=llm_metrics.output_tokens if llm_metrics else None,
+                    total_tokens=llm_metrics.total_tokens if llm_metrics else None,
+                    time_to_first_token=llm_metrics.time_to_first_token if llm_metrics else None,
+                    reasoning_tokens=llm_metrics.reasoning_tokens if llm_metrics else None,
+                    cache_read_tokens=llm_metrics.cache_read_tokens if llm_metrics else None,
+                    cache_write_tokens=llm_metrics.cache_write_tokens if llm_metrics else None,
+                )
 
                 # Handle tool calls if present
                 if assistant_message.tool_calls is not None:
@@ -1520,8 +1530,18 @@ class Model(ABC):
                 messages.append(assistant_message)
                 assistant_message.log(metrics=True)
 
-                # Emit LLM request completed event
-                yield ModelResponse(event=ModelResponseEvent.llm_request_completed.value)
+                # Emit LLM request completed event with metrics
+                llm_metrics = assistant_message.metrics
+                yield ModelResponse(
+                    event=ModelResponseEvent.llm_request_completed.value,
+                    input_tokens=llm_metrics.input_tokens if llm_metrics else None,
+                    output_tokens=llm_metrics.output_tokens if llm_metrics else None,
+                    total_tokens=llm_metrics.total_tokens if llm_metrics else None,
+                    time_to_first_token=llm_metrics.time_to_first_token if llm_metrics else None,
+                    reasoning_tokens=llm_metrics.reasoning_tokens if llm_metrics else None,
+                    cache_read_tokens=llm_metrics.cache_read_tokens if llm_metrics else None,
+                    cache_write_tokens=llm_metrics.cache_write_tokens if llm_metrics else None,
+                )
 
                 # Handle tool calls if present
                 if assistant_message.tool_calls is not None:
