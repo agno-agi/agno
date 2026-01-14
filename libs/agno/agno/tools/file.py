@@ -24,8 +24,7 @@ class FileTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        self.base_dir: Path = base_dir or Path.cwd()
-        self.base_dir = self.base_dir.resolve()
+        self.base_dir: Path = (base_dir or Path.cwd()).resolve()
 
         tools: List[Any] = []
         self.max_file_length = max_file_length
@@ -48,6 +47,19 @@ class FileTools(Toolkit):
             tools.append(self.replace_file_chunk)
 
         super().__init__(name="file_tools", tools=tools, **kwargs)
+
+    def check_escape(self, relative_path: str) -> Tuple[bool, Path]:
+        """Check if the file path is within the base directory.
+
+        Alias for _check_path maintained for backward compatibility.
+
+        Args:
+            relative_path: The file name or relative path to check.
+
+        Returns:
+            Tuple of (is_safe, resolved_path). If not safe, returns base_dir as the path.
+        """
+        return self._check_path(relative_path, self.base_dir)
 
     def save_file(self, contents: str, file_name: str, overwrite: bool = True, encoding: str = "utf-8") -> str:
         """Saves the contents to a file called `file_name` and returns the file name if successful.
@@ -172,17 +184,6 @@ class FileTools(Toolkit):
         except Exception as e:
             log_error(f"Error removing {file_name}: {e}")
             return f"Error removing file: {e}"
-
-    def check_escape(self, relative_path: str) -> Tuple[bool, Path]:
-        d = self.base_dir.joinpath(Path(relative_path)).resolve()
-        if self.base_dir == d:
-            return True, d
-        try:
-            d.relative_to(self.base_dir)
-        except ValueError:
-            log_error("Attempted to escape base_dir")
-            return False, self.base_dir
-        return True, d
 
     def list_files(self, **kwargs) -> str:
         """Returns a list of files in directory

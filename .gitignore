@@ -76,6 +76,9 @@ agno_json_data/
 .claude/
 .cursor/
 
+# Private design documents (symlinked)
+projects
+
 # ignore pyrightconfig.json
 pyrightconfig.json
 .python-version

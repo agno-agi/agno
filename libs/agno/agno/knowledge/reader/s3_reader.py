@@ -38,6 +38,7 @@ class S3Reader(Reader):
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for S3 readers."""
         return [
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,

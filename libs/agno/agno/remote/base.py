@@ -577,5 +577,5 @@ class BaseRemote:
         raise NotImplementedError("acontinue_run method must be implemented by the subclass")
 
     @abstractmethod
-    async def cancel_run(self, run_id: str) -> bool:
+    async def acancel_run(self, run_id: str) -> bool:
         raise NotImplementedError("cancel_run method must be implemented by the subclass")

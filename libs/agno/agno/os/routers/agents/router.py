@@ -243,7 +243,7 @@ def get_agent_router(
                 log_warning("Metadata parameter passed in both request state and kwargs, using request state")
             kwargs["metadata"] = metadata
 
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(agent_id, os.agents, create_fresh=True)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -405,11 +405,11 @@ def get_agent_router(
         agent_id: str,
         run_id: str,
     ):
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(agent_id, os.agents, create_fresh=True)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        cancelled = agent.cancel_run(run_id=run_id)
+        cancelled = await agent.acancel_run(run_id=run_id)
         if not cancelled:
             raise HTTPException(status_code=500, detail="Failed to cancel run - run not found or already completed")
 
@@ -464,7 +464,7 @@ def get_agent_router(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
 
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(agent_id, os.agents, create_fresh=True)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -630,7 +630,7 @@ def get_agent_router(
         dependencies=[Depends(require_resource_access("agents", "read", "agent_id"))],
     )
     async def get_agent(agent_id: str, request: Request) -> AgentResponse:
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(agent_id, os.agents, create_fresh=True)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 

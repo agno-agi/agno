@@ -34,7 +34,14 @@ class KnowledgeContentOrigin(Enum):
 
 @dataclass
 class Knowledge:
-    """Knowledge class"""
+    """Knowledge class
+
+    Args:
+        vector_db: Vector database for storing and searching embeddings (required)
+        contents_db: Optional contents database for metadata tracking and filter validation.
+                     When configured, enables validation of agentic filter keys.
+                     When not configured, filters are passed directly to vector_db.
+    """
 
     name: Optional[str] = None
     description: Optional[str] = None
@@ -2030,9 +2037,9 @@ class Knowledge:
 
         else:
             if self.name:
-                log_warning(f"Contents DB not found for knowledge base: {self.name}")
+                log_debug(f"Contents DB not found for knowledge base: {self.name}")
             else:
-                log_warning("Contents DB not found for knowledge base")
+                log_debug("Contents DB not found for knowledge base")
             return None
 
     async def _aupdate_content(self, content: Content) -> Optional[Dict[str, Any]]:
@@ -2073,13 +2080,92 @@ class Knowledge:
                 self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
 
             return content_row.to_dict()
+        return None
 
-        else:
-            if self.name:
-                log_warning(f"Contents DB not found for knowledge base: {self.name}")
-            else:
-                log_warning("Contents DB not found for knowledge base")
+    def _prepare_lightrag_path_data(self, content: Content) -> Optional[Tuple[bytes, str, str]]:
+        """Prepare file data from a path for LightRAG upload.
+
+        Returns:
+            Tuple of (file_content, filename, file_type) or None if preparation fails.
+        """
+        if content.file_data is None:
+            log_warning("No file data provided")
+
+        if content.path is None:
+            log_error("No path provided for content")
             return None
+
+        path = Path(content.path)
+        log_info(f"Uploading file to LightRAG from path: {path}")
+
+        with open(path, "rb") as f:
+            file_content = f.read()
+
+        file_type = content.file_type or path.suffix
+        return (file_content, path.name, file_type)
+
+    def _prepare_lightrag_url_data(self, content: Content) -> Optional[Tuple[str, str]]:
+        """Prepare text data from a URL for LightRAG upload.
+
+        Returns:
+            Tuple of (file_source, text) or None if preparation fails.
+        """
+        log_info(f"Uploading file to LightRAG from URL: {content.url}")
+
+        reader = content.reader or self.website_reader
+        if reader is None:
+            log_error("No URL reader available")
+            return None
+
+        reader.chunk = False
+        read_documents = reader.read(content.url, name=content.name)
+        if not content.id:
+            content.id = generate_id(content.content_hash or "")
+        self._prepare_documents_for_insert(read_documents, content.id)
+
+        if not read_documents:
+            log_error("No documents read from URL")
+            return None
+
+        return (content.url or "", read_documents[0].content)
+
+    def _prepare_lightrag_topic_data(self, content: Content) -> Optional[Tuple[str, str]]:
+        """Prepare text data from topics for LightRAG upload.
+
+        Returns:
+            Tuple of (file_source, text) or None if preparation fails.
+        """
+        log_info(f"Uploading file to LightRAG: {content.name}")
+
+        if content.reader is None:
+            log_error("No reader available for topic content")
+            return None
+
+        if not content.topics:
+            log_error("No topics available for content")
+            return None
+
+        read_documents = content.reader.read(content.topics)
+        if not read_documents:
+            log_warning(f"No documents found for LightRAG upload: {content.name}")
+            return None
+
+        return (content.topics[0], read_documents[0].content)
+
+    def _prepare_lightrag_file_data(self, content: Content) -> Optional[Tuple[Union[str, bytes], str, Optional[str]]]:
+        """Prepare file data from file_data content for LightRAG upload.
+
+        Returns:
+            Tuple of (file_content, filename, content_type) or None if preparation fails.
+        """
+        filename = content.file_data.filename if content.file_data and content.file_data.filename else "uploaded_file"
+        log_info(f"Uploading file to LightRAG: {filename}")
+
+        if not (content.file_data and content.file_data.content):
+            log_warning(f"No file data available for LightRAG upload: {content.name}")
+            return None
+
+        return (content.file_data.content, filename, content.file_data.type)
 
     async def _process_lightrag_content_async(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
         from agno.vectordb import VectorDb
@@ -2087,77 +2173,52 @@ class Knowledge:
         self.vector_db = cast(VectorDb, self.vector_db)
 
         await self._add_to_contents_db_async(content)
+
         if content_type == KnowledgeContentOrigin.PATH:
-            if content.file_data is None:
-                log_warning("No file data provided")
-
-            if content.path is None:
-                log_error("No path provided for content")
-                return
-
-            path = Path(content.path)
-
-            log_info(f"Uploading file to LightRAG from path: {path}")
             try:
-                # Read the file content from path
-                with open(path, "rb") as f:
-                    file_content = f.read()
+                path_data = self._prepare_lightrag_path_data(content)
+                if path_data is None:
+                    content.status = ContentStatus.FAILED
+                    await self._aupdate_content(content)
+                    return
 
-                # Get file type from extension or content.file_type
-                file_type = content.file_type or path.suffix
+                file_content, filename, file_type = path_data
 
                 if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
                     result = await self.vector_db.insert_file_bytes(
                         file_content=file_content,
-                        filename=path.name,  # Use the original filename with extension
+                        filename=filename,
                         content_type=file_type,
-                        send_metadata=True,  # Enable metadata so server knows the file type
+                        send_metadata=True,
                     )
-
                 else:
                     log_error("Vector database does not support file insertion")
                     content.status = ContentStatus.FAILED
                     await self._aupdate_content(content)
                     return
+
                 content.external_id = result
                 content.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content)
-                return
 
             except Exception as e:
                 log_error(f"Error uploading file to LightRAG: {e}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 await self._aupdate_content(content)
-                return
 
         elif content_type == KnowledgeContentOrigin.URL:
-            log_info(f"Uploading file to LightRAG from URL: {content.url}")
             try:
-                reader = content.reader or self.website_reader
-                if reader is None:
-                    log_error("No URL reader available")
+                url_data = self._prepare_lightrag_url_data(content)
+                if url_data is None:
                     content.status = ContentStatus.FAILED
                     await self._aupdate_content(content)
                     return
 
-                reader.chunk = False
-                read_documents = reader.read(content.url, name=content.name)
-                if not content.id:
-                    content.id = generate_id(content.content_hash or "")
-                self._prepare_documents_for_insert(read_documents, content.id)
-
-                if not read_documents:
-                    log_error("No documents read from URL")
-                    content.status = ContentStatus.FAILED
-                    await self._aupdate_content(content)
-                    return
+                file_source, text = url_data
 
                 if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    result = await self.vector_db.insert_text(
-                        file_source=content.url,
-                        text=read_documents[0].content,
-                    )
+                    result = await self.vector_db.insert_text(file_source=file_source, text=text)
                 else:
                     log_error("Vector database does not support text insertion")
                     content.status = ContentStatus.FAILED
@@ -2167,76 +2228,57 @@ class Knowledge:
                 content.external_id = result
                 content.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content)
-                return
 
             except Exception as e:
                 log_error(f"Error uploading file to LightRAG: {e}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 await self._aupdate_content(content)
-                return
 
         elif content_type == KnowledgeContentOrigin.CONTENT:
-            filename = (
-                content.file_data.filename if content.file_data and content.file_data.filename else "uploaded_file"
-            )
-            log_info(f"Uploading file to LightRAG: {filename}")
+            file_data = self._prepare_lightrag_file_data(content)
+            if file_data is None:
+                return
 
-            # Use the content from file_data
-            if content.file_data and content.file_data.content:
-                if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
-                    result = await self.vector_db.insert_file_bytes(
-                        file_content=content.file_data.content,
-                        filename=filename,
-                        content_type=content.file_data.type,
-                        send_metadata=True,  # Enable metadata so server knows the file type
-                    )
-                else:
-                    log_error("Vector database does not support file insertion")
-                    content.status = ContentStatus.FAILED
-                    await self._aupdate_content(content)
-                    return
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                await self._aupdate_content(content)
+            file_content_data, filename_data, content_type_str = file_data
+
+            if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
+                result = await self.vector_db.insert_file_bytes(
+                    file_content=file_content_data,
+                    filename=filename_data,
+                    content_type=content_type_str,
+                    send_metadata=True,
+                )
             else:
-                log_warning(f"No file data available for LightRAG upload: {content.name}")
-            return
+                log_error("Vector database does not support file insertion")
+                content.status = ContentStatus.FAILED
+                await self._aupdate_content(content)
+                return
+
+            content.external_id = result
+            content.status = ContentStatus.COMPLETED
+            await self._aupdate_content(content)
 
         elif content_type == KnowledgeContentOrigin.TOPIC:
-            log_info(f"Uploading file to LightRAG: {content.name}")
-
-            if content.reader is None:
-                log_error("No reader available for topic content")
+            topic_data = self._prepare_lightrag_topic_data(content)
+            if topic_data is None:
                 content.status = ContentStatus.FAILED
                 await self._aupdate_content(content)
                 return
 
-            if not content.topics:
-                log_error("No topics available for content")
-                content.status = ContentStatus.FAILED
-                await self._aupdate_content(content)
-                return
+            file_source, text = topic_data
 
-            read_documents = content.reader.read(content.topics)
-            if len(read_documents) > 0:
-                if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    result = await self.vector_db.insert_text(
-                        file_source=content.topics[0],
-                        text=read_documents[0].content,
-                    )
-                else:
-                    log_error("Vector database does not support text insertion")
-                    content.status = ContentStatus.FAILED
-                    await self._aupdate_content(content)
-                    return
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                await self._aupdate_content(content)
-                return
+            if self.vector_db and hasattr(self.vector_db, "insert_text"):
+                result = await self.vector_db.insert_text(file_source=file_source, text=text)
             else:
-                log_warning(f"No documents found for LightRAG upload: {content.name}")
+                log_error("Vector database does not support text insertion")
+                content.status = ContentStatus.FAILED
+                await self._aupdate_content(content)
                 return
+
+            content.external_id = result
+            content.status = ContentStatus.COMPLETED
+            await self._aupdate_content(content)
 
     def _process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
         """Synchronously process LightRAG content. Uses asyncio.run() only for LightRAG-specific async methods."""
@@ -2245,31 +2287,22 @@ class Knowledge:
         self.vector_db = cast(VectorDb, self.vector_db)
 
         self._add_to_contents_db(content)
+
         if content_type == KnowledgeContentOrigin.PATH:
-            if content.file_data is None:
-                log_warning("No file data provided")
-
-            if content.path is None:
-                log_error("No path provided for content")
-                return
-
-            path = Path(content.path)
-
-            log_info(f"Uploading file to LightRAG from path: {path}")
             try:
-                # Read the file content from path
-                with open(path, "rb") as f:
-                    file_content = f.read()
+                path_data = self._prepare_lightrag_path_data(content)
+                if path_data is None:
+                    content.status = ContentStatus.FAILED
+                    self._update_content(content)
+                    return
 
-                # Get file type from extension or content.file_type
-                file_type = content.file_type or path.suffix
+                file_content, filename, file_type = path_data
 
                 if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
-                    # LightRAG only has async methods, use asyncio.run() here
                     result = asyncio.run(
                         self.vector_db.insert_file_bytes(
                             file_content=file_content,
-                            filename=path.name,
+                            filename=filename,
                             content_type=file_type,
                             send_metadata=True,
                         )
@@ -2279,48 +2312,29 @@ class Knowledge:
                     content.status = ContentStatus.FAILED
                     self._update_content(content)
                     return
+
                 content.external_id = result
                 content.status = ContentStatus.COMPLETED
                 self._update_content(content)
-                return
 
             except Exception as e:
                 log_error(f"Error uploading file to LightRAG: {e}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 self._update_content(content)
-                return
 
         elif content_type == KnowledgeContentOrigin.URL:
-            log_info(f"Uploading file to LightRAG from URL: {content.url}")
             try:
-                reader = content.reader or self.website_reader
-                if reader is None:
-                    log_error("No URL reader available")
+                url_data = self._prepare_lightrag_url_data(content)
+                if url_data is None:
                     content.status = ContentStatus.FAILED
                     self._update_content(content)
                     return
 
-                reader.chunk = False
-                read_documents = reader.read(content.url, name=content.name)
-                if not content.id:
-                    content.id = generate_id(content.content_hash or "")
-                self._prepare_documents_for_insert(read_documents, content.id)
-
-                if not read_documents:
-                    log_error("No documents read from URL")
-                    content.status = ContentStatus.FAILED
-                    self._update_content(content)
-                    return
+                file_source, text = url_data
 
                 if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    # LightRAG only has async methods, use asyncio.run() here
-                    result = asyncio.run(
-                        self.vector_db.insert_text(
-                            file_source=content.url,
-                            text=read_documents[0].content,
-                        )
-                    )
+                    result = asyncio.run(self.vector_db.insert_text(file_source=file_source, text=text))
                 else:
                     log_error("Vector database does not support text insertion")
                     content.status = ContentStatus.FAILED
@@ -2330,82 +2344,59 @@ class Knowledge:
                 content.external_id = result
                 content.status = ContentStatus.COMPLETED
                 self._update_content(content)
-                return
 
             except Exception as e:
                 log_error(f"Error uploading file to LightRAG: {e}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 self._update_content(content)
-                return
 
         elif content_type == KnowledgeContentOrigin.CONTENT:
-            filename = (
-                content.file_data.filename if content.file_data and content.file_data.filename else "uploaded_file"
-            )
-            log_info(f"Uploading file to LightRAG: {filename}")
+            file_data = self._prepare_lightrag_file_data(content)
+            if file_data is None:
+                return
 
-            # Use the content from file_data
-            if content.file_data and content.file_data.content:
-                if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
-                    # LightRAG only has async methods, use asyncio.run() here
-                    result = asyncio.run(
-                        self.vector_db.insert_file_bytes(
-                            file_content=content.file_data.content,
-                            filename=filename,
-                            content_type=content.file_data.type,
-                            send_metadata=True,
-                        )
+            file_content_data, filename_data, content_type_str = file_data
+
+            if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
+                result = asyncio.run(
+                    self.vector_db.insert_file_bytes(
+                        file_content=file_content_data,
+                        filename=filename_data,
+                        content_type=content_type_str,
+                        send_metadata=True,
                     )
-                else:
-                    log_error("Vector database does not support file insertion")
-                    content.status = ContentStatus.FAILED
-                    self._update_content(content)
-                    return
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                self._update_content(content)
+                )
             else:
-                log_warning(f"No file data available for LightRAG upload: {content.name}")
-            return
+                log_error("Vector database does not support file insertion")
+                content.status = ContentStatus.FAILED
+                self._update_content(content)
+                return
+
+            content.external_id = result
+            content.status = ContentStatus.COMPLETED
+            self._update_content(content)
 
         elif content_type == KnowledgeContentOrigin.TOPIC:
-            log_info(f"Uploading file to LightRAG: {content.name}")
-
-            if content.reader is None:
-                log_error("No reader available for topic content")
+            topic_data = self._prepare_lightrag_topic_data(content)
+            if topic_data is None:
                 content.status = ContentStatus.FAILED
                 self._update_content(content)
                 return
 
-            if not content.topics:
-                log_error("No topics available for content")
-                content.status = ContentStatus.FAILED
-                self._update_content(content)
-                return
+            file_source, text = topic_data
 
-            read_documents = content.reader.read(content.topics)
-            if len(read_documents) > 0:
-                if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    # LightRAG only has async methods, use asyncio.run() here
-                    result = asyncio.run(
-                        self.vector_db.insert_text(
-                            file_source=content.topics[0],
-                            text=read_documents[0].content,
-                        )
-                    )
-                else:
-                    log_error("Vector database does not support text insertion")
-                    content.status = ContentStatus.FAILED
-                    self._update_content(content)
-                    return
-                content.external_id = result
-                content.status = ContentStatus.COMPLETED
-                self._update_content(content)
-                return
+            if self.vector_db and hasattr(self.vector_db, "insert_text"):
+                result = asyncio.run(self.vector_db.insert_text(file_source=file_source, text=text))
             else:
-                log_warning(f"No documents found for LightRAG upload: {content.name}")
+                log_error("Vector database does not support text insertion")
+                content.status = ContentStatus.FAILED
+                self._update_content(content)
                 return
+
+            content.external_id = result
+            content.status = ContentStatus.COMPLETED
+            self._update_content(content)
 
     def search(
         self,
@@ -2473,8 +2464,16 @@ class Knowledge:
             return []
 
     def get_valid_filters(self) -> Set[str]:
+        """Get set of valid filter keys from ContentsDB metadata.
+
+        Returns:
+            Set of metadata keys available for filtering. Empty set if ContentsDB not configured.
+
+        Note:
+            When ContentsDB is not configured, filtering still works - filters are passed
+            directly to the vector database without validation.
+        """
         if self.contents_db is None:
-            log_warning("No contents db provided. This is required for filtering.")
             return set()
         contents, _ = self.get_content()
         valid_filters: Set[str] = set()
@@ -2486,7 +2485,9 @@ class Knowledge:
 
     async def async_get_valid_filters(self) -> Set[str]:
         if self.contents_db is None:
-            log_warning("No contents db provided. This is required for filtering.")
+            log_info(
+                "ContentsDB not configured. For improved filter validation and reliability, consider adding a ContentsDB."
+            )
             return set()
         contents, _ = await self.aget_content()
         valid_filters: Set[str] = set()
@@ -2506,13 +2507,10 @@ class Knowledge:
         invalid_keys = []
 
         if isinstance(filters, dict):
-            # If no metadata filters tracked yet, all keys are considered invalid
+            # If no metadata filters tracked yet, pass all filters through without validation
             if valid_metadata_filters is None or not valid_metadata_filters:
-                invalid_keys = list(filters.keys())
-                log_warning(
-                    f"No valid metadata filters tracked yet. All filter keys considered invalid: {invalid_keys}"
-                )
-                return {}, invalid_keys
+                log_debug("No metadata filter validation available. Passing filters to vector DB without validation.")
+                return filters, []
 
             for key, value in filters.items():
                 # Handle both normal keys and prefixed keys like meta_data.key
@@ -2542,10 +2540,26 @@ class Knowledge:
     def validate_filters(
         self, filters: Union[Dict[str, Any], List[FilterExpr]]
     ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
+        """Validate filters against known metadata keys from ContentsDB.
+
+        Args:
+            filters: Filters to validate
+
+        Returns:
+            Tuple of (valid_filters, invalid_keys)
+
+        Note:
+            When ContentsDB is not configured, returns (filters, []) - all filters
+            are considered valid and passed through without validation.
+        """
+        if self.contents_db is None:
+            log_info(
+                "ContentsDB not configured. For improved filter validation and reliability, consider adding a ContentsDB."
+            )
+            return filters, []
         valid_filters_from_db = self.get_valid_filters()
 
         valid_filters, invalid_keys = self._validate_filters(filters, valid_filters_from_db)
-
         return valid_filters, invalid_keys
 
     async def async_validate_filters(
