@@ -50,7 +50,7 @@ async def test_a2a_remote_agent_basic_messaging(a2a_base_url: str, token: str):
     """Test basic non-streaming message via A2A protocol to RemoteAgent."""
     # Create RemoteAgent with A2A protocol
     remote_agent = RemoteAgent(
-        base_url=f"{a2a_base_url}/agents/{A2A_AGENT_ID}/v1/message:send",
+        base_url=f"{a2a_base_url}/agents/{A2A_AGENT_ID}",
         agent_id=A2A_AGENT_ID,
         protocol="a2a",
         timeout=REQUEST_TIMEOUT,
@@ -74,7 +74,7 @@ async def test_a2a_remote_team_basic_messaging(a2a_base_url: str, token: str):
     """Test basic non-streaming message via A2A protocol to RemoteTeam."""
     # Create RemoteTeam with A2A protocol
     remote_team = RemoteTeam(
-        base_url=f"{a2a_base_url}/teams/{A2A_TEAM_ID}/v1/message:send",
+        base_url=f"{a2a_base_url}/teams/{A2A_TEAM_ID}",
         team_id=A2A_TEAM_ID,
         protocol="a2a",
         timeout=REQUEST_TIMEOUT,
@@ -98,7 +98,7 @@ async def test_a2a_remote_workflow_basic_messaging(a2a_base_url: str, token: str
     """Test basic non-streaming message via A2A protocol to RemoteWorkflow."""
     # Create RemoteWorkflow with A2A protocol
     remote_workflow = RemoteWorkflow(
-        base_url=f"{a2a_base_url}/workflows/{A2A_WORKFLOW_ID}/v1/message:send",
+        base_url=f"{a2a_base_url}/workflows/{A2A_WORKFLOW_ID}",
         workflow_id=A2A_WORKFLOW_ID,
         protocol="a2a",
         timeout=REQUEST_TIMEOUT,

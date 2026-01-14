@@ -19,7 +19,7 @@ knowledge = Knowledge(
 
 knowledge.add_content(
     name="CV",
-    path="cookbook/knowledge/testing_resources/cv_1.pdf",
+    path="cookbook/08_knowledge/testing_resources/cv_1.pdf",
     metadata={"user_tag": "Engineering Candidates"},
 )
 
@@ -29,7 +29,7 @@ knowledge.remove_vectors_by_metadata({"user_tag": "Engineering Candidates"})
 # Add from local file to the knowledge base
 knowledge.add_content(
     name="CV",
-    path="cookbook/knowledge/testing_resources/cv_1.pdf",
+    path="cookbook/08_knowledge/testing_resources/cv_1.pdf",
     metadata={"user_tag": "Engineering Candidates"},
 )
 

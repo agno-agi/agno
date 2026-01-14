@@ -28,7 +28,6 @@ def get_entrypoint_for_tool(
     tool: MCPTool,
     session: ClientSession,
     mcp_tools_instance: Optional[Union["MCPTools", "MultiMCPTools"]] = None,
-    server_name: str = "unknown",
     server_idx: int = 0,
 ):
     """
@@ -38,7 +37,6 @@ def get_entrypoint_for_tool(
         tool: The MCP tool to create an entrypoint for
         session: The MCP ClientSession to use
         mcp_tools_instance: Optional MCPTools or MultiMCPTools instance
-        server_name: Name of the MCP server (for logging and context)
         server_idx: Index of the server (for MultiMCPTools)
 
     Returns:

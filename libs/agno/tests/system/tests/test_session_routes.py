@@ -79,14 +79,7 @@ class TestSessionRoutesWithLocalAgent:
         clear_all_sessions(client, session_type="agent", db_id=self.DB_ID)
 
     @pytest.fixture(scope="class")
-    def session_test_user_id(self) -> str:
-        """Generate a unique user ID for session tests."""
-        return f"session-local-user-{uuid.uuid4().hex[:8]}"
-
-    @pytest.fixture(scope="class")
-    def agent_run_data(
-        self, client: httpx.Client, session_test_user_id: str, clear_sessions_before_tests: None
-    ) -> dict:
+    def agent_run_data(self, client: httpx.Client, test_user_id: str, clear_sessions_before_tests: None) -> dict:
         """Run the local agent to create session and run data for testing."""
         session_id = str(uuid.uuid4())
         test_message = "Hello, this is a test message for local session testing."
@@ -96,7 +89,7 @@ class TestSessionRoutesWithLocalAgent:
                 "message": test_message,
                 "stream": "false",
                 "session_id": session_id,
-                "user_id": session_test_user_id,
+                "user_id": test_user_id,
             },
         )
         assert response.status_code == 200
@@ -104,20 +97,20 @@ class TestSessionRoutesWithLocalAgent:
         return {
             "session_id": session_id,
             "run_id": data.get("run_id"),
-            "user_id": session_test_user_id,
+            "user_id": test_user_id,
             "agent_id": self.AGENT_ID,
             "content": data.get("content"),
             "message": test_message,
         }
 
     @pytest.fixture(scope="class")
-    def created_session_id(self, client: httpx.Client, session_test_user_id: str, clear_sessions_before_tests) -> str:
+    def created_session_id(self, client: httpx.Client, test_user_id: str, clear_sessions_before_tests) -> str:
         """Create a standalone session for CRUD tests."""
         response = client.post(
             f"/sessions?type=agent&db_id={self.DB_ID}",
             json={
                 "session_name": "Local CRUD Test Session",
-                "user_id": session_test_user_id,
+                "user_id": test_user_id,
                 "agent_id": self.AGENT_ID,
                 "session_state": {"test_key": "test_value"},
             },
@@ -233,13 +226,13 @@ class TestSessionRoutesWithLocalAgent:
         assert agent_run_data["run_id"] in run_ids
         assert second_run_id in run_ids
 
-    def test_create_session_with_initial_state(self, client: httpx.Client, session_test_user_id: str):
+    def test_create_session_with_initial_state(self, client: httpx.Client, test_user_id: str):
         """Test POST /sessions creates session with initial state."""
         response = client.post(
             f"/sessions?type=agent&db_id={self.DB_ID}",
             json={
                 "session_name": "Local Session With State",
-                "user_id": session_test_user_id,
+                "user_id": test_user_id,
                 "agent_id": self.AGENT_ID,
                 "session_state": {"counter": 0, "preferences": {"theme": "dark"}},
             },
@@ -282,14 +275,14 @@ class TestSessionRoutesWithLocalAgent:
         assert data["session_state"]["updated_key"] == "updated_value"
         assert data["session_state"]["new_key"] == 42
 
-    def test_delete_session(self, client: httpx.Client, session_test_user_id: str):
+    def test_delete_session(self, client: httpx.Client, test_user_id: str):
         """Test DELETE /sessions/{session_id} removes the session."""
         # Create a session to delete
         create_response = client.post(
             f"/sessions?type=agent&db_id={self.DB_ID}",
             json={
                 "session_name": "Local Session To Delete",
-                "user_id": session_test_user_id,
+                "user_id": test_user_id,
                 "agent_id": self.AGENT_ID,
             },
         )
@@ -317,14 +310,7 @@ class TestSessionRoutesWithRemoteAgent:
         clear_all_sessions(client, session_type="agent", db_id=self.DB_ID)
 
     @pytest.fixture(scope="class")
-    def session_test_user_id(self) -> str:
-        """Generate a unique user ID for session tests."""
-        return f"session-remote-user-{uuid.uuid4().hex[:8]}"
-
-    @pytest.fixture(scope="class")
-    def agent_run_data(
-        self, client: httpx.Client, session_test_user_id: str, clear_sessions_before_tests: None
-    ) -> dict:
+    def agent_run_data(self, client: httpx.Client, test_user_id: str, clear_sessions_before_tests: None) -> dict:
         """Run the remote agent to create session and run data for testing."""
         session_id = str(uuid.uuid4())
         test_message = "Hello, this is a test message for remote session testing."
@@ -334,7 +320,7 @@ class TestSessionRoutesWithRemoteAgent:
                 "message": test_message,
                 "stream": "false",
                 "session_id": session_id,
-                "user_id": session_test_user_id,
+                "user_id": test_user_id,
             },
         )
         assert response.status_code == 200
@@ -342,7 +328,7 @@ class TestSessionRoutesWithRemoteAgent:
         return {
             "session_id": session_id,
             "run_id": data.get("run_id"),
-            "user_id": session_test_user_id,
+            "user_id": test_user_id,
             "agent_id": self.AGENT_ID,
             "content": data.get("content"),
             "message": test_message,
@@ -435,13 +421,13 @@ class TestSessionRoutesWithRemoteAgent:
         assert agent_run_data["run_id"] in run_ids
         assert second_run_id in run_ids
 
-    def test_create_session_with_initial_state(self, client: httpx.Client, session_test_user_id: str):
+    def test_create_session_with_initial_state(self, client: httpx.Client, test_user_id: str):
         """Test POST /sessions creates session with initial state for remote agent."""
         response = client.post(
             f"/sessions?type=agent&db_id={self.DB_ID}",
             json={
                 "session_name": "Remote Session With State",
-                "user_id": session_test_user_id,
+                "user_id": test_user_id,
                 "agent_id": self.AGENT_ID,
                 "session_state": {"counter": 0, "preferences": {"theme": "light"}},
             },
@@ -455,14 +441,14 @@ class TestSessionRoutesWithRemoteAgent:
         assert data["session_state"]["preferences"]["theme"] == "light"
         assert data["agent_id"] == self.AGENT_ID
 
-    def test_rename_session(self, client: httpx.Client, session_test_user_id: str):
+    def test_rename_session(self, client: httpx.Client, test_user_id: str):
         """Test POST /sessions/{session_id}/rename updates session name for remote agent."""
         # Create a session to rename
         create_response = client.post(
             f"/sessions?type=agent&db_id={self.DB_ID}",
             json={
                 "session_name": "Remote Session To Rename",
-                "user_id": session_test_user_id,
+                "user_id": test_user_id,
                 "agent_id": self.AGENT_ID,
             },
         )
@@ -482,14 +468,14 @@ class TestSessionRoutesWithRemoteAgent:
         verify_response = client.get(f"/sessions/{session_id}?type=agent&db_id={self.DB_ID}")
         assert verify_response.json()["session_name"] == new_name
 
-    def test_update_session_state(self, client: httpx.Client, session_test_user_id: str):
+    def test_update_session_state(self, client: httpx.Client, test_user_id: str):
         """Test PATCH /sessions/{session_id} updates session state for remote agent."""
         # Create a session to update
         create_response = client.post(
             f"/sessions?type=agent&db_id={self.DB_ID}",
             json={
                 "session_name": "Remote Session To Update",
-                "user_id": session_test_user_id,
+                "user_id": test_user_id,
                 "agent_id": self.AGENT_ID,
                 "session_state": {"initial_key": "initial_value"},
             },
@@ -509,14 +495,14 @@ class TestSessionRoutesWithRemoteAgent:
         assert data["session_state"]["updated_key"] == "updated_value"
         assert data["session_state"]["new_key"] == 99
 
-    def test_delete_session(self, client: httpx.Client, session_test_user_id: str):
+    def test_delete_session(self, client: httpx.Client, test_user_id: str):
         """Test DELETE /sessions/{session_id} removes the session for remote agent."""
         # Create a session to delete
         create_response = client.post(
             f"/sessions?type=agent&db_id={self.DB_ID}",
             json={
                 "session_name": "Remote Session To Delete",
-                "user_id": session_test_user_id,
+                "user_id": test_user_id,
                 "agent_id": self.AGENT_ID,
             },
         )

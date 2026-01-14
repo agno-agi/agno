@@ -1,5 +1,6 @@
 import inspect
 import time
+import warnings
 import weakref
 from contextlib import AsyncExitStack
 from dataclasses import asdict
@@ -74,6 +75,12 @@ class MultiMCPTools(Toolkit):
             refresh_connection: If True, the connection and tools will be refreshed on each run
             header_provider: Header provider function for all servers. Takes RunContext and returns dict of HTTP headers.
         """
+        warnings.warn(
+            "The MultiMCPTools class is deprecated and will be removed in a future version. Please use multiple MCPTools instances instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         super().__init__(name="MultiMCPTools", **kwargs)
 
         if urls_transports is not None:
@@ -538,9 +545,6 @@ class MultiMCPTools(Toolkit):
 
     async def build_tools(self) -> None:
         for session_list_idx, session in enumerate(self._sessions):
-            # Get server index for this session
-            server_idx = self._session_to_server_idx.get(session_list_idx, 0)
-
             # Get the list of tools from the MCP server
             available_tools = await session.list_tools()
 
@@ -560,7 +564,6 @@ class MultiMCPTools(Toolkit):
                         tool=tool,
                         session=session,
                         mcp_tools_instance=self,  # Pass self to enable dynamic headers
-                        server_name=f"{self.name}_server_{server_idx}",
                         server_idx=session_list_idx,  # Pass session list index for session lookup
                     )
 

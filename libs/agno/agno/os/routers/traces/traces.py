@@ -126,8 +126,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             default=None,
             description="Filter traces ending before this time (ISO 8601 format with timezone, e.g., '2025-11-19T11:00:00Z' or '2025-11-19T16:30:00+05:30'). Times are converted to UTC for comparison.",
         ),
-        page: int = Query(default=1, description="Page number (1-indexed)", ge=1),
-        limit: int = Query(default=20, description="Number of traces per page", ge=1, le=100),
+        page: int = Query(default=1, description="Page number (1-indexed)", ge=0),
+        limit: int = Query(default=20, description="Number of traces per page", ge=1),
         db_id: Optional[str] = Query(default=None, description="Database ID to query traces from"),
     ):
         """Get list of traces with optional filters and pagination"""
@@ -455,7 +455,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             description="Filter sessions with traces created before this time (ISO 8601 format with timezone, e.g., '2025-11-19T11:00:00Z' or '2025-11-19T16:30:00+05:30'). Times are converted to UTC for comparison.",
         ),
         page: int = Query(default=1, description="Page number (1-indexed)", ge=1),
-        limit: int = Query(default=20, description="Number of sessions per page", ge=1, le=100),
+        limit: int = Query(default=20, description="Number of sessions per page", ge=1),
         db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
     ):
         """Get trace statistics grouped by session"""

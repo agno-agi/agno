@@ -425,7 +425,7 @@ class RemoteTeam(BaseRemote):
         )
         return map_task_result_to_team_run_output(task_result, team_id=self.team_id, user_id=user_id)
 
-    async def cancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
+    async def acancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
         """Cancel a running team execution.
 
         Args:
