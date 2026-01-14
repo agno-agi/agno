@@ -17,12 +17,12 @@ PostgreSQL with PgVector at localhost:5532
 
 **Run a cookbook:**
 ```bash
-.venvs/demo/bin/python cookbook/15_learning/01_basics/1a_user_profile_always.py
+.venvs/demo/bin/python cookbook/08_learning/01_basics/1a_user_profile_always.py
 ```
 
 **Test results file:**
 ```
-cookbook/15_learning/TEST_LOG.md
+cookbook/08_learning/TEST_LOG.md
 ```
 
 ---
@@ -41,17 +41,17 @@ Ensure the database is running:
 
 Run individual cookbooks with the demo environment:
 ```bash
-.venvs/demo/bin/python cookbook/15_learning/<folder>/<file>.py
+.venvs/demo/bin/python cookbook/08_learning/<folder>/<file>.py
 ```
 
 Tail output for long tests:
 ```bash
-.venvs/demo/bin/python cookbook/15_learning/01_basics/1a_user_profile_always.py 2>&1 | tail -100
+.venvs/demo/bin/python cookbook/08_learning/01_basics/1a_user_profile_always.py 2>&1 | tail -100
 ```
 
 ### 3. Updating TEST_LOG.md
 
-After each test, update `cookbook/15_learning/TEST_LOG.md` with:
+After each test, update `cookbook/08_learning/TEST_LOG.md` with:
 - Test name and path
 - Status: PASS or FAIL
 - Brief description of what was tested
@@ -104,7 +104,7 @@ Format:
 ## Cookbook Structure
 
 ```
-cookbook/15_learning/
+cookbook/08_learning/
 ├── 01_basics/           # Basic tests for each store and mode
 ├── 02_user_profile/     # User profile specific tests
 ├── 03_session_context/  # Session context specific tests

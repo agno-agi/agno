@@ -1,6 +1,6 @@
 # Learning Cookbooks Testing Log
 
-Testing all cookbooks in `cookbook/15_learning/` to verify they work as expected.
+Testing all cookbooks in `cookbook/08_learning/` to verify they work as expected.
 
 **Test Environment:**
 - Python: `.venvs/demo/bin/python`

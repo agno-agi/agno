@@ -42,7 +42,7 @@ agent.print_response(
 ## Cookbook Structure
 
 ```
-cookbook/15_learning/
+cookbook/08_learning/
 ├── 01_basics/              # Start here - essential examples
 │   ├── 1a_user_profile_always.py
 │   ├── 1b_user_profile_agentic.py
@@ -90,14 +90,14 @@ cd agno
 Using the setup script (requires `uv`):
 
 ```bash
-./cookbook/15_learning/setup_venv.sh
+./cookbook/08_learning/setup_venv.sh
 ```
 
 Or manually:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r cookbook/15_learning/requirements.txt
+pip install -r cookbook/08_learning/requirements.txt
 ```
 
 ### 3. Export environment variables
@@ -132,11 +132,11 @@ docker run -d \
 
 ```bash
 # Start with the basics
-python cookbook/15_learning/01_basics/1a_user_profile_always.py
+python cookbook/08_learning/01_basics/1a_user_profile_always.py
 
 # Or run any specific example
-python cookbook/15_learning/02_user_profile/03_custom_schema.py
-python cookbook/15_learning/07_patterns/personal_assistant.py
+python cookbook/08_learning/02_user_profile/03_custom_schema.py
+python cookbook/08_learning/07_patterns/personal_assistant.py
 ```
 
 ---

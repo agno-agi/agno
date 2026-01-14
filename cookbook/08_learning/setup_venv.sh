@@ -4,8 +4,8 @@
 #
 #    Learning Machines Environment Setup
 #
-#    Usage: ./cookbook/15_learning/venv_setup.sh
-#    Run:   python cookbook/15_learning/01_basics/1_user_profile_always.py
+#    Usage: ./cookbook/08_learning/venv_setup.sh
+#    Run:   python cookbook/08_learning/01_basics/1_user_profile_always.py
 #
 ############################################################################
 
@@ -70,7 +70,7 @@ echo ""
 echo -e "    ${BOLD}Done.${NC}"
 echo ""
 echo -e "    ${DIM}Activate:${NC}  ${ACTIVATE_CMD}"
-echo -e "    ${DIM}Run:${NC}       python cookbook/15_learning/01_basics/1_user_profile_always.py"
+echo -e "    ${DIM}Run:${NC}       python cookbook/08_learning/01_basics/1_user_profile_always.py"
 echo ""
 echo -e "    ${DIM}(Activation command copied to clipboard. Just paste and hit enter.)${NC}"
 echo ""
