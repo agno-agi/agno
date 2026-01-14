@@ -23,7 +23,7 @@ This folder contains **database integration** examples - how to use different da
 
 **Run a cookbook:**
 ```bash
-.venvs/demo/bin/python cookbook/07_database/sqlite/sqlite_for_agent.py
+.venvs/demo/bin/python cookbook/06_storage/sqlite/sqlite_for_agent.py
 ```
 
 ---

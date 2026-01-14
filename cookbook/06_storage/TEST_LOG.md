@@ -1,6 +1,6 @@
 # Database Cookbook Testing Log
 
-Testing database examples in `cookbook/07_database/`.
+Testing database examples in `cookbook/06_storage/`.
 
 **Test Environment:**
 - Python: `.venvs/demo/bin/python`
