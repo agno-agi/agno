@@ -39,6 +39,17 @@ agent = Agent(
     debug_mode=True,
 )
 
+# Print the tools provided by the knowledge
+print("Knowledge tools:")
+knowledge_tools = knowledge.get_tools()
+for tool in knowledge_tools:
+    print(f"  - {tool.name}")
+
+# Print agent configuration
+print("\nAgent description:", agent.description)
+print("Agent instructions:", agent.instructions)
+print("Agent system_message:", agent.system_message)
+
 agent.print_response(
     "What skills does Jordan Mitchell have?",
     markdown=True,

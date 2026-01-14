@@ -3,17 +3,21 @@ FileSystem Knowledge
 ====================
 A knowledge implementation that searches files in a local directory.
 
-Supports three search modes via the `mode` kwarg:
-- "list_files": List all files in the directory
-- "get_file": Get the contents of a specific file
-- "grep": Search for a query pattern within files (default)
+Implements the KnowledgeProtocol and provides three tools:
+- grep_file: Search for patterns in file contents
+- list_files: List files matching a glob pattern
+- get_file: Read the full contents of a specific file
 """
 
-import os
-import re
 from dataclasses import dataclass, field
+from os import walk as os_walk
+from os.path import isabs as path_isabs
 from pathlib import Path
-from typing import Any, List, Literal, Optional
+from re import IGNORECASE
+from re import compile as re_compile
+from re import error as re_error
+from re import escape as re_escape
+from typing import Any, List, Optional
 
 from agno.knowledge.document import Document
 from agno.utils.log import log_debug, log_warning
@@ -23,28 +27,29 @@ from agno.utils.log import log_debug, log_warning
 class FileSystemKnowledge:
     """Knowledge implementation that searches files in a local directory.
 
-    This class implements the KnowledgeBase protocol and provides three search modes.
-    Mode can be specified via kwarg or query prefix:
-    - "list_files" / "list:": List all files matching the query pattern (glob)
-    - "get_file" / "file:": Get the contents of a specific file
-    - "grep" / "grep:" or no prefix: Search for pattern within file contents (default)
+    Implements the KnowledgeProtocol and provides three tools to agents:
+    - grep_file(query): Search for patterns in file contents
+    - list_files(pattern): List files matching a glob pattern
+    - get_file(path): Read the full contents of a specific file
 
     Example:
         ```python
+        from agno.agent import Agent
         from agno.knowledge.filesystem import FileSystemKnowledge
+        from agno.models.openai import OpenAIChat
 
-        # Create knowledge base for a directory
-        fs_knowledge = FileSystemKnowledge(base_dir="/path/to/docs")
+        # Create knowledge for a directory
+        fs_knowledge = FileSystemKnowledge(base_dir="/path/to/code")
 
-        # Using mode parameter
-        files = fs_knowledge.search("*.py", mode="list_files")
-        content = fs_knowledge.search("README.md", mode="get_file")
+        # Agent automatically gets grep_file, list_files, get_file tools
+        agent = Agent(
+            model=OpenAIChat(id="gpt-4o"),
+            knowledge=fs_knowledge,
+            search_knowledge=True,
+        )
 
-        # Using query prefixes (works with agent's search_knowledge_base tool)
-        files = fs_knowledge.search("list:*.py")
-        content = fs_knowledge.search("file:README.md")
-        results = fs_knowledge.search("grep:def main")
-        results = fs_knowledge.search("def main")  # grep is default
+        # Agent can now search, list, and read files
+        agent.print_response("Find where main() is defined")
         ```
     """
 
@@ -89,7 +94,7 @@ class FileSystemKnowledge:
         results: List[Document] = []
         limit = max_results or self.max_results
 
-        for root, dirs, files in os.walk(self.base_path):
+        for root, dirs, files in os_walk(self.base_path):
             # Filter out excluded directories
             dirs[:] = [d for d in dirs if not any(excl in d for excl in self.exclude_patterns)]
 
@@ -129,7 +134,7 @@ class FileSystemKnowledge:
     def _get_file(self, query: str) -> List[Document]:
         """Get the contents of a specific file."""
         # Handle both relative and absolute paths
-        if os.path.isabs(query):
+        if path_isabs(query):
             file_path = Path(query)
         else:
             file_path = self.base_path / query
@@ -169,12 +174,12 @@ class FileSystemKnowledge:
         limit = max_results or self.max_results
 
         try:
-            pattern = re.compile(query, re.IGNORECASE)
-        except re.error:
+            pattern = re_compile(query, IGNORECASE)
+        except re_error:
             # If not a valid regex, treat as literal string
-            pattern = re.compile(re.escape(query), re.IGNORECASE)
+            pattern = re_compile(re_escape(query), IGNORECASE)
 
-        for root, dirs, files in os.walk(self.base_path):
+        for root, dirs, files in os_walk(self.base_path):
             # Filter out excluded directories
             dirs[:] = [d for d in dirs if not any(excl in d for excl in self.exclude_patterns)]
 
@@ -238,73 +243,170 @@ class FileSystemKnowledge:
         log_debug(f"Found {len(results)} files with matches for: {query}")
         return results
 
-    def search(
-        self,
-        query: str,
-        mode: Optional[Literal["list_files", "get_file", "grep"]] = None,
-        max_results: Optional[int] = None,
-        **kwargs,
-    ) -> List[Document]:
-        """Search for documents in the filesystem.
+    # ========================================================================
+    # Protocol Implementation (build_context, get_tools, retrieve)
+    # ========================================================================
+
+    def build_context(self, **kwargs) -> str:
+        """Build context string for the agent's system prompt.
+
+        Returns instructions about the three available filesystem tools.
 
         Args:
-            query: The search query. Can include a mode prefix:
-                - "list:*.py" - list files matching glob pattern
-                - "file:path/to/file.py" - get contents of a specific file
-                - "grep:pattern" or just "pattern" - search file contents
-            mode: Search mode. One of "list_files", "get_file", or "grep".
-                  If not provided, will be inferred from query prefix.
-            max_results: Maximum number of results to return.
-            **kwargs: Additional parameters (unused, for protocol compatibility).
+            **kwargs: Additional context (unused).
 
         Returns:
-            List of Document objects with search results.
+            Context string describing available tools.
         """
-        # Parse mode from query prefix if not explicitly provided
-        if mode is None:
-            if query.startswith("list:"):
-                mode = "list_files"
-                query = query[5:].strip()
-            elif query.startswith("file:"):
-                mode = "get_file"
-                query = query[5:].strip()
-            elif query.startswith("grep:"):
-                mode = "grep"
-                query = query[5:].strip()
-            else:
-                mode = "grep"  # Default to grep
+        from textwrap import dedent
 
-        if mode == "list_files":
-            return self._list_files(query, max_results)
-        elif mode == "get_file":
-            return self._get_file(query)
-        elif mode == "grep":
-            return self._grep(query, max_results)
-        else:
-            log_warning(f"Unknown search mode: {mode}")
-            return []
+        return dedent(
+            f"""
+            You have access to a filesystem knowledge base containing documents at: {self.base_dir}
+            
+            IMPORTANT: You MUST use these tools to search and read files before answering questions.
+            Do NOT answer from your own knowledge - always search the files first.
 
-    async def asearch(
+            Available tools:
+            - grep_file(query): Search for keywords or patterns in file contents. Use this to find relevant information.
+            - list_files(pattern): List available files. Use "*" to see all files, or "*.md" for specific types.
+            - get_file(path): Read the full contents of a specific file.
+
+            When answering questions:
+            1. First use grep_file to search for relevant terms in the documents
+            2. Or use list_files to see what documents are available, then get_file to read them
+            3. Base your answer on what you find in the files
+            """
+        ).strip()
+
+    def get_tools(self, **kwargs) -> List[Any]:
+        """Get tools to expose to the agent.
+
+        Returns three filesystem tools: grep_file, list_files, get_file.
+
+        Args:
+            **kwargs: Additional context (unused).
+
+        Returns:
+            List of filesystem tools.
+        """
+        return [
+            self._create_grep_tool(),
+            self._create_list_files_tool(),
+            self._create_get_file_tool(),
+        ]
+
+    async def aget_tools(self, **kwargs) -> List[Any]:
+        """Async version of get_tools."""
+        return self.get_tools(**kwargs)
+
+    def _create_grep_tool(self) -> Any:
+        """Create the grep_file tool."""
+        from agno.tools.function import Function
+
+        def grep_file(query: str, max_results: int = 20) -> str:
+            """Search the knowledge base files for a keyword or pattern.
+
+            Use this tool to find information in the documents. Search for relevant
+            terms from the user's question to find answers.
+
+            Args:
+                query: The keyword or pattern to search for (e.g., "coffee", "cappuccino", "brewing").
+                max_results: Maximum number of files to return (default: 20).
+
+            Returns:
+                Matching content from files with context around each match.
+            """
+            docs = self._grep(query, max_results=max_results)
+
+            if not docs:
+                return f"No matches found for: {query}"
+
+            results = []
+            for doc in docs:
+                results.append(f"### {doc.name}\n{doc.content}")
+
+            return "\n\n".join(results)
+
+        return Function.from_callable(grep_file, name="grep_file")
+
+    def _create_list_files_tool(self) -> Any:
+        """Create the list_files tool."""
+        from agno.tools.function import Function
+
+        def list_files(pattern: str = "*", max_results: int = 50) -> str:
+            """List available files in the knowledge base.
+
+            Use this to see what documents are available to search.
+
+            Args:
+                pattern: Glob pattern to match (e.g., "*.md", "*.txt"). Default: "*" for all files.
+                max_results: Maximum number of files to return (default: 50).
+
+            Returns:
+                List of available file paths.
+            """
+            docs = self._list_files(pattern, max_results=max_results)
+
+            if not docs:
+                return f"No files found matching: {pattern}"
+
+            file_list = [doc.name for doc in docs]
+            return f"Found {len(file_list)} files:\n" + "\n".join(f"- {f}" for f in file_list)
+
+        return Function.from_callable(list_files, name="list_files")
+
+    def _create_get_file_tool(self) -> Any:
+        """Create the get_file tool."""
+        from agno.tools.function import Function
+
+        def get_file(path: str) -> str:
+            """Read the full contents of a document from the knowledge base.
+
+            Use this after list_files to read a specific document.
+
+            Args:
+                path: Path to the file (e.g., "coffee.md", "guide.txt").
+
+            Returns:
+                The full file contents.
+            """
+            docs = self._get_file(path)
+
+            if not docs:
+                return f"File not found: {path}"
+
+            doc = docs[0]
+            return f"### {doc.name}\n```\n{doc.content}\n```"
+
+        return Function.from_callable(get_file, name="get_file")
+
+    def retrieve(
         self,
         query: str,
-        mode: Optional[Literal["list_files", "get_file", "grep"]] = None,
         max_results: Optional[int] = None,
         **kwargs,
     ) -> List[Document]:
-        """Async search for documents in the filesystem.
+        """Retrieve documents for context injection.
 
-        This is a simple wrapper around search() since filesystem operations
-        are synchronous. For true async file I/O, consider using aiofiles.
+        Uses grep as the default retrieval method since it's most likely
+        to return relevant results for a natural language query.
 
         Args:
-            query: The search query. Can include a mode prefix (list:, file:, grep:).
-            mode: Search mode. One of "list_files", "get_file", or "grep".
-            max_results: Maximum number of results to return.
+            query: The query string.
+            max_results: Maximum number of results.
             **kwargs: Additional parameters.
 
         Returns:
-            List of Document objects with search results.
+            List of Document objects.
         """
-        # For now, just delegate to sync version
-        # Could be enhanced with aiofiles for true async I/O
-        return self.search(query, mode=mode, max_results=max_results, **kwargs)
+        return self._grep(query, max_results=max_results or 10)
+
+    async def aretrieve(
+        self,
+        query: str,
+        max_results: Optional[int] = None,
+        **kwargs,
+    ) -> List[Document]:
+        """Async version of retrieve."""
+        return self.retrieve(query, max_results=max_results, **kwargs)

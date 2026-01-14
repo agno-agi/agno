@@ -3,6 +3,12 @@ FileSystemKnowledge Example
 ===========================
 Demonstrates using FileSystemKnowledge to let an agent search local files.
 
+The FileSystemKnowledge class implements the KnowledgeProtocol and provides
+three tools to the agent:
+- grep_file: Search for patterns in file contents
+- list_files: List files matching a glob pattern
+- get_file: Read the full contents of a specific file
+
 Run: `python cookbook/08_knowledge/protocol/file_system.py`
 """
 
@@ -17,80 +23,78 @@ fs_knowledge = FileSystemKnowledge(
     exclude_patterns=[".git", "__pycache__", ".venv"],
 )
 
-# Base instructions for all agents
-base_instructions = (
-    "You are a code assistant that helps users explore the agno codebase."
-)
-
 if __name__ == "__main__":
     # ==========================================
-    # Example 1: GREP mode - Search file contents
+    # Single agent with all three filesystem tools
     # ==========================================
-    print("\n" + "=" * 60)
-    print("GREP MODE: Searching for pattern in file contents")
-    print("=" * 60 + "\n")
+    # The agent automatically gets: grep_file, list_files, get_file
+    # Plus context explaining how to use them
 
-    grep_agent = Agent(
-        model=OpenAIChat(id="gpt-5.2"),
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o"),
         knowledge=fs_knowledge,
         search_knowledge=True,
-        instructions=f"""{base_instructions}
-
-When searching, prefix your query with "grep:" to search for patterns in file contents.
-Example: grep:def handle_tool
-""",
+        instructions=(
+            "You are a code assistant that helps users explore the agno codebase. "
+            "Use the available tools to search, list, and read files."
+        ),
         markdown=True,
     )
 
-    grep_agent.print_response(
-        "Find where handle_tool is defined in the codebase",
+    # Example 1: Grep - find where something is defined
+    print("\n" + "=" * 60)
+    print("EXAMPLE 1: Using grep_file to find code patterns")
+    print("=" * 60 + "\n")
+
+    agent.print_response(
+        "Find where the KnowledgeProtocol class is defined",
         stream=True,
     )
 
-    # ==========================================
-    # Example 2: LIST_FILES mode - List files
-    # ==========================================
+    # Example 2: List files in a directory
     print("\n" + "=" * 60)
-    print("LIST_FILES MODE: Listing files matching a pattern")
+    print("EXAMPLE 2: Using list_files to explore directories")
     print("=" * 60 + "\n")
 
-    list_agent = Agent(
-        model=OpenAIChat(id="gpt-5.2"),
-        knowledge=fs_knowledge,
-        search_knowledge=True,
-        instructions=f"""{base_instructions}
-
-When searching, prefix your query with "list:" to list files matching a glob pattern.
-Example: list:*.py or list:tools/*.py
-""",
-        markdown=True,
-    )
-
-    list_agent.print_response(
-        "What Python files exist in the tools directory?",
+    agent.print_response(
+        "What Python files exist in the knowledge directory?",
         stream=True,
     )
 
-    # ==========================================
-    # Example 3: GET_FILE mode - Read full file
-    # ==========================================
+    # Example 3: Read a specific file
     print("\n" + "=" * 60)
-    print("GET_FILE MODE: Reading full file contents")
+    print("EXAMPLE 3: Using get_file to read file contents")
     print("=" * 60 + "\n")
 
-    file_agent = Agent(
-        model=OpenAIChat(id="gpt-5.2"),
-        knowledge=fs_knowledge,
-        search_knowledge=True,
-        instructions=f"""{base_instructions}
-
-When searching, prefix your query with "file:" to get the full contents of a specific file.
-Example: file:knowledge/protocol.py
-""",
-        markdown=True,
-    )
-
-    file_agent.print_response(
+    agent.print_response(
         "Read the knowledge/protocol.py file and explain what it defines",
+        stream=True,
+    )
+
+    # ==========================================
+    # Example 4: Document search (text files only)
+    # ==========================================
+    # Note: FileSystemKnowledge only works with text files (md, txt, etc.)
+    # For PDFs, use the main Knowledge class with proper readers
+    print("\n" + "=" * 60)
+    print("EXAMPLE 4: Searching document files (coffee guide)")
+    print("=" * 60 + "\n")
+
+    docs_knowledge = FileSystemKnowledge(
+        base_dir="cookbook/08_knowledge/testing_resources",
+        include_patterns=["*.md", "*.txt"],  # Text files only, not PDFs
+        exclude_patterns=[],
+    )
+
+    docs_agent = Agent(
+        model=OpenAIChat(id="gpt-4o"),
+        knowledge=docs_knowledge,
+        search_knowledge=True,
+        instructions="You are a helpful assistant that answers questions from documents.",
+        markdown=True,
+    )
+
+    docs_agent.print_response(
+        "What knowledge do you have about coffee? Which coffee region produces Bright and nutty notes?",
         stream=True,
     )

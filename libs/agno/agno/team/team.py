@@ -9,7 +9,6 @@ from concurrent.futures import Future
 from copy import copy
 from dataclasses import dataclass
 from os import getenv
-from textwrap import dedent
 from typing import (
     Any,
     AsyncIterator,
@@ -43,7 +42,7 @@ from agno.exceptions import (
 )
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
-from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.protocol import KnowledgeProtocol
 from agno.knowledge.types import KnowledgeFilter
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
@@ -313,7 +312,7 @@ class Team:
     add_dependencies_to_context: bool = False
 
     # --- Agent Knowledge ---
-    knowledge: Optional[Knowledge] = None
+    knowledge: Optional[KnowledgeProtocol] = None
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     # Let the agent choose the knowledge filters
@@ -508,7 +507,7 @@ class Team:
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
-        knowledge: Optional[Knowledge] = None,
+        knowledge: Optional[KnowledgeProtocol] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_knowledge_to_context: bool = False,
         enable_agentic_knowledge_filters: Optional[bool] = False,
@@ -5164,36 +5163,20 @@ class Team:
                 )
             )
 
-        if self.knowledge is not None or self.knowledge_retriever is not None:
-            # Check if knowledge retriever is an async function but used in sync mode
-            from inspect import iscoroutinefunction
-
-            if self.knowledge_retriever is not None and iscoroutinefunction(self.knowledge_retriever):
-                log_warning(
-                    "Async knowledge retriever function is being used with synchronous agent.run() or agent.print_response(). "
-                    "It is recommended to use agent.arun() or agent.aprint_response() instead."
+        # Add tools for accessing knowledge
+        if self.knowledge is not None and self.search_knowledge:
+            # Use knowledge protocol's get_tools method
+            get_tools_fn = getattr(self.knowledge, "get_tools", None)
+            if callable(get_tools_fn):
+                knowledge_tools = get_tools_fn(
+                    run_response=run_response,
+                    run_context=run_context,
+                    knowledge_filters=run_context.knowledge_filters,
+                    async_mode=async_mode,
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
+                    agent=self,
                 )
-
-            if self.search_knowledge:
-                # Use async or sync search based on async_mode
-                if self.enable_agentic_knowledge_filters:
-                    _tools.append(
-                        self._get_search_knowledge_base_with_agentic_filters_function(
-                            run_response=run_response,
-                            knowledge_filters=run_context.knowledge_filters,
-                            async_mode=async_mode,
-                            run_context=run_context,
-                        )
-                    )
-                else:
-                    _tools.append(
-                        self._get_search_knowledge_base_function(
-                            run_response=run_response,
-                            knowledge_filters=run_context.knowledge_filters,
-                            async_mode=async_mode,
-                            run_context=run_context,
-                        )
-                    )
+                _tools.extend(knowledge_tools)
 
         if self.knowledge is not None and self.update_knowledge:
             _tools.append(self.add_to_knowledge)
@@ -5505,26 +5488,15 @@ class Team:
         if self.name is not None and self.add_name_to_context:
             additional_information.append(f"Your name is: {self.name}.")
 
-        if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = self.knowledge.get_valid_filters()
-            if valid_filters:
-                valid_filters_str = ", ".join(valid_filters)
-                additional_information.append(
-                    dedent(f"""
-                    The knowledge base contains documents with these metadata filters: {valid_filters_str}.
-                    Always use filters when the user query indicates specific metadata.
-                    Examples:
-                    1. If the user asks about a specific person like "Jordan Mitchell", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like user_id>': '<valid value based on the user query>'}}.
-                    2. If the user asks about a specific document type like "contracts", you MUST use the search_knowledge_base tool with the filters parameter set to {{'document_type': 'contract'}}.
-                    4. If the user asks about a specific location like "documents from New York", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like location>': 'New York'}}.
-                    General Guidelines:
-                    - Always analyze the user query to identify relevant metadata.
-                    - Use the most specific filter(s) possible to narrow down results.
-                    - If multiple filters are relevant, combine them in the filters parameter (e.g., {{'name': 'Jordan Mitchell', 'document_type': 'contract'}}).
-                    - Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
-                    You can use the search_knowledge_base tool to search the knowledge base and get the most relevant documents. Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
-                """)
+        # Add knowledge context using protocol's build_context
+        if self.knowledge is not None:
+            build_context_fn = getattr(self.knowledge, "build_context", None)
+            if callable(build_context_fn):
+                knowledge_context = build_context_fn(
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
                 )
+                if knowledge_context:
+                    additional_information.append(knowledge_context)
 
         # 2 Build the default system message for the Agent.
         system_message_content: str = ""
@@ -5805,26 +5777,15 @@ class Team:
         if self.name is not None and self.add_name_to_context:
             additional_information.append(f"Your name is: {self.name}.")
 
-        if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = await self.knowledge.aget_valid_filters()
-            if valid_filters:
-                valid_filters_str = ", ".join(valid_filters)
-                additional_information.append(
-                    dedent(f"""
-                    The knowledge base contains documents with these metadata filters: {valid_filters_str}.
-                    Always use filters when the user query indicates specific metadata.
-                    Examples:
-                    1. If the user asks about a specific person like "Jordan Mitchell", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like user_id>': '<valid value based on the user query>'}}.
-                    2. If the user asks about a specific document type like "contracts", you MUST use the search_knowledge_base tool with the filters parameter set to {{'document_type': 'contract'}}.
-                    4. If the user asks about a specific location like "documents from New York", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like location>': 'New York'}}.
-                    General Guidelines:
-                    - Always analyze the user query to identify relevant metadata.
-                    - Use the most specific filter(s) possible to narrow down results.
-                    - If multiple filters are relevant, combine them in the filters parameter (e.g., {{'name': 'Jordan Mitchell', 'document_type': 'contract'}}).
-                    - Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
-                    You can use the search_knowledge_base tool to search the knowledge base and get the most relevant documents. Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
-                """)
+        # Add knowledge context using protocol's build_context
+        if self.knowledge is not None:
+            build_context_fn = getattr(self.knowledge, "build_context", None)
+            if callable(build_context_fn):
+                knowledge_context = build_context_fn(
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
                 )
+                if knowledge_context:
+                    additional_information.append(knowledge_context)
 
         # 2 Build the default system message for the Agent.
         system_message_content: str = ""
@@ -8801,16 +8762,17 @@ class Team:
             log_warning("Knowledge is not set, cannot add to knowledge")
             return "Knowledge is not set, cannot add to knowledge"
 
-        if self.knowledge.vector_db is None:
-            log_warning("Knowledge vector database is not set, cannot add to knowledge")
-            return "Knowledge vector database is not set, cannot add to knowledge"
+        insert_method = getattr(self.knowledge, "insert", None)
+        if not callable(insert_method):
+            log_warning("Knowledge base does not support adding content")
+            return "Knowledge base does not support adding content"
 
         document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
         from agno.knowledge.reader.text_reader import TextReader
 
-        self.knowledge.insert(name=document_name, text_content=document_content, reader=TextReader())
+        insert_method(name=document_name, text_content=document_content, reader=TextReader())
         return "Successfully added to knowledge base"
 
     def get_relevant_docs_from_knowledge(
@@ -8828,25 +8790,26 @@ class Team:
         dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
-            num_documents = self.knowledge.max_results
+            num_documents = getattr(self.knowledge, "max_results", None)
 
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None:
-            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+        if self.knowledge is not None and filters is not None:
+            validate_filters_method = getattr(self.knowledge, "validate_filters", None)
+            if callable(validate_filters_method):
+                valid_filters, invalid_keys = validate_filters_method(filters)
 
-            # Warn about invalid filter keys
-            if invalid_keys:
-                # type: ignore
-                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+                # Warn about invalid filter keys
+                if invalid_keys:
+                    log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
 
-                # Only use valid filters
-                filters = valid_filters
-                if not filters:
-                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+                    # Only use valid filters
+                    filters = valid_filters
+                    if not filters:
+                        log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
-            if invalid_keys == [] and valid_filters == {}:
-                log_debug("No valid filters provided. Search will proceed without filters.")
-                filters = None
+                if invalid_keys == [] and valid_filters == {}:
+                    log_debug("No valid filters provided. Search will proceed without filters.")
+                    filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import signature
@@ -8868,17 +8831,22 @@ class Team:
             except Exception as e:
                 log_warning(f"Knowledge retriever failed: {e}")
                 raise e
+        # Use knowledge protocol's retrieve method
         try:
-            if self.knowledge is None or self.knowledge.vector_db is None:
+            if self.knowledge is None:
+                return None
+
+            # Use protocol retrieve() method if available
+            retrieve_fn = getattr(self.knowledge, "retrieve", None)
+            if not callable(retrieve_fn):
+                log_debug("Knowledge does not implement retrieve()")
                 return None
 
             if num_documents is None:
-                num_documents = self.knowledge.max_results
+                num_documents = getattr(self.knowledge, "max_results", 10)
 
-            log_debug(f"Searching knowledge base with filters: {filters}")
-            relevant_docs: List[Document] = self.knowledge.search(
-                query=query, max_results=num_documents, filters=filters
-            )
+            log_debug(f"Retrieving from knowledge base with filters: {filters}")
+            relevant_docs: List[Document] = retrieve_fn(query=query, max_results=num_documents, filters=filters)
 
             if not relevant_docs or len(relevant_docs) == 0:
                 log_debug("No relevant documents found for query")
@@ -8886,7 +8854,7 @@ class Team:
 
             return [doc.to_dict() for doc in relevant_docs]
         except Exception as e:
-            log_warning(f"Error searching knowledge base: {e}")
+            log_warning(f"Error retrieving from knowledge base: {e}")
             raise e
 
     async def aget_relevant_docs_from_knowledge(
@@ -8904,25 +8872,26 @@ class Team:
         dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
-            num_documents = self.knowledge.max_results
+            num_documents = getattr(self.knowledge, "max_results", None)
 
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None:
-            valid_filters, invalid_keys = await self.knowledge.avalidate_filters(filters)  # type: ignore
+        if self.knowledge is not None and filters is not None:
+            avalidate_filters_method = getattr(self.knowledge, "avalidate_filters", None)
+            if callable(avalidate_filters_method):
+                valid_filters, invalid_keys = await avalidate_filters_method(filters)
 
-            # Warn about invalid filter keys
-            if invalid_keys:
-                # type: ignore
-                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+                # Warn about invalid filter keys
+                if invalid_keys:
+                    log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
 
-                # Only use valid filters
-                filters = valid_filters
-                if not filters:
-                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+                    # Only use valid filters
+                    filters = valid_filters
+                    if not filters:
+                        log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
-            if invalid_keys == [] and valid_filters == {}:
-                log_debug("No valid filters provided. Search will proceed without filters.")
-                filters = None
+                if invalid_keys == [] and valid_filters == {}:
+                    log_debug("No valid filters provided. Search will proceed without filters.")
+                    filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import isawaitable, signature
@@ -8951,17 +8920,32 @@ class Team:
                 log_warning(f"Knowledge retriever failed: {e}")
                 raise e
 
+        # Use knowledge protocol's retrieve method
         try:
-            if self.knowledge is None or self.knowledge.vector_db is None:
+            if self.knowledge is None:
+                return None
+
+            # Use protocol aretrieve() or retrieve() method if available
+            aretrieve_fn = getattr(self.knowledge, "aretrieve", None)
+            retrieve_fn = getattr(self.knowledge, "retrieve", None)
+
+            if not callable(aretrieve_fn) and not callable(retrieve_fn):
+                log_debug("Knowledge does not implement retrieve()")
                 return None
 
             if num_documents is None:
-                num_documents = self.knowledge.max_results
+                num_documents = getattr(self.knowledge, "max_results", 10)
 
-            log_debug(f"Searching knowledge base with filters: {filters}")
-            relevant_docs: List[Document] = await self.knowledge.asearch(
-                query=query, max_results=num_documents, filters=filters
-            )
+            log_debug(f"Retrieving from knowledge base with filters: {filters}")
+
+            if callable(aretrieve_fn):
+                relevant_docs: List[Document] = await aretrieve_fn(
+                    query=query, max_results=num_documents, filters=filters
+                )
+            elif callable(retrieve_fn):
+                relevant_docs = retrieve_fn(query=query, max_results=num_documents, filters=filters)
+            else:
+                return None
 
             if not relevant_docs or len(relevant_docs) == 0:
                 log_debug("No relevant documents found for query")
@@ -8969,7 +8953,7 @@ class Team:
 
             return [doc.to_dict() for doc in relevant_docs]
         except Exception as e:
-            log_warning(f"Error searching knowledge base: {e}")
+            log_warning(f"Error retrieving from knowledge base: {e}")
             raise e
 
     def _convert_documents_to_string(self, docs: List[Union[Dict[str, Any], str]]) -> str:

@@ -2932,6 +2932,405 @@ class Knowledge:
                 return
 
     # ========================================================================
+    # Protocol Implementation (build_context, get_tools, retrieve)
+    # ========================================================================
+
+    def build_context(
+        self,
+        enable_agentic_filters: bool = False,
+        **kwargs,
+    ) -> str:
+        """Build context string for the agent's system prompt.
+
+        Returns instructions about how to use the search_knowledge_base tool
+        and available filters.
+
+        Args:
+            enable_agentic_filters: Whether agentic filters are enabled.
+            **kwargs: Additional context (unused).
+
+        Returns:
+            Context string to add to system prompt.
+        """
+        from textwrap import dedent
+
+        context_parts: List[str] = []
+
+        # Always provide basic search instructions
+        context_parts.append(
+            "You have access to a knowledge base. Use the search_knowledge_base tool to find relevant information."
+        )
+
+        # Add filter instructions if agentic filters are enabled
+        if enable_agentic_filters:
+            valid_filters = self.get_valid_filters()
+            if valid_filters:
+                valid_filters_str = ", ".join(valid_filters)
+                context_parts.append(
+                    dedent(
+                        f"""
+                    The knowledge base contains documents with these metadata filters: {valid_filters_str}.
+                    Always use filters when the user query indicates specific metadata.
+
+                    Examples:
+                    1. If the user asks about a specific person like "Jordan Mitchell", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like user_id>': '<valid value based on the user query>'}}.
+                    2. If the user asks about a specific document type like "contracts", you MUST use the search_knowledge_base tool with the filters parameter set to {{'document_type': 'contract'}}.
+                    3. If the user asks about a specific location like "documents from New York", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like location>': 'New York'}}.
+
+                    General Guidelines:
+                    - Always analyze the user query to identify relevant metadata.
+                    - Use the most specific filter(s) possible to narrow down results.
+                    - If multiple filters are relevant, combine them in the filters parameter (e.g., {{'name': 'Jordan Mitchell', 'document_type': 'contract'}}).
+                    - Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
+
+                    Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
+                """
+                    ).strip()
+                )
+
+        return "\n".join(context_parts)
+
+    def get_tools(
+        self,
+        run_response: Optional[Any] = None,
+        run_context: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        async_mode: bool = False,
+        enable_agentic_filters: bool = False,
+        agent: Optional[Any] = None,
+        **kwargs,
+    ) -> List[Any]:
+        """Get tools to expose to the agent.
+
+        Returns the search_knowledge_base tool configured for this knowledge base.
+
+        Args:
+            run_response: The run response object to add references to.
+            run_context: The run context.
+            knowledge_filters: Filters to apply to searches.
+            async_mode: Whether to return async tools.
+            enable_agentic_filters: Whether to enable filter parameter on tool.
+            agent: The agent instance (for document conversion).
+            **kwargs: Additional context.
+
+        Returns:
+            List containing the search tool.
+        """
+        if enable_agentic_filters:
+            tool = self._create_search_tool_with_filters(
+                run_response=run_response,
+                run_context=run_context,
+                knowledge_filters=knowledge_filters,
+                async_mode=async_mode,
+                agent=agent,
+            )
+        else:
+            tool = self._create_search_tool(
+                run_response=run_response,
+                run_context=run_context,
+                knowledge_filters=knowledge_filters,
+                async_mode=async_mode,
+                agent=agent,
+            )
+
+        return [tool]
+
+    async def aget_tools(
+        self,
+        run_response: Optional[Any] = None,
+        run_context: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        async_mode: bool = True,
+        enable_agentic_filters: bool = False,
+        agent: Optional[Any] = None,
+        **kwargs,
+    ) -> List[Any]:
+        """Async version of get_tools."""
+        return self.get_tools(
+            run_response=run_response,
+            run_context=run_context,
+            knowledge_filters=knowledge_filters,
+            async_mode=async_mode,
+            enable_agentic_filters=enable_agentic_filters,
+            agent=agent,
+            **kwargs,
+        )
+
+    def _create_search_tool(
+        self,
+        run_response: Optional[Any] = None,
+        run_context: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        async_mode: bool = False,
+        agent: Optional[Any] = None,
+    ) -> Any:
+        """Create the search_knowledge_base tool without filter parameter."""
+        from agno.models.message import MessageReferences
+        from agno.tools.function import Function
+        from agno.utils.timer import Timer
+
+        def search_knowledge_base(query: str) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+
+            docs = self.search(query=query, filters=knowledge_filters)
+
+            if run_response is not None and docs:
+                references = MessageReferences(
+                    query=query,
+                    references=[doc.to_dict() for doc in docs],
+                    time=round(retrieval_timer.elapsed, 4),
+                )
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
+
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if not docs:
+                return "No documents found"
+
+            return self._convert_documents_to_string(docs, agent)
+
+        async def asearch_knowledge_base(query: str) -> str:
+            """Use this function to search the knowledge base for information about a query asynchronously.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+
+            docs = await self.asearch(query=query, filters=knowledge_filters)
+
+            if run_response is not None and docs:
+                references = MessageReferences(
+                    query=query,
+                    references=[doc.to_dict() for doc in docs],
+                    time=round(retrieval_timer.elapsed, 4),
+                )
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
+
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if not docs:
+                return "No documents found"
+
+            return self._convert_documents_to_string(docs, agent)
+
+        if async_mode:
+            return Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")
+        else:
+            return Function.from_callable(search_knowledge_base, name="search_knowledge_base")
+
+    def _create_search_tool_with_filters(
+        self,
+        run_response: Optional[Any] = None,
+        run_context: Optional[Any] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        async_mode: bool = False,
+        agent: Optional[Any] = None,
+    ) -> Any:
+        """Create the search_knowledge_base tool with filter parameter."""
+        from agno.models.message import MessageReferences
+        from agno.tools.function import Function
+        from agno.utils.timer import Timer
+
+        # Import here to avoid circular imports
+        try:
+            from agno.utils.knowledge import get_agentic_or_user_search_filters
+        except ImportError:
+            get_agentic_or_user_search_filters = None  # type: ignore[assignment]
+
+        def search_knowledge_base(query: str, filters: Optional[List[Any]] = None) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+                filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            # Merge agentic filters with user-provided filters
+            search_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+            if filters and get_agentic_or_user_search_filters is not None:
+                filters_dict = {filt.key: filt.value for filt in filters} if filters else None
+                search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
+            else:
+                search_filters = knowledge_filters
+
+            # Validate filters if we have that capability
+            if search_filters:
+                validated_filters, invalid_keys = self.validate_filters(search_filters)
+                if invalid_keys:
+                    log_warning(f"Invalid filter keys ignored: {invalid_keys}")
+                search_filters = validated_filters if validated_filters else None
+
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+
+            docs = self.search(query=query, filters=search_filters)
+
+            if run_response is not None and docs:
+                references = MessageReferences(
+                    query=query,
+                    references=[doc.to_dict() for doc in docs],
+                    time=round(retrieval_timer.elapsed, 4),
+                )
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
+
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if not docs:
+                return "No documents found"
+
+            return self._convert_documents_to_string(docs, agent)
+
+        async def asearch_knowledge_base(query: str, filters: Optional[List[Any]] = None) -> str:
+            """Use this function to search the knowledge base for information about a query asynchronously.
+
+            Args:
+                query: The query to search for.
+                filters (optional): The filters to apply to the search. This is a list of KnowledgeFilter objects.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            # Merge agentic filters with user-provided filters
+            search_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+            if filters and get_agentic_or_user_search_filters is not None:
+                filters_dict = {filt.key: filt.value for filt in filters} if filters else None
+                search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
+            else:
+                search_filters = knowledge_filters
+
+            # Validate filters if we have that capability
+            if search_filters:
+                validated_filters, invalid_keys = await self.avalidate_filters(search_filters)
+                if invalid_keys:
+                    log_warning(f"Invalid filter keys ignored: {invalid_keys}")
+                search_filters = validated_filters if validated_filters else None
+
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+
+            docs = await self.asearch(query=query, filters=search_filters)
+
+            if run_response is not None and docs:
+                references = MessageReferences(
+                    query=query,
+                    references=[doc.to_dict() for doc in docs],
+                    time=round(retrieval_timer.elapsed, 4),
+                )
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
+
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if not docs:
+                return "No documents found"
+
+            return self._convert_documents_to_string(docs, agent)
+
+        if async_mode:
+            return Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")
+        else:
+            return Function.from_callable(search_knowledge_base, name="search_knowledge_base")
+
+    def _convert_documents_to_string(
+        self,
+        docs: List[Document],
+        agent: Optional[Any] = None,
+    ) -> str:
+        """Convert documents to a string representation.
+
+        Args:
+            docs: List of documents to convert.
+            agent: Optional agent instance for custom conversion.
+
+        Returns:
+            String representation of documents.
+        """
+        # If agent has a custom converter, use it
+        if agent is not None and hasattr(agent, "_convert_documents_to_string"):
+            return agent._convert_documents_to_string([doc.to_dict() for doc in docs])
+
+        # Default conversion
+        if not docs:
+            return "No documents found"
+
+        result_parts = []
+        for doc in docs:
+            if doc.content:
+                result_parts.append(doc.content)
+
+        return "\n\n---\n\n".join(result_parts) if result_parts else "No content found"
+
+    def retrieve(
+        self,
+        query: str,
+        max_results: Optional[int] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        **kwargs,
+    ) -> List[Document]:
+        """Retrieve documents for context injection.
+
+        Used by the add_knowledge_to_context feature to pre-fetch
+        relevant documents into the user message.
+
+        Args:
+            query: The query string.
+            max_results: Maximum number of results.
+            filters: Filters to apply.
+            **kwargs: Additional parameters.
+
+        Returns:
+            List of Document objects.
+        """
+        return self.search(query=query, max_results=max_results, filters=filters)
+
+    async def aretrieve(
+        self,
+        query: str,
+        max_results: Optional[int] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        **kwargs,
+    ) -> List[Document]:
+        """Async version of retrieve.
+
+        Args:
+            query: The query string.
+            max_results: Maximum number of results.
+            filters: Filters to apply.
+            **kwargs: Additional parameters.
+
+        Returns:
+            List of Document objects.
+        """
+        return await self.asearch(query=query, max_results=max_results, filters=filters)
+
+    # ========================================================================
     # Deprecated Methods (for backward compatibility)
     # ========================================================================
 
