@@ -11,7 +11,7 @@ agno/
 ├── libs/agno/agno/          # Core framework code
 ├── cookbook/                # Examples, patterns and test cases (organized by topic)
 ├── scripts/                 # Development and build scripts
-├── projects/                # Design documents (symlinked, private)
+├── specs/                   # Design documents (symlinked, private)
 └── .cursorrules             # Coding patterns and conventions
 ```
 
@@ -92,15 +92,15 @@ Format:
 
 ## Design Documents
 
-The `projects/` folder contains design documents for ongoing initiatives. If you're working on one of the following projects:
-- `projects/learning-machine/` — Unified learning system for agents
+The `specs/` folder contains design documents for ongoing initiatives. If you're working on one of the following:
+- `specs/learning-machine/` — Unified learning system for agents
 
 **Always read the design document first**.
 
-Each project follows this structure:
+Each spec follows this structure:
 ```
-projects/<project-name>/
-├── CLAUDE.md           # Project-specific instructions (read this first)
+specs/<spec-name>/
+├── CLAUDE.md           # Spec-specific instructions (read this first)
 ├── design.md           # The specification
 ├── implementation.md   # Current status and what's done
 ├── decisions.md        # Why decisions were made
@@ -108,7 +108,7 @@ projects/<project-name>/
 ```
 
 **Workflow:**
-1. Read the project's `CLAUDE.md` for specific instructions
+1. Read the spec's `CLAUDE.md` for specific instructions
 2. Read `design.md` to understand what we're building
 3. Check `implementation.md` for current status
 4. Find the relevant code in `libs/agno`
@@ -163,7 +163,7 @@ pytest libs/agno/tests/unit/test_agent.py
 
 ## When Implementing Features
 
-1. **Check for design doc** in `projects/` — if it exists, follow it
+1. **Check for design doc** in `specs/` — if it exists, follow it
 2. **Look at existing patterns** — find similar code and follow conventions
 3. **Create a cookbook** — every pattern should have an example
 4. **Update implementation.md** — mark what's done
