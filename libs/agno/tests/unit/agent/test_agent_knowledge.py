@@ -15,9 +15,9 @@ class MockKnowledge:
     async def avalidate_filters(self, filters):
         return filters or {}, []
 
-    async def asearch(self, query, num_documents, filters):
-        # Verify that num_documents is correctly set to default value
-        assert num_documents == 5
+    async def asearch(self, query, max_results, filters):
+        # Verify that max_results is correctly set to default value
+        assert max_results == 5
         return []
 
 
