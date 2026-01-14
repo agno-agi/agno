@@ -77,6 +77,7 @@ agno_json_data/
 .cursor/
 
 # Private design documents (symlinked)
+specs
 projects
 
 # Private Claude coding session preferences
