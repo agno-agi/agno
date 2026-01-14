@@ -261,7 +261,7 @@ class Team:
     read_chat_history: bool = False
 
     # --- System message settings ---
-    # A description of the Team (used for API/display purposes, not included in the system message).
+    # A description of the Team that is added to the start of the system message.
     description: Optional[str] = None
     # List of instructions for the team.
     instructions: Optional[Union[str, List[str], Callable]] = None
@@ -5633,6 +5633,9 @@ class Team:
                 "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
             )
 
+        if self.description is not None:
+            system_message_content += f"<description>\n{self.description}\n</description>\n\n"
+
         if self.role is not None:
             system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
 
@@ -5941,6 +5944,9 @@ class Team:
                 "Note: this information is from previous interactions and may be outdated. "
                 "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
             )
+
+        if self.description is not None:
+            system_message_content += f"<description>\n{self.description}\n</description>\n\n"
 
         if self.role is not None:
             system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"

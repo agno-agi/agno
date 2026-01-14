@@ -337,7 +337,7 @@ class Agent:
     build_context: bool = True
 
     # --- Settings for building the default system message ---
-    # A description of the Agent (used for API/display purposes, not included in the system message).
+    # A description of the Agent that is added to the start of the system message.
     description: Optional[str] = None
     # List of instructions for the agent.
     instructions: Optional[Union[str, List[str], Callable]] = None
@@ -8061,10 +8061,13 @@ class Agent:
 
         # 3.3 Build the default system message for the Agent.
         system_message_content: str = ""
-        # 3.3.1 Then add the Agent role if provided
+        # 3.3.1 First add the Agent description if provided
+        if self.description is not None:
+            system_message_content += f"{self.description}\n"
+        # 3.3.2 Then add the Agent role if provided
         if self.role is not None:
             system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
-        # 3.3.2 Then add instructions for the Agent
+        # 3.3.3 Then add instructions for the Agent
         if len(instructions) > 0:
             if self.add_instruction_tags:
                 system_message_content += "<instructions>"
@@ -8080,13 +8083,13 @@ class Agent:
                         system_message_content += f"- {_upi}\n"
                 else:
                     system_message_content += instructions[0] + "\n\n"
-        # 3.3.3 Add additional information
+        # 3.3.4 Add additional information
         if len(additional_information) > 0:
             system_message_content += "<additional_information>"
             for _ai in additional_information:
                 system_message_content += f"\n- {_ai}"
             system_message_content += "\n</additional_information>\n\n"
-        # 3.3.4 Then add instructions for the tools
+        # 3.3.5 Then add instructions for the tools
         if self._tool_instructions is not None:
             for _ti in self._tool_instructions:
                 system_message_content += f"{_ti}\n"
@@ -8412,10 +8415,13 @@ class Agent:
 
         # 3.3 Build the default system message for the Agent.
         system_message_content: str = ""
-        # 3.3.1 Then add the Agent role if provided
+        # 3.3.1 First add the Agent description if provided
+        if self.description is not None:
+            system_message_content += f"{self.description}\n"
+        # 3.3.2 Then add the Agent role if provided
         if self.role is not None:
             system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
-        # 3.3.2 Then add instructions for the Agent
+        # 3.3.3 Then add instructions for the Agent
         if len(instructions) > 0:
             if self.add_instruction_tags:
                 system_message_content += "<instructions>"
@@ -8431,13 +8437,13 @@ class Agent:
                         system_message_content += f"- {_upi}\n"
                 else:
                     system_message_content += instructions[0] + "\n\n"
-        # 3.3.3 Add additional information
+        # 3.3.4 Add additional information
         if len(additional_information) > 0:
             system_message_content += "<additional_information>"
             for _ai in additional_information:
                 system_message_content += f"\n- {_ai}"
             system_message_content += "\n</additional_information>\n\n"
-        # 3.3.4 Then add instructions for the tools
+        # 3.3.5 Then add instructions for the tools
         if self._tool_instructions is not None:
             for _ti in self._tool_instructions:
                 system_message_content += f"{_ti}\n"
