@@ -23,7 +23,7 @@ This folder contains **Agent OS** examples - the runtime and API layer for deplo
 
 **Run a cookbook:**
 ```bash
-.venvs/demo/bin/python cookbook/06_agent_os/basic.py
+.venvs/demo/bin/python cookbook/05_agent_os/basic.py
 ```
 
 ---
