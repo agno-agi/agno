@@ -52,6 +52,7 @@ class BaseRunOutputEvent:
                 "metrics",
                 "run_input",
                 "requirements",
+                "memories",
             ]
         }
 
@@ -141,6 +142,9 @@ class BaseRunOutputEvent:
 
         if hasattr(self, "requirements") and self.requirements is not None:
             _dict["requirements"] = [req.to_dict() if hasattr(req, "to_dict") else req for req in self.requirements]
+
+        if hasattr(self, "memories") and self.memories is not None:
+            _dict["memories"] = [mem.to_dict() if hasattr(mem, "to_dict") else mem for mem in self.memories]
 
         return _dict
 
