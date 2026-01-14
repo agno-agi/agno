@@ -31,6 +31,7 @@ class MarkdownReader(Reader):
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Markdown readers."""
         strategies = [
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.RECURSIVE_CHUNKER,

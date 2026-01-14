@@ -181,7 +181,7 @@ def test_edit_content_success(test_app, mock_knowledge):
         "created_at": 1234567890,
         "updated_at": 1234567900,
     }
-    mock_knowledge.apatch_content.return_value = mock_content_dict
+    mock_knowledge.patch_content.return_value = mock_content_dict
 
     response = test_app.patch(
         f"/knowledge/content/{content_id}",
@@ -196,7 +196,7 @@ def test_edit_content_success(test_app, mock_knowledge):
     assert data["status"] == "completed"
 
     # Verify knowledge.patch_content was called
-    mock_knowledge.apatch_content.assert_called_once()
+    mock_knowledge.patch_content.assert_called_once()
 
 
 def test_edit_content_with_invalid_reader(test_app, mock_knowledge):

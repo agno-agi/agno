@@ -340,7 +340,7 @@ class RemoteWorkflow(BaseRemote):
         )
         return map_task_result_to_workflow_run_output(task_result, workflow_id=self.workflow_id, user_id=user_id)
 
-    async def cancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
+    async def acancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
         """Cancel a running workflow execution.
 
         Args:

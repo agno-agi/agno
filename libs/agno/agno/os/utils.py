@@ -343,7 +343,7 @@ def get_session_name(session: Dict[str, Any]) -> str:
 
         run_input = r.get("input")
         if run_input is not None:
-            return run_input.get("input_content")
+            return stringify_input_content(run_input)
 
     return ""
 
@@ -414,37 +414,89 @@ def extract_format(file: UploadFile) -> Optional[str]:
 
 
 def get_agent_by_id(
-    agent_id: str, agents: Optional[List[Union[Agent, RemoteAgent]]] = None
+    agent_id: str,
+    agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    create_fresh: bool = False,
 ) -> Optional[Union[Agent, RemoteAgent]]:
+    """Get an agent by ID, optionally creating a fresh instance for request isolation.
+
+    When create_fresh=True, creates a new agent instance using deep_copy() to prevent
+    state contamination between concurrent requests. The new instance shares heavy
+    resources (db, model, MCP tools) but has isolated mutable state.
+
+    Args:
+        agent_id: The agent ID to look up
+        agents: List of agents to search
+        create_fresh: If True, creates a new instance using deep_copy()
+
+    Returns:
+        The agent instance (shared or fresh copy based on create_fresh)
+    """
     if agent_id is None or agents is None:
         return None
 
     for agent in agents:
         if agent.id == agent_id:
+            if create_fresh and isinstance(agent, Agent):
+                return agent.deep_copy()
             return agent
     return None
 
 
 def get_team_by_id(
-    team_id: str, teams: Optional[List[Union[Team, RemoteTeam]]] = None
+    team_id: str,
+    teams: Optional[List[Union[Team, RemoteTeam]]] = None,
+    create_fresh: bool = False,
 ) -> Optional[Union[Team, RemoteTeam]]:
+    """Get a team by ID, optionally creating a fresh instance for request isolation.
+
+    When create_fresh=True, creates a new team instance using deep_copy() to prevent
+    state contamination between concurrent requests. Member agents are also deep copied.
+
+    Args:
+        team_id: The team ID to look up
+        teams: List of teams to search
+        create_fresh: If True, creates a new instance using deep_copy()
+
+    Returns:
+        The team instance (shared or fresh copy based on create_fresh)
+    """
     if team_id is None or teams is None:
         return None
 
     for team in teams:
         if team.id == team_id:
+            if create_fresh and isinstance(team, Team):
+                return team.deep_copy()
             return team
     return None
 
 
 def get_workflow_by_id(
-    workflow_id: str, workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None
+    workflow_id: str,
+    workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
+    create_fresh: bool = False,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
+    """Get a workflow by ID, optionally creating a fresh instance for request isolation.
+
+    When create_fresh=True, creates a new workflow instance using deep_copy() to prevent
+    state contamination between concurrent requests. Steps containing agents/teams are also deep copied.
+
+    Args:
+        workflow_id: The workflow ID to look up
+        workflows: List of workflows to search
+        create_fresh: If True, creates a new instance using deep_copy()
+
+    Returns:
+        The workflow instance (shared or fresh copy based on create_fresh)
+    """
     if workflow_id is None or workflows is None:
         return None
 
     for workflow in workflows:
         if workflow.id == workflow_id:
+            if create_fresh and isinstance(workflow, Workflow):
+                return workflow.deep_copy()
             return workflow
     return None
 

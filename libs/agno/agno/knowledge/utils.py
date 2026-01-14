@@ -15,6 +15,7 @@ def _get_chunker_class(strategy_type):
         ChunkingStrategyType.AGENTIC_CHUNKER: lambda: _import_class(
             "agno.knowledge.chunking.agentic", "AgenticChunking"
         ),
+        ChunkingStrategyType.CODE_CHUNKER: lambda: _import_class("agno.knowledge.chunking.code", "CodeChunking"),
         ChunkingStrategyType.DOCUMENT_CHUNKER: lambda: _import_class(
             "agno.knowledge.chunking.document", "DocumentChunking"
         ),
