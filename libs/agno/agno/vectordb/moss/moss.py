@@ -7,7 +7,7 @@ from agno.utils.log import log_debug, log_error, log_info
 from agno.vectordb.base import VectorDb
 
 try:
-    from inferedge_moss import DocumentInfo, GetDocumentsOptions, MossClient
+    from inferedge_moss import DocumentInfo, GetDocumentsOptions, MossClient  # type: ignore
 
     moss_available = True
 except ImportError:
