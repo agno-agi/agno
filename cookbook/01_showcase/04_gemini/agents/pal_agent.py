@@ -698,7 +698,7 @@ if __name__ == "__main__":
     else:
         # Interactive mode
         print("=" * 60)
-        print("🤝 PaL — Plan and Learn Agent")
+        print("PaL - Plan and Learn Agent")
         print("   Plan. Execute. Learn. Repeat.")
         print("=" * 60)
         print("\nType 'quit' or 'exit' to stop.\n")
@@ -707,9 +707,9 @@ if __name__ == "__main__":
 
         while True:
             try:
-                user_input = input("\n👤 You: ").strip()
+                user_input = input("\nYou: ").strip()
                 if user_input.lower() in ["quit", "exit", "q"]:
-                    print("\n👋 Goodbye!")
+                    print("\nGoodbye!")
                     break
                 if not user_input:
                     continue
@@ -718,5 +718,5 @@ if __name__ == "__main__":
                 run_pal(user_input, session_id=session_id)
 
             except KeyboardInterrupt:
-                print("\n\n👋 Goodbye!")
+                print("\n\nGoodbye!")
                 break

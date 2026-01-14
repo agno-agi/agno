@@ -8,7 +8,6 @@
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -22,10 +21,6 @@ knowledge = Knowledge(
         table_name="autonomous_startup_team",
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     ),
-)
-
-knowledge.add_content(
-    path="cookbook/teams/coordinate/data", reader=PDFReader(chunk=True)
 )
 
 
@@ -219,23 +214,8 @@ autonomous_startup_team = Team(
     show_members_responses=True,
 )
 
-autonomous_startup_team.print_response(
-    input="I want to start a startup that sells AI agents to businesses. What is the best way to do this?",
-    stream=True,
-)
-
-
-autonomous_startup_team.print_response(
-    input="Give me good marketing campaign for buzzai?",
-    stream=True,
-)
-
-autonomous_startup_team.print_response(
-    input="What is my company and what are the monetization strategies?",
-    stream=True,
-)
-
-# autonomous_startup_team.print_response(
-#     input="Read the partnership details and give me details about the partnership with InnovateAI",
-#     stream=True,
-# )
+if __name__ == "__main__":
+    autonomous_startup_team.print_response(
+        input="I want to start a startup that sells AI agents to businesses. What is the best way to do this?",
+        stream=True,
+    )

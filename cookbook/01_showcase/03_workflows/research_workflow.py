@@ -176,3 +176,17 @@ research_workflow = Workflow(
     ],
     db=demo_db,
 )
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    from agno.utils.pprint import pprint_run_response
+
+    async def main():
+        result = await research_workflow.arun(
+            input="Research the latest developments in AI agents and autonomous systems"
+        )
+        pprint_run_response(result, markdown=True)
+
+    asyncio.run(main())

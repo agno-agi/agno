@@ -66,4 +66,6 @@ editor = Team(
     debug_mode=True,
     show_members_responses=True,
 )
-editor.print_response("Write an article about latest developments in AI.")
+
+if __name__ == "__main__":
+    editor.print_response("Write an article about latest developments in AI.")

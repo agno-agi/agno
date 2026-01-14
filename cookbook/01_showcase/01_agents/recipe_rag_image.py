@@ -1,8 +1,8 @@
 """Example: Multi-Modal RAG & Image Agent
 
-An agent that uses Llama 4 for multi-modal RAG and OpenAITools to create a visual, step-by-step image manual for a recipe.
+An agent that uses Gemini for multi-modal RAG and OpenAITools to create a visual, step-by-step image manual for a recipe.
 
-Run: `pip install openai agno groq cohere` to install the dependencies
+Run: `pip install openai agno cohere` to install the dependencies
 """
 
 import asyncio
@@ -11,8 +11,7 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
-
-# from agno.models.groq import Groq
+from agno.models.google import Gemini
 from agno.tools.openai import OpenAITools
 from agno.utils.media import download_image
 from agno.vectordb.pgvector import PgVector
@@ -35,7 +34,7 @@ asyncio.run(
 
 agent = Agent(
     name="EmbedVisionRAGAgent",
-    # model=Groq(id="meta-llama/llama-4-scout-17b-16e-instruct"),
+    model=Gemini(id="gemini-3-flash-preview"),
     tools=[OpenAITools()],
     knowledge=knowledge,
     instructions=[

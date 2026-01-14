@@ -1,4 +1,4 @@
-"""🏠 MCP Airbnb Agent - Search for Airbnb listings!
+"""MCP Airbnb Agent - Search for Airbnb listings!
 
 This example shows how to create an agent that uses MCP and Llama 4 to search for Airbnb listings.
 

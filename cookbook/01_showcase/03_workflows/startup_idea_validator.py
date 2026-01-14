@@ -1,34 +1,10 @@
-"""
-🚀 Startup Idea Validator - Your Personal Business Validation Assistant!
+"""Startup Idea Validator - Business Validation Workflow
 
 This workflow helps entrepreneurs validate their startup ideas by:
 1. Clarifying and refining the core business concept
 2. Evaluating originality compared to existing solutions
 3. Defining clear mission and objectives
 4. Conducting comprehensive market research and analysis
-
-Why is this helpful?
---------------------------------------------------------------------------------
-• Get objective feedback on your startup idea before investing resources
-• Understand your total addressable market and target segments
-• Validate assumptions about market opportunity and competition
-• Define clear mission and objectives to guide execution
-
-Who should use this?
---------------------------------------------------------------------------------
-• Entrepreneurs and Startup Founders
-• Product Managers and Business Strategists
-• Innovation Teams
-• Angel Investors and VCs doing initial screening
-
-Example use cases:
---------------------------------------------------------------------------------
-• New product/service validation
-• Market opportunity assessment
-• Competitive analysis
-• Business model validation
-• Target customer segmentation
-• Mission/vision refinement
 
 Quick Start:
 --------------------------------------------------------------------------------
@@ -40,9 +16,6 @@ Quick Start:
 
 3. Run:
    python startup_idea_validator.py
-
-The workflow will guide you through validating your startup idea with AI-powered
-analysis and research. Use the insights to refine your concept and business plan!
 """
 
 import asyncio
@@ -179,13 +152,13 @@ async def startup_validation_execution(
     idea: str = startup_idea
 
     if not idea:
-        return "❌ No startup idea provided"
+        return "ERROR: No startup idea provided"
 
-    print(f"🚀 Starting startup idea validation for: {idea}")
-    print(f"💡 Validation request: {message}")
+    print(f"Starting startup idea validation for: {idea}")
+    print(f"Validation request: {message}")
 
     # Phase 1: Idea Clarification
-    print("\n🎯 PHASE 1: IDEA CLARIFICATION & REFINEMENT")
+    print("\nPHASE 1: IDEA CLARIFICATION & REFINEMENT")
     print("=" * 60)
 
     clarification_prompt = f"""
@@ -202,20 +175,20 @@ async def startup_validation_execution(
     Provide insights on how to strengthen and focus the core concept.
     """
 
-    print("🔍 Analyzing and refining the startup concept...")
+    print("Analyzing and refining the startup concept...")
 
     try:
         clarification_result = await idea_clarifier_agent.arun(clarification_prompt)
         idea_clarification = clarification_result.content
 
-        print("✅ Idea clarification completed")
-        print(f"📝 Mission: {idea_clarification.mission[:100]}...")
+        print("Idea clarification completed")
+        print(f"Mission: {idea_clarification.mission[:100]}...")
 
     except Exception as e:
-        return f"❌ Failed to clarify idea: {str(e)}"
+        return f"ERROR: Failed to clarify idea: {str(e)}"
 
     # Phase 2: Market Research
-    print("\n📊 PHASE 2: MARKET RESEARCH & ANALYSIS")
+    print("\nPHASE 2: MARKET RESEARCH & ANALYSIS")
     print("=" * 60)
 
     market_research_prompt = f"""
@@ -232,20 +205,20 @@ async def startup_validation_execution(
     Use web search to find current market data and trends.
     """
 
-    print("📈 Researching market size and customer segments...")
+    print("Researching market size and customer segments...")
 
     try:
         market_result = await market_research_agent.arun(market_research_prompt)
         market_research = market_result.content
 
-        print("✅ Market research completed")
-        print(f"🎯 TAM: {market_research.total_addressable_market[:100]}...")
+        print("Market research completed")
+        print(f"TAM: {market_research.total_addressable_market[:100]}...")
 
     except Exception as e:
-        return f"❌ Failed to complete market research: {str(e)}"
+        return f"ERROR: Failed to complete market research: {str(e)}"
 
     # Phase 3: Competitor Analysis
-    print("\n🏢 PHASE 3: COMPETITIVE LANDSCAPE ANALYSIS")
+    print("\nPHASE 3: COMPETITIVE LANDSCAPE ANALYSIS")
     print("=" * 60)
 
     competitor_prompt = f"""
@@ -263,20 +236,20 @@ async def startup_validation_execution(
     Use web search to find current competitor information.
     """
 
-    print("🔎 Analyzing competitive landscape...")
+    print("Analyzing competitive landscape...")
 
     try:
         competitor_result = await competitor_analysis_agent.arun(competitor_prompt)
         competitor_analysis = competitor_result.content
 
-        print("✅ Competitor analysis completed")
-        print(f"🏆 Positioning: {competitor_analysis.positioning[:100]}...")
+        print("Competitor analysis completed")
+        print(f"Positioning: {competitor_analysis.positioning[:100]}...")
 
     except Exception as e:
-        return f"❌ Failed to complete competitor analysis: {str(e)}"
+        return f"ERROR: Failed to complete competitor analysis: {str(e)}"
 
     # Phase 4: Final Validation Report
-    print("\n📋 PHASE 4: COMPREHENSIVE VALIDATION REPORT")
+    print("\nPHASE 4: COMPREHENSIVE VALIDATION REPORT")
     print("=" * 60)
 
     report_prompt = f"""
@@ -306,35 +279,37 @@ async def startup_validation_execution(
     6. Specific next steps for the entrepreneur
     """
 
-    print("📝 Generating comprehensive validation report...")
+    print("Generating comprehensive validation report...")
 
     try:
         final_result = await report_agent.arun(report_prompt)
         validation_report = final_result.content
 
-        print("✅ Validation report completed")
+        print("Validation report completed")
 
     except Exception as e:
-        return f"❌ Failed to generate final report: {str(e)}"
+        return f"ERROR: Failed to generate final report: {str(e)}"
 
     # Final summary
     summary = f"""
-    🎉 STARTUP IDEA VALIDATION COMPLETED!
-    📊 Validation Summary:
-    • Startup Idea: {idea}
-    • Idea Clarification: ✅ Completed
-    • Market Research: ✅ Completed
-    • Competitor Analysis: ✅ Completed
-    • Final Report: ✅ Generated
+    STARTUP IDEA VALIDATION COMPLETED
+    =================================
 
-    📈 Key Market Insights:
-    • TAM: {market_research.total_addressable_market[:150]}...
-    • Target Segments: {market_research.target_customer_segments[:150]}...
+    Validation Summary:
+    - Startup Idea: {idea}
+    - Idea Clarification: Completed
+    - Market Research: Completed
+    - Competitor Analysis: Completed
+    - Final Report: Generated
 
-    🏆 Competitive Positioning:
+    Key Market Insights:
+    - TAM: {market_research.total_addressable_market[:150]}...
+    - Target Segments: {market_research.target_customer_segments[:150]}...
+
+    Competitive Positioning:
     {competitor_analysis.positioning[:200]}...
 
-    📋 COMPREHENSIVE VALIDATION REPORT:
+    COMPREHENSIVE VALIDATION REPORT:
 
     ## Executive Summary
     {validation_report.executive_summary}
@@ -354,7 +329,7 @@ async def startup_validation_execution(
     ## Next Steps
     {validation_report.next_steps}
 
-    ⚠️ Disclaimer: This validation is for informational purposes only. Conduct additional due diligence before making investment decisions.
+    Disclaimer: This validation is for informational purposes only. Conduct additional due diligence before making investment decisions.
     """
 
     return summary
@@ -380,11 +355,11 @@ if __name__ == "__main__":
 
         # Get idea from user
         idea = Prompt.ask(
-            "[bold]What is your startup idea?[/bold]\n✨",
+            "[bold]What is your startup idea?[/bold]",
             default="A marketplace for Christmas Ornaments made from leather",
         )
 
-        print("🧪 Testing Startup Idea Validator with New Workflow Structure")
+        print("Testing Startup Idea Validator")
         print("=" * 70)
 
         result = await startup_validation_workflow.arun(
