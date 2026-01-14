@@ -162,6 +162,55 @@ VERSIONS_TABLE_SCHEMA = {
     "updated_at": {"type": String, "nullable": True},
 }
 
+ENTITIES_TABLE_SCHEMA = {
+    "entity_id": {"type": String, "primary_key": True},
+    "entity_type": {"type": String, "nullable": False, "index": True},  # agent|team|workflow
+    "name": {"type": String, "nullable": False, "index": True},
+    "description": {"type": String, "nullable": True},
+    "current_version": {"type": BigInteger, "nullable": True, "index": True},
+    "metadata": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+}
+
+CONFIGS_TABLE_SCHEMA = {
+    "entity_id": {"type": String, "nullable": False},
+    "version": {"type": BigInteger, "nullable": False},
+    "version_label": {"type": String, "nullable": True},  # stable|v1.2.0|pre-refactor
+    "stage": {"type": String, "nullable": False, "default": "draft", "index": True},  # draft|published
+    "config": {"type": JSON, "nullable": False},
+    "notes": {"type": String, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "deleted_at": {"type": BigInteger, "nullable": True},
+    "_unique_constraints": [
+        {
+            "name": "uq_config_entity_version",
+            "columns": ["entity_id", "version"],
+        },
+    ],
+}
+
+ENTITY_REFS_TABLE_SCHEMA = {
+    "parent_entity_id": {"type": String, "nullable": False},
+    "parent_version": {"type": BigInteger, "nullable": False},
+    "ref_kind": {"type": String, "nullable": False, "index": True},
+    "ref_key": {"type": String, "nullable": False},
+    "child_entity_id": {"type": String, "nullable": False},
+    "child_version": {"type": BigInteger, "nullable": True},
+    "position": {"type": BigInteger, "nullable": False},
+    "meta": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": True, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "_unique_constraints": [
+        {
+            "name": "uq_ref_parent_kind_key",
+            "columns": ["parent_entity_id", "parent_version", "ref_kind", "ref_key"],
+        },
+    ],
+}
+
 
 def get_table_schema_definition(table_type: str, traces_table_name: str = "agno_traces") -> dict[str, Any]:
     """
@@ -187,6 +236,9 @@ def get_table_schema_definition(table_type: str, traces_table_name: str = "agno_
         "traces": TRACE_TABLE_SCHEMA,
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
+        "entities": ENTITIES_TABLE_SCHEMA,
+        "configs": CONFIGS_TABLE_SCHEMA,
+        "entity_refs": ENTITY_REFS_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
 

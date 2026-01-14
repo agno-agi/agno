@@ -7277,6 +7277,14 @@ class Agent:
                 except Exception as e:
                     log_error(f"Error reconstructing DB from dictionary: {e}")
                     config["db"] = None
+            elif db_type == "sqlite":
+                try:
+                    from agno.db.sqlite import SqliteDb
+
+                    config["db"] = SqliteDb.from_dict(db_data)
+                except Exception as e:
+                    log_error(f"Error reconstructing DB from dictionary: {e}")
+                    config["db"] = None
             # TODO: Extend support for other DB types and create a db_from_dict method.
 
         # --- Handle Schema reconstruction ---
