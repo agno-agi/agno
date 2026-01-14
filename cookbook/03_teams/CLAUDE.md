@@ -23,7 +23,7 @@ This folder contains **feature documentation** for multi-agent teams - groups of
 
 **Run a cookbook:**
 ```bash
-.venvs/demo/bin/python cookbook/04_teams/<subfolder>/<file>.py
+.venvs/demo/bin/python cookbook/03_teams/<subfolder>/<file>.py
 ```
 
 ---
