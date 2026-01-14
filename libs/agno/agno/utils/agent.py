@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 async def await_for_open_threads(
     memory_task: Optional[Task] = None,
     cultural_knowledge_task: Optional[Task] = None,
+    learning_task: Optional[Task] = None,
 ) -> None:
     if memory_task is not None:
         try:
@@ -43,9 +44,17 @@ async def await_for_open_threads(
         except Exception as e:
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
+    if learning_task is not None:
+        try:
+            await learning_task
+        except Exception as e:
+            log_warning(f"Error in learning extraction: {str(e)}")
+
 
 def wait_for_open_threads(
-    memory_future: Optional[Future] = None, cultural_knowledge_future: Optional[Future] = None
+    memory_future: Optional[Future] = None,
+    cultural_knowledge_future: Optional[Future] = None,
+    learning_future: Optional[Future] = None,
 ) -> None:
     if memory_future is not None:
         try:
@@ -60,11 +69,18 @@ def wait_for_open_threads(
         except Exception as e:
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
+    if learning_future is not None:
+        try:
+            learning_future.result()
+        except Exception as e:
+            log_warning(f"Error in learning extraction: {str(e)}")
+
 
 async def await_for_thread_tasks_stream(
     run_response: Union[RunOutput, TeamRunOutput],
     memory_task: Optional[Task] = None,
     cultural_knowledge_task: Optional[Task] = None,
+    learning_task: Optional[Task] = None,
     stream_events: bool = False,
     events_to_skip: Optional[List[RunEvent]] = None,
     store_events: bool = False,
@@ -111,11 +127,18 @@ async def await_for_thread_tasks_stream(
         except Exception as e:
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
+    if learning_task is not None:
+        try:
+            await learning_task
+        except Exception as e:
+            log_warning(f"Error in learning extraction: {str(e)}")
+
 
 def wait_for_thread_tasks_stream(
     run_response: Union[TeamRunOutput, RunOutput],
     memory_future: Optional[Future] = None,
     cultural_knowledge_future: Optional[Future] = None,
+    learning_future: Optional[Future] = None,
     stream_events: bool = False,
     events_to_skip: Optional[List[RunEvent]] = None,
     store_events: bool = False,
@@ -163,6 +186,12 @@ def wait_for_thread_tasks_stream(
             cultural_knowledge_future.result()
         except Exception as e:
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
+
+    if learning_future is not None:
+        try:
+            learning_future.result()
+        except Exception as e:
+            log_warning(f"Error in learning extraction: {str(e)}")
 
 
 def collect_joint_images(

@@ -1,0 +1,27 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Google ADK and dependencies
+RUN pip install --no-cache-dir \
+    google-adk \
+    a2a-sdk \
+    uvicorn
+
+# Copy the server script
+COPY tests/system/adk_server.py /app/adk_server.py
+
+# Expose port
+EXPOSE 7003
+
+# Health check - ADK servers respond to POST at /
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:7003/ -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"agent/card","id":1}' || exit 1
+
+CMD ["python", "adk_server.py"]

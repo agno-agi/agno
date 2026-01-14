@@ -46,14 +46,27 @@ Server will start on `http://localhost:7778` with:
 Once the server is running, you can run any of the client examples:
 
 ```bash
-# Remote agent examples
+# Remote agent examples (AgentOS protocol)
 python cookbook/agent_os/remote/01_remote_agent.py
 
-# Remote team examples
+# Remote team examples (AgentOS protocol)
 python cookbook/agent_os/remote/02_remote_team.py
 
+# Remote Agno A2A agent examples
+# First start the A2A server:
+python cookbook/agent_os/remote/agno_a2a_server.py
+# Then run the client:
+python cookbook/agent_os/remote/03_remote_agno_a2a_agent.py
+
+# Remote Google ADK agent examples
+# First start the ADK server (requires GOOGLE_API_KEY):
+python cookbook/agent_os/remote/adk_server.py
+# Then run the client:
+python cookbook/agent_os/remote/04_remote_adk_agent.py
+
+
 # AgentOS gateway (combines remote and local agents)
-python cookbook/agent_os/remote/03_agent_os_gateway.py
+python cookbook/agent_os/remote/05_agent_os_gateway.py
 ```
 
 ## Examples
@@ -111,7 +124,67 @@ response = await team.arun(
 print(response.content)
 ```
 
-### AgentOS Gateway (`03_agent_os_gateway.py`)
+
+### Remote Agno A2A Agent (`03_remote_agno_a2a_agent.py`)
+
+Connect to Agno agents exposed via the A2A (Agent-to-Agent) protocol:
+
+```python
+from agno.agent import RemoteAgent
+
+# Connect to remote Agno A2A agent
+agent = RemoteAgent(
+    base_url="http://localhost:7779",
+    agent_id="assistant-agent-2",
+    protocol="a2a",  # Use A2A protocol
+    a2a_protocol="rest",  # Agno A2A servers use REST
+)
+
+# Use it like a local agent
+response = await agent.arun(
+    "What is 15 * 23? Use the calculator tool.",
+    user_id="user-123",
+    session_id="session-456",
+)
+print(response.content)
+```
+
+**Start the A2A server:**
+```bash
+python cookbook/agent_os/remote/agno_a2a_server.py
+```
+
+### Remote Google ADK Agent (`04_remote_adk_agent.py`)
+
+Connect to Google ADK agents exposed via the A2A protocol:
+
+```python
+from agno.agent import RemoteAgent
+
+# Connect to remote Google ADK agent
+agent = RemoteAgent(
+    base_url="http://localhost:7780",
+    agent_id="facts_agent",
+    protocol="a2a",  # Use A2A protocol
+    a2a_protocol="json-rpc",  # Google ADK uses JSON-RPC
+)
+
+# Use it like a local agent
+response = await agent.arun(
+    "Tell me an interesting fact about the solar system",
+    user_id="user-123",
+    session_id="session-456",
+)
+print(response.content)
+```
+
+**Start the ADK server (requires GOOGLE_API_KEY):**
+```bash
+export GOOGLE_API_KEY=your-api-key
+python cookbook/agent_os/remote/adk_server.py
+```
+
+### AgentOS Gateway (`05_agent_os_gateway.py`)
 
 Build a gateway that combines remote and local agents:
 
@@ -148,6 +221,22 @@ Now you have a gateway on port 7777 that orchestrates:
 - Remote agents from port 7778
 - Local workflows defined in the gateway
 - All accessible via a single API
+
+## A2A Protocol Support
+
+Agno supports the A2A (Agent-to-Agent) protocol, enabling cross-framework communication. This allows you to:
+
+- Connect to agents from different frameworks (Agno, Google ADK, etc.)
+- Use a standardized protocol for agent communication
+- Build distributed systems with agents from multiple sources
+
+The `RemoteAgent` class supports two protocols:
+- **`agentos`** (default): Agno's proprietary AgentOS REST API
+- **`a2a`**: A2A protocol for cross-framework communication
+
+For A2A protocol, you can choose between:
+- **`rest`**: REST API (used by Agno A2A servers)
+- **`json-rpc`**: JSON-RPC protocol (used by Google ADK servers)
 
 ## Use Cases
 
