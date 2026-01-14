@@ -21,6 +21,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.remote_content import (
     AzureBlobConfig,
     GitHubConfig,
+    S3Config,
     SharePointConfig,
 )
 from agno.models.openai import OpenAIChat
@@ -38,6 +39,16 @@ vector_db = PgVector(
 )
 
 # Define content source configs (credentials can come from env vars)
+
+s3_docs = S3Config(
+    id="s3-docs",
+    name="S3 Documents",
+    bucket_name=getenv("S3_BUCKET_NAME", "knowledge-testing-docs"),
+    region=getenv("AWS_REGION", "us-east-1"),
+    aws_access_key_id=getenv("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=getenv("AWS_SECRET_ACCESS_KEY"),
+    prefix="",
+)
 
 sharepoint = SharePointConfig(
     id="sharepoint",
@@ -73,7 +84,7 @@ knowledge = Knowledge(
     description="Unified knowledge from multiple sources",
     contents_db=contents_db,
     vector_db=vector_db,
-    content_sources=[sharepoint, github_docs, azure_blob],
+    content_sources=[s3_docs, sharepoint, github_docs, azure_blob],
 )
 
 agent = Agent(
@@ -109,9 +120,22 @@ Once AgentOS is running, use the Knowledge API to upload content from remote sou
 Response:
     {
       "remote_content_sources": [
+        {"id": "s3-docs", "name": "S3 Documents", "type": "s3"},
         {"id": "my-repo", "name": "My Repository", "type": "github"},
         ...
       ]
+    }
+
+## Step 1b: Browse S3 files (S3 only)
+
+    curl -s "http://localhost:7777/v1/knowledge/sources/s3-docs/files" | jq
+
+Response:
+    {
+      "source_id": "s3-docs",
+      "folders": [{"prefix": "reports/", "name": "reports"}],
+      "files": [{"key": "readme.txt", "name": "readme.txt", "size": 1024}],
+      "next_cursor": null
     }
 
 ## Step 2: Upload content
