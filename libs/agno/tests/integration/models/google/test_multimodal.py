@@ -6,7 +6,7 @@ from PIL import Image as PILImage
 
 from agno.agent.agent import Agent
 from agno.db.in_memory import InMemoryDb
-from agno.media import Audio, Image, Video
+from agno.media import Audio, File, Image, Video
 from agno.models.google import Gemini
 
 
@@ -251,3 +251,46 @@ def test_combined_text_and_image_generation():
     assert run_response.images is not None
     assert len(run_response.images) > 0
     assert run_response.images[0].content is not None
+
+
+def test_file_input_bytes():
+    agent = Agent(
+        model=Gemini(id="gemini-2.0-flash-001"),
+        exponential_backoff=True,
+        delay_between_retries=5,
+        markdown=True,
+        telemetry=False,
+    )
+
+    # Create a small text file as bytes
+    file_content = b"This is a test document.\nIt contains some text for the model to analyze."
+
+    response = agent.run(
+        "What does this document say?",
+        files=[File(content=file_content, mime_type="text/plain")],
+    )
+
+    assert response.content is not None
+    assert "test document" in response.content.lower() or "text" in response.content.lower()
+
+
+def test_file_input_with_text_prompt():
+    agent = Agent(
+        model=Gemini(id="gemini-2.0-flash-001"),
+        exponential_backoff=True,
+        delay_between_retries=5,
+        markdown=True,
+        telemetry=False,
+    )
+
+    # Create a PDF-like content (simple text for testing)
+    file_content = b"Project Report\n\nQ1 Revenue: $100,000\nQ2 Revenue: $150,000\nGrowth: 50%"
+
+    response = agent.run(
+        "Summarize the revenue data from this file",
+        files=[File(content=file_content, mime_type="text/plain")],
+    )
+
+    assert response.content is not None
+    # Should be able to read and process the file content
+    assert any(keyword in response.content.lower() for keyword in ["revenue", "100", "150", "growth"])
