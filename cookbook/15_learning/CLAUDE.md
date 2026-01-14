@@ -22,7 +22,7 @@ PostgreSQL with PgVector at localhost:5532
 
 **Test results file:**
 ```
-cookbook/15_learning/TESTING.md
+cookbook/15_learning/TEST_LOG.md
 ```
 
 ---
@@ -49,9 +49,9 @@ Tail output for long tests:
 .venvs/demo/bin/python cookbook/15_learning/01_basics/1a_user_profile_always.py 2>&1 | tail -100
 ```
 
-### 3. Updating TESTING.md
+### 3. Updating TEST_LOG.md
 
-After each test, update `cookbook/15_learning/TESTING.md` with:
+After each test, update `cookbook/15_learning/TEST_LOG.md` with:
 - Test name and path
 - Status: PASS or FAIL
 - Brief description of what was tested
@@ -113,7 +113,7 @@ cookbook/15_learning/
 ├── 06_quick_tests/      # Quick validation tests (async, shorthand, edge cases)
 ├── 07_patterns/         # Combined pattern tests
 ├── 08_custom_stores/    # Custom store implementations
-├── TESTING.md           # Test results log
+├── TEST_LOG.md           # Test results log
 └── CLAUDE.md            # This file
 ```
 
