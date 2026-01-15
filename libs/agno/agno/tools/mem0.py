@@ -6,8 +6,8 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
-    from mem0.client.main import MemoryClient
-    from mem0.memory.main import Memory
+    from mem0.client.main import AsyncMemoryClient, MemoryClient
+    from mem0.memory.main import AsyncMemory, Memory
 except ImportError:
     raise ImportError("`mem0ai` package not found. Please install it with `pip install mem0ai`")
 
@@ -21,6 +21,7 @@ class Mem0Tools(Toolkit):
         org_id: Optional[str] = None,
         project_id: Optional[str] = None,
         infer: bool = True,
+        enable_async: bool = False,
         enable_add_memory: bool = True,
         enable_search_memory: bool = True,
         enable_get_all_memories: bool = True,
@@ -30,21 +31,22 @@ class Mem0Tools(Toolkit):
     ):
         tools: List[Any] = []
         if enable_add_memory or all:
-            tools.append(self.add_memory)
+            tools.append(self.add_memory_async if enable_async else self.add_memory)
         if enable_search_memory or all:
-            tools.append(self.search_memory)
+            tools.append(self.search_memory_async if enable_async else self.search_memory)
         if enable_get_all_memories or all:
-            tools.append(self.get_all_memories)
+            tools.append(self.get_all_memories_async if enable_async else self.get_all_memories)
         if enable_delete_all_memories or all:
-            tools.append(self.delete_all_memories)
+            tools.append(self.delete_all_memories_async if enable_async else self.delete_all_memories)
 
         super().__init__(name="mem0_tools", tools=tools, **kwargs)
         self.api_key = api_key or getenv("MEM0_API_KEY")
         self.user_id = user_id
         self.org_id = org_id or getenv("MEM0_ORG_ID")
         self.project_id = project_id or getenv("MEM0_PROJECT_ID")
-        self.client: Union[Memory, MemoryClient]
+        self.client: Union[Memory, MemoryClient, AsyncMemory, AsyncMemoryClient]
         self.infer = infer
+        self.enable_async = enable_async
 
         try:
             if self.api_key:
@@ -54,13 +56,13 @@ class Mem0Tools(Toolkit):
                     client_kwargs["org_id"] = self.org_id
                 if self.project_id:
                     client_kwargs["project_id"] = self.project_id
-                self.client = MemoryClient(**client_kwargs)
+                self.client = AsyncMemoryClient(**client_kwargs) if self.enable_async else MemoryClient(**client_kwargs)
             elif config is not None:
                 log_debug("Using Mem0 with config.")
-                self.client = Memory.from_config(config)
+                self.client = AsyncMemory.from_config(config) if self.enable_async else Memory.from_config(config)
             else:
                 log_debug("Initializing Mem0 with default settings.")
-                self.client = Memory()
+                self.client = AsyncMemory() if self.enable_async else Memory()
         except Exception as e:
             log_error(f"Failed to initialize Mem0 client: {e}")
             raise ConnectionError("Failed to initialize Mem0 client. Ensure API keys/config are set.") from e
@@ -85,7 +87,7 @@ class Mem0Tools(Toolkit):
 
     def add_memory(
         self,
-        session_state,
+        session_state: Dict[str, Any],
         content: Union[str, Dict[str, str]],
     ) -> str:
         """Add facts to the user's memory.
@@ -119,6 +121,42 @@ class Mem0Tools(Toolkit):
             log_error(f"Error adding memory: {e}")
             return f"Error adding memory: {e}"
 
+    async def add_memory_async(
+        self,
+        session_state: Dict[str, Any],
+        content: Union[str, Dict[str, str]],
+    ) -> str:
+        """Add facts to the user's memory (async version).
+        Args:
+            content(Union[str, Dict[str, str]]): The facts that should be stored.
+            Example:
+                content = "I live in NYC"
+                content = {"Name": "John", "Age": 30, "Location": "New York"}
+        Returns:
+            str: JSON-encoded Mem0 response or an error message.
+        """
+
+        resolved_user_id = self._get_user_id("add_memory_async", session_state=session_state)
+        if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in add_memory_async:"):
+            return resolved_user_id
+        try:
+            if isinstance(content, dict):
+                log_debug("Wrapping dict message into content string")
+                content = json.dumps(content)
+            elif not isinstance(content, str):
+                content = str(content)
+            messages_list = [{"role": "user", "content": content}]
+
+            result = await self.client.add(
+                messages_list,
+                user_id=resolved_user_id,
+                infer=self.infer,
+            )
+            return json.dumps(result)
+        except Exception as e:
+            log_error(f"Error adding memory: {e}")
+            return f"Error adding memory: {e}"
+
     def search_memory(
         self,
         session_state: Dict[str, Any],
@@ -131,6 +169,38 @@ class Mem0Tools(Toolkit):
             return resolved_user_id
         try:
             results = self.client.search(
+                query=query,
+                user_id=resolved_user_id,
+            )
+
+            if isinstance(results, dict) and "results" in results:
+                search_results_list = results.get("results", [])
+            elif isinstance(results, list):
+                search_results_list = results
+            else:
+                log_warning(f"Unexpected return type from mem0.search: {type(results)}. Returning empty list.")
+                search_results_list = []
+
+            return json.dumps(search_results_list)
+        except ValueError as ve:
+            log_error(str(ve))
+            return str(ve)
+        except Exception as e:
+            log_error(f"Error searching memory: {e}")
+            return f"Error searching memory: {e}"
+
+    async def search_memory_async(
+        self,
+        session_state: Dict[str, Any],
+        query: str,
+    ) -> str:
+        """Semantic search for *query* across the user's stored memories (async version)."""
+
+        resolved_user_id = self._get_user_id("search_memory_async", session_state=session_state)
+        if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in search_memory_async:"):
+            return resolved_user_id
+        try:
+            results = await self.client.search(
                 query=query,
                 user_id=resolved_user_id,
             )
@@ -177,6 +247,32 @@ class Mem0Tools(Toolkit):
             log_error(f"Error getting all memories: {e}")
             return f"Error getting all memories: {e}"
 
+    async def get_all_memories_async(self, session_state: Dict[str, Any]) -> str:
+        """Return **all** memories for the current user as a JSON string (async version)."""
+
+        resolved_user_id = self._get_user_id("get_all_memories_async", session_state=session_state)
+        if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in get_all_memories_async:"):
+            return resolved_user_id
+        try:
+            results = await self.client.get_all(
+                user_id=resolved_user_id,
+            )
+
+            if isinstance(results, dict) and "results" in results:
+                memories_list = results.get("results", [])
+            elif isinstance(results, list):
+                memories_list = results
+            else:
+                log_warning(f"Unexpected return type from mem0.get_all: {type(results)}. Returning empty list.")
+                memories_list = []
+            return json.dumps(memories_list)
+        except ValueError as ve:
+            log_error(str(ve))
+            return str(ve)
+        except Exception as e:
+            log_error(f"Error getting all memories: {e}")
+            return f"Error getting all memories: {e}"
+
     def delete_all_memories(self, session_state: Dict[str, Any]) -> str:
         """Delete *all* memories associated with the current user"""
 
@@ -187,6 +283,21 @@ class Mem0Tools(Toolkit):
             return f"Error deleting all memories: {error_msg}"
         try:
             self.client.delete_all(user_id=resolved_user_id)
+            return f"Successfully deleted all memories for user_id: {resolved_user_id}."
+        except Exception as e:
+            log_error(f"Error deleting all memories: {e}")
+            return f"Error deleting all memories: {e}"
+
+    async def delete_all_memories_async(self, session_state: Dict[str, Any]) -> str:
+        """Delete *all* memories associated with the current user (async version)"""
+
+        resolved_user_id = self._get_user_id("delete_all_memories_async", session_state=session_state)
+        if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in delete_all_memories_async:"):
+            error_msg = resolved_user_id
+            log_error(error_msg)
+            return f"Error deleting all memories: {error_msg}"
+        try:
+            await self.client.delete_all(user_id=resolved_user_id)
             return f"Successfully deleted all memories for user_id: {resolved_user_id}."
         except Exception as e:
             log_error(f"Error deleting all memories: {e}")
