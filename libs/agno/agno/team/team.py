@@ -9392,3 +9392,134 @@ class Team:
             )
         except Exception as e:
             log_debug(f"Could not create Team run telemetry event: {e}")
+
+    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> "Team":
+        """Create and return a deep copy of this Team, optionally updating fields.
+
+        This creates a fresh Team instance with isolated mutable state while sharing
+        heavy resources like database connections and models. Member agents are also
+        deep copied to ensure complete isolation.
+
+        Args:
+            update: Optional dictionary of fields to override in the new Team.
+
+        Returns:
+            Team: A new Team instance with copied state.
+        """
+        from dataclasses import fields
+
+        # Extract the fields to set for the new Team
+        fields_for_new_team: Dict[str, Any] = {}
+
+        for f in fields(self):
+            # Skip private fields (not part of __init__ signature)
+            if f.name.startswith("_"):
+                continue
+
+            field_value = getattr(self, f.name)
+            if field_value is not None:
+                try:
+                    fields_for_new_team[f.name] = self._deep_copy_field(f.name, field_value)
+                except Exception as e:
+                    log_warning(f"Failed to deep copy field '{f.name}': {e}. Using original value.")
+                    fields_for_new_team[f.name] = field_value
+
+        # Update fields if provided
+        if update:
+            fields_for_new_team.update(update)
+
+        # Create a new Team
+        try:
+            new_team = self.__class__(**fields_for_new_team)
+            log_debug(f"Created new {self.__class__.__name__}")
+            return new_team
+        except Exception as e:
+            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
+            raise
+
+    def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
+        """Helper method to deep copy a field based on its type."""
+        from copy import copy, deepcopy
+
+        # For members, deep copy each agent/team
+        if field_name == "members" and field_value is not None:
+            copied_members = []
+            for member in field_value:
+                if hasattr(member, "deep_copy"):
+                    copied_members.append(member.deep_copy())
+                else:
+                    copied_members.append(member)
+            return copied_members
+
+        # For tools, share MCP tools but copy others
+        if field_name == "tools" and field_value is not None:
+            try:
+                copied_tools = []
+                for tool in field_value:
+                    try:
+                        # Share MCP tools (they maintain server connections)
+                        is_mcp_tool = hasattr(type(tool), "__mro__") and any(
+                            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                        )
+                        if is_mcp_tool:
+                            copied_tools.append(tool)
+                        else:
+                            try:
+                                copied_tools.append(deepcopy(tool))
+                            except Exception:
+                                # Tool can't be deep copied, share by reference
+                                copied_tools.append(tool)
+                    except Exception:
+                        # MCP detection failed, share tool by reference to be safe
+                        copied_tools.append(tool)
+                return copied_tools
+            except Exception as e:
+                # If entire tools processing fails, log and return original list
+                log_warning(f"Failed to process tools for deep copy: {e}")
+                return field_value
+
+        # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
+        if field_name in (
+            "db",
+            "model",
+            "reasoning_model",
+            "knowledge",
+            "memory_manager",
+            "parser_model",
+            "output_model",
+            "session_summary_manager",
+            "culture_manager",
+            "compression_manager",
+            "learning",
+            "skills",
+        ):
+            return field_value
+
+        # For compound types, attempt a deep copy
+        if isinstance(field_value, (list, dict, set)):
+            try:
+                return deepcopy(field_value)
+            except Exception:
+                try:
+                    return copy(field_value)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
+
+        # For pydantic models, attempt a model_copy
+        if isinstance(field_value, BaseModel):
+            try:
+                return field_value.model_copy(deep=True)
+            except Exception:
+                try:
+                    return field_value.model_copy(deep=False)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
+
+        # For other types, attempt a shallow copy first
+        try:
+            return copy(field_value)
+        except Exception:
+            # If copy fails, return as is
+            return field_value
