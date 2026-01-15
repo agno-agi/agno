@@ -1,8 +1,7 @@
-import hashlib
 import os
 import re
 import tempfile
-from typing import List, Optional, Union
+from typing import List, Union
 
 try:
     from unstructured.chunking.title import chunk_by_title  # type: ignore
@@ -37,23 +36,6 @@ class MarkdownChunking(ChunkingStrategy):
         if isinstance(split_on_headings, int) and not isinstance(split_on_headings, bool):
             if not (1 <= split_on_headings <= 6):
                 raise ValueError("split_on_headings must be between 1 and 6 when using integer value")
-
-    def _generate_chunk_id(self, document: Document, chunk_number: int, content: Optional[str] = None) -> str:
-        """Generate a unique chunk ID.
-
-        Uses document.id or document.name if available, otherwise falls back
-        to a content hash to ensure unique IDs even for documents without
-        explicit identifiers.
-        """
-        if document.id:
-            return f"{document.id}_{chunk_number}"
-        elif document.name:
-            return f"{document.name}_{chunk_number}"
-        else:
-            # Generate a deterministic ID from content hash
-            hash_source = content if content else document.content
-            content_hash = hashlib.md5(hash_source.encode()).hexdigest()[:12]
-            return f"chunk_{content_hash}_{chunk_number}"
 
     def _split_by_headings(self, content: str) -> List[str]:
         """

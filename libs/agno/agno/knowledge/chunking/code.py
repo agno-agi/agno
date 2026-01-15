@@ -1,4 +1,3 @@
-import hashlib
 from typing import Any, Dict, List, Literal, Optional, Union
 
 try:
@@ -63,23 +62,6 @@ class CodeChunking(ChunkingStrategy):
                     f"Please install using `pip install tiktoken`, `pip install transformers`, or `pip install tokenizers`"
                 ) from e
             raise
-
-    def _generate_chunk_id(self, document: Document, chunk_number: int, content: Optional[str] = None) -> str:
-        """Generate a unique chunk ID.
-
-        Uses document.id or document.name if available, otherwise falls back
-        to a content hash to ensure unique IDs even for documents without
-        explicit identifiers.
-        """
-        if document.id:
-            return f"{document.id}_{chunk_number}"
-        elif document.name:
-            return f"{document.name}_{chunk_number}"
-        else:
-            # Generate a deterministic ID from content hash
-            hash_source = content if content else document.content
-            content_hash = hashlib.md5(hash_source.encode()).hexdigest()[:12]
-            return f"chunk_{content_hash}_{chunk_number}"
 
     def chunk(self, document: Document) -> List[Document]:
         """Split document into code chunks using Chonkie."""

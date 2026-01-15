@@ -1,3 +1,4 @@
+import hashlib
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import List, Optional
@@ -11,6 +12,31 @@ class ChunkingStrategy(ABC):
     @abstractmethod
     def chunk(self, document: Document) -> List[Document]:
         raise NotImplementedError
+
+    def _generate_chunk_id(self, document: Document, chunk_number: int, content: Optional[str] = None) -> str:
+        """Generate a unique chunk ID.
+
+        Uses document.id or document.name if available, otherwise falls back
+        to a content hash to ensure unique IDs even for documents without
+        explicit identifiers.
+
+        Args:
+            document: The source document being chunked
+            chunk_number: The 1-based index of this chunk
+            content: Optional content to hash (defaults to document.content)
+
+        Returns:
+            A unique string ID for the chunk
+        """
+        if document.id:
+            return f"{document.id}_{chunk_number}"
+        elif document.name:
+            return f"{document.name}_{chunk_number}"
+        else:
+            # Generate a deterministic ID from content hash
+            hash_source = content if content else document.content
+            content_hash = hashlib.md5(hash_source.encode()).hexdigest()[:12]
+            return f"chunk_{content_hash}_{chunk_number}"
 
     def clean_text(self, text: str) -> str:
         """Clean the text by normalizing whitespace while preserving paragraph structure.
