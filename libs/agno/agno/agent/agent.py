@@ -7438,7 +7438,7 @@ class Agent:
         stage: str = "published",
         label: Optional[str] = None,
         notes: Optional[str] = None,
-    ) -> None:
+    ) -> Optional[int]:
         """
         Save the agent component and config.
 
@@ -7463,13 +7463,15 @@ class Agent:
             )
 
             # Create or update config
-            db_.upsert_config(
+            config = db_.upsert_config(
                 component_id=self.id,
                 config=self.to_dict(),
                 label=label,
                 stage=stage,
                 notes=notes,
             )
+
+            return config.get("version")
 
         except Exception as e:
             log_error(f"Error saving Agent to database: {e}")
@@ -7494,14 +7496,16 @@ class Agent:
         Returns:
             The agent loaded from the database or None if not found.
         """
-        if not db:
-            raise ValueError("Db not initialized or provided")
 
         data = db.get_config(component_id=id, label=label)
         if data is None:
             return None
 
-        agent = cls.from_dict(data["config"] if "config" in data else data)
+        config = data.get("config")
+        if config is None:
+            return None
+
+        agent = cls.from_dict(config)
 
         agent.id = id
         # If your get_config returns the entire configs row, set version:

@@ -193,41 +193,41 @@ class Step:
             executor=executor,
         )
 
-    def get_refs(self, position: int = 0) -> List[Dict[str, Any]]:
-        """Get refs for this step's agent/team.
+    def get_links(self, position: int = 0) -> List[Dict[str, Any]]:
+        """Get links for this step's agent/team.
 
         Args:
             position: Position of this step in the workflow.
 
         Returns:
-            List of ref dictionaries for the refs table.
+            List of link dictionaries for the links table.
         """
-        refs = []
-        ref_key = self.step_id or self.name
+        links = []
+        link_key = self.step_id or self.name
 
         if self.agent is not None:
-            refs.append(
+            links.append(
                 {
-                    "ref_kind": "step_agent",
-                    "ref_key": ref_key,
-                    "child_entity_id": self.agent.id,
+                    "link_kind": "step_agent",
+                    "link_key": link_key,
+                    "child_component_id": self.agent.id,
                     "child_version": None,
                     "position": position,
                 }
             )
 
         if self.team is not None:
-            refs.append(
+            links.append(
                 {
-                    "ref_kind": "step_team",
-                    "ref_key": ref_key,
-                    "child_entity_id": self.team.id,
+                    "link_kind": "step_team",
+                    "link_key": link_key,
+                    "child_component_id": self.team.id,
                     "child_version": None,
                     "position": position,
                 }
             )
 
-        return refs
+        return links
 
     @property
     def executor_name(self) -> str:

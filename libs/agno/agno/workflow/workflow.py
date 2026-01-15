@@ -257,32 +257,60 @@ class Workflow:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert workflow to a dictionary representation."""
-        config = {
-            "name": self.name,
-            "id": self.id,
-            "description": self.description,
-            "session_id": self.session_id,
-            "user_id": self.user_id,
-            "session_state": self.session_state,
-            "overwrite_db_session_state": self.overwrite_db_session_state,
-            "debug_mode": self.debug_mode,
-            "stream": self.stream,
-            "stream_events": self.stream_events,
-            "stream_executor_events": self.stream_executor_events,
-            "store_events": self.store_events,
-            "store_executor_outputs": self.store_executor_outputs,
-            "input_schema": self.input_schema.__name__ if self.input_schema else None,
-            "metadata": self.metadata,
-            "telemetry": self.telemetry,
-            "add_workflow_history_to_steps": self.add_workflow_history_to_steps,
-            "num_history_runs": self.num_history_runs,
-        }
+        config: Dict[str, Any] = {}
+
+        # --- Workflow settings ---
+        if self.name is not None:
+            config["name"] = self.name
+        if self.id is not None:
+            config["id"] = self.id
+        if self.description is not None:
+            config["description"] = self.description
+
+        # --- User settings ---
+        if self.user_id is not None:
+            config["user_id"] = self.user_id
+
+        # --- Session settings ---
+        if self.session_id is not None:
+            config["session_id"] = self.session_id
+        if self.session_state is not None:
+            config["session_state"] = self.session_state
+        config["overwrite_db_session_state"] = self.overwrite_db_session_state
 
         # --- Database settings ---
         if self.db is not None:
             config["db"] = self.db.to_dict()
 
-        # Handle steps serialization
+        # --- History settings ---
+        config["add_workflow_history_to_steps"] = self.add_workflow_history_to_steps
+        config["num_history_runs"] = self.num_history_runs
+
+        # --- Streaming settings ---
+        if self.stream is not None:
+            config["stream"] = self.stream
+        config["stream_events"] = self.stream_events
+        config["stream_executor_events"] = self.stream_executor_events
+        config["store_events"] = self.store_events
+        config["store_executor_outputs"] = self.store_executor_outputs
+
+        # --- Schema settings ---
+        # TODO: implement input_schema serialization
+        # if self.input_schema is not None:
+        #     if isinstance(self.input_schema, type) and issubclass(self.input_schema, BaseModel):
+        #         config["input_schema"] = self.input_schema.__name__
+        #     elif isinstance(self.input_schema, dict):
+        #         config["input_schema"] = self.input_schema
+
+        # --- Metadata ---
+        if self.metadata is not None:
+            config["metadata"] = self.metadata
+
+        # --- Debug and telemetry settings ---
+        config["debug_mode"] = self.debug_mode
+        config["telemetry"] = self.telemetry
+
+        # --- Steps ---
         # TODO: Implement steps serialization for step types other than Step
         if self.steps and isinstance(self.steps, list):
             config["steps"] = [step.to_dict() for step in self.steps]
@@ -315,41 +343,60 @@ class Workflow:
         if "db" in config and isinstance(config["db"], dict):
             db_data = config["db"]
             db_type = db_data.get("type")
-
             if db_type == "postgres":
                 try:
                     from agno.db.postgres import PostgresDb
-
                     config["db"] = PostgresDb.from_dict(db_data)
                 except Exception as e:
                     log_error(f"Error reconstructing DB from dictionary: {e}")
-                    config["db"] = None
-            # TODO: Extend support for other DB types and create a db_from_dict method.
+                    del config["db"]
+            else:
+                del config["db"]
 
+        # --- Handle Schema reconstruction ---
+        # TODO: implement input_schema deserialization
+        # if "input_schema" in config and isinstance(config["input_schema"], str):
+        #     if registry and config["input_schema"] in registry.schemas:
+        #         config["input_schema"] = registry.schemas[config["input_schema"]]
+        #     else:
+        #         del config["input_schema"]
+
+        # --- Handle steps reconstruction ---
         steps = None
-
-        # Handle steps reconstruction
         if "steps" in config and config["steps"]:
             steps = [Step.from_dict(step_data, db=db, refs=refs, registry=registry) for step_data in config["steps"]]
+            del config["steps"]
 
         return cls(
+            # --- Workflow settings ---
             name=config.get("name"),
             id=config.get("id"),
             description=config.get("description"),
-            session_id=config.get("session_id"),
+            # --- User settings ---
             user_id=config.get("user_id"),
+            # --- Session settings ---
+            session_id=config.get("session_id"),
             session_state=config.get("session_state"),
             overwrite_db_session_state=config.get("overwrite_db_session_state", False),
-            debug_mode=config.get("debug_mode", False),
+            # --- Database settings ---
+            db=config.get("db"),
+            # --- History settings ---
+            add_workflow_history_to_steps=config.get("add_workflow_history_to_steps", False),
+            num_history_runs=config.get("num_history_runs", 3),
+            # --- Streaming settings ---
             stream=config.get("stream"),
             stream_events=config.get("stream_events", False),
             stream_executor_events=config.get("stream_executor_events", True),
             store_events=config.get("store_events", False),
             store_executor_outputs=config.get("store_executor_outputs", True),
+            # --- Schema settings ---
+            # input_schema=config.get("input_schema"),  # TODO
+            # --- Metadata ---
             metadata=config.get("metadata"),
+            # --- Debug and telemetry settings ---
+            debug_mode=config.get("debug_mode", False),
             telemetry=config.get("telemetry", True),
-            add_workflow_history_to_steps=config.get("add_workflow_history_to_steps", False),
-            num_history_runs=config.get("num_history_runs", 3),
+            # --- Steps ---
             steps=steps,
         )
 
@@ -360,11 +407,8 @@ class Workflow:
         stage: str = "published",
         label: Optional[str] = None,
         notes: Optional[str] = None,
-        set_current: bool = True,
-        publish: bool = False,
-        upsert_version: bool = False,
-    ) -> int:
-        """Save workflow with steps as refs."""
+    ) -> Optional[int]:
+        """Save workflow with steps as links."""
         db_ = db or self.db
         if not db_:
             raise ValueError("Db not initialized or provided")
@@ -373,58 +417,120 @@ class Workflow:
         saved_versions: Dict[str, int] = {}
 
         # Collect all refs
-        all_refs = []
+        all_links = []
         steps_config = []
 
-        for position, step in enumerate(self.steps or []):
-            if isinstance(step, Step):
-                # Save agent/team if present and capture version
-                if step.agent and isinstance(step.agent, Agent):
-                    agent_version = step.agent.save(
-                        db=db_,
-                        stage=stage,
-                        label=label,
-                        notes=notes,
-                        set_current=set_current,
-                        publish=publish,
-                        upsert_version=upsert_version,
-                    )
-                    saved_versions[step.agent.id] = agent_version
+        try:
 
-                # TODO: Implement team saving
-                # if step.team and isinstance(step.team, Team):
-                #     team_version = step.team.save(...)
-                #     saved_versions[step.team.id] = team_version
+            for position, step in enumerate(self.steps or []):
+                if isinstance(step, Step):
+                    # TODO: Allow not saving a new config if the agent/team already has a published config and no changes have been made
+                    # Save agent/team if present and capture version
+                    if step.agent and isinstance(step.agent, Agent):
+                        agent_version = step.agent.save(
+                            db=db_,
+                            stage=stage,
+                            label=label,
+                            notes=notes,
+                        )
+                        saved_versions[step.agent.id] = agent_version
 
-                # Add step config
-                steps_config.append(step.to_dict())
+                    # TODO: Implement team saving
+                    # if step.team and isinstance(step.team, Team):
+                    #     team_version = step.team.save(...)
+                    #     saved_versions[step.team.id] = team_version
 
-                # Add refs with position and pinned version
-                for ref in step.get_refs(position=position):
-                    # Pin the version if we just saved it
-                    if ref["child_entity_id"] in saved_versions:
-                        ref["child_version"] = saved_versions[ref["child_entity_id"]]
-                    all_refs.append(ref)
+                    # Add step config
+                    steps_config.append(step.to_dict())
 
-        # Save workflow entity + config + refs
-        db_.upsert_entity(
-            entity_id=self.id,
-            entity_type=ComponentType.WORKFLOW,
-            name=self.name,
-            description=self.description,
-            metadata=self.metadata,
-        )
-        config = db_.upsert_config(
-            entity_id=self.id,
-            config=self.to_dict(),
-            refs=all_refs,
-            version_label=label,
-            stage="published" if publish else stage,
-            notes=notes,
-            set_current=set_current,
-        )
+                    # Add refs with position and pinned version
+                    for link in step.get_links(position=position):
+                        # Pin the version if we just saved it
+                        if link["child_component_id"] in saved_versions:
+                            link["child_version"] = saved_versions[link["child_component_id"]]
+                        all_links.append(link)
 
-        return config["version"]
+            # Save workflow component + config + links
+            db_.upsert_component(
+                component_id=self.id,
+                component_type=ComponentType.WORKFLOW,
+                name=self.name,
+                description=self.description,
+                metadata=self.metadata,
+            )
+            config = db_.upsert_config(
+                component_id=self.id,
+                config=self.to_dict(),
+                links=all_links,
+                label=label,
+                stage=stage,
+                notes=notes,
+            )
+
+            return config.get("version")
+
+        except Exception as e:
+            log_error(f"Error saving workflow: {e}")
+            return None
+
+    @classmethod
+    def load(
+        cls,
+        id: str,
+        *,
+        db: "BaseDb",
+        label: Optional[str] = None,
+    ) -> Optional["Workflow"]:
+        """
+        Load a workflow by id.
+
+        Args:
+            id: The id of the workflow to load.
+            db: The database to load the workflow from.
+            label: The label of the workflow to load.
+
+        Returns:
+            The workflow loaded from the database or None if not found.
+        """
+
+        data: Optional[Dict[str, Any]] = db.get_config(component_id=id, label=label)
+        if data is None:
+            return None
+
+        config = data.get("config") 
+        if config is None:
+            return None
+
+        workflow = cls.from_dict(config)
+
+        workflow.id = id
+        # If your get_config returns the entire configs row, set version:
+        if isinstance(data, dict) and "version" in data:
+            workflow.version = int(data["version"])
+        workflow.db = db
+        return workflow
+
+    def delete(
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        hard_delete: bool = False,
+    ) -> bool:
+        """
+        Delete the workflow component.
+
+        Args:
+            db: The database to delete the workflow from.
+            hard_delete: Whether to hard delete the workflow.
+
+        Returns:
+            True if the workflow was deleted, False otherwise.
+        """
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+
+        return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
 
     def set_id(self) -> None:
         if self.id is None:
@@ -4644,7 +4750,7 @@ def get_workflow_by_id(
         resolved_version = row.get("version")
 
         # Get refs for this workflow version
-        refs = db.get_refs(entity_id=id, version=resolved_version) if resolved_version else []
+        refs = db.get_links(entity_id=id, version=resolved_version) if resolved_version else []
 
         workflow = Workflow.from_dict(cfg, db=db, refs=refs, registry=registry)
 

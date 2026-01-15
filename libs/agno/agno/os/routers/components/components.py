@@ -1,5 +1,6 @@
 import logging
 import time
+from token import OP
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
@@ -50,7 +51,7 @@ def get_components_router(
     return attach_routes(router=router, os_db=os_db)
 
 
-def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRouter:
+def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb], registry: Optional[Registry] = None) -> APIRouter:
     @router.get(
         "/components",
         response_model=PaginatedResponse[ComponentResponse],
@@ -110,13 +111,36 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRo
 
             # TODO: Create links from config
             # TODO: Use DB from registry
+
+            # Prepare config - ensure it's a dict
+            config = body.config or {}
+
+            db_dict: Dict[str, Any] = {}
+            try:
+                component_db = config.get("db")
+                if component_db is not None:
+                    component_db_id = component_db.get("id")
+                    if component_db_id is not None and component_db_id == os_db.id:
+                        db_dict = os_db.to_dict()
+                    else:
+                        if registry.dbs is not None and len(registry.dbs) > 0:
+                            for db in registry.dbs:
+                                if db.id == component_db_id:
+                                    db_dict = db.to_dict()
+                                    break
+            except Exception as e:
+                log_error(f"Error getting OS Database: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+            config["db"] = db_dict
+
             component, _config = os_db.create_component_with_config(
                 component_id=component_id,
                 component_type=body.component_type,
                 name=body.name,
                 description=body.description,
                 metadata=body.metadata,
-                config=body.config or {},
+                config=config,
                 label=body.label,
                 stage=body.stage or "draft",
                 notes=body.notes,
