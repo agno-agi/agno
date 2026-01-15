@@ -143,7 +143,7 @@ agent_os = AgentOS(
     workflows=[qa_workflow],
     knowledge=[knowledge],
     tracing=True,
-    tracing_db=db,
+    db=db,
 )
 
 # FastAPI app instance (for uvicorn)
