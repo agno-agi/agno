@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from agno.os.managers import WebSocketHandler
 
 from agno.agent.agent import Agent
-from agno.db.base import AsyncBaseDb, BaseDb, PrimitiveType, SessionType
+from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
@@ -409,7 +409,7 @@ class Workflow:
         # Save workflow entity + config + refs
         db_.upsert_entity(
             entity_id=self.id,
-            entity_type=PrimitiveType.WORKFLOW,
+            entity_type=ComponentType.WORKFLOW,
             name=self.name,
             description=self.description,
             metadata=self.metadata,
@@ -4676,7 +4676,7 @@ def get_workflows(
     """Get all workflows from the database"""
     workflows: List[Workflow] = []
     try:
-        entities = db.list_entities(entity_type=PrimitiveType.WORKFLOW)
+        entities = db.list_entities(entity_type=ComponentType.WORKFLOW)
         for entity in entities:
             config = db.get_config(entity_id=entity["entity_id"])
             if config is not None:

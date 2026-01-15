@@ -10,11 +10,9 @@ from agno.os.schema import (
     BadRequestResponse,
     ComponentCreate,
     ComponentResponse,
-    ComponentType,
     ComponentUpdate,
     ConfigCreate,
     ConfigResponse,
-    ConfigUpdate,
     InternalServerErrorResponse,
     NotFoundResponse,
     PaginatedResponse,
@@ -24,6 +22,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.registry import Registry
+from agno.remote.base import RemoteDb
 from agno.utils.log import log_error
 from agno.utils.string import generate_id_from_name
 
@@ -31,9 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_components_router(
-    os_db: Union[BaseDb, AsyncBaseDb],
-    settings: AgnoAPISettings = AgnoAPISettings(),
-    registry: Optional[Registry] = None,
+    os_db: Union[BaseDb, AsyncBaseDb, RemoteDb], registry: Registry, settings: AgnoAPISettings = AgnoAPISettings()
 ) -> APIRouter:
     """Create components router."""
     router = APIRouter(
@@ -47,10 +44,10 @@ def get_components_router(
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
         },
     )
-    return attach_routes(router=router, os_db=os_db)
+    return attach_routes(router=router, os_db=os_db, registry=registry)
 
 
-def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRouter:
+def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb, RemoteDb], registry: Registry) -> APIRouter:
     @router.get(
         "/components",
         response_model=PaginatedResponse[ComponentResponse],
@@ -61,24 +58,23 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRo
         description="Retrieve a paginated list of components with optional filtering by type.",
     )
     async def list_components(
-        component_type: Optional[ComponentType] = Query(None, description="Filter by type: agent, team, workflow"),
+        request: Request,
+        component_type: Optional[str] = Query(None, description="Filter by type: agent, team, workflow"),
         page: int = Query(1, ge=1, description="Page number"),
         limit: int = Query(20, ge=1, le=100, description="Items per page"),
+        db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> PaginatedResponse[ComponentResponse]:
         try:
             start_time_ms = time.time() * 1000
-            offset = (page - 1) * limit
+            components = os_db.list_components(component_type=component_type)
 
-            components, total_count = os_db.list_components(
-                component_type=component_type,
-                limit=limit,
-                offset=offset,
-            )
-
+            total_count = len(components)
             total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
+            start_idx = (page - 1) * limit
+            paginated = components[start_idx : start_idx + limit]
 
             return PaginatedResponse(
-                data=[ComponentResponse(**c) for c in components],
+                data=[ComponentResponse(**c) for c in paginated],
                 meta=PaginationInfo(
                     page=page,
                     limit=limit,
@@ -89,7 +85,7 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRo
             )
         except Exception as e:
             log_error(f"Error listing components: {e}")
-            raise HTTPException(status_code=500, detail="Internal server error")
+            raise HTTPException(status_code=500, detail=str(e))
 
     @router.post(
         "/components",
@@ -98,36 +94,62 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRo
         status_code=201,
         operation_id="create_component",
         summary="Create Component",
-        description="Create a new component (agent, team, or workflow) with initial config.",
+        description="Create a new component (agent, team, or workflow).",
     )
     async def create_component(
+        request: Request,
         body: ComponentCreate,
+        db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> ComponentResponse:
         try:
+            # Auto-generate component_id if not provided
             component_id = body.component_id
             if component_id is None:
                 component_id = generate_id_from_name(body.name)
 
-            # TODO: Create links from config
-            # TODO: Use DB from registry
-            component, _config = os_db.create_component_with_config(
+            component = os_db.upsert_component(
                 component_id=component_id,
                 component_type=body.component_type,
                 name=body.name,
                 description=body.description,
                 metadata=body.metadata,
-                config=body.config or {},
-                label=body.label,
-                stage=body.stage or "draft",
-                notes=body.notes,
             )
 
+            # Prepare config - ensure it's a dict
+            config = body.config or {}
+
+            db_dict: Dict[str, Any] = {}
+            try:
+                component_db = config.get("db")
+                if component_db is not None:
+                    component_db_id = component_db.get("id")
+                    if component_db_id is not None and component_db_id == db_id:
+                        db_dict = os_db.to_dict()
+                    else:
+                        if registry.dbs is not None and len(registry.dbs) > 0:
+                            for db in registry.dbs:
+                                if db.id == component_db_id:
+                                    db_dict = db.to_dict()
+                                    break
+            except Exception as e:
+                log_error(f"Error getting OS Database: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+            config["db"] = db_dict
+
+            # Create the initial config
+            os_db.upsert_config(
+                component_id=component_id,
+                config=config,
+                label=body.label,
+                stage=body.stage,
+                notes=body.notes,
+                set_current=body.set_current,
+            )
             return ComponentResponse(**component)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             log_error(f"Error creating component: {e}")
-            raise HTTPException(status_code=500, detail="Internal server error")
+            raise HTTPException(status_code=500, detail=str(e))
 
     @router.get(
         "/components/{component_id}",
@@ -139,7 +161,9 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRo
         description="Retrieve a component by ID.",
     )
     async def get_component(
+        request: Request,
         component_id: str = Path(description="Component ID"),
+        db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> ComponentResponse:
         try:
             component = os_db.get_component(component_id)
@@ -150,7 +174,7 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRo
             raise
         except Exception as e:
             log_error(f"Error getting component: {e}")
-            raise HTTPException(status_code=500, detail="Internal server error")
+            raise HTTPException(status_code=500, detail=str(e))
 
     @router.patch(
         "/components/{component_id}",
@@ -162,14 +186,18 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRo
         description="Partially update a component by ID.",
     )
     async def update_component(
+        request: Request,
         component_id: str = Path(description="Component ID"),
         body: ComponentUpdate = Body(description="Component fields to update"),
+        db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> ComponentResponse:
         try:
+            # First check if component exists
             existing = os_db.get_component(component_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
 
+            # Build update kwargs from provided fields only
             update_kwargs: Dict[str, Any] = {"component_id": component_id}
             if body.name is not None:
                 update_kwargs["name"] = body.name
@@ -184,11 +212,9 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRo
             return ComponentResponse(**component)
         except HTTPException:
             raise
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             log_error(f"Error updating component: {e}")
-            raise HTTPException(status_code=500, detail="Internal server error")
+            raise HTTPException(status_code=500, detail=str(e))
 
     @router.delete(
         "/components/{component_id}",
@@ -198,7 +224,9 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRo
         description="Delete a component by ID.",
     )
     async def delete_component(
+        request: Request,
         component_id: str = Path(description="Component ID"),
+        db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> None:
         try:
             deleted = os_db.delete_component(component_id)
@@ -208,7 +236,7 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRo
             raise
         except Exception as e:
             log_error(f"Error deleting component: {e}")
-            raise HTTPException(status_code=500, detail="Internal server error")
+            raise HTTPException(status_code=500, detail=str(e))
 
     @router.get(
         "/components/{component_id}/configs",
@@ -221,14 +249,14 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRo
     )
     async def list_configs(
         component_id: str = Path(description="Component ID"),
-        include_config: bool = Query(True, description="Include full config blob"),
+        db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> List[ConfigResponse]:
         try:
-            configs = os_db.list_configs(component_id, include_config=include_config)
+            configs = os_db.list_config_versions(component_id)
             return [ConfigResponse(**c) for c in configs]
         except Exception as e:
             log_error(f"Error listing configs: {e}")
-            raise HTTPException(status_code=500, detail="Internal server error")
+            raise HTTPException(status_code=500, detail=str(e))
 
     @router.post(
         "/components/{component_id}/configs",
@@ -237,59 +265,36 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRo
         status_code=201,
         operation_id="create_config",
         summary="Create Config Version",
-        description="Create a new config version for a component.",
+        description="Create a new config version for a component. Set upsert_version=true to update the current version instead of creating a new one.",
     )
     async def create_config(
         component_id: str = Path(description="Component ID"),
         body: ConfigCreate = Body(description="Config data"),
+        db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> ConfigResponse:
         try:
+            # Determine version to update (if overwriting)
+            version_to_update = None
+            if body.upsert_version:
+                component = os_db.get_component(component_id)
+                if component and component.get("current_version"):
+                    version_to_update = component["current_version"]
+
             config = os_db.upsert_config(
                 component_id=component_id,
-                version=None,  # Always create new
+                version=version_to_update,
                 config=body.config,
                 label=body.label,
                 stage=body.stage,
                 notes=body.notes,
-                links=body.links,
+                set_current=body.set_current,
             )
             return ConfigResponse(**config)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             log_error(f"Error creating config: {e}")
-            raise HTTPException(status_code=500, detail="Internal server error")
-
-    @router.patch(
-        "/components/{component_id}/configs/{version}",
-        response_model=ConfigResponse,
-        response_model_exclude_none=True,
-        status_code=200,
-        operation_id="update_config",
-        summary="Update Draft Config",
-        description="Update an existing draft config. Cannot update published configs.",
-    )
-    async def update_config(
-        component_id: str = Path(description="Component ID"),
-        version: int = Path(description="Version number"),
-        body: ConfigUpdate = Body(description="Config fields to update"),
-    ) -> ConfigResponse:
-        try:
-            config = os_db.upsert_config(
-                component_id=component_id,
-                version=version,  # Always update existing
-                config=body.config,
-                label=body.label,
-                stage=body.stage,
-                notes=body.notes,
-                links=body.links,
-            )
-            return ConfigResponse(**config)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            log_error(f"Error updating config: {e}")
-            raise HTTPException(status_code=500, detail="Internal server error")
+            raise HTTPException(status_code=500, detail=str(e))
 
     @router.get(
         "/components/{component_id}/configs/current",
@@ -302,17 +307,18 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRo
     )
     async def get_current_config(
         component_id: str = Path(description="Component ID"),
+        db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> ConfigResponse:
         try:
             config = os_db.get_config(component_id)
             if config is None:
-                raise HTTPException(status_code=404, detail=f"No current config for {component_id}")
+                raise HTTPException(status_code=404, detail=f"No config found for {component_id}")
             return ConfigResponse(**config)
         except HTTPException:
             raise
         except Exception as e:
             log_error(f"Error getting config: {e}")
-            raise HTTPException(status_code=500, detail="Internal server error")
+            raise HTTPException(status_code=500, detail=str(e))
 
     @router.get(
         "/components/{component_id}/configs/{version}",
@@ -321,14 +327,18 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRo
         status_code=200,
         operation_id="get_config",
         summary="Get Config Version",
-        description="Get a specific config version by number.",
+        description="Get a specific config version by number or label.",
     )
-    async def get_config_version(
+    async def get_component_config(
         component_id: str = Path(description="Component ID"),
-        version: int = Path(description="Version number"),
+        version: str = Path(description="Version number or label"),
+        db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> ConfigResponse:
         try:
-            config = os_db.get_config(component_id, version=version)
+            try:
+                config = os_db.get_config(component_id, version=int(version))
+            except ValueError:
+                config = os_db.get_config(component_id, label=version)
 
             if config is None:
                 raise HTTPException(status_code=404, detail=f"Config {component_id} v{version} not found")
@@ -337,31 +347,44 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRo
             raise
         except Exception as e:
             log_error(f"Error getting config: {e}")
-            raise HTTPException(status_code=500, detail="Internal server error")
+            raise HTTPException(status_code=500, detail=str(e))
 
     @router.delete(
         "/components/{component_id}/configs/{version}",
         status_code=204,
         operation_id="delete_config",
         summary="Delete Config Version",
-        description="Delete a specific draft config version. Cannot delete published or current configs.",
+        description="Delete a specific config version. Cannot delete the current version.",
     )
-    async def delete_config_version(
+    async def delete_component_config(
         component_id: str = Path(description="Component ID"),
-        version: int = Path(description="Version number"),
+        version: str = Path(description="Version number or label"),
+        db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> None:
         try:
-            # Resolve version number
-            deleted = os_db.delete_config(component_id, version=version)
+            # Get the version number
+            try:
+                version_num = int(version)
+            except ValueError:
+                # It's a label, need to look up the version number
+                config = os_db.get_config(component_id, label=version)
+                if config is None:
+                    raise HTTPException(status_code=404, detail=f"Config {component_id} v{version} not found")
+                version_num = config.get("version")
+
+            # Check if this is the current version
+            component = os_db.get_component(component_id)
+            if component and component.get("current_version") == version_num:
+                raise HTTPException(status_code=400, detail="Cannot delete the current config version")
+
+            deleted = os_db.delete_config(component_id, version=version_num)
             if not deleted:
                 raise HTTPException(status_code=404, detail=f"Config {component_id} v{version} not found")
         except HTTPException:
             raise
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             log_error(f"Error deleting config: {e}")
-            raise HTTPException(status_code=500, detail="Internal server error")
+            raise HTTPException(status_code=500, detail=str(e))
 
     @router.post(
         "/components/{component_id}/configs/{version}/set-current",
@@ -370,31 +393,39 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb]) -> APIRo
         status_code=200,
         operation_id="set_current_config",
         summary="Set Current Config Version",
-        description="Set a published config version as current (for rollback).",
+        description="Set a specific config version as the current version (rollback/promote).",
     )
     async def set_current_config(
         component_id: str = Path(description="Component ID"),
-        version: int = Path(description="Version number"),
+        version: str = Path(description="Version number or label"),
+        db_id: Optional[str] = Query(None, description="Database ID"),
     ) -> ComponentResponse:
         try:
-            success = os_db.set_current_version(component_id, version=version)
-            if not success:
-                raise HTTPException(
-                    status_code=404, detail=f"Component {component_id} or config version {version} not found"
-                )
+            # Get the version number
+            try:
+                version_num = int(version)
+            except ValueError:
+                # It's a label, need to look up the version number
+                config = os_db.get_config(component_id, label=version)
+                if config is None:
+                    raise HTTPException(status_code=404, detail=f"Config {component_id} v{version} not found")
+                version_num = config.get("version")
 
-            # Fetch and return updated component
-            component = os_db.get_component(component_id)
+            # Verify the config exists
+            config = os_db.get_config(component_id, version=version_num)
+            if config is None:
+                raise HTTPException(status_code=404, detail=f"Config {component_id} v{version} not found")
+
+            # Update the component's current version
+            component = os_db.set_current_config(component_id, version=version_num)
             if component is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
 
             return ComponentResponse(**component)
         except HTTPException:
             raise
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             log_error(f"Error setting current config: {e}")
-            raise HTTPException(status_code=500, detail="Internal server error")
+            raise HTTPException(status_code=500, detail=str(e))
 
     return router

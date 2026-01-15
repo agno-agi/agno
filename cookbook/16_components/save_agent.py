@@ -10,7 +10,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 agent = Agent(
     id="agno-agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5-mini"),
     name="Agno Agent",
     db=db,
 )
