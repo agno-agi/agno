@@ -29,17 +29,17 @@ pip install -U agno portkey-ai
 - Streaming on
 
 ```shell
-python cookbook/models/portkey/basic_stream.py
+python cookbook/92_models/portkey/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/portkey/basic.py
+python cookbook/92_models/portkey/basic.py
 ```
 
 ### 5. Run Agent with Tools
 
 ```shell
-python cookbook/models/portkey/tool_use.py
+python cookbook/92_models/portkey/tool_use.py
 ```

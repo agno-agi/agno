@@ -32,13 +32,13 @@ pip install -U agno openai
 - Streaming on
 
 ```shell
-python cookbook/models/meta/llama/basic_stream.py
+python cookbook/92_models/meta/llama/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/meta/llama/basic.py
+python cookbook/92_models/meta/llama/basic.py
 ```
 
 ### 5. Run an Agent with Tools
@@ -48,11 +48,11 @@ python cookbook/models/meta/llama/basic.py
 - Streaming on
 
 ```shell
-python cookbook/models/meta/llama/tool_use_stream.py
+python cookbook/92_models/meta/llama/tool_use_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/meta/llama/tool_use.py
+python cookbook/92_models/meta/llama/tool_use.py
 ```

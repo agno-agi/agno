@@ -36,7 +36,7 @@ litellm --model claude-3-sonnet-20240229 --host 127.0.0.1 --port 4000
 - Streaming on
 
 ```shell
-python cookbook/models/litellm_proxy/basic_stream.py
+python cookbook/92_models/litellm_proxy/basic_stream.py
 ```
 
 ### 6. Run Agent with Tools
@@ -44,5 +44,5 @@ python cookbook/models/litellm_proxy/basic_stream.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/models/litellm_proxy/tool_use.py
+python cookbook/92_models/litellm_proxy/tool_use.py
 ```

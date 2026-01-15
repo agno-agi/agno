@@ -26,42 +26,42 @@ pip install -U together openai ddgs duckdb yfinance agno
 - Streaming on
 
 ```shell
-python cookbook/models/together/basic_stream.py
+python cookbook/92_models/together/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/together/basic.py
+python cookbook/92_models/together/basic.py
 ```
 
 ### 5. Run Agent with Tools
 
 - DuckDuckGo Search
 ```shell
-python cookbook/models/together/tool_use.py
+python cookbook/92_models/together/tool_use.py
 ```
 
 ### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/models/together/structured_output.py
+python cookbook/92_models/together/structured_output.py
 ```
 
 ### 7. Run Agent with Image URL Input
 
 ```shell
-python cookbook/models/together/image_agent.py
+python cookbook/92_models/together/image_agent.py
 ```
 
 ### 8. Run Agent with Image Input
 
 ```shell
-python cookbook/models/together/image_agent_bytes.py
+python cookbook/92_models/together/image_agent_bytes.py
 ```
 
 ### 9. Run Agent with Image Input and Memory
 
 ```shell
-python cookbook/models/together/image_agent_with_memory.py
+python cookbook/92_models/together/image_agent_with_memory.py
 ```

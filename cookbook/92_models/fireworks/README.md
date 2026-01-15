@@ -26,13 +26,13 @@ pip install -U openai ddgs duckdb yfinance agno
 - Streaming on
 
 ```shell
-python cookbook/models/fireworks/basic_stream.py
+python cookbook/92_models/fireworks/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/fireworks/basic.py
+python cookbook/92_models/fireworks/basic.py
 ```
 
 ### 5. Run Agent with Tools
@@ -40,14 +40,14 @@ python cookbook/models/fireworks/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/models/fireworks/tool_use.py
+python cookbook/92_models/fireworks/tool_use.py
 ```
 
 
 ### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/models/fireworks/structured_output.py
+python cookbook/92_models/fireworks/structured_output.py
 ```
 
 

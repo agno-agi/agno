@@ -26,13 +26,13 @@ pip install -U groq ddgs duckdb yfinance agno
 - Streaming on
 
 ```shell
-python cookbook/models/groq/basic_stream.py
+python cookbook/92_models/groq/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/groq/basic.py
+python cookbook/92_models/groq/basic.py
 ```
 
 ### 5. Run Agent with Tools
@@ -40,19 +40,19 @@ python cookbook/models/groq/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/models/groq/tool_use.py
+python cookbook/92_models/groq/tool_use.py
 ```
 
 - Research using Exa
 
 ```shell
-python cookbook/models/groq/research_agent_exa.py
+python cookbook/92_models/groq/research_agent_exa.py
 ```
 
 ### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/models/groq/structured_output.py
+python cookbook/92_models/groq/structured_output.py
 ```
 
 ### 7. Run Agent that uses storage
@@ -66,27 +66,27 @@ Please run pgvector in a docker container using:
 Then run the following:
 
 ```shell
-python cookbook/models/groq/storage.py
+python cookbook/92_models/groq/storage.py
 ```
 
 ### 8. Run Agent that uses knowledge
 
 ```shell
-python cookbook/models/groq/knowledge.py
+python cookbook/92_models/groq/knowledge.py
 ```
 Take note that by default, OpenAI embeddings are used and an API key will be required. Alternatively, there are other embedders available that can be used. See more examples in `/cookbook/08_knowledge/embedders`
 
 ### 9. Run Agent that analyzes an image
 
 ```shell
-python cookbook/models/groq/image_agent.py
+python cookbook/92_models/groq/image_agent.py
 ```
 
 ### 10. Run in async mode
 
 ```shell
-python cookbook/models/groq/async/basic_stream.py
+python cookbook/92_models/groq/async/basic_stream.py
 ```
 ```shell
-python cookbook/models/groq/async/basic.py
+python cookbook/92_models/groq/async/basic.py
 ```

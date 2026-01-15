@@ -30,13 +30,13 @@ pip install -U ddgs openai agno
 - Streaming on
 
 ```shell
-python cookbook/models/llama_cpp/basic_stream.py
+python cookbook/92_models/llama_cpp/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/llama_cpp/basic.py
+python cookbook/92_models/llama_cpp/basic.py
 ```
 
 ### 5. Run Agent with Tools
@@ -44,17 +44,17 @@ python cookbook/models/llama_cpp/basic.py
 - Streaming on
 
 ```shell
-python cookbook/models/llama_cpp/tool_use_stream.py
+python cookbook/92_models/llama_cpp/tool_use_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/llama_cpp/tool_use.py
+python cookbook/92_models/llama_cpp/tool_use.py
 ```
 
 ### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/models/llama_cpp/structured_output.py
+python cookbook/92_models/llama_cpp/structured_output.py
 ```

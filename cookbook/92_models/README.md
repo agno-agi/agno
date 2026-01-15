@@ -29,7 +29,7 @@ pip install agno openai
 export OPENAI_API_KEY=your-key
 
 # Run example
-python cookbook/11_models/openai/basic.py
+python cookbook/92_models/openai/basic.py
 ```
 
 ## Common Patterns

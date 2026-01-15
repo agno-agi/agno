@@ -26,13 +26,13 @@ pip install -U openai agno
 - Streaming on
 
 ```shell
-python cookbook/models/nvidia/basic_stream.py
+python cookbook/92_models/nvidia/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/nvidia/basic.py
+python cookbook/92_models/nvidia/basic.py
 ```
 
 ### 5. Run Agent with Tools
@@ -40,11 +40,11 @@ python cookbook/models/nvidia/basic.py
 - Streaming on
 
 ```shell
-python cookbook/models/nvidia/tool_use_stream.py
+python cookbook/92_models/nvidia/tool_use_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/nvidia/tool_use.py
+python cookbook/92_models/nvidia/tool_use.py
 ```

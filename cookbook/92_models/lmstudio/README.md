@@ -24,13 +24,13 @@ pip install -U ddgs duckdb yfinance agno
 - Streaming on
 
 ```shell
-python cookbook/models/lmstudio/basic_stream.py
+python cookbook/92_models/lmstudio/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/lmstudio/basic.py
+python cookbook/92_models/lmstudio/basic.py
 ```
 
 ### 5. Run Agent with Tools
@@ -38,35 +38,35 @@ python cookbook/models/lmstudio/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/models/lmstudio/tool_use.py
+python cookbook/92_models/lmstudio/tool_use.py
 ```
 
 ### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/models/lmstudio/structured_output.py
+python cookbook/92_models/lmstudio/structured_output.py
 ```
 
 ### 7. Run Agent that uses storage
 
 ```shell
-python cookbook/models/lmstudio/storage.py
+python cookbook/92_models/lmstudio/storage.py
 ```
 
 ### 8. Run Agent that uses knowledge
 
 ```shell
-python cookbook/models/lmstudio/knowledge.py
+python cookbook/92_models/lmstudio/knowledge.py
 ```
 
 ### 9. Run Agent that uses memory
 
 ```shell
-python cookbook/models/lmstudio/memory.py
+python cookbook/92_models/lmstudio/memory.py
 ```
 
 ### 10. Run Agent that takes image as input
 
 ```shell
-python cookbook/models/lmstudio/image_agent.py
+python cookbook/92_models/lmstudio/image_agent.py
 ```

@@ -26,13 +26,13 @@ pip install -U openai ddgs duckdb yfinance agno
 - Streaming on
 
 ```shell
-python cookbook/models/openrouter/basic_stream.py
+python cookbook/92_models/openrouter/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/openrouter/basic.py
+python cookbook/92_models/openrouter/basic.py
 ```
 
 ### 5. Run Agent with Tools
@@ -40,17 +40,17 @@ python cookbook/models/openrouter/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/models/openrouter/tool_use.py
+python cookbook/92_models/openrouter/tool_use.py
 ```
 
 ### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/models/openrouter/structured_output.py
+python cookbook/92_models/openrouter/structured_output.py
 ```
 
 ### 7. Run Agent with dynamic model router
 
 ```shell
-python cookbook/models/openrouter/dynamic_model_router.py
+python cookbook/92_models/openrouter/dynamic_model_router.py
 ```

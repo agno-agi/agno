@@ -31,11 +31,11 @@ pip install -U agno
 - Streaming on
 
 ```shell
-python cookbook/models/vercel/basic_stream.py
+python cookbook/92_models/vercel/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/vercel/basic.py
+python cookbook/92_models/vercel/basic.py
 ```

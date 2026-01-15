@@ -26,13 +26,13 @@ pip install -U openai duckduckgo-search duckdb agno
 - Streaming on
 
 ```shell
-python cookbook/models/siliconflow/basic_stream.py
+python cookbook/92_models/siliconflow/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/siliconflow/basic.py
+python cookbook/92_models/siliconflow/basic.py
 ```
 
 ### 5. Run Agent with Tools
@@ -40,11 +40,11 @@ python cookbook/models/siliconflow/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/models/siliconflow/tool_use.py
+python cookbook/92_models/siliconflow/tool_use.py
 ```
 
 ### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/models/siliconflow/structured_output.py
+python cookbook/92_models/siliconflow/structured_output.py
 ```

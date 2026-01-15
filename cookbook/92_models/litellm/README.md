@@ -31,13 +31,13 @@ pip install -U litellm ddgs duckdb yfinance agno
 - Streaming off
 
 ```shell
-python cookbook/models/litellm/basic.py
+python cookbook/92_models/litellm/basic.py
 ```
 
 - Streaming on
 
 ```shell
-python cookbook/models/litellm/basic_stream.py
+python cookbook/92_models/litellm/basic_stream.py
 ```
 
 ### 5. Run Agent with Tools
@@ -45,37 +45,37 @@ python cookbook/models/litellm/basic_stream.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/models/litellm/tool_use.py
+python cookbook/92_models/litellm/tool_use.py
 ```
 
 - Tool use with streaming
 
 ```shell
-python cookbook/models/litellm/tool_use_stream.py
+python cookbook/92_models/litellm/tool_use_stream.py
 ```
 
 ### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/models/litellm/structured_output.py
+python cookbook/92_models/litellm/structured_output.py
 ```
 
 ### 7. Run Agent that uses memory
 
 ```shell
-python cookbook/models/litellm/memory.py
+python cookbook/92_models/litellm/memory.py
 ```
 
 ### 8. Run Agent that uses storage
 
 ```shell
-python cookbook/models/litellm/storage.py
+python cookbook/92_models/litellm/storage.py
 ```
 
 ### 9. Run Agent that uses knowledge
 
 ```shell
-python cookbook/models/litellm/knowledge.py
+python cookbook/92_models/litellm/knowledge.py
 ```
 
 ### 10. Run Agent that analyzes images
@@ -83,19 +83,19 @@ python cookbook/models/litellm/knowledge.py
 - URL-based image
 
 ```shell
-python cookbook/models/litellm/image_agent.py
+python cookbook/92_models/litellm/image_agent.py
 ```
 
 - Byte-based image
 
 ```shell
-python cookbook/models/litellm/image_agent_bytes.py
+python cookbook/92_models/litellm/image_agent_bytes.py
 ```
 
 ### 11. Run Agent that analyzes audio
 
 ```shell
-python cookbook/models/litellm/audio_input_agent.py
+python cookbook/92_models/litellm/audio_input_agent.py
 ```
 
 ### 12. Run Agent that processes PDF files
@@ -103,25 +103,25 @@ python cookbook/models/litellm/audio_input_agent.py
 - Local PDF file
 
 ```shell
-python cookbook/models/litellm/pdf_input_local.py
+python cookbook/92_models/litellm/pdf_input_local.py
 ```
 
 - Remote PDF URL
 
 ```shell
-python cookbook/models/litellm/pdf_input_url.py
+python cookbook/92_models/litellm/pdf_input_url.py
 ```
 
 - PDF from bytes
 
 ```shell
-python cookbook/models/litellm/pdf_input_bytes.py
+python cookbook/92_models/litellm/pdf_input_bytes.py
 ```
 
 ### 13. Run Agent with metrics
 
 ```shell
-python cookbook/models/litellm/metrics.py
+python cookbook/92_models/litellm/metrics.py
 ```
 
 ### 14. Run async Agents
@@ -129,17 +129,17 @@ python cookbook/models/litellm/metrics.py
 - Basic async
 
 ```shell
-python cookbook/models/litellm/async_basic.py
+python cookbook/92_models/litellm/async_basic.py
 ```
 
 - Async with streaming
 
 ```shell
-python cookbook/models/litellm/async_basic_stream.py
+python cookbook/92_models/litellm/async_basic_stream.py
 ```
 
 - Async with tools
 
 ```shell
-python cookbook/models/litellm/async_tool_use.py
+python cookbook/92_models/litellm/async_tool_use.py
 ```

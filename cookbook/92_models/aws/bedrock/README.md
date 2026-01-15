@@ -58,13 +58,13 @@ pip install -U boto3 ddgs agno
 - Streaming on
 
 ```shell
-python cookbook/models/aws/bedrock/basic_stream.py
+python cookbook/92_models/aws/bedrock/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/aws/bedrock/basic.py
+python cookbook/92_models/aws/bedrock/basic.py
 ```
 
 ### 5. Run Agent with Tools
@@ -72,23 +72,23 @@ python cookbook/models/aws/bedrock/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/models/aws/bedrock/tool_use.py
+python cookbook/92_models/aws/bedrock/tool_use.py
 ```
 
 ### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/models/aws/bedrock/structured_output.py
+python cookbook/92_models/aws/bedrock/structured_output.py
 ```
 
 ### 7. Run Agent that uses storage
 
 ```shell
-python cookbook/models/aws/bedrock/storage.py
+python cookbook/92_models/aws/bedrock/storage.py
 ```
 
 ### 8. Run Agent that uses knowledge
 
 ```shell
-python cookbook/models/aws/bedrock/knowledge.py
+python cookbook/92_models/aws/bedrock/knowledge.py
 ```

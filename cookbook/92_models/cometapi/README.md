@@ -32,13 +32,13 @@ pip install -U openai duckduckgo-search duckdb agno
 - Streaming on
 
 ```shell
-python cookbook/models/cometapi/basic_stream.py
+python cookbook/92_models/cometapi/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/cometapi/basic.py
+python cookbook/92_models/cometapi/basic.py
 ```
 
 ### 5. Run Async examples
@@ -46,13 +46,13 @@ python cookbook/models/cometapi/basic.py
 - Basic async
 
 ```shell
-python cookbook/models/cometapi/async_basic.py
+python cookbook/92_models/cometapi/async_basic.py
 ```
 
 - Async with streaming
 
 ```shell
-python cookbook/models/cometapi/async_basic_stream.py
+python cookbook/92_models/cometapi/async_basic_stream.py
 ```
 
 ### 6. Run Agent with Tools
@@ -60,31 +60,31 @@ python cookbook/models/cometapi/async_basic_stream.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/models/cometapi/tool_use.py
+python cookbook/92_models/cometapi/tool_use.py
 ```
 
 - Tool use with streaming
 
 ```shell
-python cookbook/models/cometapi/tool_use_stream.py
+python cookbook/92_models/cometapi/tool_use_stream.py
 ```
 
 - Async tool use
 
 ```shell
-python cookbook/models/cometapi/async_tool_use.py
+python cookbook/92_models/cometapi/async_tool_use.py
 ```
 
 - Async tool use with streaming
 
 ```shell
-python cookbook/models/cometapi/async_tool_use_stream.py
+python cookbook/92_models/cometapi/async_tool_use_stream.py
 ```
 
 ### 7. Run Agent that returns structured output
 
 ```shell
-python cookbook/models/cometapi/structured_output.py
+python cookbook/92_models/cometapi/structured_output.py
 ```
 
 ### 8. Image analysis examples
@@ -92,19 +92,19 @@ python cookbook/models/cometapi/structured_output.py
 - Basic image analysis
 
 ```shell
-python cookbook/models/cometapi/image_agent.py
+python cookbook/92_models/cometapi/image_agent.py
 ```
 
 - Image analysis with memory
 
 ```shell
-python cookbook/models/cometapi/image_agent_with_memory.py
+python cookbook/92_models/cometapi/image_agent_with_memory.py
 ```
 
 ### 9. Multi-model showcase
 
 ```shell
-python cookbook/models/cometapi/multi_model.py
+python cookbook/92_models/cometapi/multi_model.py
 ```
 
 ## Available Models

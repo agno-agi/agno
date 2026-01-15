@@ -102,7 +102,7 @@ vLLM embedders can load and run embedding models locally without requiring a ser
 
 
 ```shell
-python cookbook/models/vllm/basic.py
+python cookbook/92_models/vllm/basic.py
 ```
 
 ### Embeddings

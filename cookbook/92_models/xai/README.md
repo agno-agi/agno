@@ -26,13 +26,13 @@ pip install -U openai ddgs duckdb yfinance agno
 - Streaming on
 
 ```shell
-python cookbook/models/xai/basic_stream.py
+python cookbook/92_models/xai/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/xai/basic.py
+python cookbook/92_models/xai/basic.py
 ```
 
 ### 5. Run with Tools
@@ -40,23 +40,23 @@ python cookbook/models/xai/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/models/xai/tool_use.py
+python cookbook/92_models/xai/tool_use.py
 ```
 
 ### 6. Run Agent with Image URL Input
 
 ```shell
-python cookbook/models/xai/image_agent.py
+python cookbook/92_models/xai/image_agent.py
 ```
 
 ### 7. Run Agent with Image Input
 
 ```shell
-python cookbook/models/xai/image_agent_bytes.py
+python cookbook/92_models/xai/image_agent_bytes.py
 ```
 
 ### 8. Run Agent with Image Input and Memory
 
 ```shell
-python cookbook/models/xai/image_agent_with_memory.py
+python cookbook/92_models/xai/image_agent_with_memory.py
 ``

@@ -26,13 +26,13 @@ pip install -U openai agno
 - Streaming on
 
 ```shell
-python cookbook/models/sambanova/basic_stream.py
+python cookbook/92_models/sambanova/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/sambanova/basic.py
+python cookbook/92_models/sambanova/basic.py
 ```
 ## Disclaimer:
 

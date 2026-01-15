@@ -26,13 +26,13 @@ pip install -U ddgs duckdb agno
 - Streaming on
 
 ```shell
-python cookbook/models/cohere/basic_stream.py
+python cookbook/92_models/cohere/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/cohere/basic.py
+python cookbook/92_models/cohere/basic.py
 ```
 
 ### 5. Run Agent with Tools
@@ -40,12 +40,12 @@ python cookbook/models/cohere/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/models/cohere/tool_use.py
+python cookbook/92_models/cohere/tool_use.py
 ```
 
 ### 6. Run Agent with Knowledge
 
 ```shell
-python cookbook/models/perplexity/knowledge.py
+python cookbook/92_models/perplexity/knowledge.py
 ```
 

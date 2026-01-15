@@ -34,13 +34,13 @@ pip install -U ollama ddgs duckdb yfinance agno
 - Streaming on
 
 ```shell
-python cookbook/models/ollama/basic_stream.py
+python cookbook/92_models/ollama/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/ollama/basic.py
+python cookbook/92_models/ollama/basic.py
 ```
 
 ### 6. Run Agent with Tools
@@ -48,31 +48,31 @@ python cookbook/models/ollama/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/models/ollama/tool_use.py
+python cookbook/92_models/ollama/tool_use.py
 ```
 
 ### 7. Run Agent that returns structured output
 
 ```shell
-python cookbook/models/ollama/structured_output.py
+python cookbook/92_models/ollama/structured_output.py
 ```
 
 ### 8. Run Agent that uses storage
 
 ```shell
-python cookbook/models/ollama/storage.py
+python cookbook/92_models/ollama/storage.py
 ```
 
 ### 9. Run Agent that uses knowledge
 
 ```shell
-python cookbook/models/ollama/knowledge.py
+python cookbook/92_models/ollama/knowledge.py
 ```
 
 ### 10. Run Agent that uses memory
 
 ```shell
-python cookbook/models/ollama/memory.py
+python cookbook/92_models/ollama/memory.py
 ```
 
 ### 11. Run Agent that interprets an image
@@ -84,25 +84,25 @@ ollama pull llama3.2-vision
 ```
 
 ```shell
-python cookbook/models/ollama/image_agent.py
+python cookbook/92_models/ollama/image_agent.py
 ```
 
 ### 12. Run Agent that manually sets the Ollama client
 
 ```shell
-python cookbook/models/ollama/set_client.py
+python cookbook/92_models/ollama/set_client.py
 ```
 
 ### 13. See demos of some widely used models used via Ollama
 
 ```shell
-python cookbook/models/ollama/demo_deepseek_r1.py
+python cookbook/92_models/ollama/demo_deepseek_r1.py
 ```
 
 ```shell
-python cookbook/models/ollama/demo_qwen.py
+python cookbook/92_models/ollama/demo_qwen.py
 ```
 
 ```shell
-python cookbook/models/ollama/demo_phi4.py
+python cookbook/92_models/ollama/demo_phi4.py
 ```

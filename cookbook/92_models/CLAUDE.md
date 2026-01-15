@@ -22,7 +22,7 @@ This folder contains **model provider** examples - how to use every supported LL
 
 **Run a cookbook:**
 ```bash
-.venvs/demo/bin/python cookbook/11_models/openai/basic.py
+.venvs/demo/bin/python cookbook/92_models/openai/basic.py
 ```
 
 ---

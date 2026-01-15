@@ -27,13 +27,13 @@ pip install -U openai ddgs duckdb yfinance agno
 - Streaming on
 
 ```shell
-python cookbook/models/langdb/basic_stream.py
+python cookbook/92_models/langdb/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/langdb/basic.py
+python cookbook/92_models/langdb/basic.py
 ```
 
 ### 5. Run Agent with Tools
@@ -41,37 +41,37 @@ python cookbook/models/langdb/basic.py
 - Yahoo Finance with streaming on
 
 ```shell
-python cookbook/models/langdb/agent_stream.py
+python cookbook/92_models/langdb/agent_stream.py
 ```
 
 - Yahoo Finance without streaming
 
 ```shell
-python cookbook/models/langdb/agent.py
+python cookbook/92_models/langdb/agent.py
 ```
 
 - Web Search Agent
 
 ```shell
-python cookbook/models/langdb/web_search.py
+python cookbook/92_models/langdb/web_search.py
 ```
 
 - Data Analyst
 
 ```shell
-python cookbook/models/langdb/data_analyst.py
+python cookbook/92_models/langdb/data_analyst.py
 ```
 
 - Finance Agent
 
 ```shell
-python cookbook/models/langdb/finance_agent.py
+python cookbook/92_models/langdb/finance_agent.py
 ```
 
 ### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/models/langdb/structured_output.py
+python cookbook/92_models/langdb/structured_output.py
 ```
 
 

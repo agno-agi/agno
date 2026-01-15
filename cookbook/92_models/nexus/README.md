@@ -31,13 +31,13 @@ pip install -U openai agno
 - Streaming on
 
 ```shell
-python cookbook/models/nexus/basic_stream.py
+python cookbook/92_models/nexus/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/nexus/basic.py
+python cookbook/92_models/nexus/basic.py
 ```
 
 ### 6. Run Agent with Tools
@@ -45,11 +45,11 @@ python cookbook/models/nexus/basic.py
 - Streaming on
 
 ```shell
-python cookbook/models/nexus/tool_use.py
+python cookbook/92_models/nexus/tool_use.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/nexus/tool_use.py
+python cookbook/92_models/nexus/tool_use.py
 ```
