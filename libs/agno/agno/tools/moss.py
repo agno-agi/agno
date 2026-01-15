@@ -15,7 +15,7 @@ except ImportError:
 
 class MossTools(Toolkit):
     """
-    Toolkit for interacting with Moss VectorDB.
+    Toolkit for interacting with Moss.
     Moss handles embeddings internally and provides sub-10ms semantic search.
     """
 
@@ -78,7 +78,7 @@ class MossTools(Toolkit):
         limit: int = 5,
         alpha: float = 0.6,
     ) -> str:
-        """Use this tool to search a Moss vector database for relevant information.
+        """Use this tool to search a Moss index for relevant information.
 
         Args:
             query (str): The search query.
@@ -157,7 +157,7 @@ class MossTools(Toolkit):
     def create_moss_index(
         self,
         index_name: str,
-        embedding_model: str = "moss-minilm",
+        embedding_model: str = "moss-minilm",  # 'moss-minilm' or 'moss-mediumlm'
     ) -> str:
         """Use this tool to create a new Moss index.
 
