@@ -21,13 +21,12 @@ Supported Modes:
 - AGENTIC: Agent explicitly logs decisions via tools
 """
 
-import inspect
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Union, cast
+from typing import Any, Callable, List, Optional, Union
 
 from agno.learn.config import DecisionLogConfig, LearningMode
 from agno.learn.schemas import DecisionLog
@@ -43,7 +42,6 @@ from agno.utils.log import (
 try:
     from agno.db.base import AsyncBaseDb, BaseDb
     from agno.models.message import Message
-    from agno.tools.function import Function
 except ImportError:
     pass
 
@@ -726,14 +724,11 @@ class DecisionLogStore(LearningStore):
         if not self.db:
             return []
 
-        try:
-            # Build filter criteria
-            filters: Dict[str, Any] = {"learning_type": self.learning_type}
-            if agent_id:
-                filters["agent_id"] = agent_id
-            if session_id:
-                filters["session_id"] = session_id
+        # Ensure sync db for sync method
+        if not isinstance(self.db, BaseDb):
+            return []
 
+        try:
             # Get all matching records
             results = self.db.get_learnings(
                 learning_type=self.learning_type,
@@ -864,14 +859,24 @@ class DecisionLogStore(LearningStore):
         if not self.db:
             return None
 
+        # Ensure sync db for sync method
+        if not isinstance(self.db, BaseDb):
+            return None
+
         try:
-            result = self.db.get_learning(
+            # Get learnings and filter by decision_id in content
+            results = self.db.get_learnings(
                 learning_type=self.learning_type,
-                id=decision_id,
+                limit=100,
             )
 
-            if result and result.get("content"):
-                return from_dict_safe(DecisionLog, result["content"])
+            if not results:
+                return None
+
+            for record in results:
+                content = record.get("content") if isinstance(record, dict) else None
+                if content and content.get("id") == decision_id:
+                    return from_dict_safe(DecisionLog, content)
 
             return None
 
@@ -885,19 +890,25 @@ class DecisionLogStore(LearningStore):
             return None
 
         try:
+            # Get learnings and filter by decision_id in content
             if isinstance(self.db, AsyncBaseDb):
-                result = await self.db.get_learning(
+                results = await self.db.get_learnings(
                     learning_type=self.learning_type,
-                    id=decision_id,
+                    limit=100,
                 )
             else:
-                result = self.db.get_learning(
+                results = self.db.get_learnings(
                     learning_type=self.learning_type,
-                    id=decision_id,
+                    limit=100,
                 )
 
-            if result and result.get("content"):
-                return from_dict_safe(DecisionLog, result["content"])
+            if not results:
+                return None
+
+            for record in results:
+                content = record.get("content") if isinstance(record, dict) else None
+                if content and content.get("id") == decision_id:
+                    return from_dict_safe(DecisionLog, content)
 
             return None
 
@@ -1038,7 +1049,7 @@ class DecisionLogStore(LearningStore):
                     id=decision_id,
                     decision=f"Called tool: {tool_name}",
                     decision_type="tool_selection",
-                    context=f"During conversation with user",
+                    context="During conversation with user",
                     session_id=session_id,
                     user_id=user_id,
                     agent_id=agent_id,
@@ -1074,7 +1085,7 @@ class DecisionLogStore(LearningStore):
                     id=decision_id,
                     decision=f"Called tool: {tool_name}",
                     decision_type="tool_selection",
-                    context=f"During conversation with user",
+                    context="During conversation with user",
                     session_id=session_id,
                     user_id=user_id,
                     agent_id=agent_id,

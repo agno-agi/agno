@@ -1,11 +1,11 @@
 import asyncio
 
 from agno.agent import Agent
+from agno.models.deepseek import DeepSeek
+from agno.models.openai import OpenAIChat
 from rich.console import Console
 
 console = Console()
-from agno.models.deepseek import DeepSeek
-from agno.models.openai import OpenAIChat
 
 task = "How many 'r' are in the word 'strawberry'?"
 

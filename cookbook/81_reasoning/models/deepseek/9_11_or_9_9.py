@@ -1,10 +1,10 @@
 from agno.agent import Agent
-from rich.console import Console
-
-console = Console()
 from agno.models.anthropic import Claude
 from agno.models.deepseek import DeepSeek
 from agno.models.openai import OpenAIChat
+from rich.console import Console
+
+console = Console()
 
 task = "9.11 and 9.9 -- which is bigger?"
 
