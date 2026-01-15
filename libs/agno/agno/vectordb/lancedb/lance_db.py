@@ -284,7 +284,10 @@ class LanceDb(VectorDb):
                 meta_data.update(filters)
                 document.meta_data = meta_data
 
-            document.embed(embedder=self.embedder)
+            # Only embed if the document doesn't already have an embedding
+            # This prevents duplicate embedding when called from async_insert or async_upsert
+            if document.embedding is None:
+                document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             # Include content_hash in ID to ensure uniqueness across different content hashes
             base_id = document.id or md5(cleaned_content.encode()).hexdigest()
