@@ -1,18 +1,11 @@
 """
-Demonstrates using Knowledge with List[Message] input.
+Knowledge with List[Message] Input
+===================================
+Pass a conversation as List[Message] to agent.run() and the knowledge base
+is searched using the last user message.
 
-When passing a conversation as List[Message] to agent.run(), the knowledge base
-is searched using the last user message, and relevant context is automatically
-added to the conversation.
-
-Use Cases:
-- Multi-turn conversations with knowledge context
-- Passing conversation history with system prompts
-- API integrations receiving structured message arrays
-
-1. Run: `pip install openai agno lancedb tantivy` to install dependencies
-2. Export your OPENAI_API_KEY
-3. Run: `python cookbook/08_knowledge/basic_operations/knowledge_with_message_array.py`
+Useful for multi-turn conversations, API integrations, or passing
+conversation history with system prompts.
 """
 
 from agno.agent import Agent
@@ -26,27 +19,26 @@ from agno.vectordb.lancedb import LanceDb, SearchType
 knowledge = Knowledge(
     vector_db=LanceDb(
         uri="tmp/lancedb",
-        table_name="message_array_demo",
+        table_name="policies",
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
 )
 
-# Add sample content about a fictional company's policies
 knowledge.insert(
-    text="""
-    Refund Policy:
-    - Full refunds are available within 30 days of purchase
-    - Partial refunds (50%) available between 30-60 days
-    - No refunds after 60 days
-    - Digital products are non-refundable once downloaded
+    text_content="""
+        Refund Policy:
+        - Full refunds are available within 30 days of purchase
+        - Partial refunds (50%) available between 30-60 days
+        - No refunds after 60 days
+        - Digital products are non-refundable once downloaded
 
-    Shipping Policy:
-    - Standard shipping: 5-7 business days
-    - Express shipping: 2-3 business days
-    - International shipping: 10-14 business days
+        Shipping Policy:
+        - Standard shipping: 5-7 business days
+        - Express shipping: 2-3 business days
+        - International shipping: 10-14 business days
     """,
-    name="company_policies",
+    name="refund_policy",
 )
 
 # Create agent with knowledge and auto-context enabled
@@ -67,8 +59,8 @@ if __name__ == "__main__":
     print(response.content)
     print()
 
-    # Example 2: Multi-turn conversation with system prompt
-    print("=== Example 2: Multi-turn with System Prompt ===\n")
+    # Example 2: Multi-turn conversation
+    print("=== Example 2: Multi-turn conversation ===\n")
     messages = [
         Message(role="system", content="You are a helpful customer service agent. Be concise."),
         Message(role="user", content="Hi, I bought something 45 days ago."),
@@ -79,7 +71,7 @@ if __name__ == "__main__":
     print(response.content)
     print()
 
-    # Example 3: Using dict format (also supported)
+    # Example 3: Using dict as input
     print("=== Example 3: Dict Format Messages ===\n")
     messages = [
         {"role": "user", "content": "How long does express shipping take?"},
