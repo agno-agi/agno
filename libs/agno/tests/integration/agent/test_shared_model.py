@@ -62,4 +62,4 @@ def test_tools_available_to_agents(web_agent, finance_agent):
         # Get the tools passed to invoke
         tools = mock_invoke.call_args[1].get("tools", [])
         tool_names = [tool["function"]["name"] for tool in tools]
-        assert tool_names == ["duckduckgo_search", "duckduckgo_news"]
+        assert tool_names == ["web_search", "search_news"]

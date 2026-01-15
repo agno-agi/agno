@@ -4,9 +4,16 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.xai import xAI
-from agno.tools.exa import ExaTools
 from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
+
+# Check if exa_py is available for tests that need ExaTools
+try:
+    from agno.tools.exa import ExaTools
+
+    EXA_AVAILABLE = True
+except ImportError:
+    EXA_AVAILABLE = False
 
 
 def test_tool_use():
@@ -175,6 +182,7 @@ def test_tool_call_custom_tool_optional_parameters():
     assert "70" in response.content
 
 
+@pytest.mark.skipif(not EXA_AVAILABLE, reason="exa_py not installed")
 def test_tool_call_list_parameters():
     agent = Agent(
         model=xAI(id="grok-3-mini-fast"),
