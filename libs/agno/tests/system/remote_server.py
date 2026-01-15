@@ -70,7 +70,7 @@ assistant = Agent(
         "You have access to a knowledge base - search it when asked about documents.",
     ],
     markdown=True,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     tools=[CalculatorTools()],
     knowledge=knowledge,
     search_knowledge=True,
@@ -82,7 +82,7 @@ researcher = Agent(
     id="researcher-agent",
     description="A research assistant with web search capabilities.",
     model=OpenAIChat(id="gpt-5-mini"),
-    enable_user_memories=True,
+    update_memory_on_run=True,
     db=db,
     instructions=[
         "You are a research assistant.",
@@ -110,7 +110,7 @@ research_team = Team(
         "Combine insights from team members for comprehensive answers.",
     ],
     markdown=True,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     db=db,
 )
 

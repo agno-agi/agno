@@ -5,7 +5,7 @@ Testing all cookbooks in `cookbook/00_getting_started/` to verify they work as e
 **Test Environment:**
 - Python: `.venvs/demo/bin/python`
 - API Key: `GOOGLE_API_KEY` (Gemini)
-- Date: 2026-01-11
+- Date: 2026-01-14
 
 ---
 
@@ -17,7 +17,7 @@ Testing all cookbooks in `cookbook/00_getting_started/` to verify they work as e
 
 **Description:** Basic agent with YFinanceTools for fetching stock data.
 
-**Result:** Agent fetched NVIDIA stock data (price $184.86, market cap $4.50T, P/E 45.64) and provided comprehensive investment brief with key drivers, risks, and analyst sentiment.
+**Result:** Agent fetched NVIDIA stock data (price $185.81, market cap $4.52T, P/E 46.11) and provided comprehensive investment brief with key drivers, risks, and analyst sentiment.
 
 ---
 
@@ -151,7 +151,7 @@ Testing all cookbooks in `cookbook/00_getting_started/` to verify they work as e
 - Step 1 (Data Collection): Fetched NVIDIA fundamentals
 - Step 2 (Analysis): Deep-dive on strengths/weaknesses
 - Step 3 (Report Writing): Final recommendation with metrics table
-- Completed in 31.5s
+- Completed in 32.2s
 
 **Note:** Debug warnings "Failed to broadcast through manager: no running event loop" appeared but did not affect execution.
 
@@ -171,16 +171,6 @@ Testing all cookbooks in `cookbook/00_getting_started/` to verify they work as e
 
 ## Other Tests
 
-### readme_examples.py
-
-**Status:** NOT TESTED
-
-**Description:** Examples from the README - uses OpenAI instead of Gemini.
-
-**Note:** Requires `OPENAI_API_KEY` instead of `GOOGLE_API_KEY`.
-
----
-
 ### run.py
 
 **Status:** NOT TESTED
@@ -194,10 +184,10 @@ Testing all cookbooks in `cookbook/00_getting_started/` to verify they work as e
 ## TESTING SUMMARY
 
 **Summary:**
-- Total cookbooks: 14
-- Tested: 11/14
+- Total cookbooks: 13
+- Tested: 11/13
 - Passed: 11/11
-- Skipped: 3 (interactive/special requirements)
+- Skipped: 2 (interactive/special requirements)
 
 **Phases Completed:**
 - Phase 1 (Basic): 4/4 passed
@@ -207,7 +197,6 @@ Testing all cookbooks in `cookbook/00_getting_started/` to verify they work as e
 
 **Skipped Tests:**
 - `human_in_the_loop.py` - Requires interactive input
-- `readme_examples.py` - Requires OpenAI API key
 - `run.py` - Server startup test
 
 **Notes:**

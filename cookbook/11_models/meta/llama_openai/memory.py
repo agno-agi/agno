@@ -16,7 +16,7 @@ agent = Agent(
     model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
     # Store sessions, memories and summaries in the
     db=PostgresDb(db_url=db_url, memory_table="agent_memory"),
-    enable_user_memories=True,
+    update_memory_on_run=True,
     enable_session_summaries=True,
     # Show debug logs so, you can see the memory being created
     debug_mode=True,

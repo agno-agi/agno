@@ -21,7 +21,7 @@ agent = Agent(
     # Pass the database to the Agent
     db=db,
     # Enable user memories
-    enable_user_memories=True,
+    update_memory_on_run=True,
     # Enable session summaries
     enable_session_summaries=True,
     # Show debug logs so, you can see the memory being created

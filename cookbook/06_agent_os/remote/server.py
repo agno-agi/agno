@@ -52,7 +52,7 @@ assistant = Agent(
         "You have access to a knowledge base - search it when asked about documents.",
     ],
     markdown=True,
-    enable_user_memories=True,  # Required for 03_memory_operations
+    update_memory_on_run=True,  # Required for 03_memory_operations
     tools=[CalculatorTools()],
     knowledge=knowledge,
     search_knowledge=True,

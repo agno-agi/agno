@@ -121,6 +121,10 @@ from agno.utils.agent import (
 from agno.utils.common import is_typed_dict
 from agno.utils.events import (
     add_error_event,
+    create_compression_completed_event,
+    create_compression_started_event,
+    create_model_request_completed_event,
+    create_model_request_started_event,
     create_parser_model_response_completed_event,
     create_parser_model_response_started_event,
     create_post_hook_completed_event,
@@ -235,7 +239,9 @@ class Agent:
     # Enable the agent to manage memories of the user
     enable_agentic_memory: bool = False
     # If True, the agent creates/updates user memories at the end of runs
-    enable_user_memories: bool = False
+    update_memory_on_run: bool = False
+    # Soon to be deprecated. Use update_memory_on_run
+    enable_user_memories: Optional[bool] = None
     # If True, the agent adds a reference to the user memories in the response
     add_memories_to_context: Optional[bool] = None
 
@@ -341,6 +347,8 @@ class Agent:
     description: Optional[str] = None
     # List of instructions for the agent.
     instructions: Optional[Union[str, List[str], Callable]] = None
+    # If True, wrap instructions in <instructions> tags. Default is False.
+    use_instruction_tags: bool = False
     # Provide the expected output from the Agent.
     expected_output: Optional[str] = None
     # Additional context added to the end of the system message.
@@ -479,7 +487,8 @@ class Agent:
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
-        enable_user_memories: bool = False,
+        update_memory_on_run: bool = False,
+        enable_user_memories: Optional[bool] = None,  # Soon to be deprecated. Use update_memory_on_run
         add_memories_to_context: Optional[bool] = None,
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
@@ -523,6 +532,7 @@ class Agent:
         build_context: bool = True,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
+        use_instruction_tags: bool = False,
         expected_output: Optional[str] = None,
         additional_context: Optional[str] = None,
         markdown: bool = False,
@@ -585,7 +595,17 @@ class Agent:
 
         self.memory_manager = memory_manager
         self.enable_agentic_memory = enable_agentic_memory
-        self.enable_user_memories = enable_user_memories
+
+        if enable_user_memories is not None:
+            log_debug(
+                "The 'enable_user_memories' parameter is deprecated and will be removed in future versions. "
+                "Use 'update_memory_on_run' instead."
+            )
+            self.update_memory_on_run = enable_user_memories
+        else:
+            self.update_memory_on_run = update_memory_on_run
+        self.enable_user_memories = self.update_memory_on_run  # Soon to be deprecated. Use update_memory_on_run
+
         self.add_memories_to_context = add_memories_to_context
 
         self.enable_session_summaries = enable_session_summaries
@@ -650,9 +670,9 @@ class Agent:
         self.system_message = system_message
         self.system_message_role = system_message_role
         self.build_context = build_context
-
         self.description = description
         self.instructions = instructions
+        self.use_instruction_tags = use_instruction_tags
         self.expected_output = expected_output
         self.additional_context = additional_context
         self.markdown = markdown
@@ -812,7 +832,7 @@ class Agent:
 
         if self.add_memories_to_context is None:
             self.add_memories_to_context = (
-                self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None
+                self.update_memory_on_run or self.enable_agentic_memory or self.memory_manager is not None
             )
 
     def _set_learning_machine(self) -> None:
@@ -905,7 +925,7 @@ class Agent:
         self._set_default_model()
         self._set_debug(debug_mode=debug_mode)
         self.set_id()
-        if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
+        if self.update_memory_on_run or self.enable_agentic_memory or self.memory_manager is not None:
             self._set_memory_manager()
         if (
             self.add_culture_to_context
@@ -1517,6 +1537,7 @@ class Agent:
                             run_response=run_response,
                             events_to_skip=self.events_to_skip,
                             store_events=self.store_events,
+                            get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
                         )
 
                         # Handle the paused run
@@ -1555,6 +1576,9 @@ class Agent:
                         learning_future=learning_future,  # type: ignore
                         stream_events=stream_events,
                         run_response=run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                        get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
                     )
 
                     # 9. Create session summary
@@ -2558,6 +2582,9 @@ class Agent:
                             learning_task=learning_task,
                             stream_events=stream_events,
                             run_response=run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                            get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
                         ):
                             yield item
 
@@ -2591,6 +2618,7 @@ class Agent:
                         run_response=run_response,
                         events_to_skip=self.events_to_skip,
                         store_events=self.store_events,
+                        get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
                     ):
                         yield item
 
@@ -5565,6 +5593,70 @@ class Agent:
             send_media_to_model=self.send_media_to_model,
             compression_manager=self.compression_manager if self.compress_tool_results else None,
         ):
+            # Handle LLM request events and compression events from ModelResponse
+            if isinstance(model_response_event, ModelResponse):
+                if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_model_request_started_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.model_request_completed.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_model_request_completed_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                                input_tokens=model_response_event.input_tokens,
+                                output_tokens=model_response_event.output_tokens,
+                                total_tokens=model_response_event.total_tokens,
+                                time_to_first_token=model_response_event.time_to_first_token,
+                                reasoning_tokens=model_response_event.reasoning_tokens,
+                                cache_read_tokens=model_response_event.cache_read_tokens,
+                                cache_write_tokens=model_response_event.cache_write_tokens,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                # Handle compression events
+                if model_response_event.event == ModelResponseEvent.compression_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_compression_started_event(from_run_response=run_response),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                    if stream_events:
+                        stats = model_response_event.compression_stats or {}
+                        yield handle_event(  # type: ignore
+                            create_compression_completed_event(
+                                from_run_response=run_response,
+                                tool_results_compressed=stats.get("tool_results_compressed"),
+                                original_size=stats.get("original_size"),
+                                compressed_size=stats.get("compressed_size"),
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+                    continue
+
             yield from self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
@@ -5576,6 +5668,16 @@ class Agent:
                 session_state=session_state,
                 run_context=run_context,
             )
+
+        # Update RunOutput
+        # Build a list of messages that should be added to the RunOutput
+        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        # Update the RunOutput messages
+        run_response.messages = messages_for_run_response
+        # Update the RunOutput metrics
+        run_response.metrics = self._calculate_run_metrics(
+            messages=messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
         # Determine reasoning completed
         if stream_events and reasoning_state["reasoning_started"]:
@@ -5598,16 +5700,6 @@ class Agent:
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
                 )
-
-        # Update RunOutput
-        # Build a list of messages that should be added to the RunOutput
-        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
-        # Update the RunOutput messages
-        run_response.messages = messages_for_run_response
-        # Update the RunOutput metrics
-        run_response.metrics = self._calculate_run_metrics(
-            messages=messages_for_run_response, current_run_metrics=run_response.metrics
-        )
 
         # Update the run_response audio if streaming
         if model_response.audio is not None:
@@ -5654,6 +5746,70 @@ class Agent:
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
+            # Handle LLM request events and compression events from ModelResponse
+            if isinstance(model_response_event, ModelResponse):
+                if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_model_request_started_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.model_request_completed.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_model_request_completed_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                                input_tokens=model_response_event.input_tokens,
+                                output_tokens=model_response_event.output_tokens,
+                                total_tokens=model_response_event.total_tokens,
+                                time_to_first_token=model_response_event.time_to_first_token,
+                                reasoning_tokens=model_response_event.reasoning_tokens,
+                                cache_read_tokens=model_response_event.cache_read_tokens,
+                                cache_write_tokens=model_response_event.cache_write_tokens,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                # Handle compression events
+                if model_response_event.event == ModelResponseEvent.compression_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_compression_started_event(from_run_response=run_response),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                    if stream_events:
+                        stats = model_response_event.compression_stats or {}
+                        yield handle_event(  # type: ignore
+                            create_compression_completed_event(
+                                from_run_response=run_response,
+                                tool_results_compressed=stats.get("tool_results_compressed"),
+                                original_size=stats.get("original_size"),
+                                compressed_size=stats.get("compressed_size"),
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+                    continue
+
             for event in self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
@@ -5666,6 +5822,16 @@ class Agent:
                 run_context=run_context,
             ):
                 yield event
+
+        # Update RunOutput
+        # Build a list of messages that should be added to the RunOutput
+        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        # Update the RunOutput messages
+        run_response.messages = messages_for_run_response
+        # Update the RunOutput metrics
+        run_response.metrics = self._calculate_run_metrics(
+            messages=messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
         if stream_events and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
@@ -5687,16 +5853,6 @@ class Agent:
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
                 )
-
-        # Update RunOutput
-        # Build a list of messages that should be added to the RunOutput
-        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
-        # Update the RunOutput messages
-        run_response.messages = messages_for_run_response
-        # Update the RunOutput metrics
-        run_response.metrics = self._calculate_run_metrics(
-            messages=messages_for_run_response, current_run_metrics=run_response.metrics
-        )
 
         # Update the run_response audio if streaming
         if model_response.audio is not None:
@@ -6088,7 +6244,7 @@ class Agent:
             user_message_str is not None
             and user_message_str.strip() != ""
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
         ):
             log_debug("Managing user memories")
             self.memory_manager.create_user_memories(  # type: ignore
@@ -6117,7 +6273,7 @@ class Agent:
                 for msg in parsed_messages
                 if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
             ]
-            if len(non_empty_messages) > 0 and self.memory_manager is not None and self.enable_user_memories:
+            if len(non_empty_messages) > 0 and self.memory_manager is not None and self.update_memory_on_run:
                 self.memory_manager.create_user_memories(messages=non_empty_messages, user_id=user_id, agent_id=self.id)  # type: ignore
             else:
                 log_warning("Unable to add messages to memory")
@@ -6134,7 +6290,7 @@ class Agent:
             user_message_str is not None
             and user_message_str.strip() != ""
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
         ):
             log_debug("Managing user memories")
             await self.memory_manager.acreate_user_memories(  # type: ignore
@@ -6163,7 +6319,7 @@ class Agent:
                 for msg in parsed_messages
                 if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
             ]
-            if len(non_empty_messages) > 0 and self.memory_manager is not None and self.enable_user_memories:
+            if len(non_empty_messages) > 0 and self.memory_manager is not None and self.update_memory_on_run:
                 await self.memory_manager.acreate_user_memories(  # type: ignore
                     messages=non_empty_messages, user_id=user_id, agent_id=self.id
                 )
@@ -6198,7 +6354,7 @@ class Agent:
         if (
             run_messages.user_message is not None
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
             and not self.enable_agentic_memory
         ):
             log_debug("Starting memory creation in background task.")
@@ -6351,7 +6507,7 @@ class Agent:
         if (
             run_messages.user_message is not None
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
             and not self.enable_agentic_memory
         ):
             log_debug("Starting memory creation in background thread.")
@@ -8064,22 +8220,29 @@ class Agent:
         # 3.3.2 Then add the Agent role if provided
         if self.role is not None:
             system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
-        # 3.3.4 Then add instructions for the Agent
+        # 3.3.3 Then add instructions for the Agent
         if len(instructions) > 0:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
+            if self.use_instruction_tags:
+                system_message_content += "<instructions>"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"\n- {_upi}"
+                else:
+                    system_message_content += "\n" + instructions[0]
+                system_message_content += "\n</instructions>\n\n"
             else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
-        # 3.3.6 Add additional information
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"- {_upi}\n"
+                else:
+                    system_message_content += instructions[0] + "\n\n"
+        # 3.3.4 Add additional information
         if len(additional_information) > 0:
             system_message_content += "<additional_information>"
             for _ai in additional_information:
                 system_message_content += f"\n- {_ai}"
             system_message_content += "\n</additional_information>\n\n"
-        # 3.3.7 Then add instructions for the tools
+        # 3.3.5 Then add instructions for the tools
         if self._tool_instructions is not None:
             for _ti in self._tool_instructions:
                 system_message_content += f"{_ti}\n"
@@ -8411,22 +8574,29 @@ class Agent:
         # 3.3.2 Then add the Agent role if provided
         if self.role is not None:
             system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
-        # 3.3.4 Then add instructions for the Agent
+        # 3.3.3 Then add instructions for the Agent
         if len(instructions) > 0:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
+            if self.use_instruction_tags:
+                system_message_content += "<instructions>"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"\n- {_upi}"
+                else:
+                    system_message_content += "\n" + instructions[0]
+                system_message_content += "\n</instructions>\n\n"
             else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
-        # 3.3.6 Add additional information
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"- {_upi}\n"
+                else:
+                    system_message_content += instructions[0] + "\n\n"
+        # 3.3.4 Add additional information
         if len(additional_information) > 0:
             system_message_content += "<additional_information>"
             for _ai in additional_information:
                 system_message_content += f"\n- {_ai}"
             system_message_content += "\n</additional_information>\n\n"
-        # 3.3.7 Then add instructions for the tools
+        # 3.3.5 Then add instructions for the tools
         if self._tool_instructions is not None:
             for _ti in self._tool_instructions:
                 system_message_content += f"{_ti}\n"
@@ -11437,7 +11607,7 @@ class Agent:
             "parser_model": self.parser_model.to_dict() if self.parser_model else None,
             "output_model": self.output_model.to_dict() if self.output_model else None,
             "has_tools": self.tools is not None,
-            "has_memory": self.enable_user_memories is True
+            "has_memory": self.update_memory_on_run is True
             or self.enable_agentic_memory is True
             or self.memory_manager is not None,
             "has_learnings": self._learning is not None,

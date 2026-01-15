@@ -48,7 +48,7 @@ Apart from implementing features, your most important task will be to test and m
 Each cookbook folder should have the following files:
 - `README.md` — The README for the cookbook.
 - `CLAUDE.md` — Project-specific instructions (most cookbooks won't have this yet).
-- `TESTING.md` — Test results log.
+- `TEST_LOG.md` — Test results log.
 
 When testing a cookbook folder, first check for the `CLAUDE.md` file. If it doesn't exist, ask the user if they'd like you to create it. Use `cookbook/15_learning/CLAUDE.md` as a reference.
 
@@ -67,9 +67,9 @@ When testing a cookbook folder, first check for the `CLAUDE.md` file. If it does
 .venvs/demo/bin/python cookbook/<folder>/<file>.py 2>&1 | tail -100
 ```
 
-**3. Updating TESTING.md**
+**3. Updating TEST_LOG.md**
 
-After each test, update the cookbook's `TESTING.md` with:
+After each test, update the cookbook's `TEST_LOG.md` with:
 - Test name and path
 - Status: PASS or FAIL
 - Brief description of what was tested

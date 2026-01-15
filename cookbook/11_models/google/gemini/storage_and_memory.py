@@ -21,7 +21,7 @@ agent = Agent(
     knowledge=knowledge_base,
     # Store the memories and summary in a database
     db=PostgresDb(db_url=db_url, memory_table="agent_memory"),
-    enable_user_memories=True,
+    update_memory_on_run=True,
     enable_session_summaries=True,
     # This setting adds a tool to search the knowledge base for information
     search_knowledge=True,

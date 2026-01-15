@@ -32,7 +32,7 @@ finance_agent_with_memory = Agent(
     enable_agentic_memory=True,
     # Uncomment to always create memories from the input
     # can be used instead of enable_agentic_memory
-    # enable_user_memories=True,
+    # update_memory_on_run=True,
     db=SqliteDb(
         session_table="agent_sessions",
         db_file="tmp/agent_data.db",

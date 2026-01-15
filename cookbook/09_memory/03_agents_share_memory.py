@@ -18,7 +18,7 @@ chat_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     description="You are a helpful assistant that can chat with users",
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
 )
 
 chat_agent.print_response(
@@ -35,7 +35,7 @@ research_agent = Agent(
     description="You are a research assistant that can help users with their research questions",
     tools=[WebSearchTools()],
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
 )
 
 research_agent.print_response(

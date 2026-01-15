@@ -79,7 +79,7 @@ def get_agentic_rag_agent(
         id="agentic-rag-agent",
         user_id=user_id,
         db=db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
         knowledge=knowledge_base,
         add_history_to_context=True,
         num_history_runs=5,
