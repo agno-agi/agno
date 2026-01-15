@@ -2404,15 +2404,24 @@ class Knowledge:
             reader = type(content.reader).__name__ if content.reader else "unknown"
             hash_parts.append(f"{topic}-{reader}")
         else:
-            # Fallback for edge cases
-            import random
-            import string
-
-            fallback = (
-                content.name
-                or content.id
-                or ("unknown_content" + "".join(random.choices(string.ascii_lowercase + string.digits, k=6)))
-            )
+            # Fallback for edge cases - use deterministic hash based on available attributes
+            # NEVER use random values as this breaks deduplication
+            fallback = content.name or content.id
+            if not fallback:
+                # Create deterministic identifier from content metadata
+                fallback_parts = []
+                if content.metadata:
+                    # Sort metadata keys for deterministic ordering
+                    for key in sorted(content.metadata.keys()):
+                        fallback_parts.append(f"{key}:{content.metadata[key]}")
+                if content.reader:
+                    fallback_parts.append(f"reader:{type(content.reader).__name__}")
+                if fallback_parts:
+                    fallback = hashlib.sha256(":".join(fallback_parts).encode()).hexdigest()[:16]
+                else:
+                    # Absolute fallback - content with no identifying info gets a fixed hash
+                    # This means ALL unidentifiable content deduplicates (which is safer than duplicates)
+                    fallback = "unidentified_content"
             hash_parts.append(fallback)
 
         hash_input = ":".join(hash_parts)
