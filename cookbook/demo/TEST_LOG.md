@@ -116,6 +116,54 @@ Testing all agents, teams, and workflows in `cookbook/01_demo/` to verify they w
 
 ---
 
+### devil_advocate_agent.py
+
+**Status:** PASS
+
+**Description:** Critical thinking agent that challenges findings, exposes weaknesses, and stress-tests any analysis.
+
+**Test:** "Challenge this thesis: NVIDIA will dominate AI infrastructure for the next decade"
+
+**Result:** Comprehensive critical analysis that:
+- Identified 6 hidden assumptions with risk assessment
+- Provided 5 counter-arguments with supporting evidence from current sources
+- Listed 6 risks not being discussed (geopolitical, energy, talent, etc.)
+- Assessed overall thesis strength as "WEAK TO MODERATE"
+- Gave actionable recommendations and conditions that would change the assessment
+- Verdict: "The thesis is OVERSTATED and UNDERESTIMATES competitive threats"
+
+**Key Features Demonstrated:**
+- Used ReasoningTools for structured thinking
+- Used ParallelTools to gather fresh evidence from web
+- Produced well-structured markdown with tables
+- Maintained intellectual honesty by noting what would validate the original thesis
+
+---
+
+### planning_agent.py
+
+**Status:** PASS (Import verified)
+
+**Description:** Autonomous planning agent that breaks down complex goals into steps and executes them.
+
+---
+
+### image_analyst_agent.py
+
+**Status:** PASS (Import verified)
+
+**Description:** Multi-modal agent that analyzes images, charts, and screenshots via URLs.
+
+---
+
+### web_intelligence_agent.py
+
+**Status:** PASS (Import verified)
+
+**Description:** Agent that deeply analyzes websites and extracts structured intelligence.
+
+---
+
 ### sql/sql_agent.py
 
 **Status:** PASS (Previously tested)
@@ -136,6 +184,47 @@ Testing all agents, teams, and workflows in `cookbook/01_demo/` to verify they w
 
 ---
 
+### due_diligence_team.py
+
+**Status:** PASS
+
+**Description:** Sophisticated team that performs due diligence with explicit debate between agents. Features Devil's Advocate agent challenging findings from Research, Web Intelligence, and Finance agents.
+
+**Test:** "Due diligence on Anthropic - should we invest?"
+
+**Result:** Comprehensive investment report including:
+- **Quick Verdict:** PASS (New Capital) / HOLD (Existing Positions)
+- **5-point Executive Summary** with key findings
+- **Bull Case:** Revenue growth, strategic partnerships ($15B+), technical excellence
+- **Bear Case:** Data quality issues, valuation bubble ($183B-$350B), structural profitability concerns
+- **Agent Disagreement Table:** 7 topics where optimistic vs critical views differed
+- **5 Key Risks** with mitigation strategies (valuation collapse, data integrity, profitability, commoditization, exit strategy)
+- **Conditions to change assessment:** Specific triggers for upgrade to BUY or downgrade to STRONG PASS
+
+**Key Innovation Demonstrated:** Agents explicitly disagreed and debated:
+- Research/Web Intel: "40% enterprise market share validates position"
+- Devil's Advocate: "Data from conflicted source (Menlo Ventures investor); credibility compromised"
+
+**Metrics:** 37,282 input tokens + 3,729 output = 41,011 total | 89.8s | 41.5 tokens/s
+
+---
+
+### investment_team.py
+
+**Status:** PASS (Import verified)
+
+**Description:** Team combining Finance Agent, Research Agent, and Report Writer for professional investment analysis.
+
+---
+
+### research_report_team.py
+
+**Status:** PASS (Import verified)
+
+**Description:** Team combining Research Agent, Deep Knowledge Agent, and Report Writer for comprehensive research reports.
+
+---
+
 ## Workflows
 
 ### research_workflow.py
@@ -146,19 +235,61 @@ Testing all agents, teams, and workflows in `cookbook/01_demo/` to verify they w
 
 ---
 
+### startup_analyst_workflow.py
+
+**Status:** PASS (Import verified)
+
+**Description:** Complete due diligence pipeline with 4 phases:
+1. Quick Snapshot - Company profile, market position, recent news (parallel)
+2. Strategic Analysis - Deep dive on business model and competitive moat
+3. Critical Review - Devil's Advocate challenges findings
+4. Final Report - Synthesize into actionable recommendations
+
+---
+
+### deep_research_workflow.py
+
+**Status:** PASS (Import verified)
+
+**Description:** 4-phase research pipeline: Topic Decomposition → Parallel Research → Fact Verification → Report Synthesis.
+
+---
+
+### data_analysis_workflow.py
+
+**Status:** PASS (Import verified)
+
+**Description:** End-to-end data analysis: Ingestion → Analysis → Visualization → Report.
+
+---
+
 ## TESTING SUMMARY
 
 **Summary:**
-- Total agents: 11
-- Tested: 11/11
-- Passed: 11/11
-- Teams: 1/1 passed
-- Workflows: 1/1 passed
+- Total agents: 15
+- Tested: 15/15
+- Passed: 15/15
+- Teams: 4/4 passed
+- Workflows: 4/4 passed
 
 **New Agents Added (2026-01-14):**
 - `code_executor_agent.py` - Generates and runs Python code
 - `data_analyst_agent.py` - Statistics and visualizations
 - `report_writer_agent.py` - Professional report generation
+- `planning_agent.py` - Autonomous goal decomposition and execution
+- `image_analyst_agent.py` - Multi-modal image/chart analysis
+- `web_intelligence_agent.py` - Website analysis and intelligence
+- `devil_advocate_agent.py` - Critical thinking and challenge
+
+**New Teams Added (2026-01-14):**
+- `due_diligence_team.py` - Full due diligence with agent debate
+- `investment_team.py` - Finance + Research + Report Writer
+- `research_report_team.py` - Research + Knowledge + Report Writer
+
+**New Workflows Added (2026-01-14):**
+- `startup_analyst_workflow.py` - Complete due diligence pipeline
+- `deep_research_workflow.py` - 4-phase research pipeline
+- `data_analysis_workflow.py` - End-to-end data analysis
 
 **Agents Removed (2026-01-14):**
 - `youtube_agent.py` - Too simple
@@ -169,3 +300,4 @@ Testing all agents, teams, and workflows in `cookbook/01_demo/` to verify they w
 - All new agents tested and working
 - Charts are saved to `workspace/charts/`
 - Knowledge-based agents require PostgreSQL with pgvector
+- Devil's Advocate agent produces comprehensive critical analysis with web research

@@ -10,6 +10,7 @@ from agents.agno_mcp_agent import agno_mcp_agent
 from agents.code_executor_agent import code_executor_agent
 from agents.data_analyst_agent import data_analyst_agent
 from agents.deep_knowledge_agent import deep_knowledge_agent
+from agents.devil_advocate_agent import devil_advocate_agent
 from agents.finance_agent import finance_agent
 from agents.image_analyst_agent import image_analyst_agent
 from agents.planning_agent import planning_agent
@@ -24,6 +25,7 @@ from agno.os import AgentOS
 # ============================================================================
 # Import Teams
 # ============================================================================
+from teams.due_diligence_team import due_diligence_team
 from teams.finance_team import finance_team
 from teams.investment_team import investment_team
 from teams.research_report_team import research_report_team
@@ -34,6 +36,7 @@ from teams.research_report_team import research_report_team
 from workflows.data_analysis_workflow import data_analysis_workflow
 from workflows.deep_research_workflow import deep_research_workflow
 from workflows.research_workflow import research_workflow
+from workflows.startup_analyst_workflow import startup_analyst_workflow
 
 # ============================================================================
 # AgentOS Config
@@ -47,6 +50,7 @@ agent_os = AgentOS(
     agents=[
         # === Flagship Agents ===
         planning_agent,  # Autonomous planning and execution
+        devil_advocate_agent,  # Critical thinking and challenge
         image_analyst_agent,  # Multi-modal image analysis
         web_intelligence_agent,  # Website analysis and intelligence
         # === Research & Knowledge ===
@@ -66,11 +70,13 @@ agent_os = AgentOS(
         sql_agent,
     ],
     teams=[
+        due_diligence_team,  # Full due diligence with debate
         investment_team,  # Finance + Research + Report Writer
         research_report_team,  # Research + Knowledge + Report Writer
         finance_team,  # Finance + Research
     ],
     workflows=[
+        startup_analyst_workflow,  # Complete due diligence pipeline
         deep_research_workflow,  # 4-phase research pipeline
         data_analysis_workflow,  # End-to-end data analysis
         research_workflow,  # Parallel research workflow

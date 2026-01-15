@@ -1,12 +1,17 @@
 chat:
   quick_prompts:
     # ============================================================================
-    # FLAGSHIP AGENTS
+    # FLAGSHIP AGENTS - THE STARS
     # ============================================================================
     planning-agent:
       - "Build a complete market analysis of the electric vehicle industry"
       - "Create a competitor analysis for OpenAI vs Anthropic vs Google"
       - "Research AI agents and create an investment thesis"
+
+    devil-advocate-agent:
+      - "Challenge this thesis: NVIDIA will dominate AI infrastructure for a decade"
+      - "What could go wrong with betting heavily on AI stocks?"
+      - "Find the flaws in the assumption that AI will replace most jobs"
 
     image-analyst-agent:
       - "Analyze this chart and extract the key data points"
@@ -22,29 +27,29 @@ chat:
     # RESEARCH & KNOWLEDGE AGENTS
     # ============================================================================
     research-agent:
-      - "Competitive landscape for vector databases"
-      - "Latest breakthroughs in small language models"
-      - "What has changed recently in the Japanese yen carry trade?"
+      - "Research: Is AI in a bubble? Present both sides with sources."
+      - "What are the latest breakthroughs in small language models?"
+      - "Research the competitive landscape for vector databases"
 
     deep-knowledge-agent:
-      - "What is Agno?"
-      - "What are Agno's key features?"
+      - "What is Agno and how does it work?"
+      - "What are Agno's key features for building AI agents?"
       - "How does Agno handle knowledge base management?"
 
     agno-mcp-agent:
       - "What is Agno?"
       - "What is AgentOS?"
-      - "What are Agno's key features?"
+      - "How do I build a team of agents with Agno?"
 
     agno-knowledge-agent:
       - "What is Agno?"
       - "What is AgentOS?"
-      - "What are Agno's key features?"
+      - "How do I create an agent with tools?"
 
     self-learning-research-agent:
       - "What is the consensus on AI agents in enterprise production systems?"
-      - "Has the consensus on AI agents in production systems changed recently?"
-      - "How are companies currently deploying AI models in production?"
+      - "Has the consensus on AI agents in production changed recently?"
+      - "How are companies deploying AI models in production?"
 
     self-learning-agent:
       - "Analyze NVIDIA and Tesla performance and suggest investment rules"
@@ -78,8 +83,13 @@ chat:
       - "Generate a competitive analysis of cloud computing providers"
 
     # ============================================================================
-    # TEAMS
+    # TEAMS - MULTI-AGENT COORDINATION
     # ============================================================================
+    due-diligence-team:
+      - "Due diligence on Anthropic - should we invest?"
+      - "Evaluate OpenAI as a strategic partner - what are the risks?"
+      - "Analyze NVIDIA as an investment - challenge the bull case"
+
     investment-team:
       - "Complete investment analysis of NVIDIA"
       - "Should I invest in Microsoft, Google, or Amazon? Full analysis."
@@ -96,12 +106,17 @@ chat:
       - "Analyze the automotive industry: Tesla, Ford, General Motors, Toyota"
 
     # ============================================================================
-    # WORKFLOWS
+    # WORKFLOWS - SOPHISTICATED PIPELINES
     # ============================================================================
+    startup-analyst-workflow:
+      - "Due diligence on: Anthropic"
+      - "Evaluate this company: OpenAI"
+      - "Should we invest in or partner with: Perplexity AI?"
+
     deep-research-workflow:
       - "Deep research: What's the future of AI agents in enterprise?"
       - "Comprehensive research on climate tech investment opportunities"
-      - "In-depth analysis of the LLM landscape in 2025"
+      - "In-depth analysis: Is AI in a bubble?"
 
     data-analysis-workflow:
       - "Analyze this sales data: Q1: 25000, Q2: 31000, Q3: 28000, Q4: 35000"

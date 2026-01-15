@@ -266,7 +266,9 @@ async def consolidate_research_step_function(input: StepInput) -> StepOutput:
 
     # Combine all research
     research_content = "## Consolidated Research Findings\n\n"
-    research_content += "Use these findings to verify facts and create the final report.\n\n"
+    research_content += (
+        "Use these findings to verify facts and create the final report.\n\n"
+    )
 
     if parallel_steps and len(parallel_steps) > 0:
         for step_output in parallel_steps:
@@ -331,7 +333,12 @@ deep_research_workflow = Workflow(
         """),
     steps=[
         decomposition_step,
-        Parallel(hn_research_step, web_research_step, deep_research_step, name="Research Phase"),  # type: ignore
+        Parallel(
+            hn_research_step,
+            web_research_step,
+            deep_research_step,
+            name="Research Phase",
+        ),  # type: ignore
         consolidation_step,
         verification_step,
         synthesis_step,
