@@ -10,7 +10,7 @@ This example shows how to use the Agno MCP tools to interact with your Notion wo
 Dependencies: pip install agno mcp openai
 
 Usage:
-  python cookbook/tools/mcp/notion_mcp_agent.py
+  python cookbook/90_tools/mcp/notion_mcp_agent.py
 """
 
 import asyncio

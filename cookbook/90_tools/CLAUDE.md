@@ -22,7 +22,7 @@ This folder contains **tool** examples - all the built-in tools and how to creat
 
 **Run a cookbook:**
 ```bash
-.venvs/demo/bin/python cookbook/14_tools/mcp/basic_mcp.py
+.venvs/demo/bin/python cookbook/90_tools/mcp/basic_mcp.py
 ```
 
 ---

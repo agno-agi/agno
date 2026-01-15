@@ -9,10 +9,10 @@ Prerequisites:
 - You can get the API key from the Parallel website: https://parallel.ai/
 
 Usage:
-  python cookbook/tools/mcp/parallel.py
+  python cookbook/90_tools/mcp/parallel.py
 
 Example:
-  python cookbook/tools/mcp/parallel.py "What is the weather in Tokyo?"
+  python cookbook/90_tools/mcp/parallel.py "What is the weather in Tokyo?"
 """
 
 import asyncio

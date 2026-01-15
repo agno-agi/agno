@@ -5,7 +5,7 @@
 pip install fastmcp
 ```
 
-Run this with `fastmcp run cookbook/tools/mcp/local_server/server.py`
+Run this with `fastmcp run cookbook/90_tools/mcp/local_server/server.py`
 """
 
 from fastmcp import FastMCP

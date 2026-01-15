@@ -31,7 +31,7 @@ Start the MCP Toolbox and PostgreSQL database using Docker Compose (`docker-comp
 
 Navigate to the demo directory:
 ```bash
-cd cookbook/tools/mcp/mcp_toolbox_demo
+cd cookbook/90_tools/mcp/mcp_toolbox_demo
 ```
 
 #### Start the services
