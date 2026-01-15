@@ -22,6 +22,46 @@ class YouTubeReader(Reader):
     def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = RecursiveChunking(), **kwargs):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
+    def _extract_video_id(self, url: str) -> str:
+        """Extract video ID from various YouTube URL formats.
+
+        Supports:
+        - https://www.youtube.com/watch?v=VIDEO_ID
+        - https://www.youtube.com/watch?v=VIDEO_ID&list=PLAYLIST
+        - https://youtu.be/VIDEO_ID
+        - https://youtu.be/VIDEO_ID?t=TIMESTAMP
+
+        Args:
+            url: YouTube URL in any supported format
+
+        Returns:
+            The 11-character video ID
+
+        Raises:
+            ValueError: If URL format is not recognized or video ID is invalid
+        """
+        video_id = None
+
+        # Handle youtu.be short URL format
+        if "youtu.be/" in url:
+            # Extract ID after youtu.be/ and before any query params
+            video_id = url.split("youtu.be/")[-1].split("?")[0].split("&")[0]
+        # Handle youtube.com/watch?v= format
+        elif "v=" in url:
+            video_id = url.split("v=")[-1].split("&")[0]
+
+        # Validate video ID
+        if not video_id:
+            raise ValueError(f"Could not extract video ID from URL: {url}")
+
+        # YouTube video IDs are exactly 11 characters
+        if len(video_id) != 11:
+            raise ValueError(
+                f"Invalid video ID '{video_id}' extracted from URL: {url}. YouTube video IDs must be 11 characters."
+            )
+
+        return video_id
+
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for YouTube readers."""
@@ -40,8 +80,8 @@ class YouTubeReader(Reader):
 
     def read(self, url: str, name: Optional[str] = None) -> List[Document]:
         try:
-            # Extract video ID from URL
-            video_id = url.split("v=")[-1].split("&")[0]
+            # Extract video ID from URL (supports youtube.com and youtu.be formats)
+            video_id = self._extract_video_id(url)
             log_info(f"Reading transcript for video: {video_id}")
 
             # Get transcript
@@ -75,5 +115,7 @@ class YouTubeReader(Reader):
             log_error(f"Error reading transcript for {url}: {e}")
             return []
 
-    async def async_read(self, url: str) -> List[Document]:
-        return await asyncio.get_event_loop().run_in_executor(None, self.read, url)
+    async def async_read(self, url: str, name: Optional[str] = None) -> List[Document]:
+        import functools
+
+        return await asyncio.get_event_loop().run_in_executor(None, functools.partial(self.read, url, name=name))

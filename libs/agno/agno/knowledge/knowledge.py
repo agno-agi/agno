@@ -118,6 +118,11 @@ class Knowledge:
             )
             return
 
+        # Validation: text_content must not be empty string if provided
+        if text_content is not None and text_content == "":
+            log_warning("text_content cannot be an empty string. Please provide actual content.")
+            return
+
         content = None
         file_data = None
         if text_content:
@@ -181,6 +186,11 @@ class Knowledge:
             log_warning(
                 "At least one of 'path', 'url', 'text_content', 'topics', or 'remote_content' must be provided."
             )
+            return
+
+        # Validation: text_content must not be empty string if provided
+        if text_content is not None and text_content == "":
+            log_warning("text_content cannot be an empty string. Please provide actual content.")
             return
 
         content = None
@@ -498,6 +508,16 @@ class Knowledge:
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
 
+        # Validation: query must not be empty or whitespace-only
+        if not query or not query.strip():
+            log_warning("Search query cannot be empty or whitespace-only.")
+            return []
+
+        # Validation: max_results must be positive if provided
+        if max_results is not None and max_results <= 0:
+            log_warning(f"max_results must be a positive integer, got {max_results}. Returning empty results.")
+            return []
+
         self.vector_db = cast(VectorDb, self.vector_db)
 
         if (
@@ -528,6 +548,16 @@ class Knowledge:
         """Returns relevant documents matching a query"""
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
+
+        # Validation: query must not be empty or whitespace-only
+        if not query or not query.strip():
+            log_warning("Search query cannot be empty or whitespace-only.")
+            return []
+
+        # Validation: max_results must be positive if provided
+        if max_results is not None and max_results <= 0:
+            log_warning(f"max_results must be a positive integer, got {max_results}. Returning empty results.")
+            return []
 
         self.vector_db = cast(VectorDb, self.vector_db)
         if (
@@ -1454,11 +1484,14 @@ class Knowledge:
                 content.status_message = f"Invalid URL format: {content.url}"
                 await self._aupdate_content(content)
                 log_warning(f"Invalid URL format: {content.url}")
+                return
         except Exception as e:
             content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             await self._aupdate_content(content)
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
+            return
+
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
@@ -1551,11 +1584,13 @@ class Knowledge:
                 content.status_message = f"Invalid URL format: {content.url}"
                 self._update_content(content)
                 log_warning(f"Invalid URL format: {content.url}")
+                return
         except Exception as e:
             content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             self._update_content(content)
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
+            return
 
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)

@@ -1,7 +1,8 @@
+import hashlib
 import os
 import re
 import tempfile
-from typing import List, Union
+from typing import List, Optional, Union
 
 try:
     from unstructured.chunking.title import chunk_by_title  # type: ignore
@@ -36,6 +37,23 @@ class MarkdownChunking(ChunkingStrategy):
         if isinstance(split_on_headings, int) and not isinstance(split_on_headings, bool):
             if not (1 <= split_on_headings <= 6):
                 raise ValueError("split_on_headings must be between 1 and 6 when using integer value")
+
+    def _generate_chunk_id(self, document: Document, chunk_number: int, content: Optional[str] = None) -> str:
+        """Generate a unique chunk ID.
+
+        Uses document.id or document.name if available, otherwise falls back
+        to a content hash to ensure unique IDs even for documents without
+        explicit identifiers.
+        """
+        if document.id:
+            return f"{document.id}_{chunk_number}"
+        elif document.name:
+            return f"{document.name}_{chunk_number}"
+        else:
+            # Generate a deterministic ID from content hash
+            hash_source = content if content else document.content
+            content_hash = hashlib.md5(hash_source.encode()).hexdigest()[:12]
+            return f"chunk_{content_hash}_{chunk_number}"
 
     def _split_by_headings(self, content: str) -> List[str]:
         """
@@ -166,11 +184,7 @@ class MarkdownChunking(ChunkingStrategy):
             if self.split_on_headings:
                 meta_data = chunk_meta_data.copy()
                 meta_data["chunk"] = chunk_number
-                chunk_id = None
-                if document.id:
-                    chunk_id = f"{document.id}_{chunk_number}"
-                elif document.name:
-                    chunk_id = f"{document.name}_{chunk_number}"
+                chunk_id = self._generate_chunk_id(document, chunk_number, section)
                 meta_data["chunk_size"] = section_size
 
                 chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=section))
@@ -181,12 +195,9 @@ class MarkdownChunking(ChunkingStrategy):
             else:
                 meta_data = chunk_meta_data.copy()
                 meta_data["chunk"] = chunk_number
-                chunk_id = None
-                if document.id:
-                    chunk_id = f"{document.id}_{chunk_number}"
-                elif document.name:
-                    chunk_id = f"{document.name}_{chunk_number}"
-                meta_data["chunk_size"] = len("\n\n".join(current_chunk))
+                chunk_content = "\n\n".join(current_chunk)
+                chunk_id = self._generate_chunk_id(document, chunk_number, chunk_content)
+                meta_data["chunk_size"] = len(chunk_content)
 
                 if current_chunk:
                     chunks.append(
@@ -203,15 +214,10 @@ class MarkdownChunking(ChunkingStrategy):
         if current_chunk and not self.split_on_headings:
             meta_data = chunk_meta_data.copy()
             meta_data["chunk"] = chunk_number
-            chunk_id = None
-            if document.id:
-                chunk_id = f"{document.id}_{chunk_number}"
-            elif document.name:
-                chunk_id = f"{document.name}_{chunk_number}"
-            meta_data["chunk_size"] = len("\n\n".join(current_chunk))
-            chunks.append(
-                Document(id=chunk_id, name=document.name, meta_data=meta_data, content="\n\n".join(current_chunk))
-            )
+            chunk_content = "\n\n".join(current_chunk)
+            chunk_id = self._generate_chunk_id(document, chunk_number, chunk_content)
+            meta_data["chunk_size"] = len(chunk_content)
+            chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk_content))
 
         # Handle overlap if specified
         if self.overlap > 0:
@@ -222,7 +228,8 @@ class MarkdownChunking(ChunkingStrategy):
                     prev_text = chunks[i - 1].content[-self.overlap :]
                     meta_data = chunk_meta_data.copy()
                     meta_data["chunk"] = chunks[i].meta_data["chunk"]
-                    chunk_id = chunks[i].id
+                    # chunk.id is always set by _generate_chunk_id, but use fallback for type safety
+                    chunk_id = chunks[i].id or self._generate_chunk_id(document, i + 1)
                     meta_data["chunk_size"] = len(prev_text + chunks[i].content)
 
                     if prev_text:

@@ -1,4 +1,5 @@
-from typing import List
+import hashlib
+from typing import List, Optional
 
 from agno.knowledge.chunking.strategy import ChunkingStrategy
 from agno.knowledge.document.base import Document
@@ -8,12 +9,34 @@ class FixedSizeChunking(ChunkingStrategy):
     """Chunking strategy that splits text into fixed-size chunks with optional overlap"""
 
     def __init__(self, chunk_size: int = 5000, overlap: int = 0):
+        # Bug fix: validate chunk_size is positive to prevent infinite loops
+        if chunk_size <= 0:
+            raise ValueError(f"Invalid parameters: chunk_size ({chunk_size}) must be greater than 0.")
         # overlap must be less than chunk size
         if overlap >= chunk_size:
             raise ValueError(f"Invalid parameters: overlap ({overlap}) must be less than chunk size ({chunk_size}).")
+        if overlap < 0:
+            raise ValueError(f"Invalid parameters: overlap ({overlap}) must be non-negative.")
 
         self.chunk_size = chunk_size
         self.overlap = overlap
+
+    def _generate_chunk_id(self, document: Document, chunk_number: int, content: Optional[str] = None) -> str:
+        """Generate a unique chunk ID.
+
+        Uses document.id or document.name if available, otherwise falls back
+        to a content hash to ensure unique IDs even for documents without
+        explicit identifiers.
+        """
+        if document.id:
+            return f"{document.id}_{chunk_number}"
+        elif document.name:
+            return f"{document.name}_{chunk_number}"
+        else:
+            # Generate a deterministic ID from content hash
+            hash_source = content if content else document.content
+            content_hash = hashlib.md5(hash_source.encode()).hexdigest()[:12]
+            return f"chunk_{content_hash}_{chunk_number}"
 
     def chunk(self, document: Document) -> List[Document]:
         """Split document into fixed-size chunks with optional overlap"""
@@ -23,7 +46,10 @@ class FixedSizeChunking(ChunkingStrategy):
         chunk_number = 1
         chunk_meta_data = document.meta_data
         start = 0
-        while start + self.overlap < content_length:
+        # Bug fix: Changed from `start + self.overlap < content_length` to `start < content_length`
+        # The old condition would exit too early with large overlaps, losing the last chunk
+        # Example: content=100, chunk_size=50, overlap=40 would miss content[40:100]
+        while start < content_length:
             end = min(start + self.chunk_size, content_length)
 
             # Ensure we're not splitting a word in half
@@ -38,11 +64,7 @@ class FixedSizeChunking(ChunkingStrategy):
             chunk = content[start:end]
             meta_data = chunk_meta_data.copy()
             meta_data["chunk"] = chunk_number
-            chunk_id = None
-            if document.id:
-                chunk_id = f"{document.id}_{chunk_number}"
-            elif document.name:
-                chunk_id = f"{document.name}_{chunk_number}"
+            chunk_id = self._generate_chunk_id(document, chunk_number, chunk)
             meta_data["chunk_size"] = len(chunk)
             chunked_documents.append(
                 Document(

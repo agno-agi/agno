@@ -9073,6 +9073,74 @@ class Agent:
             and len(input) > 0
             and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
         ):
+            # 5.1 Search knowledge for the last user message if add_knowledge_to_context is enabled
+            if self.add_knowledge_to_context and self.knowledge:
+                knowledge_filters = run_context.knowledge_filters if run_context else None
+
+                # Find the last user message content for knowledge search
+                last_user_content: Optional[str] = None
+                last_user_msg_index: int = -1
+                for i in range(len(input) - 1, -1, -1):
+                    msg = input[i]
+                    if isinstance(msg, Message) and msg.role == "user":
+                        if msg.content is not None:
+                            last_user_content = get_text_from_message(msg.content)
+                            last_user_msg_index = i
+                        break
+                    elif isinstance(msg, dict) and msg.get("role") == "user":
+                        msg_content = msg.get("content")
+                        if msg_content is not None:
+                            last_user_content = get_text_from_message(msg_content)
+                            last_user_msg_index = i
+                        break
+
+                if last_user_content:
+                    try:
+                        retrieval_timer = Timer()
+                        retrieval_timer.start()
+                        docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                            query=last_user_content, filters=knowledge_filters, run_context=run_context, **kwargs
+                        )
+                        if docs_from_knowledge is not None and len(docs_from_knowledge) > 0:
+                            references = MessageReferences(
+                                query=last_user_content,
+                                references=docs_from_knowledge,
+                                time=round(retrieval_timer.elapsed, 4),
+                            )
+                            # Add the references to the run_response
+                            if run_response.references is None:
+                                run_response.references = []
+                            run_response.references.append(references)
+
+                            # Append knowledge context to the last user message
+                            knowledge_context = self._convert_documents_to_string(docs_from_knowledge)
+                            msg = input[last_user_msg_index]
+                            if isinstance(msg, Message) and msg.content is not None:
+                                original_content = get_text_from_message(msg.content)
+                                msg.content = (
+                                    original_content
+                                    + "\n\nUse the following references from the knowledge base if it helps:\n"
+                                    + "<references>\n"
+                                    + knowledge_context
+                                    + "\n</references>"
+                                )
+                            elif isinstance(msg, dict):
+                                msg_content = msg.get("content")
+                                if msg_content is not None:
+                                    original_content = get_text_from_message(msg_content)
+                                    msg["content"] = (
+                                        original_content
+                                        + "\n\nUse the following references from the knowledge base if it helps:\n"
+                                        + "<references>\n"
+                                        + knowledge_context
+                                        + "\n</references>"
+                                    )
+                        retrieval_timer.stop()
+                        log_debug(f"Time to get references for messages array: {retrieval_timer.elapsed:.4f}s")
+                    except Exception as e:
+                        log_warning(f"Failed to get references for messages array: {e}")
+
+            # 5.2 Add the messages to run_messages
             for _m in input:
                 if isinstance(_m, Message):
                     run_messages.messages.append(_m)
@@ -9270,6 +9338,74 @@ class Agent:
             and len(input) > 0
             and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
         ):
+            # 5.1 Search knowledge for the last user message if add_knowledge_to_context is enabled
+            if self.add_knowledge_to_context and self.knowledge:
+                knowledge_filters = run_context.knowledge_filters if run_context else None
+
+                # Find the last user message content for knowledge search
+                last_user_content: Optional[str] = None
+                last_user_msg_index: int = -1
+                for i in range(len(input) - 1, -1, -1):
+                    msg = input[i]
+                    if isinstance(msg, Message) and msg.role == "user":
+                        if msg.content is not None:
+                            last_user_content = get_text_from_message(msg.content)
+                            last_user_msg_index = i
+                        break
+                    elif isinstance(msg, dict) and msg.get("role") == "user":
+                        msg_content = msg.get("content")
+                        if msg_content is not None:
+                            last_user_content = get_text_from_message(msg_content)
+                            last_user_msg_index = i
+                        break
+
+                if last_user_content:
+                    try:
+                        retrieval_timer = Timer()
+                        retrieval_timer.start()
+                        docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(
+                            query=last_user_content, filters=knowledge_filters, run_context=run_context, **kwargs
+                        )
+                        if docs_from_knowledge is not None and len(docs_from_knowledge) > 0:
+                            references = MessageReferences(
+                                query=last_user_content,
+                                references=docs_from_knowledge,
+                                time=round(retrieval_timer.elapsed, 4),
+                            )
+                            # Add the references to the run_response
+                            if run_response.references is None:
+                                run_response.references = []
+                            run_response.references.append(references)
+
+                            # Append knowledge context to the last user message
+                            knowledge_context = self._convert_documents_to_string(docs_from_knowledge)
+                            msg = input[last_user_msg_index]
+                            if isinstance(msg, Message) and msg.content is not None:
+                                original_content = get_text_from_message(msg.content)
+                                msg.content = (
+                                    original_content
+                                    + "\n\nUse the following references from the knowledge base if it helps:\n"
+                                    + "<references>\n"
+                                    + knowledge_context
+                                    + "\n</references>"
+                                )
+                            elif isinstance(msg, dict):
+                                msg_content = msg.get("content")
+                                if msg_content is not None:
+                                    original_content = get_text_from_message(msg_content)
+                                    msg["content"] = (
+                                        original_content
+                                        + "\n\nUse the following references from the knowledge base if it helps:\n"
+                                        + "<references>\n"
+                                        + knowledge_context
+                                        + "\n</references>"
+                                    )
+                        retrieval_timer.stop()
+                        log_debug(f"Time to get references for messages array: {retrieval_timer.elapsed:.4f}s")
+                    except Exception as e:
+                        log_warning(f"Failed to get references for messages array: {e}")
+
+            # 5.2 Add the messages to run_messages
             for _m in input:
                 if isinstance(_m, Message):
                     run_messages.messages.append(_m)

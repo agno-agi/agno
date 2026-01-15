@@ -13,21 +13,30 @@ class ChunkingStrategy(ABC):
         raise NotImplementedError
 
     def clean_text(self, text: str) -> str:
-        """Clean the text by replacing multiple newlines with a single newline"""
+        """Clean the text by normalizing whitespace while preserving paragraph structure.
+
+        Bug fix: The previous implementation used r"\\s+" which matches ALL whitespace
+        including newlines. This destroyed paragraph breaks (e.g., "Hello\\n\\nWorld"
+        became "Hello World"). Now using character classes that exclude newlines.
+        """
         import re
 
-        # Replace multiple newlines with a single newline
-        cleaned_text = re.sub(r"\n+", "\n", text)
-        # Replace multiple spaces with a single space
-        cleaned_text = re.sub(r"\s+", " ", cleaned_text)
-        # Replace multiple tabs with a single tab
-        cleaned_text = re.sub(r"\t+", "\t", cleaned_text)
-        # Replace multiple carriage returns with a single carriage return
-        cleaned_text = re.sub(r"\r+", "\r", cleaned_text)
-        # Replace multiple form feeds with a single form feed
-        cleaned_text = re.sub(r"\f+", "\f", cleaned_text)
-        # Replace multiple vertical tabs with a single vertical tab
-        cleaned_text = re.sub(r"\v+", "\v", cleaned_text)
+        # Normalize line endings to \n first
+        cleaned_text = re.sub(r"\r\n", "\n", text)
+        cleaned_text = re.sub(r"\r", "\n", cleaned_text)
+
+        # Preserve paragraph breaks: 3+ newlines → 2 newlines (paragraph break)
+        cleaned_text = re.sub(r"\n{3,}", "\n\n", cleaned_text)
+
+        # Replace multiple horizontal whitespace (spaces/tabs) with single space
+        # Bug fix: Using [ \t]+ instead of \s+ to avoid destroying newlines
+        cleaned_text = re.sub(r"[ \t]+", " ", cleaned_text)
+
+        # Clean up spaces around newlines (but preserve the newlines)
+        cleaned_text = re.sub(r" *\n *", "\n", cleaned_text)
+
+        # Strip leading/trailing whitespace from the entire text
+        cleaned_text = cleaned_text.strip()
 
         return cleaned_text
 

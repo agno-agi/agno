@@ -419,7 +419,9 @@ class Milvus(VectorDb):
                     log_debug(f"Skipping document without embedding: {document.name} ({document.meta_data})")
                     continue
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                doc_id = md5(cleaned_content.encode()).hexdigest()
+                # Include document.id in ID calculation to ensure uniqueness when chunks have identical content
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
                 meta_data = document.meta_data or {}
                 if filters:
@@ -550,7 +552,9 @@ class Milvus(VectorDb):
         for document in documents:
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            # Include document.id in ID calculation to ensure uniqueness when chunks have identical content
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
             meta_data = document.meta_data or {}
             if filters:
@@ -618,7 +622,9 @@ class Milvus(VectorDb):
 
         async def process_document(document):
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            # Include document.id in ID calculation to ensure uniqueness when chunks have identical content
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
             data = {
                 "id": doc_id,
                 "vector": document.embedding,
@@ -1092,6 +1098,13 @@ class Milvus(VectorDb):
             log_info(f"Error deleting documents with content_id {content_id}: {e}")
             return False
 
+    def _escape_milvus_value(self, v: str) -> str:
+        """Escape special characters for Milvus filter expressions.
+
+        Prevents injection attacks by escaping backslashes and double quotes.
+        """
+        return v.replace("\\", "\\\\").replace('"', '\\"')
+
     def _build_expr(self, filters: Optional[Dict[str, Any]]) -> Optional[str]:
         """Build Milvus expression from filters."""
         if not filters:
@@ -1104,8 +1117,9 @@ class Milvus(VectorDb):
                 values_str = json.dumps(v)
                 expr = f'json_contains_any(meta_data["{k}"], {values_str})'
             elif isinstance(v, str):
-                # For string values
-                expr = f'meta_data["{k}"] == "{v}"'
+                # For string values - escape special characters
+                escaped_v = self._escape_milvus_value(v)
+                expr = f'meta_data["{k}"] == "{escaped_v}"'
             elif isinstance(v, bool):
                 # For boolean values
                 expr = f'meta_data["{k}"] == {str(v).lower()}'
@@ -1116,8 +1130,9 @@ class Milvus(VectorDb):
                 # For null values
                 expr = f'meta_data["{k}"] is null'
             else:
-                # For other types, convert to string
-                expr = f'meta_data["{k}"] == "{str(v)}"'
+                # For other types, convert to string and escape
+                escaped_v = self._escape_milvus_value(str(v))
+                expr = f'meta_data["{k}"] == "{escaped_v}"'
 
             expressions.append(expr)
 

@@ -599,7 +599,9 @@ class CouchbaseSearch(VectorDb):
 
         # Clean content and generate ID
         cleaned_content = document.content.replace("\x00", "\ufffd")
-        doc_id = md5(cleaned_content.encode("utf-8")).hexdigest()
+        # Include document.id in ID calculation to ensure uniqueness when chunks have identical content
+        base_id = document.id or md5(cleaned_content.encode("utf-8")).hexdigest()
+        doc_id = md5(f"{base_id}_{content_hash}".encode("utf-8")).hexdigest()
 
         return {
             "_id": doc_id,

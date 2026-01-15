@@ -252,7 +252,9 @@ class ChromaDb(VectorDb):
         for document in documents:
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            # Include document.id in ID calculation to ensure uniqueness when chunks have identical content
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
             # Handle metadata and filters
             metadata = document.meta_data or {}
@@ -411,7 +413,9 @@ class ChromaDb(VectorDb):
         for document in documents:
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            # Include document.id in ID calculation to ensure uniqueness when chunks have identical content
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
             # Handle metadata and filters
             metadata = document.meta_data or {}

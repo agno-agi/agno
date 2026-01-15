@@ -164,8 +164,10 @@ class WebsiteReader(Reader):
         num_links = 0
         crawler_result: Dict[str, str] = {}
         primary_domain = self._get_primary_domain(url)
-        # Add starting URL with its depth to the global list
-        self._urls_to_crawl.append((url, starting_depth))
+
+        # Clear previously visited URLs and URLs to crawl (must reset for each crawl)
+        self._visited = set()
+        self._urls_to_crawl = [(url, starting_depth)]
         while self._urls_to_crawl:
             # Unpack URL and depth from the global list
             current_url, current_depth = self._urls_to_crawl.pop(0)
@@ -288,7 +290,7 @@ class WebsiteReader(Reader):
                 if (
                     current_url in self._visited
                     or not urlparse(current_url).netloc.endswith(primary_domain)
-                    or current_depth > self.max_depth
+                    or (current_depth > self.max_depth and current_url != url)
                     or num_links >= self.max_links
                 ):
                     continue

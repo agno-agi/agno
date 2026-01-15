@@ -211,6 +211,9 @@ class WebSearchReader(Reader):
         if not query:
             raise ValueError("Query cannot be empty")
 
+        # Clear visited URLs for fresh search (prevents state pollution across calls)
+        self._visited_urls.clear()
+
         log_debug(f"Starting web search reader for query: {query}")
 
         # Perform web search
@@ -262,6 +265,9 @@ class WebSearchReader(Reader):
         if not query:
             raise ValueError("Query cannot be empty")
 
+        # Clear visited URLs for fresh search (prevents state pollution across calls)
+        self._visited_urls.clear()
+
         log_debug(f"Starting async web search reader for query: {query}")
 
         search_results = self._perform_web_search(query)
@@ -269,7 +275,7 @@ class WebSearchReader(Reader):
             logger.warning(f"No search results found for query: {query}")
             return []
 
-        async def fetch_url_async(result: Dict[str, str]) -> Optional[Document]:
+        async def fetch_url_async(client: httpx.AsyncClient, result: Dict[str, str]) -> Optional[Document]:
             url = result.get("url", "")
 
             if not self._is_valid_url(url):
@@ -279,37 +285,38 @@ class WebSearchReader(Reader):
 
             try:
                 headers = {"User-Agent": self.user_agent}
-                async with httpx.AsyncClient(timeout=self.request_timeout) as client:
-                    response = await client.get(url, headers=headers, follow_redirects=True)
-                    response.raise_for_status()
+                response = await client.get(url, headers=headers, follow_redirects=True)
+                response.raise_for_status()
 
-                    content_type = response.headers.get("content-type", "").lower()
-                    if "text/html" in content_type:
-                        content = self._extract_text_from_html(response.text, url)
-                    else:
-                        content = response.text
+                content_type = response.headers.get("content-type", "").lower()
+                if "text/html" in content_type:
+                    content = self._extract_text_from_html(response.text, url)
+                else:
+                    content = response.text
 
-                    return self._create_document_from_url(url, content, result)
+                return self._create_document_from_url(url, content, result)
 
             except Exception as e:
                 logger.warning(f"Error fetching {url}: {e}")
                 return None
 
         documents = []
-        for i, result in enumerate(search_results):
-            if i > 0:
-                await asyncio.sleep(self.delay_between_requests)
+        # Reuse a single AsyncClient for all URLs (connection pooling)
+        async with httpx.AsyncClient(timeout=self.request_timeout) as client:
+            for i, result in enumerate(search_results):
+                if i > 0:
+                    await asyncio.sleep(self.delay_between_requests)
 
-            doc = await fetch_url_async(result)
-            if doc is not None:
-                if self.chunk:
-                    chunked_docs = await self.chunk_documents_async([doc])
-                    documents.extend(chunked_docs)
-                else:
-                    documents.append(doc)
+                doc = await fetch_url_async(client, result)
+                if doc is not None:
+                    if self.chunk:
+                        chunked_docs = await self.chunk_documents_async([doc])
+                        documents.extend(chunked_docs)
+                    else:
+                        documents.append(doc)
 
-                if len(documents) >= self.max_results:
-                    break
+                    if len(documents) >= self.max_results:
+                        break
 
         log_debug(f"Created {len(documents)} documents from async web search")
         return documents

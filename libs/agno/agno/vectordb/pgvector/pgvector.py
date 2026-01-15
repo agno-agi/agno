@@ -650,13 +650,6 @@ class PgVector(VectorDb):
                                 ):
                                     log_warning(f"Document {idx} '{doc.name}' has empty embedding (length 0)")
 
-                                if (
-                                    doc.embedding is not None
-                                    and isinstance(doc.embedding, list)
-                                    and len(doc.embedding) == 0
-                                ):
-                                    log_warning(f"Document {idx} '{doc.name}' has empty embedding (length 0)")
-
                                 meta_data = doc.meta_data or {}
                                 if filters:
                                     meta_data.update(filters)
@@ -1396,7 +1389,6 @@ class PgVector(VectorDb):
                 return True
         except Exception as e:
             log_error(f"Error deleting rows from table '{self.table.fullname}': {e}")
-            sess.rollback()
             return False
 
     def delete_by_id(self, id: str) -> bool:

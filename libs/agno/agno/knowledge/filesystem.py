@@ -135,9 +135,14 @@ class FileSystemKnowledge:
         """Get the contents of a specific file."""
         # Handle both relative and absolute paths
         if path_isabs(query):
-            file_path = Path(query)
+            file_path = Path(query).resolve()
         else:
-            file_path = self.base_path / query
+            file_path = (self.base_path / query).resolve()
+
+        # Security fix: Validate path is within base_path to prevent path traversal attacks
+        if not file_path.is_relative_to(self.base_path):
+            log_warning(f"Security: Path traversal attempt blocked: {query}")
+            return []
 
         if not file_path.exists():
             log_warning(f"File not found: {query}")

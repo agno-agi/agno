@@ -315,16 +315,25 @@ class ReaderFactory:
 
     @classmethod
     def create_reader(cls, reader_key: str, **kwargs) -> Reader:
-        """Create a reader instance with the given key and optional overrides."""
-        if reader_key in cls._reader_cache:
+        """Create a reader instance with the given key and optional overrides.
+
+        Note: Caching only applies when no kwargs are provided. When kwargs are
+        specified, a fresh reader instance is always created to ensure the correct
+        configuration is used. This prevents bugs where cached readers with different
+        configurations are incorrectly reused.
+        """
+        # Only use cache when no kwargs are provided
+        # This ensures custom configurations always get fresh instances
+        if not kwargs and reader_key in cls._reader_cache:
             return cls._reader_cache[reader_key]
 
         # Get the reader method and create the instance
         reader_method = cls._get_reader_method(reader_key)
         reader = reader_method(**kwargs)
 
-        # Cache the reader
-        cls._reader_cache[reader_key] = reader
+        # Only cache readers created with default configuration
+        if not kwargs:
+            cls._reader_cache[reader_key] = reader
 
         return reader
 
