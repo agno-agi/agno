@@ -10,7 +10,7 @@ persists user-level information: preferences, facts, context.
 Key concepts:
 - MemoryManager: Extracts and stores user memories from conversations
 - enable_agentic_memory: Agent decides when to store/recall via tool calls (efficient)
-- enable_user_memories: Memory manager runs after every response (guaranteed capture)
+- update_memory_on_run: Memory manager runs after every response (guaranteed capture)
 - user_id: Links memories to a specific user
 
 Example prompts to try:
@@ -150,7 +150,7 @@ Two ways to enable memory:
    - Agent decides when to store/recall via tool calls
    - More efficient — only runs when needed
 
-2. enable_user_memories=True
+2. update_memory_on_run=True
    - Memory manager runs after every agent response
    - Guaranteed capture — never misses user info
    - Higher latency and cost

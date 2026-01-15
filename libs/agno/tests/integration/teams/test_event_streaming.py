@@ -284,7 +284,7 @@ def test_intermediate_steps_with_memory(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[],
         db=shared_db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
         telemetry=False,
     )
 

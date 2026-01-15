@@ -150,7 +150,7 @@ user_request_bot = Agent(
     description="Answer queries about the user.",
     db=db,
     markdown=True,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     instructions="You are a user agent. You are asked to answer queries about the user.",
 )
 
