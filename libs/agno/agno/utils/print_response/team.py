@@ -8,10 +8,32 @@ from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
+from agno.run.agent import RunContentEvent as AgentRunContentEvent
 from agno.run.agent import RunOutput
+from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutput, TeamRunOutputEvent
+from agno.run.workflow import (
+    ConditionExecutionCompletedEvent,
+    ConditionExecutionStartedEvent,
+    LoopExecutionCompletedEvent,
+    LoopExecutionStartedEvent,
+    LoopIterationCompletedEvent,
+    LoopIterationStartedEvent,
+    ParallelExecutionCompletedEvent,
+    ParallelExecutionStartedEvent,
+    RouterExecutionCompletedEvent,
+    RouterExecutionStartedEvent,
+    StepCompletedEvent,
+    StepsExecutionCompletedEvent,
+    StepsExecutionStartedEvent,
+    StepStartedEvent,
+    WorkflowCompletedEvent,
+    WorkflowRunOutputEvent,
+    WorkflowStartedEvent,
+)
 from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
+from agno.utils.print_response.helpers import build_workflow_step_panel
 from agno.utils.response import build_reasoning_step_panel, create_panel, escape_markdown_tags, format_tool_calls
 from agno.utils.timer import Timer
 
@@ -465,6 +487,13 @@ def print_response_stream(
         # Dict to track member response panels by member_id
         member_response_panels = {}
 
+        # Track workflow state
+        workflow_step_panels: List[Any] = []
+        current_workflow_step_name: str = ""
+        current_workflow_step_content: str = ""
+        workflow_in_progress: bool = False
+        all_panels: List[Any] = []
+
         final_run_response = None
         for resp in stream_resp:
             if team_markdown is None:
@@ -475,6 +504,128 @@ def print_response_stream(
 
                 if team.output_schema is not None:
                     team_markdown = False
+
+            if isinstance(resp, tuple(get_args(WorkflowRunOutputEvent))):
+                if isinstance(resp, WorkflowStartedEvent):
+                    workflow_in_progress = True
+                    status.update(f"Workflow started: {resp.workflow_name or 'Workflow'}...")
+                    live_console.update(Group(*panels, status))
+                    continue
+
+                elif isinstance(resp, StepStartedEvent):
+                    step_name = resp.step_name or "Unknown"
+                    current_workflow_step_name = step_name
+                    current_workflow_step_content = ""
+                    status.update(f"Running step: {step_name}...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, StepCompletedEvent):
+                    step_name = resp.step_name or "Unknown"
+                    step_content = current_workflow_step_content or (str(resp.content) if resp.content else "")
+                    if step_content:
+                        step_panel = create_panel(
+                            content=Markdown(step_content) if markdown else Text(step_content),
+                            title=f"Step: {step_name} (Completed)",
+                            border_style="orange3",
+                        )
+                        workflow_step_panels.append(step_panel)
+                    status.update(f"Completed step: {step_name}")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    current_workflow_step_name = ""
+                    current_workflow_step_content = ""
+                    continue
+
+                elif isinstance(resp, LoopExecutionStartedEvent):
+                    status.update(
+                        f"Starting loop: {resp.step_name or 'Loop'} (max {resp.max_iterations} iterations)..."
+                    )
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, LoopIterationStartedEvent):
+                    status.update(f"Loop iteration {resp.iteration}/{resp.max_iterations}: {resp.step_name}...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, LoopIterationCompletedEvent):
+                    status.update(f"Completed iteration {resp.iteration}/{resp.max_iterations}: {resp.step_name}")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, LoopExecutionCompletedEvent):
+                    status.update(f"Completed loop: {resp.step_name or 'Loop'} ({resp.total_iterations} iterations)")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, ParallelExecutionStartedEvent):
+                    status.update(f"Starting parallel execution: {resp.step_name or 'Parallel'}...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, ParallelExecutionCompletedEvent):
+                    status.update(f"Completed parallel execution: {resp.step_name or 'Parallel'}")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, ConditionExecutionStartedEvent):
+                    condition_result = "true" if resp.condition_result else "false"
+                    status.update(f"Evaluating condition: {resp.step_name or 'Condition'} ({condition_result})...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, ConditionExecutionCompletedEvent):
+                    condition_result = "true" if resp.condition_result else "false"
+                    status.update(
+                        f"Completed condition: {resp.step_name or 'Condition'} ({condition_result}, {resp.executed_steps or 0} steps)"
+                    )
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, RouterExecutionStartedEvent):
+                    selected = ", ".join(resp.selected_steps) if resp.selected_steps else "none"
+                    status.update(f"Router selecting: {resp.step_name or 'Router'} -> [{selected}]...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, RouterExecutionCompletedEvent):
+                    selected = ", ".join(resp.selected_steps) if resp.selected_steps else "none"
+                    status.update(
+                        f"Completed router: {resp.step_name or 'Router'} -> [{selected}] ({resp.executed_steps or 0} steps)"
+                    )
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, StepsExecutionStartedEvent):
+                    status.update(f"Starting steps: {resp.step_name or 'Steps'} ({resp.steps_count or 0} steps)...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, StepsExecutionCompletedEvent):
+                    status.update(
+                        f"Completed steps: {resp.step_name or 'Steps'} ({resp.executed_steps or 0}/{resp.steps_count or 0} steps)"
+                    )
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, WorkflowCompletedEvent):
+                    workflow_in_progress = False
+                    status.update("Workflow completed")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+            if workflow_in_progress and isinstance(resp, (AgentRunContentEvent, TeamRunContentEvent)):
+                if resp.content is not None and isinstance(resp.content, str):
+                    current_workflow_step_content += resp.content
+                    current_step_panel = build_workflow_step_panel(
+                        current_workflow_step_name, current_workflow_step_content, markdown, create_panel, running=True
+                    )
+                    display_panels = panels + workflow_step_panels
+                    if current_step_panel:
+                        display_panels = display_panels + [current_step_panel]
+                    live_console.update(Group(*display_panels, status))
+                    continue
+                continue
 
             if isinstance(resp, TeamRunOutput):
                 final_run_response = resp
@@ -503,10 +654,8 @@ def print_response_stream(
                     if resp.run_input is not None:  # type: ignore
                         input_content = get_text_from_message(resp.run_input.input_content)  # type: ignore
 
-                # Collect team tool calls, avoiding duplicates
                 if resp.event == TeamRunEvent.tool_call_completed and resp.tool:  # type: ignore
                     tool = resp.tool  # type: ignore
-                    # Generate a unique ID for this tool call
                     if tool.tool_call_id:
                         tool_id = tool.tool_call_id
                     else:
@@ -515,7 +664,6 @@ def print_response_stream(
                         processed_tool_calls.add(tool_id)
                         team_tool_calls.append(tool)
 
-            # Collect member tool calls, avoiding duplicates
             if show_member_responses and hasattr(resp, "member_responses") and resp.member_responses:
                 for member_response in resp.member_responses:
                     member_id = None
@@ -539,12 +687,10 @@ def print_response_stream(
                                 member_tool_calls[member_id].append(tool)
 
             response_content_stream: Union[str, Markdown] = _response_content
-            # Escape special tags before markdown conversion
             if team_markdown:
                 escaped_content = escape_markdown_tags(_response_content, tags_to_include_in_markdown)
                 response_content_stream = Markdown(escaped_content)
 
-            # Create new panels for each chunk
             panels = []
 
             if input_content and show_message:
@@ -577,7 +723,6 @@ def print_response_stream(
                 # Keep showing status if no content yet
                 panels.append(status)
 
-            # Process member responses and their tool calls
             for member_response in (
                 resp.member_responses if show_member_responses and hasattr(resp, "member_responses") else []
             ):
@@ -591,7 +736,6 @@ def print_response_stream(
 
                     member_name = team._get_member_name(member_id)
 
-                # If we have tool calls for this member, display them
                 if member_id in member_tool_calls and member_tool_calls[member_id]:
                     formatted_calls = format_tool_calls(member_tool_calls[member_id])
                     if formatted_calls:
@@ -612,7 +756,6 @@ def print_response_stream(
                         )
                         panels.append(member_tool_calls_panel)
 
-                # Process member response content
                 if show_member_responses and member_id is not None:
                     show_markdown = False
                     if markdown:
@@ -632,11 +775,9 @@ def print_response_stream(
 
                     panels.append(member_response_panel)
 
-                    # Store for reference
                     if member_id is not None:
                         member_response_panels[member_id] = member_response_panel
 
-            # Add team tool calls panel if available (before the team response)
             if team_tool_calls:
                 formatted_calls = format_tool_calls(team_tool_calls)
                 if formatted_calls:
@@ -644,19 +785,15 @@ def print_response_stream(
                     panel_width = console_width + 30
 
                     lines = []
-                    # Create a set to track already added calls by their string representation
                     added_calls = set()
                     for call in formatted_calls:
                         if call not in added_calls:
                             added_calls.add(call)
-                            # Wrap the call text to fit within the panel
                             wrapped_call = textwrap.fill(f"• {call}", width=panel_width, subsequent_indent="  ")
                             lines.append(wrapped_call)
 
-                    # Join with blank lines between items
                     tool_calls_text = "\n\n".join(lines)
 
-                    # Add compression stats if available (don't clear - will be cleared in final_panels)
                     if team.compression_manager is not None and team.compression_manager.stats:
                         stats = team.compression_manager.stats
                         saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
@@ -671,19 +808,22 @@ def print_response_stream(
                     )
                     panels.append(team_tool_calls_panel)
 
-            # Add the team response panel at the end
-            if response_content_stream:
-                render = True
-                # Create panel for response
-                response_panel = create_panel(
-                    content=response_content_stream,
-                    title=f"Response ({response_timer.elapsed:.1f}s)",
-                    border_style="blue",
-                )
-                panels.append(response_panel)
+            if workflow_in_progress:
+                all_panels = panels + workflow_step_panels
+            else:
+                if response_content_stream:
+                    render = True
+                    # Create panel for response
+                    response_panel = create_panel(
+                        content=response_content_stream,
+                        title=f"Response ({response_timer.elapsed:.1f}s)",
+                        border_style="blue",
+                    )
+                    panels.append(response_panel)
+                all_panels = panels + workflow_step_panels
 
-            if render or len(panels) > 0:
-                live_console.update(Group(*panels))
+            if render or len(all_panels) > 0:
+                live_console.update(Group(*all_panels))
 
         response_timer.stop()
         run_response = final_run_response
@@ -748,10 +888,8 @@ def print_response_stream(
             if member.output_schema is not None and member.id is not None:
                 member_markdown[member.id] = False  # type: ignore
 
-        # Final panels assembly - we'll recreate the panels from scratch to ensure correct order
         final_panels = []
 
-        # Start with the message
         if input_content and show_message:
             message_panel = create_panel(
                 content=Text(input_content, style="green"),
@@ -760,13 +898,11 @@ def print_response_stream(
             )
             final_panels.append(message_panel)
 
-        # Add reasoning steps
         if reasoning_steps and show_reasoning:
             for i, step in enumerate(reasoning_steps, 1):
                 reasoning_panel = build_reasoning_step_panel(i, step, show_full_reasoning)
                 final_panels.append(reasoning_panel)
 
-        # Add thinking panel if available
         if _response_reasoning_content and show_reasoning:
             thinking_panel = create_panel(
                 content=Text(_response_reasoning_content),
@@ -775,7 +911,6 @@ def print_response_stream(
             )
             final_panels.append(thinking_panel)
 
-        # Add member tool calls and responses in correct order
         if show_member_responses and run_response is not None and hasattr(run_response, "member_responses"):
             for i, member_response in enumerate(run_response.member_responses):  # type: ignore
                 member_id = None
@@ -785,7 +920,6 @@ def print_response_stream(
                     member_id = member_response.team_id
 
                 if member_id:
-                    # First add tool calls if any
                     if member_id in member_tool_calls and member_tool_calls[member_id]:
                         formatted_calls = format_tool_calls(member_tool_calls[member_id])
                         if formatted_calls:
@@ -807,7 +941,6 @@ def print_response_stream(
                             )
                             final_panels.append(member_tool_calls_panel)
 
-                # Add reasoning steps if any
                 reasoning_steps = []
                 if member_response.reasoning_steps is not None:
                     reasoning_steps = member_response.reasoning_steps
@@ -818,7 +951,6 @@ def print_response_stream(
                         )
                         final_panels.append(member_reasoning_panel)
 
-                # Then add response
                 show_markdown = False
                 if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
                     show_markdown = member_markdown.get(member_response.agent_id, False)
@@ -871,7 +1003,6 @@ def print_response_stream(
                         )
                         final_panels.append(citations_panel)
 
-        # Add team tool calls before team response
         if team_tool_calls:
             formatted_calls = format_tool_calls(team_tool_calls)
             if formatted_calls:
@@ -890,7 +1021,6 @@ def print_response_stream(
 
                 tool_calls_text = "\n\n".join(lines)
 
-                # Add compression stats at end of tool calls
                 if team.compression_manager is not None and team.compression_manager.stats:
                     stats = team.compression_manager.stats
                     saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
@@ -906,7 +1036,6 @@ def print_response_stream(
                 )
                 final_panels.append(team_tool_calls_panel)
 
-        # Add team response
         if _response_content:
             response_content_stream = _response_content
             if team_markdown:
@@ -920,7 +1049,6 @@ def print_response_stream(
             )
             final_panels.append(response_panel)
 
-        # Add team citations
         if hasattr(resp, "citations") and resp.citations is not None and resp.citations.urls is not None:
             md_lines = []
 
@@ -947,7 +1075,7 @@ def print_response_stream(
                 )
                 final_panels.append(citations_panel)
 
-        # Final update with correctly ordered panels
+        final_panels = final_panels + workflow_step_panels
         live_console.update(Group(*final_panels))
 
 
@@ -1373,6 +1501,13 @@ async def aprint_response_stream(
 
         input_content = get_text_from_message(input)
 
+        # Track workflow state
+        workflow_step_panels: List[Any] = []
+        current_workflow_step_name: str = ""
+        current_workflow_step_content: str = ""
+        workflow_in_progress: bool = False
+        all_panels: List[Any] = []
+
         final_run_response = None
         async for resp in team.arun(  # type: ignore
             input=input,
@@ -1405,6 +1540,128 @@ async def aprint_response_stream(
                 if team.output_schema is not None:
                     team_markdown = False
 
+            if isinstance(resp, tuple(get_args(WorkflowRunOutputEvent))):
+                if isinstance(resp, WorkflowStartedEvent):
+                    workflow_in_progress = True
+                    status.update(f"Workflow started: {resp.workflow_name or 'Workflow'}...")
+                    live_console.update(Group(*panels, status))
+                    continue
+
+                elif isinstance(resp, StepStartedEvent):
+                    step_name = resp.step_name or "Unknown"
+                    current_workflow_step_name = step_name
+                    current_workflow_step_content = ""
+                    status.update(f"Running step: {step_name}...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, StepCompletedEvent):
+                    step_name = resp.step_name or "Unknown"
+                    step_content = current_workflow_step_content or (str(resp.content) if resp.content else "")
+                    if step_content:
+                        step_panel = create_panel(
+                            content=Markdown(step_content) if markdown else Text(step_content),
+                            title=f"Step: {step_name} (Completed)",
+                            border_style="orange3",
+                        )
+                        workflow_step_panels.append(step_panel)
+                    status.update(f"Completed step: {step_name}")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    current_workflow_step_name = ""
+                    current_workflow_step_content = ""
+                    continue
+
+                elif isinstance(resp, LoopExecutionStartedEvent):
+                    status.update(
+                        f"Starting loop: {resp.step_name or 'Loop'} (max {resp.max_iterations} iterations)..."
+                    )
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, LoopIterationStartedEvent):
+                    status.update(f"Loop iteration {resp.iteration}/{resp.max_iterations}: {resp.step_name}...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, LoopIterationCompletedEvent):
+                    status.update(f"Completed iteration {resp.iteration}/{resp.max_iterations}: {resp.step_name}")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, LoopExecutionCompletedEvent):
+                    status.update(f"Completed loop: {resp.step_name or 'Loop'} ({resp.total_iterations} iterations)")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, ParallelExecutionStartedEvent):
+                    status.update(f"Starting parallel execution: {resp.step_name or 'Parallel'}...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, ParallelExecutionCompletedEvent):
+                    status.update(f"Completed parallel execution: {resp.step_name or 'Parallel'}")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, ConditionExecutionStartedEvent):
+                    condition_result = "true" if resp.condition_result else "false"
+                    status.update(f"Evaluating condition: {resp.step_name or 'Condition'} ({condition_result})...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, ConditionExecutionCompletedEvent):
+                    condition_result = "true" if resp.condition_result else "false"
+                    status.update(
+                        f"Completed condition: {resp.step_name or 'Condition'} ({condition_result}, {resp.executed_steps or 0} steps)"
+                    )
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, RouterExecutionStartedEvent):
+                    selected = ", ".join(resp.selected_steps) if resp.selected_steps else "none"
+                    status.update(f"Router selecting: {resp.step_name or 'Router'} -> [{selected}]...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, RouterExecutionCompletedEvent):
+                    selected = ", ".join(resp.selected_steps) if resp.selected_steps else "none"
+                    status.update(
+                        f"Completed router: {resp.step_name or 'Router'} -> [{selected}] ({resp.executed_steps or 0} steps)"
+                    )
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, StepsExecutionStartedEvent):
+                    status.update(f"Starting steps: {resp.step_name or 'Steps'} ({resp.steps_count or 0} steps)...")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, StepsExecutionCompletedEvent):
+                    status.update(
+                        f"Completed steps: {resp.step_name or 'Steps'} ({resp.executed_steps or 0}/{resp.steps_count or 0} steps)"
+                    )
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+                elif isinstance(resp, WorkflowCompletedEvent):
+                    workflow_in_progress = False
+                    status.update("Workflow completed")
+                    live_console.update(Group(*panels, *workflow_step_panels, status))
+                    continue
+
+            if workflow_in_progress and isinstance(resp, (AgentRunContentEvent, TeamRunContentEvent)):
+                if resp.content is not None and isinstance(resp.content, str):
+                    current_workflow_step_content += resp.content
+                    current_step_panel = build_workflow_step_panel(
+                        current_workflow_step_name, current_workflow_step_content, markdown, create_panel, running=True
+                    )
+                    display_panels = panels + workflow_step_panels
+                    if current_step_panel:
+                        display_panels = display_panels + [current_step_panel]
+                    live_console.update(Group(*display_panels, status))
+                    continue
+                continue
+
             if isinstance(resp, TeamRunOutput):
                 final_run_response = resp
                 continue
@@ -1432,7 +1689,6 @@ async def aprint_response_stream(
                     if resp.run_input is not None:  # type: ignore
                         input_content = get_text_from_message(resp.run_input.input_content)  # type: ignore
 
-                # Collect team tool calls, avoiding duplicates
                 if resp.event == TeamRunEvent.tool_call_completed and resp.tool:  # type: ignore
                     tool = resp.tool  # type: ignore
                     # Generate a unique ID for this tool call
@@ -1444,7 +1700,6 @@ async def aprint_response_stream(
                         processed_tool_calls.add(tool_id)
                         team_tool_calls.append(tool)
 
-            # Collect member tool calls, avoiding duplicates
             if show_member_responses and hasattr(resp, "member_responses") and resp.member_responses:
                 for member_response in resp.member_responses:
                     member_id = None
@@ -1467,12 +1722,10 @@ async def aprint_response_stream(
                                 member_tool_calls[member_id].append(tool)
 
             response_content_stream: Union[str, Markdown] = _response_content
-            # Escape special tags before markdown conversion
             if team_markdown:
                 escaped_content = escape_markdown_tags(_response_content, tags_to_include_in_markdown)
                 response_content_stream = Markdown(escaped_content)
 
-            # Create new panels for each chunk
             panels = []
 
             if input_content and show_message:
@@ -1505,7 +1758,6 @@ async def aprint_response_stream(
                 # Keep showing status if no content yet
                 panels.append(status)
 
-            # Process member responses and their tool calls
             for member_response in (
                 resp.member_responses if show_member_responses and hasattr(resp, "member_responses") else []
             ):
@@ -1519,7 +1771,6 @@ async def aprint_response_stream(
 
                     member_name = team._get_member_name(member_id)
 
-                # If we have tool calls for this member, display them
                 if member_id in member_tool_calls and member_tool_calls[member_id]:
                     formatted_calls = format_tool_calls(member_tool_calls[member_id])
                     if formatted_calls:
@@ -1540,7 +1791,6 @@ async def aprint_response_stream(
                         )
                         panels.append(member_tool_calls_panel)
 
-                # Process member response content
                 if show_member_responses and member_id is not None:
                     show_markdown = False
                     if markdown:
@@ -1560,11 +1810,9 @@ async def aprint_response_stream(
 
                     panels.append(member_response_panel)
 
-                    # Store for reference
                     if member_id is not None:
                         member_response_panels[member_id] = member_response_panel
 
-            # Add team tool calls panel if available (before the team response)
             if team_tool_calls:
                 formatted_calls = format_tool_calls(team_tool_calls)
                 if formatted_calls:
@@ -1572,19 +1820,15 @@ async def aprint_response_stream(
                     panel_width = console_width + 30
 
                     lines = []
-                    # Create a set to track already added calls by their string representation
                     added_calls = set()
                     for call in formatted_calls:
                         if call not in added_calls:
                             added_calls.add(call)
-                            # Wrap the call text to fit within the panel
                             wrapped_call = textwrap.fill(f"• {call}", width=panel_width, subsequent_indent="  ")
                             lines.append(wrapped_call)
 
-                    # Join with blank lines between items
                     tool_calls_text = "\n\n".join(lines)
 
-                    # Add compression stats if available (don't clear - will be cleared in final_panels)
                     if team.compression_manager is not None and team.compression_manager.stats:
                         stats = team.compression_manager.stats
                         saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
@@ -1599,19 +1843,22 @@ async def aprint_response_stream(
                     )
                     panels.append(team_tool_calls_panel)
 
-            # Add the team response panel at the end
-            if response_content_stream:
-                render = True
-                # Create panel for response
-                response_panel = create_panel(
-                    content=response_content_stream,
-                    title=f"Response ({response_timer.elapsed:.1f}s)",
-                    border_style="blue",
-                )
-                panels.append(response_panel)
+            if workflow_in_progress:
+                all_panels = panels + workflow_step_panels
+            else:
+                if response_content_stream:
+                    render = True
+                    # Create panel for response
+                    response_panel = create_panel(
+                        content=response_content_stream,
+                        title=f"Response ({response_timer.elapsed:.1f}s)",
+                        border_style="blue",
+                    )
+                    panels.append(response_panel)
+                all_panels = panels + workflow_step_panels
 
-            if render or len(panels) > 0:
-                live_console.update(Group(*panels))
+            if render or len(all_panels) > 0:
+                live_console.update(Group(*all_panels))
 
         response_timer.stop()
 
@@ -1677,10 +1924,8 @@ async def aprint_response_stream(
             if member.output_schema is not None and member.id is not None:
                 member_markdown[member.id] = False  # type: ignore
 
-        # Final panels assembly - we'll recreate the panels from scratch to ensure correct order
         final_panels = []
 
-        # Start with the message
         if input_content and show_message:
             message_panel = create_panel(
                 content=Text(input_content, style="green"),
@@ -1689,13 +1934,11 @@ async def aprint_response_stream(
             )
             final_panels.append(message_panel)
 
-        # Add reasoning steps
         if reasoning_steps and show_reasoning:
             for i, step in enumerate(reasoning_steps, 1):
                 reasoning_panel = build_reasoning_step_panel(i, step, show_full_reasoning)
                 final_panels.append(reasoning_panel)
 
-        # Add thinking panel if available
         if _response_reasoning_content and show_reasoning:
             thinking_panel = create_panel(
                 content=Text(_response_reasoning_content),
@@ -1704,7 +1947,6 @@ async def aprint_response_stream(
             )
             final_panels.append(thinking_panel)
 
-        # Add member tool calls and responses in correct order
         if show_member_responses and run_response is not None and hasattr(run_response, "member_responses"):
             for i, member_response in enumerate(run_response.member_responses):
                 member_id = None
@@ -1713,9 +1955,7 @@ async def aprint_response_stream(
                 elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
                     member_id = member_response.team_id
 
-                # Print tool calls
                 if member_id:
-                    # First add tool calls if any
                     if member_id in member_tool_calls and member_tool_calls[member_id]:
                         formatted_calls = format_tool_calls(member_tool_calls[member_id])
                         if formatted_calls:
@@ -1742,7 +1982,6 @@ async def aprint_response_stream(
                             )
                             final_panels.append(member_tool_calls_panel)
 
-                # Add reasoning steps if any
                 reasoning_steps = []
                 if member_response.reasoning_steps is not None:
                     reasoning_steps = member_response.reasoning_steps
@@ -1764,7 +2003,6 @@ async def aprint_response_stream(
                             )
                             final_panels.append(member_reasoning_panel)
 
-                # Then add response
                 show_markdown = False
                 if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
                     show_markdown = member_markdown.get(member_response.agent_id, False)
@@ -1817,7 +2055,6 @@ async def aprint_response_stream(
                         )
                         final_panels.append(citations_panel)
 
-        # Add team tool calls before team response
         if team_tool_calls:
             formatted_calls = format_tool_calls(team_tool_calls)
             if formatted_calls:
@@ -1836,7 +2073,6 @@ async def aprint_response_stream(
 
                 tool_calls_text = "\n\n".join(lines)
 
-                # Add compression stats at end of tool calls
                 if team.compression_manager is not None and team.compression_manager.stats:
                     stats = team.compression_manager.stats
                     saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
@@ -1852,7 +2088,6 @@ async def aprint_response_stream(
                 )
                 final_panels.append(team_tool_calls_panel)
 
-        # Add team response
         if _response_content:
             response_content_stream = _response_content
             if team_markdown:
@@ -1866,7 +2101,6 @@ async def aprint_response_stream(
             )
             final_panels.append(response_panel)
 
-        # Add team citations
         if hasattr(resp, "citations") and resp.citations is not None and resp.citations.urls is not None:
             md_lines = []
 
@@ -1893,7 +2127,7 @@ async def aprint_response_stream(
                 )
                 final_panels.append(citations_panel)
 
-        # Final update with correctly ordered panels
+        final_panels = final_panels + workflow_step_panels
         live_console.update(Group(*final_panels))
 
 
