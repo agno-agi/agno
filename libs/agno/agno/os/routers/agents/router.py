@@ -218,7 +218,7 @@ def get_agent_router(
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
-        version: Optional[str] = Form(...),
+        version: Optional[str] = Form(None),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
 
