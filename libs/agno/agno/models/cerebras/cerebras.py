@@ -97,6 +97,25 @@ class Cerebras(Model):
             client_params.update(self.client_params)
         return client_params
 
+    def _ensure_additional_properties_false(self, schema: Dict[str, Any]) -> None:
+        """
+        Recursively ensure all object types have additionalProperties: false.
+        Cerebras API requires this for JSON schema validation.
+        """
+        if isinstance(schema, dict):
+            if schema.get("type") == "object":
+                schema["additionalProperties"] = False
+
+            # Recursively process nested schemas
+            for key, value in schema.items():
+                if key in ["properties", "items", "allOf", "anyOf", "oneOf"]:
+                    if isinstance(value, dict):
+                        self._ensure_additional_properties_false(value)
+                    elif isinstance(value, list):
+                        for item in value:
+                            if isinstance(item, dict):
+                                self._ensure_additional_properties_false(item)
+
     def get_client(self) -> CerebrasClient:
         """
         Returns a Cerebras client.
@@ -191,8 +210,11 @@ class Cerebras(Model):
             ):
                 # Ensure json_schema has strict parameter set
                 schema = response_format["json_schema"]
-                if isinstance(schema.get("schema"), dict) and "strict" not in schema:
-                    schema["strict"] = self.strict_output
+                if isinstance(schema.get("schema"), dict):
+                    if "strict" not in schema:
+                        schema["strict"] = self.strict_output
+                    # Cerebras requires additionalProperties: false for all object types
+                    self._ensure_additional_properties_false(schema["schema"])
 
                 request_params["response_format"] = response_format
 
