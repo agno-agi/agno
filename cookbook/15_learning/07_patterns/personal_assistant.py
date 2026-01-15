@@ -64,8 +64,6 @@ def create_personal_assistant(user_id: str, session_id: str) -> Agent:
 # ============================================================================
 
 if __name__ == "__main__":
-    from rich.pretty import pprint
-
     user_id = "alex@example.com"
 
     # Conversation 1: Introduction
@@ -80,12 +78,8 @@ if __name__ == "__main__":
         stream=True,
     )
     agent.get_learning_machine().user_profile_store.print(user_id=user_id)
-    print("\n--- Entities ---")
-    pprint(
-        agent.get_learning_machine().entity_memory_store.search(query="sarah", limit=10)
-    )
 
-    # Conversation 2: New session (demonstrates memory)
+    # Test memory recall
     print("\n" + "=" * 60)
     print("CONVERSATION 2: New session (memory test)")
     print("=" * 60 + "\n")

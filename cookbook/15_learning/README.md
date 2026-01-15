@@ -71,9 +71,16 @@ cookbook/15_learning/
 │   ├── 01_agentic_mode.py
 │   └── 02_propose_mode.py
 │
-└── 07_patterns/            # Real-world patterns
-    ├── personal_assistant.py
-    └── support_agent.py
+├── 07_patterns/            # Real-world patterns (2-3 stores)
+│   ├── personal_assistant.py
+│   ├── support_agent.py
+│   ├── sales_crm_agent.py
+│   ├── incident_response.py
+│   └── meeting_assistant.py
+│
+└── 09_comprehensive/       # All 5 stores
+    ├── startup_fundraising.py
+    └── personal_assistant.py
 ```
 
 ## Running the Cookbooks
@@ -133,6 +140,14 @@ docker run -d \
 ```bash
 # Start with the basics
 python cookbook/15_learning/01_basics/1a_user_profile_always.py
+
+# Try focused patterns (2-3 stores)
+python cookbook/15_learning/07_patterns/sales_crm_agent.py
+python cookbook/15_learning/07_patterns/incident_response.py
+
+# Run comprehensive examples (all 5 stores, multi-week journeys)
+python cookbook/15_learning/09_comprehensive/startup_fundraising.py
+python cookbook/15_learning/09_comprehensive/personal_assistant.py
 
 # Or run any specific example
 python cookbook/15_learning/02_user_profile/03_custom_schema.py
@@ -395,6 +410,46 @@ learning = LearningMachine(
     ),
 )
 ```
+
+## Comprehensive Examples
+
+The `09_comprehensive/` folder contains real-world scenarios demonstrating all 5 learning stores working together over multi-week journeys.
+
+### Startup Fundraising Assistant
+
+**File:** `startup_fundraising.py`
+
+A founder uses an AI assistant over 5 weeks to close a seed round. Shows how pattern recognition from early rejections leads to a successful pitch strategy.
+
+**Success metrics:**
+- Before learning: 12 pitches → 1 second meeting → 0 term sheets
+- After learning: 8 pitches → 4 second meetings → 2 term sheets → 1 close
+
+**What it demonstrates:**
+- UserProfile: Founder background and experience
+- UserMemory: Communication style and decision patterns
+- SessionContext: Current fundraising round progress
+- EntityMemory: Investors, meetings, feedback tracking
+- LearnedKnowledge: Pitch patterns that work
+
+### Personal Assistant with Multi-Channel Integration
+
+**File:** `personal_assistant.py`
+
+An AI assistant manages daily communication across email, Slack, WhatsApp, and meeting notes, learning user preferences over a work week.
+
+**Success metrics:**
+- Before learning: User manually triages 50+ messages daily
+- After learning: Assistant surfaces 5-10 priority items, auto-handles rest
+
+**What it demonstrates:**
+- UserProfile: User info, role, work preferences
+- UserMemory: Communication patterns and work habits
+- SessionContext: Daily priorities and active threads
+- EntityMemory: Contacts, projects, relationships
+- LearnedKnowledge: Priority heuristics and decision patterns
+
+---
 
 ## Learn More
 
