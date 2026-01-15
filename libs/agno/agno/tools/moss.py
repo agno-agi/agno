@@ -6,7 +6,7 @@ from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
-    from inferedge_moss import DocumentInfo, GetDocumentsOptions, MossClient  # type: ignore
+    from inferedge_moss import DocumentInfo, MossClient  # type: ignore
 
     moss_available = True
 except ImportError:
