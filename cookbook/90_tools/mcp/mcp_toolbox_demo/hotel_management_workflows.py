@@ -72,14 +72,14 @@ async def run_workflow_demo():
         # Input for the workflow
         user_request = "Find luxury hotels in Zurich and book the first available one"
 
-        print("🏨 Hotel Search and Booking Workflow")
+        print("Hotel Search and Booking Workflow")
         print(f"Request: {user_request}")
         print("=" * 50)
 
         # Execute workflow
         result = await workflow.arun(user_request)
 
-        print("\n✅ Workflow Result:")
+        print("\nWorkflow Result:")
         print(f"Content: {result.content}")
         print(f"Steps executed: {len(result.step_results)}")
 

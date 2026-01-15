@@ -66,7 +66,7 @@ if run_output.messages:
     for message in run_output.messages:
         if message.role == "assistant":
             if message.content:
-                print(f"📝 Message: {message.content[:100]}...")
+                print(f" Message: {message.content[:100]}...")
             elif message.tool_calls:
                 print(f"🔧 Tool calls: {message.tool_calls}")
 
@@ -97,7 +97,7 @@ if run_output.member_responses:
             for message in member_response.messages:
                 if message.role == "assistant":
                     if message.content:
-                        print(f"📝 Member Message: {message.content[:100]}...")
+                        print(f" Member Message: {message.content[:100]}...")
                     elif message.tool_calls:
                         print(f"🔧 Member Tool calls: {message.tool_calls}")
 

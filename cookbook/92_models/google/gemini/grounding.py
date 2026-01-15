@@ -12,7 +12,7 @@ from agno.models.google import Gemini
 
 agent = Agent(
     model=Gemini(
-        id="gemini-2.0-flash",
+        id="gemini-3-flash-preview",
         grounding=True,
         grounding_dynamic_threshold=0.7,  # Optional: set threshold for grounding
     ),

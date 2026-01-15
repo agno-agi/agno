@@ -194,14 +194,14 @@ def demo_customer_support_cli():
     """Demo customer support workflow with CLI"""
     support_workflow = create_customer_support_workflow()
 
-    print("🎧 Customer Support Demo - Type 'exit' to quit")
+    print("Customer Support Demo - Type 'exit' to quit")
     print("Try: 'My account is locked and I can't access my billing information'")
     print("-" * 60)
 
     support_workflow.cli_app(
         session_id="support_demo",
         user="Customer",
-        emoji="🆘",
+        emoji="",
         stream=True,
     )
 
@@ -210,14 +210,14 @@ def demo_medical_consultation_cli():
     """Demo medical consultation workflow with CLI"""
     medical_workflow = create_medical_consultation_workflow()
 
-    print("🏥 Medical Consultation Demo - Type 'exit' to quit")
+    print("Medical Consultation Demo - Type 'exit' to quit")
     print("Try: 'I've been having chest pain and shortness of breath for 2 days'")
     print("-" * 60)
 
     medical_workflow.cli_app(
         session_id="medical_demo",
         user="Patient",
-        emoji="🩺",
+        emoji="",
         stream=True,
     )
 
@@ -226,14 +226,14 @@ def demo_tutoring_cli():
     """Demo tutoring workflow with CLI"""
     tutoring_workflow = create_tutoring_workflow()
 
-    print("📚 Tutoring Session Demo - Type 'exit' to quit")
+    print("Tutoring Session Demo - Type 'exit' to quit")
     print("Try: 'I'm struggling with calculus derivatives and have a test next week'")
     print("-" * 60)
 
     tutoring_workflow.cli_app(
         session_id="tutoring_demo",
         user="Student",
-        emoji="🎓",
+        emoji="",
         stream=True,
     )
 
@@ -250,7 +250,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] in demos:
         demos[sys.argv[1]]()
     else:
-        print("🚀 Conversational Workflow Demos")
+        print("Conversational Workflow Demos")
         print("Choose a demo to run:")
         print("")
         for key, func in demos.items():

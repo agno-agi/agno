@@ -5,7 +5,7 @@ Testing agent feature examples in `cookbook/02_agents/` to verify they work as e
 **Test Environment:**
 - Python: `.venvs/demo/bin/python`
 - Database: PostgreSQL with PgVector (for RAG examples)
-- Date: 2026-01-14
+- Date: 2026-01-15 (updated), 2026-01-14 (initial)
 
 ---
 
@@ -213,10 +213,24 @@ Testing agent feature examples in `cookbook/02_agents/` to verify they work as e
 - **Skipped:** 4 (missing dependencies: cohere, lancedb, moviepy)
 - **Manual/Interactive:** ~20 (human_in_the_loop examples)
 
-**Fixes Applied:**
+**Fixes Applied (2026-01-14):**
 1. `other/agent_metrics.py` - Fixed `pprint` import (was importing module instead of function)
 2. `async/gather_agents.py` - Fixed anti-pattern (agent now created once outside loop)
 3. `other/tool_call_limit.py` - Fixed outdated `YFinanceTools` API arguments
+
+**Fixes Applied (2026-01-15):**
+4. `multimodal/audio_sentiment_analysis.py` - Fixed model ID (`gemini-2.0-flash-exp` -> `gemini-3-flash-preview`), removed unused `db_url` variable
+5. `multimodal/audio_to_text.py` - Fixed model ID (`gemini-2.0-flash-exp` -> `gemini-3-flash-preview`)
+6. `multimodal/video_to_shorts.py` - Fixed model ID, updated `pip install` -> `uv pip install`, fixed run path in docstring
+7. `guardrails/prompt_injection.py` - Removed emojis from print statements
+8. `guardrails/pii_detection.py` - Removed emojis from print statements
+9. `guardrails/openai_moderation.py` - Removed emojis from print statements
+10. `other/cancel_a_run.py` - Removed emojis from print statements
+11. `hooks/input_validation_pre_hook.py` - Removed emojis from print statements
+12. `hooks/input_transformation_pre_hook.py` - Removed emojis, added main guard
+13. `hooks/output_transformation_post_hook.py` - Removed emojis from print statements
+14. `hooks/output_validation_post_hook.py` - Removed emojis from print statements
+15. `agentic_search/agentic_rag_infinity_reranker.py` - Removed emojis, fixed `pip install` -> `uv pip install`, moved `asyncio.run()` inside main guard
 
 **Known Issues:**
 None - all issues have been fixed.
@@ -232,3 +246,4 @@ None - all issues have been fixed.
 - Hooks system is production-ready
 - Human-in-the-loop patterns require interactive testing
 - Multimodal examples need local media files
+- All emojis removed from print statements per CLAUDE.md guidelines

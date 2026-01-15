@@ -4,7 +4,7 @@ from agno.models.google import Gemini
 
 media_agent = Agent(
     name="Media Agent",
-    model=Gemini(id="gemini-2.0-flash"),
+    model=Gemini(id="gemini-3-flash-preview"),
     description="A Media processing agent",
     instructions="Analyze images, audios and videos sent by the user",
     add_history_to_context=True,

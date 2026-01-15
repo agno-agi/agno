@@ -7,7 +7,7 @@ from agno.os.interfaces.whatsapp import Whatsapp
 agent_db = SqliteDb(db_file="tmp/persistent_memory.db")
 media_agent = Agent(
     name="Media Agent",
-    model=Gemini(id="gemini-2.0-flash"),
+    model=Gemini(id="gemini-3-flash-preview"),
     db=agent_db,
     add_history_to_context=True,
     num_history_runs=3,

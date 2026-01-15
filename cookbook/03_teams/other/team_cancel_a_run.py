@@ -41,14 +41,14 @@ def long_running_task(team: Team, run_id_container: dict):
             stream=True,
         ):
             if "run_id" not in run_id_container and chunk.run_id:
-                print(f"🚀 Team run started: {chunk.run_id}")
+                print(f"Team run started: {chunk.run_id}")
                 run_id_container["run_id"] = chunk.run_id
 
             if chunk.event in [TeamRunEvent.run_content, RunEvent.run_content]:
                 print(chunk.content, end="", flush=True)
                 content_pieces.append(chunk.content)
             elif chunk.event == RunEvent.run_cancelled:
-                print(f"\n🚫 Member run was cancelled: {chunk.run_id}")
+                print(f"\nMember run was cancelled: {chunk.run_id}")
                 run_id_container["result"] = {
                     "status": "cancelled",
                     "run_id": chunk.run_id,
@@ -59,7 +59,7 @@ def long_running_task(team: Team, run_id_container: dict):
                 }
                 return
             elif chunk.event == TeamRunEvent.run_cancelled:
-                print(f"\n🚫 Team run was cancelled: {chunk.run_id}")
+                print(f"\nTeam run was cancelled: {chunk.run_id}")
                 run_id_container["result"] = {
                     "status": "cancelled",
                     "run_id": chunk.run_id,
@@ -95,7 +95,7 @@ def long_running_task(team: Team, run_id_container: dict):
             }
 
     except Exception as e:
-        print(f"\n❌ Exception in run: {str(e)}")
+        print(f"\nException in run: {str(e)}")
         run_id_container["result"] = {
             "status": "error",
             "error": str(e),
@@ -114,21 +114,21 @@ def cancel_after_delay(team: Team, run_id_container: dict, delay_seconds: int = 
         run_id_container: Dictionary containing the run_id to cancel
         delay_seconds: How long to wait before cancelling
     """
-    print(f"⏰ Will cancel team run in {delay_seconds} seconds...")
+    print(f"Will cancel team run in {delay_seconds} seconds...")
     time.sleep(delay_seconds)
 
     run_id = run_id_container.get("run_id")
     if run_id:
-        print(f"🚫 Cancelling team run: {run_id}")
+        print(f"Cancelling team run: {run_id}")
         success = team.cancel_run(run_id)
         if success:
-            print(f"✅ Team run {run_id} marked for cancellation")
+            print(f"Team run {run_id} marked for cancellation")
         else:
             print(
-                f"❌ Failed to cancel team run {run_id} (may not exist or already completed)"
+                f"Failed to cancel team run {run_id} (may not exist or already completed)"
             )
     else:
-        print("⚠️  No run_id found to cancel")
+        print("No run_id found to cancel")
 
 
 def main():
@@ -155,7 +155,7 @@ def main():
         description="A team that collaborates to write detailed stories",
     )
 
-    print("🚀 Starting team run cancellation example...")
+    print("Starting team run cancellation example...")
     print("=" * 50)
 
     # Container to share run_id between threads
@@ -174,20 +174,20 @@ def main():
     )
 
     # Start both threads
-    print("🏃 Starting team run thread...")
+    print("Starting team run thread...")
     team_thread.start()
 
-    print("🏃 Starting cancellation thread...")
+    print("Starting cancellation thread...")
     cancel_thread.start()
 
     # Wait for both threads to complete
-    print("⌛ Waiting for threads to complete...")
+    print("Waiting for threads to complete...")
     team_thread.join()
     cancel_thread.join()
 
     # Print the results
     print("\n" + "=" * 50)
-    print("📊 RESULTS:")
+    print("RESULTS:")
     print("=" * 50)
 
     result = run_id_container.get("result")
@@ -202,13 +202,13 @@ def main():
             print(f"Content Preview: {result['content']}")
 
         if result["cancelled"]:
-            print("\n✅ SUCCESS: Team run was successfully cancelled!")
+            print("\nSUCCESS: Team run was successfully cancelled!")
         else:
-            print("\n⚠️  WARNING: Team run completed before cancellation")
+            print("\nWARNING: Team run completed before cancellation")
     else:
-        print("❌ No result obtained - check if cancellation happened during streaming")
+        print("No result obtained - check if cancellation happened during streaming")
 
-    print("\n🏁 Team cancellation example completed!")
+    print("\nTeam cancellation example completed!")
 
 
 if __name__ == "__main__":

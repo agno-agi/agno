@@ -10,7 +10,7 @@ from PIL import Image
 # No system message should be provided
 agent = Agent(
     model=Gemini(
-        id="gemini-2.0-flash-exp-image-generation",
+        id="gemini-3-flash-preview",
         response_modalities=["Text", "Image"],
     ),
     db=InMemoryDb(),

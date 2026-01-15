@@ -100,8 +100,8 @@ try:
     # )
 
 except ValueError as e:
-    print(f"\n❌ Docker Tool Error: {e}")
-    print("\n🔍 Troubleshooting steps:")
+    print(f"\n[ERROR] Docker Tool Error: {e}")
+    print("\nTroubleshooting steps:")
 
     if sys.platform == "darwin":  # macOS
         print("1. Ensure Docker Desktop is running")

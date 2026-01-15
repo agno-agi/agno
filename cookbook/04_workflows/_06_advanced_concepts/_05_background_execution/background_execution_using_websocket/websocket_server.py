@@ -69,7 +69,7 @@ async def websocket_endpoint(websocket: WebSocket):
     active_connections[connection_id] = websocket
     authenticated_connections[connection_id] = False  # Start unauthenticated
 
-    print(f"🔌 Client connected: {connection_id}")
+    print(f"Client connected: {connection_id}")
 
     try:
         # Send connection confirmation
@@ -112,7 +112,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 }
                             )
                         )
-                        print(f"🔐 Client authenticated: {connection_id}")
+                        print(f"Client authenticated: {connection_id}")
                     else:
                         await websocket.send_text(
                             json.dumps(
@@ -163,7 +163,7 @@ async def websocket_endpoint(websocket: WebSocket):
             del active_connections[connection_id]
         if connection_id in authenticated_connections:
             del authenticated_connections[connection_id]
-        print(f"🔌 Client disconnected: {connection_id}")
+        print(f"Client disconnected: {connection_id}")
 
 
 async def handle_start_workflow(websocket: WebSocket, message_data: dict):
@@ -232,11 +232,11 @@ async def handle_start_workflow(websocket: WebSocket, message_data: dict):
 # ... rest of the HTTP endpoint code stays the same ...
 
 if __name__ == "__main__":
-    print("🚀 Starting Background Workflow WebSocket Server...")
-    print("🔌 WebSocket: ws://localhost:8000/ws")
-    print("📡 HTTP API: http://localhost:8000")
-    print("📊 API Docs: http://localhost:8000/docs")
-    print(f"🔐 Security Key: {SECURITY_KEY}")
+    print("Starting Background Workflow WebSocket Server...")
+    print("WebSocket: ws://localhost:8000/ws")
+    print("HTTP API: http://localhost:8000")
+    print("API Docs: http://localhost:8000/docs")
+    print(f"Security Key: {SECURITY_KEY}")
 
     uvicorn.run(
         app,

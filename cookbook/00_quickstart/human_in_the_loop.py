@@ -170,7 +170,7 @@ if __name__ == "__main__":
     for requirement in run_response.active_requirements:
         if requirement.needs_confirmation:
             console.print(
-                f"\n[bold yellow]🛑 Confirmation Required[/bold yellow]\n"
+                f"\n[bold yellow]Confirmation Required[/bold yellow]\n"
                 f"Tool: [bold blue]{requirement.tool_execution.tool_name}[/bold blue]\n"
                 f"Args: {requirement.tool_execution.tool_args}"
             )
@@ -187,10 +187,10 @@ if __name__ == "__main__":
 
             if choice == "n":
                 requirement.reject()
-                console.print("[red]❌ Rejected[/red]")
+                console.print("[red]Rejected[/red]")
             else:
                 requirement.confirm()
-                console.print("[green]✅ Approved[/green]")
+                console.print("[green]Approved[/green]")
 
     # Continue the run with the user's decisions
     run_response = human_in_the_loop_agent.continue_run(

@@ -135,7 +135,7 @@ distributed_reranking_team = Team(
 
 async def async_reranking_rag_demo():
     """Demonstrate async distributed reranking RAG processing."""
-    print("🎯 Async Distributed Reranking RAG Demo")
+    print("Async Distributed Reranking RAG Demo")
     print("=" * 45)
 
     query = "What's the best way to prepare authentic Tom Kha Gai? I want traditional methods and modern variations."
@@ -154,7 +154,7 @@ async def async_reranking_rag_demo():
 
 def sync_reranking_rag_demo():
     """Demonstrate sync distributed reranking RAG processing."""
-    print("🎯 Distributed Reranking RAG Demo")
+    print("Distributed Reranking RAG Demo")
     print("=" * 35)
 
     query = "What's the best way to prepare authentic Tom Kha Gai? I want traditional methods and modern variations."
@@ -173,7 +173,7 @@ def sync_reranking_rag_demo():
 
 def advanced_culinary_demo():
     """Demonstrate advanced reranking for complex culinary queries."""
-    print("👨‍🍳 Advanced Culinary Analysis with Reranking RAG")
+    print("Advanced Culinary Analysis with Reranking RAG")
     print("=" * 55)
 
     query = """I want to understand the science behind Thai curry pastes. Can you explain:

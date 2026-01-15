@@ -103,7 +103,7 @@ def demonstrate_tools():
     notion_agent.print_response(prompt)
 
     # Example 4: Search and Update
-    print("\n🔍 Example 4: Finding and Updating Existing Content")
+    print("\nExample 4: Finding and Updating Existing Content")
     print("-" * 60)
     prompt = """
     Search for any pages tagged 'tech' and let me know what you find.

@@ -4,9 +4,8 @@ from agno.db.sqlite import SqliteDb
 from agno.media import Audio
 from agno.models.google import Gemini
 
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-3-flash-preview"),
     add_history_to_context=True,
     markdown=True,
     db=SqliteDb(

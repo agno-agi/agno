@@ -169,11 +169,11 @@ def structure_team_response(run_output: TeamRunOutput, team: Team) -> None:
 
 def main():
     """Demonstrate output transformation post-hooks for teams."""
-    print("🎨 Team Output Transformation Post-Hook Examples")
+    print("Team Output Transformation Post-Hook Examples")
     print("=" * 60)
 
     # Test 1: Simple team metadata formatting
-    print("\n📝 Test 1: Basic team metadata transformation")
+    print("\n[TEST 1] Basic team metadata transformation")
     print("-" * 50)
 
     # Create simple team
@@ -202,10 +202,10 @@ def main():
     metadata_team.print_response(
         input="What are the key trends in the e-commerce industry for 2024?"
     )
-    print("✅ Response with team metadata formatting")
+    print("[OK] Response with team metadata formatting")
 
     # Test 2: Collaboration summary
-    print("\n🤝 Test 2: Collaboration summary transformation")
+    print("\n[TEST 2] Collaboration summary transformation")
     print("-" * 50)
 
     collab_team = Team(
@@ -239,10 +239,10 @@ def main():
     collab_team.print_response(
         input="How should we approach building a mobile app for fitness tracking? Give me a detailed plan."
     )
-    print("✅ Response with collaboration summary")
+    print("[OK] Response with collaboration summary")
 
     # Test 3: Comprehensive structured team response
-    print("\n🏗️  Test 3: Comprehensive structured team response")
+    print("\n[TEST 3] Comprehensive structured team response")
     print("-" * 50)
 
     consulting_team = Team(
@@ -278,7 +278,7 @@ def main():
     consulting_team.print_response(
         input="Our mid-size manufacturing company wants to implement digital transformation. We have 500 employees and are struggling with outdated processes and resistance to change. What's our path forward?"
     )
-    print("✅ Comprehensive structured team response")
+    print("[OK] Comprehensive structured team response")
 
 
 if __name__ == "__main__":

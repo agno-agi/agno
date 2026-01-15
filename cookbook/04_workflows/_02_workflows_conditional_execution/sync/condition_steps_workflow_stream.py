@@ -99,7 +99,7 @@ basic_workflow = Workflow(
 )
 
 if __name__ == "__main__":
-    print("🚀 Running Basic Linear Workflow Example")
+    print("Running Basic Linear Workflow Example")
     print("=" * 50)
 
     try:
@@ -108,7 +108,7 @@ if __name__ == "__main__":
             stream=True,
         )
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"[ERROR] {e}")
         import traceback
 
         traceback.print_exc()

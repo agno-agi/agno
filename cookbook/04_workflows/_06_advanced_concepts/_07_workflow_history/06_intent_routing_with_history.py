@@ -108,13 +108,13 @@ def simple_intent_router(step_input: StepInput) -> List[Step]:
 
     # Simple routing logic
     if any(keyword in current_message_lower for keyword in tech_keywords):
-        print("🔧 Routing to Technical Support")
+        print("Routing to Technical Support")
         return [tech_support_step]
     elif any(keyword in current_message_lower for keyword in billing_keywords):
-        print("💳 Routing to Billing Support")
+        print("Routing to Billing Support")
         return [billing_support_step]
     else:
-        print("🎧 Routing to General Support")
+        print("Routing to General Support")
         return [general_support_step]
 
 
@@ -141,30 +141,30 @@ def demo_smart_customer_service_cli():
     """Demo the smart customer service workflow with CLI"""
     workflow = create_smart_customer_service_workflow()
 
-    print("🎧 Smart Customer Service Demo")
+    print("Smart Customer Service Demo")
     print("=" * 60)
     print("")
     print("This workflow demonstrates:")
-    print("• 🤖 Simple routing between Technical, Billing, and General support")
-    print("• 📚 Shared conversation history across ALL agents")
-    print("• 💬 Context continuity - agents remember your entire conversation")
+    print("- Simple routing between Technical, Billing, and General support")
+    print("- Shared conversation history across ALL agents")
+    print("- Context continuity - agents remember your entire conversation")
     print("")
-    print("🎯 TRY THESE CONVERSATIONS:")
+    print("TRY THESE CONVERSATIONS:")
     print("")
-    print("🔧 TECHNICAL SUPPORT:")
-    print("   • 'My API is not working'")
-    print("   • 'I'm getting an error message'")
-    print("   • 'There's a technical bug'")
+    print("TECHNICAL SUPPORT:")
+    print("   - 'My API is not working'")
+    print("   - 'I'm getting an error message'")
+    print("   - 'There's a technical bug'")
     print("")
-    print("💳 BILLING SUPPORT:")
-    print("   • 'I need help with billing'")
-    print("   • 'Can I get a refund?'")
-    print("   • 'My payment was charged twice'")
+    print("BILLING SUPPORT:")
+    print("   - 'I need help with billing'")
+    print("   - 'Can I get a refund?'")
+    print("   - 'My payment was charged twice'")
     print("")
-    print("🎧 GENERAL SUPPORT:")
-    print("   • 'Hello, I have a question'")
-    print("   • 'What features do you offer?'")
-    print("   • 'I need general help'")
+    print("GENERAL SUPPORT:")
+    print("   - 'Hello, I have a question'")
+    print("   - 'What features do you offer?'")
+    print("   - 'I need general help'")
     print("")
     print("Type 'exit' to quit")
     print("-" * 60)
@@ -172,7 +172,7 @@ def demo_smart_customer_service_cli():
     workflow.cli_app(
         session_id="smart_customer_service_demo",
         user="Customer",
-        emoji="🎧",
+        emoji="",
         stream=True,
         show_step_details=True,
     )

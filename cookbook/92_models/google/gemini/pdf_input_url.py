@@ -4,7 +4,7 @@ from agno.media import File
 from agno.models.google import Gemini
 
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-3-flash-preview"),
     markdown=True,
     db=InMemoryDb(),
     add_history_to_context=True,

@@ -8,7 +8,7 @@ from agno.team import Team
 transcription_agent = Agent(
     name="Audio Transcriber",
     role="Transcribe audio conversations accurately",
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-3-flash-preview"),
     instructions=[
         "Transcribe audio with speaker identification",
         "Maintain conversation structure and flow",
@@ -18,7 +18,7 @@ transcription_agent = Agent(
 sentiment_analyst = Agent(
     name="Sentiment Analyst",
     role="Analyze emotional tone and sentiment in conversations",
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-3-flash-preview"),
     instructions=[
         "Analyze sentiment for each speaker separately",
         "Identify emotional patterns and conversation dynamics",
@@ -30,7 +30,7 @@ sentiment_analyst = Agent(
 sentiment_team = Team(
     name="Audio Sentiment Team",
     members=[transcription_agent, sentiment_analyst],
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-3-flash-preview"),
     instructions=[
         "Analyze audio sentiment with conversation memory.",
         "Audio Transcriber: First transcribe audio with speaker identification.",

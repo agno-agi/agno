@@ -90,8 +90,8 @@ async def test_structured_streaming():
         run_response = event_or_response
 
     assert isinstance(run_response.content, StockReport)
-    print(f"✅ Stock Symbol: {run_response.content.symbol}")
-    print(f"✅ Company Name: {run_response.content.company_name}")
+    print(f"Stock Symbol: {run_response.content.symbol}")
+    print(f"Company Name: {run_response.content.company_name}")
 
 
 async def test_structured_streaming_with_arun():

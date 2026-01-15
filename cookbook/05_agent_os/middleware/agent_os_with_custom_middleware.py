@@ -87,27 +87,27 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Basic request info
         client_ip = request.client.host if request.client else "unknown"
         print(
-            f"🔍 Request #{self.request_count}: {request.method} {request.url.path} from {client_ip}"
+            f"[REQ] Request #{self.request_count}: {request.method} {request.url.path} from {client_ip}"
         )
 
         # Optional: Log headers
         if self.log_headers:
-            print(f"📋 Headers: {dict(request.headers)}")
+            print(f"[HEADERS] Headers: {dict(request.headers)}")
 
         # Optional: Log request body
         if self.log_body and request.method in ["POST", "PUT", "PATCH"]:
             body = await request.body()
             if body:
-                print(f"📝 Body: {body.decode()}")
+                print(f"[BODY] Body: {body.decode()}")
 
         # Process request
         response = await call_next(request)
 
         # Log response info
         duration = time.time() - start_time
-        status_emoji = "✅" if response.status_code < 400 else "❌"
+        status_label = "[OK]" if response.status_code < 400 else "[ERROR]"
         print(
-            f"{status_emoji} Response: {response.status_code} in {duration * 1000:.1f}ms"
+            f"{status_label} Response: {response.status_code} in {duration * 1000:.1f}ms"
         )
 
         # Add request count to response header

@@ -3,7 +3,7 @@ from agno.media import Video
 from agno.models.google import Gemini
 
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-3-flash-preview"),
     markdown=True,
 )
 
@@ -15,7 +15,7 @@ agent.print_response(
 # Video upload via URL is also supported with Vertex AI
 
 # agent = Agent(
-#     model=Gemini(id="gemini-2.0-flash-exp", vertexai=True),
+#     model=Gemini(id="gemini-3-flash-preview", vertexai=True),
 #     markdown=True,
 # )
 

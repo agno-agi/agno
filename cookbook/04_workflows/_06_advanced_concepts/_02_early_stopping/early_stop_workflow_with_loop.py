@@ -34,13 +34,13 @@ def safety_checker(step_input: StepInput) -> StepOutput:
     ):  # Will trigger on our test message
         return StepOutput(
             step_name="Safety Checker",
-            content="🚨 SAFETY CONCERN DETECTED! Content contains sensitive AI-related information. Stopping research loop for review.",
+            content="[ALERT] SAFETY CONCERN DETECTED! Content contains sensitive AI-related information. Stopping research loop for review.",
             stop=True,  # ✅ Request early termination
         )
     else:
         return StepOutput(
             step_name="Safety Checker",
-            content="✅ Safety check passed. Content is safe to continue.",
+            content="[OK] Safety check passed. Content is safe to continue.",
             stop=False,
         )
 
@@ -72,18 +72,18 @@ def research_evaluator(outputs: List[StepOutput]) -> bool:
     Returns True to break the loop, False to continue
     """
     if not outputs:
-        print("❌ No research outputs - continuing loop")
+        print("[INFO] No research outputs - continuing loop")
         return False
 
     # Original logic: Check if any output contains substantial content
     for output in outputs:
         if output.content and len(output.content) > 200:
             print(
-                f"✅ Research evaluation passed - found substantial content ({len(output.content)} chars)"
+                f"[PASS] Research evaluation passed - found substantial content ({len(output.content)} chars)"
             )
             return True
 
-    print("❌ Research evaluation failed - need more substantial research")
+    print("[FAIL] Research evaluation failed - need more substantial research")
     return False
 
 

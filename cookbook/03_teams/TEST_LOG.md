@@ -5,7 +5,7 @@ Testing team examples in `cookbook/03_teams/`.
 **Test Environment:**
 - Python: `.venvs/demo/bin/python`
 - Database: PostgreSQL with PgVector (for knowledge/memory examples)
-- Date: 2026-01-14
+- Date: 2026-01-15 (updated), 2026-01-14 (initial)
 
 ---
 
@@ -178,7 +178,28 @@ Testing team examples in `cookbook/03_teams/`.
 - Team run cancellation
 - Event handling and streaming
 
+**Fixes Applied (2026-01-15):**
+1. `multimodal/audio_to_text.py` - Fixed model ID (`gemini-2.0-flash-exp` -> `gemini-3-flash-preview`) x3
+2. `multimodal/audio_sentiment_analysis.py` - Fixed model ID (`gemini-2.0-flash-exp` -> `gemini-3-flash-preview`) x3
+3. `guardrails/prompt_injection.py` - Removed emojis from print statements
+4. `guardrails/pii_detection.py` - Removed emojis from print statements
+5. `guardrails/openai_moderation.py` - Removed emojis from print statements
+6. `hooks/input_validation_pre_hook.py` - Removed emojis from print statements
+7. `hooks/output_validation_post_hook.py` - Removed emojis from print statements
+8. `hooks/output_transformation_post_hook.py` - Removed emojis from print statements
+
+**Remaining Emoji Files (lower priority):**
+- `streaming/04_async_team_events.py`
+- `search_coordination/03_distributed_infinity_search.py`
+- `structured_input_output/04_structured_output_streaming.py`
+- `structured_input_output/05_async_structured_output_streaming.py`
+- `distributed_rag/` (multiple files)
+- `tools/01_team_with_custom_tools.py`
+- `other/run_as_cli.py`
+- `other/team_cancel_a_run.py`
+
 **Notes:**
 - Teams folder mirrors 02_agents structure for consistency
 - Core team patterns (basic_flows, state, streaming) all work
 - Production patterns (guardrails, hooks, memory) verified
+- Model IDs fixed from gemini-2.0-flash-exp to gemini-3-flash-preview

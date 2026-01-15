@@ -1,5 +1,5 @@
 """
-💬 Pipedream Slack MCP
+Pipedream Slack MCP
 
 This example shows how to use Pipedream MCP servers (in this case the Slack one) with Agno Agents.
 

@@ -43,13 +43,13 @@ def content_safety_checker(step_input: StepInput) -> StepOutput:
     ):
         return StepOutput(
             step_name="Content Safety Checker",
-            content="🚨 CONTENT SAFETY VIOLATION! Research contains controversial or sensitive material. Stopping workflow for manual review.",
+            content="[ALERT] CONTENT SAFETY VIOLATION! Research contains controversial or sensitive material. Stopping workflow for manual review.",
             stop=True,  # ✅ Request early termination
         )
     else:
         return StepOutput(
             step_name="Content Safety Checker",
-            content="✅ Content safety check passed. Material is appropriate for publication.",
+            content="[OK] Content safety check passed. Material is appropriate for publication.",
             stop=False,
         )
 
@@ -108,14 +108,14 @@ def research_router(step_input: StepInput) -> List[Step]:
     ]
 
     if any(keyword in topic for keyword in tech_keywords):
-        print(f"🔍 Tech topic detected: Using HackerNews research for '{topic}'")
+        print(f"Tech topic detected: Using HackerNews research for '{topic}'")
         return [
             research_hackernews,  # Step 1: Research
             safety_check,  # Step 2: Safety check (may stop here)
             research_web,  # Step 3: Additional research (only if safety passes)
         ]
     else:
-        print(f"🌐 General topic detected: Using web research for '{topic}'")
+        print(f"General topic detected: Using web research for '{topic}'")
         return [
             research_web,  # Step 1: Research
             safety_check,  # Step 2: Safety check (may stop here)

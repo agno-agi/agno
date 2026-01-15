@@ -61,7 +61,7 @@ def long_running_task(agent: Agent, run_id_container: dict):
                 content_pieces.append(chunk.content)
             # When the run is cancelled, a `RunEvent.run_cancelled` event is emitted
             elif chunk.event == RunEvent.run_cancelled:
-                print(f"\n🚫 Run was cancelled: {chunk.run_id}")
+                print(f"\n[CANCELLED] Run was cancelled: {chunk.run_id}")
                 run_id_container["result"] = {
                     "status": "cancelled",
                     "run_id": chunk.run_id,
@@ -97,7 +97,7 @@ def long_running_task(agent: Agent, run_id_container: dict):
             }
 
     except Exception as e:
-        print(f"\n❌ Exception in run: {str(e)}")
+        print(f"\n[ERROR] Exception in run: {str(e)}")
         run_id_container["result"] = {
             "status": "error",
             "error": str(e),
@@ -116,21 +116,21 @@ def cancel_after_delay(agent: Agent, run_id_container: dict, delay_seconds: int 
         run_id_container: Dictionary containing the run_id to cancel
         delay_seconds: How long to wait before cancelling
     """
-    print(f"⏰ Will cancel run in {delay_seconds} seconds...")
+    print(f"[TIMER] Will cancel run in {delay_seconds} seconds...")
     time.sleep(delay_seconds)
 
     run_id = run_id_container.get("run_id")
     if run_id:
-        print(f"🚫 Cancelling run: {run_id}")
+        print(f"[CANCEL] Cancelling run: {run_id}")
         success = agent.cancel_run(run_id)
         if success:
-            print(f"✅ Run {run_id} marked for cancellation")
+            print(f"[OK] Run {run_id} marked for cancellation")
         else:
             print(
-                f"❌ Failed to cancel run {run_id} (may not exist or already completed)"
+                f"[ERROR] Failed to cancel run {run_id} (may not exist or already completed)"
             )
     else:
-        print("⚠️  No run_id found to cancel")
+        print("[WARNING] No run_id found to cancel")
 
 
 def main():
@@ -143,7 +143,7 @@ def main():
         description="An agent that writes detailed stories",
     )
 
-    print("🚀 Starting agent run cancellation example...")
+    print("Starting agent run cancellation example...")
     print("=" * 50)
 
     # Container to share run_id between threads
@@ -162,20 +162,20 @@ def main():
     )
 
     # Start both threads
-    print("🏃 Starting agent run thread...")
+    print("[START] Starting agent run thread...")
     agent_thread.start()
 
-    print("🏃 Starting cancellation thread...")
+    print("[START] Starting cancellation thread...")
     cancel_thread.start()
 
     # Wait for both threads to complete
-    print("⌛ Waiting for threads to complete...")
+    print("[WAIT] Waiting for threads to complete...")
     agent_thread.join()
     cancel_thread.join()
 
     # Print the results
     print("\n" + "=" * 50)
-    print("📊 RESULTS:")
+    print("RESULTS:")
     print("=" * 50)
 
     result = run_id_container.get("result")
@@ -190,13 +190,15 @@ def main():
             print(f"Content Preview: {result['content']}")
 
         if result["cancelled"]:
-            print("\n✅ SUCCESS: Run was successfully cancelled!")
+            print("\n[SUCCESS] Run was successfully cancelled!")
         else:
-            print("\n⚠️  WARNING: Run completed before cancellation")
+            print("\n[WARNING] Run completed before cancellation")
     else:
-        print("❌ No result obtained - check if cancellation happened during streaming")
+        print(
+            "[ERROR] No result obtained - check if cancellation happened during streaming"
+        )
 
-    print("\n🏁 Example completed!")
+    print("\nExample completed!")
 
 
 if __name__ == "__main__":

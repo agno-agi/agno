@@ -7,7 +7,7 @@ from agno.models.google import Gemini
 from agno.utils.log import logger
 from google.genai.types import UploadFileConfig
 
-model = Gemini(id="gemini-2.0-flash-exp")
+model = Gemini(id="gemini-3-flash-preview")
 agent = Agent(
     model=model,
     markdown=True,

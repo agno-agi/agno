@@ -26,7 +26,7 @@ agent = Agent(
         "Always prepend the table name with your_project_id.your_dataset_name when run_sql tool is invoked",
     ],
     tools=[GoogleBigQueryTools(dataset="test_dataset")],
-    model=Gemini(id="gemini-2.0-flash", vertexai=True),
+    model=Gemini(id="gemini-3-flash-preview", vertexai=True),
 )
 
 agent.print_response(

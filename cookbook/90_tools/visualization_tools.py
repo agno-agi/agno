@@ -1,4 +1,4 @@
-"""📊 Data Visualization Tools - Create Charts and Graphs with AI Agents
+"""Data Visualization Tools - Create Charts and Graphs with AI Agents
 
 This example shows how to use the VisualizationTools to create various types of charts
 and graphs for data visualization. Demonstrates include_tools/exclude_tools patterns
@@ -126,7 +126,7 @@ viz_agent_stats = Agent(
 viz_agent = viz_agent_all
 
 # Example 1: Sales Performance Analysis
-print("📊 Example 1: Creating a Sales Performance Chart")
+print("Example 1: Creating a Sales Performance Chart")
 viz_agent.print_response(
     """
 Create a bar chart showing our Q4 sales performance:
@@ -143,7 +143,7 @@ Title it "Q4 Sales Performance" and provide insights about the trend.
 print("\n" + "=" * 60 + "\n")
 
 # Example 2: Market Share Analysis
-print("🥧 Example 2: Market Share Pie Chart")
+print("Example 2: Market Share Pie Chart")
 viz_agent.print_response(
     """
 Create a pie chart showing our market share compared to competitors:
@@ -161,7 +161,7 @@ Title it "Market Share Analysis 2024" and analyze our position.
 print("\n" + "=" * 60 + "\n")
 
 # Example 3: Growth Trend Analysis
-print("📈 Example 3: Revenue Growth Trend")
+print("Example 3: Revenue Growth Trend")
 viz_agent.print_response(
     """
 Create a line chart showing our monthly revenue growth over the past 6 months:
@@ -180,7 +180,7 @@ Title it "Monthly Revenue Growth" and identify trends and growth rate.
 print("\n" + "=" * 60 + "\n")
 
 # Example 4: Advanced Data Analysis
-print("🔹 Example 4: Customer Satisfaction vs Sales Correlation")
+print("Example 4: Customer Satisfaction vs Sales Correlation")
 viz_agent.print_response(
     """
 Create a scatter plot to analyze the relationship between customer satisfaction scores and sales:
@@ -196,7 +196,7 @@ Title it "Customer Satisfaction vs Sales Performance" and analyze the correlatio
 print("\n" + "=" * 60 + "\n")
 
 # Example 5: Distribution Analysis
-print("📊 Example 5: Score Distribution Histogram")
+print("Example 5: Score Distribution Histogram")
 viz_agent.print_response(
     """
 Create a histogram showing the distribution of customer review scores:
@@ -208,12 +208,12 @@ Use 6 bins, title it "Customer Review Score Distribution" and analyze the distri
 )
 
 print(
-    "\n🎯 All examples completed! Check the 'business_charts' folder for generated visualizations."
+    "\nAll examples completed. Check the 'business_charts' folder for generated visualizations."
 )
 
 # More advanced example with business context
 print("\n" + "=" * 60)
-print("🚀 ADVANCED EXAMPLE: Business Intelligence Dashboard")
+print("ADVANCED EXAMPLE: Business Intelligence Dashboard")
 print("=" * 60 + "\n")
 
 bi_agent = Agent(

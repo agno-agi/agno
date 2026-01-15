@@ -74,7 +74,7 @@ research_team = Team(
     model=OpenAIChat(id="gpt-4.1"),
     id="research_team",
     instructions=[
-        "You are the lead researcher of a research team! 🔍",
+        "You are the lead researcher of a research team.",
     ],
     db=db,
     enable_user_memories=True,

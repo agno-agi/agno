@@ -20,7 +20,7 @@ player_1 = Agent(
 player_2 = Agent(
     name="Player 2",
     role="Play Tic Tac Toe",
-    model=Gemini(id="gemini-2.0-flash"),
+    model=Gemini(id="gemini-3-flash-preview"),
     add_name_to_context=True,
     instructions=dedent("""
     You are a Tic Tac Toe player.
@@ -48,7 +48,8 @@ agent_team = Team(
     show_members_responses=True,
 )
 
-agent_team.print_response(
-    input="Run a full Tic Tac Toe game. After the game, report the final board state and the results.",
-    stream=True,
-)
+if __name__ == "__main__":
+    agent_team.print_response(
+        input="Run a full Tic Tac Toe game. After the game, report the final board state and the results.",
+        stream=True,
+    )

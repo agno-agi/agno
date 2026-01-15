@@ -120,11 +120,11 @@ def structure_financial_advice(run_output: RunOutput) -> None:
 
 def main():
     """Demonstrate output transformation post-hooks."""
-    print("🎨 Output Transformation Post-Hook Examples")
+    print("Output Transformation Post-Hook Examples")
     print("=" * 60)
 
     # Test 1: Simple markdown formatting
-    print("\n📝 Test 1: Markdown formatting transformation")
+    print("\n[TEST 1] Markdown formatting transformation")
     print("-" * 50)
 
     markdown_agent = Agent(
@@ -137,10 +137,10 @@ def main():
     markdown_agent.print_response(
         input="What is version control and why is it important?"
     )
-    print("✅ Response with markdown formatting")
+    print("[OK] Response with markdown formatting")
 
     # Test 2: Disclaimer and timestamp
-    print("\n⚠️  Test 2: Disclaimer and timestamp transformation")
+    print("\n[TEST 2] Disclaimer and timestamp transformation")
     print("-" * 50)
 
     advice_agent = Agent(
@@ -153,10 +153,10 @@ def main():
     advice_agent.print_response(
         input="What are some good study habits for college students?"
     )
-    print("✅ Response with disclaimer and timestamp")
+    print("[OK] Response with disclaimer and timestamp")
 
     # Test 3: Advanced financial advice structuring
-    print("\n💰 Test 3: Structured financial advice transformation")
+    print("\n[TEST 3] Structured financial advice transformation")
     print("-" * 50)
 
     financial_agent = Agent(
@@ -173,7 +173,7 @@ def main():
     financial_agent.print_response(
         input="I'm 30 years old and want to start investing. I can save $500 per month. What should I know?"
     )
-    print("✅ Structured financial advice response")
+    print("[OK] Structured financial advice response")
 
 
 if __name__ == "__main__":

@@ -77,7 +77,7 @@ def create_plan(
     # Guard: Don't overwrite active plan
     if state.get("plan") and state.get("status") == "in_progress":
         return (
-            "⚠️ A plan is already in progress.\n"
+            "A plan is already in progress.\n"
             "Options:\n"
             "  - Complete the current plan\n"
             "  - Call reset_plan(confirm=True) to start fresh"
@@ -87,7 +87,7 @@ def create_plan(
     plan_items = []
     for i, step in enumerate(steps, 1):
         if not isinstance(step, dict) or "description" not in step:
-            return f"❌ Invalid step format at position {i}. Need {{'description': '...', 'success_criteria': '...'}}"
+            return f"Invalid step format at position {i}. Need {{'description': '...', 'success_criteria': '...'}}"
 
         plan_items.append(
             {
@@ -116,7 +116,7 @@ def create_plan(
     # Format response
     steps_display = "\n".join(
         [
-            f"  {s['id']}. {s['description']}\n     ✓ Done when: {s['success_criteria']}"
+            f"  {s['id']}. {s['description']}\n     Done when: {s['success_criteria']}"
             for s in plan_items
         ]
     )
@@ -124,11 +124,11 @@ def create_plan(
     logger.info(f"[PaL] Plan created: {objective} ({len(plan_items)} steps)")
 
     return (
-        f"✅ Plan created!\n\n"
-        f"🎯 Objective: {objective}\n"
-        f"{'📝 Context: ' + context + chr(10) if context else ''}\n"
+        f"Plan created!\n\n"
+        f"Objective: {objective}\n"
+        f"{'Context: ' + context + chr(10) if context else ''}\n"
         f"Steps:\n{steps_display}\n\n"
-        f"→ Ready to begin with Step 1"
+        f"-> Ready to begin with Step 1"
     )
 
 
@@ -147,16 +147,18 @@ def complete_step(run_context: RunContext, output: str) -> str:
     current = state.get("current_step", 1)
 
     if not plan:
-        return "❌ No plan exists. Create one first with create_plan()."
+        return "No plan exists. Create one first with create_plan()."
 
     if state.get("status") == "complete":
-        return "✅ Plan is already complete. Use reset_plan(confirm=True) to start a new one."
+        return (
+            "Plan is already complete. Use reset_plan(confirm=True) to start a new one."
+        )
 
     # Get current step
     step = plan[current - 1]
 
     if step["status"] == "complete":
-        return f"❌ Step {current} is already complete."
+        return f"Step {current} is already complete."
 
     # Mark complete
     now = datetime.now(timezone.utc).isoformat()
@@ -177,11 +179,11 @@ def complete_step(run_context: RunContext, output: str) -> str:
         duration = completed - created
 
         return (
-            f"✅ Step {current} complete!\n\n"
-            f"🎉 **Plan Finished!**\n"
+            f"Step {current} complete!\n\n"
+            f"**Plan Finished!**\n"
             f"All {len(plan)} steps completed successfully.\n"
             f"Duration: {duration}\n\n"
-            f"💡 **Learning opportunity**: Is there a reusable insight from this execution?\n"
+            f"**Learning opportunity**: Is there a reusable insight from this execution?\n"
             f"If so, propose it and I'll save it with `save_learning()` for future tasks."
         )
 
@@ -190,8 +192,8 @@ def complete_step(run_context: RunContext, output: str) -> str:
     next_step = plan[current]
 
     return (
-        f"✅ Step {current} complete!\n\n"
-        f"→ **Step {current + 1}**: {next_step['description']}\n"
+        f"Step {current} complete!\n\n"
+        f"-> **Step {current + 1}**: {next_step['description']}\n"
         f"  Success criteria: {next_step['success_criteria']}"
     )
 
@@ -221,14 +223,12 @@ def update_plan(
     current = state.get("current_step", 1)
 
     if not plan:
-        return "❌ No plan exists. Create one first."
+        return "No plan exists. Create one first."
 
     # ADD: Append new step to end
     if action == "add":
         if not new_step or "description" not in new_step:
-            return (
-                "❌ Provide new_step={'description': '...', 'success_criteria': '...'}"
-            )
+            return "Provide new_step={'description': '...', 'success_criteria': '...'}"
 
         new_item = {
             "id": len(plan) + 1,
@@ -245,14 +245,14 @@ def update_plan(
         state["plan_length"] = len(plan)
 
         logger.info(f"[PaL] Step added: {new_item['description'][:50]}...")
-        return f"✅ Added Step {new_item['id']}: {new_item['description']}"
+        return f"Added Step {new_item['id']}: {new_item['description']}"
 
     # INSERT: Add step after a specific position
     elif action == "insert":
         if not step_id or not new_step:
-            return "❌ Provide step_id (insert after) and new_step"
+            return "Provide step_id (insert after) and new_step"
         if step_id < current:
-            return f"❌ Cannot insert before current step {current}"
+            return f"Cannot insert before current step {current}"
 
         new_item = {
             "id": step_id + 1,
@@ -275,18 +275,18 @@ def update_plan(
         logger.info(
             f"[PaL] Step inserted after {step_id}: {new_item['description'][:50]}..."
         )
-        return f"✅ Inserted new Step {step_id + 1}: {new_item['description']}"
+        return f"Inserted new Step {step_id + 1}: {new_item['description']}"
 
     # REMOVE: Delete a future step
     elif action == "remove":
         if not step_id:
-            return "❌ Provide step_id to remove"
+            return "Provide step_id to remove"
         if step_id <= current:
-            return f"❌ Cannot remove step {step_id} — already current or completed"
+            return f"Cannot remove step {step_id} - already current or completed"
 
         removed = next((s for s in plan if s["id"] == step_id), None)
         if not removed:
-            return f"❌ Step {step_id} not found"
+            return f"Step {step_id} not found"
 
         state["plan"] = [s for s in plan if s["id"] != step_id]
         # Renumber remaining steps
@@ -295,16 +295,16 @@ def update_plan(
         state["plan_length"] = len(state["plan"])
 
         logger.info(f"[PaL] Step removed: {removed['description'][:50]}...")
-        return f"✅ Removed: {removed['description']}\nPlan now has {state['plan_length']} steps."
+        return f"Removed: {removed['description']}\nPlan now has {state['plan_length']} steps."
 
     # REVISIT: Go back to a previous step
     elif action == "revisit":
         if not step_id:
-            return "❌ Provide step_id to revisit"
+            return "Provide step_id to revisit"
         if not reason:
-            return "❌ Provide reason for revisiting"
+            return "Provide reason for revisiting"
         if step_id > current:
-            return f"❌ Step {step_id} hasn't been reached yet"
+            return f"Step {step_id} hasn't been reached yet"
 
         # Reset this step and all subsequent
         for s in plan:
@@ -322,12 +322,10 @@ def update_plan(
 
         logger.info(f"[PaL] Revisiting step {step_id}: {reason}")
         return (
-            f"🔄 Revisiting Step {step_id}\n"
-            f"Reason: {reason}\n"
-            f"Progress reset to this step."
+            f"Revisiting Step {step_id}\nReason: {reason}\nProgress reset to this step."
         )
 
-    return f"❌ Unknown action: {action}. Use 'add', 'insert', 'remove', or 'revisit'."
+    return f"Unknown action: {action}. Use 'add', 'insert', 'remove', or 'revisit'."
 
 
 def block_step(
@@ -345,7 +343,7 @@ def block_step(
     current = state.get("current_step", 1)
 
     if not plan:
-        return "❌ No plan exists."
+        return "No plan exists."
 
     step = plan[current - 1]
     step["status"] = "blocked"
@@ -353,7 +351,7 @@ def block_step(
 
     logger.warning(f"[PaL] Step {current} blocked: {blocker}")
 
-    response = f"⚠️ Step {current} is blocked\n\n**Blocker**: {blocker}\n"
+    response = f"Step {current} is blocked\n\n**Blocker**: {blocker}\n"
 
     if suggestion:
         response += f"**Suggested resolution**: {suggestion}\n"
@@ -377,7 +375,7 @@ def get_status(run_context: RunContext) -> str:
 
     if not state.get("plan"):
         return (
-            "📋 No active plan.\n\n"
+            "No active plan.\n\n"
             "Use create_plan() to start. Example:\n"
             "```\n"
             "create_plan(\n"
@@ -405,13 +403,13 @@ def get_status(run_context: RunContext) -> str:
 
     # Build output
     lines = [
-        f"{'═' * 50}",
-        f"🎯 OBJECTIVE: {objective}",
-        f"📊 STATUS: {status.upper()}",
+        f"{'=' * 50}",
+        f"OBJECTIVE: {objective}",
+        f"STATUS: {status.upper()}",
     ]
 
     if context:
-        lines.append(f"📝 Context: {context}")
+        lines.append(f"Context: {context}")
 
     lines.extend(["", "STEPS:", ""])
 
@@ -423,29 +421,29 @@ def get_status(run_context: RunContext) -> str:
         lines.append(f"  {icon} [{s['id']}] {s['description']}{marker}")
 
         if is_current:
-            lines.append(f"       ✓ Must satisfy: {s['success_criteria']}")
+            lines.append(f"       Must satisfy: {s['success_criteria']}")
 
         if s["output"] and s["status"] == "complete":
             # Truncate long outputs
             output_preview = (
                 s["output"][:80] + "..." if len(s["output"]) > 80 else s["output"]
             )
-            lines.append(f"       └─ {output_preview}")
+            lines.append(f"       -> {output_preview}")
         elif s["status"] == "blocked":
-            lines.append(f"       └─ {s['output']}")
+            lines.append(f"       -> {s['output']}")
 
     # Progress bar
     done = sum(1 for s in plan if s["status"] == "complete")
     total = len(plan)
     pct = int(done / total * 100) if total > 0 else 0
     bar_filled = int(pct / 5)
-    bar = "█" * bar_filled + "░" * (20 - bar_filled)
+    bar = "#" * bar_filled + "-" * (20 - bar_filled)
 
     lines.extend(
         [
             "",
             f"Progress: [{bar}] {done}/{total} ({pct}%)",
-            f"{'═' * 50}",
+            f"{'=' * 50}",
         ]
     )
 
@@ -461,7 +459,7 @@ def reset_plan(run_context: RunContext, confirm: bool = False) -> str:
     """
     if not confirm:
         return (
-            "⚠️ This will clear the current plan and all progress.\n"
+            "This will clear the current plan and all progress.\n"
             "To confirm, call: reset_plan(confirm=True)"
         )
 
@@ -480,7 +478,7 @@ def reset_plan(run_context: RunContext, confirm: bool = False) -> str:
     )
 
     logger.info("[PaL] Plan reset")
-    return "🗑️ Plan cleared. Ready to create a new plan."
+    return "Plan cleared. Ready to create a new plan."
 
 
 # ============================================================================
@@ -537,14 +535,11 @@ def save_learning(
             skip_if_exists=True,
         )
         return (
-            f"💡 Learning saved!\n\n"
-            f"**{title}**\n"
-            f"{learning}\n\n"
-            f"_Applies to: {applies_to}_"
+            f"Learning saved!\n\n**{title}**\n{learning}\n\n_Applies to: {applies_to}_"
         )
     except Exception as e:
         logger.error(f"[PaL] Failed to save learning: {e}")
-        return f"❌ Failed to save learning: {str(e)}"
+        return f"Failed to save learning: {str(e)}"
 
 
 # ============================================================================
@@ -676,13 +671,13 @@ def run_pal(message: str, session_id: Optional[str] = None, show_state: bool = T
     pal_agent.print_response(message, session_id=session_id, stream=True)
     if show_state:
         state = pal_agent.get_session_state()
-        print(f"\n{'─' * 50}")
-        print("📊 Session State:")
+        print(f"\n{'-' * 50}")
+        print("Session State:")
         print(f"   Status: {state.get('status', 'no_plan')}")
         if state.get("plan"):
             done = sum(1 for s in state["plan"] if s["status"] == "complete")
             print(f"   Progress: {done}/{len(state['plan'])} steps")
-        print(f"{'─' * 50}")
+        print(f"{'-' * 50}")
 
 
 # ============================================================================

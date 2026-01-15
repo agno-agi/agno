@@ -47,7 +47,7 @@ async def run_agent():
         stream=True,
     ):
         if isinstance(event, CustomEvent):
-            print(f"✅ Custom event emitted: {event}")
+            print(f"Custom event emitted: {event}")
 
 
 asyncio.run(run_agent())

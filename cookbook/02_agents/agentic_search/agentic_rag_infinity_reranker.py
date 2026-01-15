@@ -6,7 +6,7 @@ It provides fast and efficient reranking capabilities for RAG applications.
 ## Setup Instructions:
 
 ### 1. Install Dependencies
-Run: `pip install agno anthropic infinity-client lancedb`
+Run: `uv pip install agno anthropic infinity-client lancedb`
 
 ### 2. Set up Infinity Server
 You have several options to deploy Infinity:
@@ -14,7 +14,7 @@ You have several options to deploy Infinity:
 #### Local Installation
 ```bash
 # Install infinity
-pip install "infinity-emb[all]"
+uv pip install "infinity-emb[all]"
 
 # Run infinity server with reranking model
 infinity_emb v2 --model-id BAAI/bge-reranker-base --port 7997
@@ -34,7 +34,7 @@ export ANTHROPIC_API_KEY="your-anthropic-api-key"
 
 ### 4. Run the Example
 ```bash
-python cookbook/agent_concepts/agentic_search/agentic_rag_infinity_reranker.py
+python cookbook/02_agents/agentic_search/agentic_rag_infinity_reranker.py
 ```
 
 ## About Infinity Reranker:
@@ -70,15 +70,6 @@ knowledge = Knowledge(
         ),
     ),
 )
-asyncio.run(
-    knowledge.add_contents_async(
-        urls=[
-            "https://docs.agno.com/basics/agents/overview.md",
-            "https://docs.agno.com/basics/tools/overview.md",
-            "https://docs.agno.com/basics/knowledge/overview.md",
-        ]
-    )
-)
 
 agent = Agent(
     model=Claude(id="claude-3-7-sonnet-latest"),
@@ -102,10 +93,10 @@ def test_infinity_connection():
         from infinity_client import Client
 
         _ = Client(base_url="http://localhost:7997")
-        print("✅ Successfully connected to Infinity server at localhost:7997")
+        print("[OK] Successfully connected to Infinity server at localhost:7997")
         return True
     except Exception as e:
-        print(f"❌ Failed to connect to Infinity server: {e}")
+        print(f"[ERROR] Failed to connect to Infinity server: {e}")
         print(
             "\nPlease make sure Infinity server is running. See setup instructions above."
         )
@@ -113,14 +104,26 @@ def test_infinity_connection():
 
 
 if __name__ == "__main__":
-    print("🚀 Agentic RAG with Infinity Reranker Example")
+    print("Agentic RAG with Infinity Reranker Example")
     print("=" * 50)
+
+    # Load knowledge base
+    print("\nLoading knowledge base...")
+    asyncio.run(
+        knowledge.add_contents_async(
+            urls=[
+                "https://docs.agno.com/basics/agents/overview.md",
+                "https://docs.agno.com/basics/tools/overview.md",
+                "https://docs.agno.com/basics/knowledge/overview.md",
+            ]
+        )
+    )
 
     # Test Infinity connection first
     if not test_infinity_connection():
         exit(1)
 
-    print("\n🤖 Starting agent interaction...")
+    print("\nStarting agent interaction...")
     print("=" * 50)
 
     # Example questions to test the reranking capabilities
@@ -131,11 +134,11 @@ if __name__ == "__main__":
     ]
 
     for i, question in enumerate(questions, 1):
-        print(f"\n🔍 Question {i}: {question}")
+        print(f"\n[Question {i}] {question}")
         print("-" * 40)
         agent.print_response(question, stream=True)
         print("\n" + "=" * 50)
 
-    print("\n🎉 Example completed!")
+    print("\nExample completed!")
     print("\nThe Infinity reranker helped improve the relevance of retrieved documents")
     print("by reranking them based on semantic similarity to your queries.")

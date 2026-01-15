@@ -1,7 +1,7 @@
 """
-1. Install dependencies using: `pip install opencv-python google-geneai sqlalchemy`
+1. Install dependencies using: `uv pip install opencv-python google-genai sqlalchemy`
 2. Install ffmpeg `brew install ffmpeg`
-2. Run the script using: `python cookbook/agent_concepts/video_to_shorts.py`
+3. Run the script using: `python cookbook/02_agents/multimodal/video_to_shorts.py`
 """
 
 import subprocess
@@ -18,7 +18,7 @@ output_dir = Path("tmp/shorts")
 agent = Agent(
     name="Video2Shorts",
     description="Process videos and generate engaging shorts.",
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-3-flash-preview"),
     markdown=True,
     instructions=[
         "Analyze the provided video directly—do NOT reference or analyze any external sources or YouTube videos.",

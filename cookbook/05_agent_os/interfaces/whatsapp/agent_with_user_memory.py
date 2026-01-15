@@ -17,13 +17,13 @@ memory_manager = MemoryManager(
                     Collect Information about the users likes and dislikes,
                     Collect information about what the user is doing with their life right now
                 """,
-    model=Gemini(id="gemini-2.0-flash"),
+    model=Gemini(id="gemini-3-flash-preview"),
 )
 
 
 personal_agent = Agent(
     name="Basic Agent",
-    model=Gemini(id="gemini-2.0-flash"),
+    model=Gemini(id="gemini-3-flash-preview"),
     tools=[DuckDuckGoTools()],
     add_history_to_context=True,
     num_history_runs=3,

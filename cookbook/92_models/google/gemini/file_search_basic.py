@@ -11,7 +11,7 @@ agent = Agent(model=model, markdown=True)
 
 print("Creating File Search store...")
 store = model.create_file_search_store(display_name="Basic Demo Store")
-print(f"✓ Created store: {store.name}")
+print(f"[OK] Created store: {store.name}")
 
 print("\nUploading file to store...")
 # Upload a file directly to the File Search store
@@ -24,7 +24,7 @@ operation = model.upload_to_file_search_store(
 # Wait for upload to complete
 print("Waiting for upload to complete...")
 completed_op = model.wait_for_operation(operation)
-print("✓ Upload completed")
+print("[OK] Upload completed")
 
 # Configure model to use File Search
 model.file_search_store_names = [store.name]
@@ -82,4 +82,4 @@ else:
 print("\n" + "=" * 50)
 print("Cleaning up...")
 model.delete_file_search_store(store.name)
-print("✓ Store deleted")
+print("[OK] Store deleted")

@@ -60,6 +60,12 @@ Testing model provider examples in `cookbook/92_models/`.
 
 **Fixes Applied:**
 1. Fixed 48 path references (`cookbook/11_models/` and `cookbook/models/` -> `cookbook/92_models/`)
+2. Fixed model IDs in 36 Python files (google/gemini/*.py and cometapi/multi_model.py):
+   - All `gemini-2.0-flash-001` -> `gemini-3-flash-preview`
+   - All `gemini-2.0-flash-exp` -> `gemini-3-flash-preview`
+   - All `gemini-2.0-flash` -> `gemini-3-flash-preview`
+   - All `gemini-2.0-flash-exp-image-generation` -> `gemini-3-flash-preview`
+3. Removed emojis from `cometapi/multi_model.py`
 
 **Key Features Verified:**
 - OpenAI GPT-4o streaming completion

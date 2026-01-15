@@ -5,7 +5,7 @@ from agno.tools.webbrowser import WebBrowserTools
 
 # Example 1: Enable specific WebBrowser functions
 agent = Agent(
-    model=Gemini("gemini-2.0-flash"),
+    model=Gemini("gemini-3-flash-preview"),
     tools=[WebBrowserTools(enable_open_page=True), DuckDuckGoTools(all=True)],
     instructions=[
         "Find related websites and pages using DuckDuckGo",
@@ -16,7 +16,7 @@ agent = Agent(
 
 # Example 2: Enable all WebBrowser functions
 agent_all = Agent(
-    model=Gemini("gemini-2.0-flash"),
+    model=Gemini("gemini-3-flash-preview"),
     tools=[WebBrowserTools(all=True), DuckDuckGoTools(all=True)],
     instructions=[
         "Find related websites and pages using DuckDuckGo",

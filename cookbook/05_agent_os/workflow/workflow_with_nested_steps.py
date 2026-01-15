@@ -65,11 +65,11 @@ def research_quality_check(outputs: List[StepOutput]) -> bool:
     for output in outputs:
         if output.content and len(output.content) > 300:
             print(
-                f"✅ Research quality check passed - found substantial content ({len(output.content)} chars)"
+                f"[OK] Research quality check passed - found substantial content ({len(output.content)} chars)"
             )
             return True
 
-    print("❌ Research quality check failed - need more substantial research")
+    print("[FAIL] Research quality check failed - need more substantial research")
     return False
 
 

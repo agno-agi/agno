@@ -72,7 +72,7 @@ for event_or_response in stream_generator:
 
 assert isinstance(run_response.content, StockReport)
 print(
-    f"✅ Response content is correctly typed as StockReport: {type(run_response.content)}"
+    f"Response content is correctly typed as StockReport: {type(run_response.content)}"
 )
-print(f"✅ Stock Symbol: {run_response.content.symbol}")
-print(f"✅ Company Name: {run_response.content.company_name}")
+print(f"Stock Symbol: {run_response.content.symbol}")
+print(f"Company Name: {run_response.content.company_name}")

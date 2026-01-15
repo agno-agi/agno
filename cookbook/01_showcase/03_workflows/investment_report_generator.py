@@ -1,4 +1,4 @@
-"""💰 Investment Report Generator - Your AI Financial Analysis Studio!
+"""Investment Report Generator - Your AI Financial Analysis Studio!
 
 This advanced example demonstrates how to build a sophisticated investment analysis system that combines
 market research, financial analysis, and portfolio management. The workflow uses a three-stage
@@ -96,17 +96,17 @@ stock_analyst = Agent(
     - Growth potential evaluation\
     """),
     instructions=dedent("""\
-    1. Market Research 📊
+    1. Market Research
        - Analyze company fundamentals and metrics
        - Review recent market performance
        - Evaluate competitive positioning
        - Assess industry trends and dynamics
-    2. Financial Analysis 💹
+    2. Financial Analysis
        - Examine key financial ratios
        - Review analyst recommendations
        - Analyze recent news impact
        - Identify growth catalysts
-    3. Risk Assessment 🎯
+    3. Risk Assessment
        - Evaluate market risks
        - Assess company-specific challenges
        - Consider macroeconomic factors
@@ -129,17 +129,17 @@ research_analyst = Agent(
     - Strategic recommendations\
     """),
     instructions=dedent("""\
-    1. Investment Analysis 🔍
+    1. Investment Analysis
        - Evaluate each company's potential
        - Compare relative valuations
        - Assess competitive advantages
        - Consider market positioning
-    2. Risk Evaluation 📈
+    2. Risk Evaluation
        - Analyze risk factors
        - Consider market conditions
        - Evaluate growth sustainability
        - Assess management capability
-    3. Company Ranking 🏆
+    3. Company Ranking
        - Rank based on investment potential
        - Provide detailed rationale
        - Consider risk-adjusted returns
@@ -161,17 +161,17 @@ investment_lead = Agent(
     - Client recommendation delivery\
     """),
     instructions=dedent("""\
-    1. Portfolio Strategy 💼
+    1. Portfolio Strategy
        - Develop allocation strategy
        - Optimize risk-reward balance
        - Consider diversification
        - Set investment timeframes
-    2. Investment Rationale 📝
+    2. Investment Rationale
        - Explain allocation decisions
        - Support with analysis
        - Address potential concerns
        - Highlight growth catalysts
-    3. Recommendation Delivery 📊
+    3. Recommendation Delivery
        - Present clear allocations
        - Explain investment thesis
        - Provide actionable insights
@@ -193,13 +193,13 @@ async def investment_analysis_execution(
     company_symbols: str = companies
 
     if not company_symbols:
-        return "❌ No company symbols provided"
+        return "No company symbols provided"
 
-    print(f"🚀 Starting investment analysis for companies: {company_symbols}")
-    print(f"💼 Analysis request: {message}")
+    print(f"Starting investment analysis for companies: {company_symbols}")
+    print(f"Analysis request: {message}")
 
     # Phase 1: Stock Analysis
-    print("\n📊 PHASE 1: COMPREHENSIVE STOCK ANALYSIS")
+    print("\nPHASE 1: COMPREHENSIVE STOCK ANALYSIS")
     print("=" * 60)
 
     analysis_prompt = f"""
@@ -216,7 +216,7 @@ async def investment_analysis_execution(
     Companies to analyze: {company_symbols}
     """
 
-    print("🔍 Analyzing market data and fundamentals...")
+    print("Analyzing market data and fundamentals...")
     stock_analysis_result = await stock_analyst.arun(analysis_prompt)
     stock_analysis = stock_analysis_result.content
 
@@ -229,10 +229,10 @@ async def investment_analysis_execution(
         f.write(f"## Risk Assessment\n{stock_analysis.risk_assessment}\n\n")
         f.write(f"## Recommendations\n{stock_analysis.recommendations}\n")
 
-    print(f"✅ Stock analysis completed and saved to {stock_analyst_report}")
+    print(f"Stock analysis completed and saved to {stock_analyst_report}")
 
     # Phase 2: Investment Ranking
-    print("\n🏆 PHASE 2: INVESTMENT POTENTIAL RANKING")
+    print("\nPHASE 2: INVESTMENT POTENTIAL RANKING")
     print("=" * 60)
 
     ranking_prompt = f"""
@@ -249,7 +249,7 @@ async def investment_analysis_execution(
     4. Growth potential assessment
     """
 
-    print("📈 Ranking companies by investment potential...")
+    print("Ranking companies by investment potential...")
     ranking_result = await research_analyst.arun(ranking_prompt)
     ranking_analysis = ranking_result.content
 
@@ -261,10 +261,10 @@ async def investment_analysis_execution(
         f.write(f"## Risk Evaluation\n{ranking_analysis.risk_evaluation}\n\n")
         f.write(f"## Growth Potential\n{ranking_analysis.growth_potential}\n")
 
-    print(f"✅ Investment ranking completed and saved to {research_analyst_report}")
+    print(f"Investment ranking completed and saved to {research_analyst_report}")
 
     # Phase 3: Portfolio Allocation Strategy
-    print("\n💼 PHASE 3: PORTFOLIO ALLOCATION STRATEGY")
+    print("\nPHASE 3: PORTFOLIO ALLOCATION STRATEGY")
     print("=" * 60)
 
     portfolio_prompt = f"""
@@ -281,7 +281,7 @@ async def investment_analysis_execution(
     4. Final actionable recommendations
     """
 
-    print("💰 Developing portfolio allocation strategy...")
+    print("Developing portfolio allocation strategy...")
     portfolio_result = await investment_lead.arun(portfolio_prompt)
     portfolio_strategy = portfolio_result.content
 
@@ -295,27 +295,27 @@ async def investment_analysis_execution(
             f"## Final Recommendations\n{portfolio_strategy.final_recommendations}\n"
         )
 
-    print(f"✅ Portfolio strategy completed and saved to {investment_report}")
+    print(f"Portfolio strategy completed and saved to {investment_report}")
 
     # Final summary
     summary = f"""
-    🎉 INVESTMENT ANALYSIS WORKFLOW COMPLETED!
+    INVESTMENT ANALYSIS WORKFLOW COMPLETED!
 
-    📊 Analysis Summary:
-    • Companies Analyzed: {company_symbols}
-    • Market Analysis: ✅ Completed
-    • Investment Ranking: ✅ Completed
-    • Portfolio Strategy: ✅ Completed
+    Analysis Summary:
+    - Companies Analyzed: {company_symbols}
+    - Market Analysis: Completed
+    - Investment Ranking: Completed
+    - Portfolio Strategy: Completed
 
-    📁 Reports Generated:
-    • Stock Analysis: {stock_analyst_report}
-    • Investment Ranking: {research_analyst_report}
-    • Portfolio Strategy: {investment_report}
+    Reports Generated:
+    - Stock Analysis: {stock_analyst_report}
+    - Investment Ranking: {research_analyst_report}
+    - Portfolio Strategy: {investment_report}
 
-    💡 Key Insights:
+    Key Insights:
     {portfolio_strategy.allocation_strategy[:200]}...
 
-    ⚠️ Disclaimer: This analysis is for educational purposes only and should not be considered as financial advice.
+    Disclaimer: This analysis is for educational purposes only and should not be considered as financial advice.
     """
 
     return summary
@@ -353,11 +353,11 @@ if __name__ == "__main__":
         # Get companies from user with example suggestion
         companies = Prompt.ask(
             "[bold]Enter company symbols (comma-separated)[/bold] "
-            "(or press Enter for a suggested portfolio)\n✨",
+            "(or press Enter for a suggested portfolio)",
             default=random.choice(example_scenarios),
         )
 
-        print("🧪 Testing Investment Report Generator with New Workflow Structure")
+        print("Testing Investment Report Generator with New Workflow Structure")
         print("=" * 70)
 
         result = await investment_workflow.arun(

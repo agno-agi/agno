@@ -136,7 +136,7 @@ def main():
     )
 
     # Test 1: Valid team request (should work - requires multiple expertise areas)
-    print("\n✅ Test 1: Complex software project (valid team request)")
+    print("\n[TEST 1] Complex software project (valid team request)")
     print("-" * 40)
     try:
         response = dev_team.run(
@@ -154,27 +154,27 @@ def main():
             Please provide a comprehensive development plan covering frontend, backend, and deployment strategies.
             """
         )
-        print("✅ Success! Complex request validated for team execution:")
+        print("[OK] Success! Complex request validated for team execution:")
         print(
             response.content[:300] + "..."
             if len(response.content) > 300
             else response.content
         )
     except Exception as e:
-        print(f"❌ Unexpected error: {e}")
+        print(f"[ERROR] Unexpected error: {e}")
 
     # Test 2: Request better suited for single agent (should trigger validation)
-    print("\n🔴 Test 2: Simple frontend question (doesn't benefit from team)")
+    print("\n[TEST 2] Simple frontend question (doesn't benefit from team)")
     print("-" * 40)
     try:
         response = dev_team.run(input="How do I center a div in CSS?")
         print(response.content)
     except InputCheckError as e:
-        print(f"❌ Team validation failed: {e}")
+        print(f"[BLOCKED] Team validation failed: {e}")
         print(f"   Trigger: {e.check_trigger}")
 
     # Test 3: Irrelevant to team's capabilities
-    print("\n🔴 Test 3: Off-topic request")
+    print("\n[TEST 3] Off-topic request")
     print("-" * 40)
     try:
         response = dev_team.run(
@@ -182,11 +182,11 @@ def main():
         )
         print(response.content)
     except InputCheckError as e:
-        print(f"❌ Team validation failed: {e}")
+        print(f"[BLOCKED] Team validation failed: {e}")
         print(f"   Trigger: {e.check_trigger}")
 
     # Test 4: Potentially unsafe content
-    print("\n🔴 Test 4: Potentially unsafe request")
+    print("\n[TEST 4] Potentially unsafe request")
     print("-" * 40)
     try:
         response = dev_team.run(
@@ -194,7 +194,7 @@ def main():
         )
         print(response.content)
     except InputCheckError as e:
-        print(f"❌ Team validation failed: {e}")
+        print(f"[BLOCKED] Team validation failed: {e}")
         print(f"   Trigger: {e.check_trigger}")
 
 

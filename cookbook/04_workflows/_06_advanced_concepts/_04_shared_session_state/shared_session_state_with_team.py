@@ -30,23 +30,23 @@ def add_step(
     }
     run_context.session_state["steps"].append(step)  # type: ignore
 
-    result = f"✅ Successfully added step '{step_name}' assigned to {assignee} (priority: {priority}). Total steps: {len(run_context.session_state['steps'])}"
+    result = f"[OK] Successfully added step '{step_name}' assigned to {assignee} (priority: {priority}). Total steps: {len(run_context.session_state['steps'])}"
     return result
 
 
 def delete_step(run_context: RunContext, step_name: str) -> str:
     """Delete a step from the team's workflow session state."""
     if run_context.session_state is None or "steps" not in run_context.session_state:
-        return "❌ No steps found to delete"
+        return "[ERROR] No steps found to delete"
 
     steps = run_context.session_state["steps"]
     for i, step in enumerate(steps):
         if step["name"] == step_name:
             deleted_step = steps.pop(i)
-            result = f"✅ Successfully deleted step '{step_name}' (was assigned to {deleted_step['assignee']}). Remaining steps: {len(steps)}"
+            result = f"[OK] Successfully deleted step '{step_name}' (was assigned to {deleted_step['assignee']}). Remaining steps: {len(steps)}"
             return result
 
-    result = f"❌ Step '{step_name}' not found in the list"
+    result = f"[ERROR] Step '{step_name}' not found in the list"
     return result
 
 
@@ -56,7 +56,7 @@ def update_step_status(
 ) -> str:
     """Update the status of a step in the workflow session state."""
     if run_context.session_state is None or "steps" not in run_context.session_state:
-        return "❌ No steps found in workflow session state"
+        return "[ERROR] No steps found in workflow session state"
 
     steps = run_context.session_state["steps"]
     for step in steps:
@@ -67,20 +67,20 @@ def update_step_status(
                 step["notes"] = notes
             step["last_updated"] = "now"
 
-            result = f"✅ Updated step '{step_name}' status from '{old_status}' to '{new_status}'"
+            result = f"[OK] Updated step '{step_name}' status from '{old_status}' to '{new_status}'"
             if notes:
                 result += f" with notes: {notes}"
 
             return result
 
-    result = f"❌ Step '{step_name}' not found in the list"
+    result = f"[ERROR] Step '{step_name}' not found in the list"
     return result
 
 
 def assign_step(run_context: RunContext, step_name: str, new_assignee: str) -> str:
     """Reassign a step to a different person."""
     if run_context.session_state is None or "steps" not in run_context.session_state:
-        return "❌ No steps found in workflow session state"
+        return "[ERROR] No steps found in workflow session state"
 
     steps = run_context.session_state["steps"]
     for step in steps:
@@ -89,10 +89,10 @@ def assign_step(run_context: RunContext, step_name: str, new_assignee: str) -> s
             step["assignee"] = new_assignee
             step["last_updated"] = "now"
 
-            result = f"✅ Reassigned step '{step_name}' from {old_assignee} to {new_assignee}"
+            result = f"[OK] Reassigned step '{step_name}' from {old_assignee} to {new_assignee}"
             return result
 
-    result = f"❌ Step '{step_name}' not found in the list"
+    result = f"[ERROR] Step '{step_name}' not found in the list"
     return result
 
 
@@ -179,89 +179,89 @@ def print_current_steps(workflow):
 
     session_state = workflow.get_session_state()
     if not session_state or "steps" not in session_state:
-        print("📋 No steps in workflow")
+        print("No steps in workflow")
         return
 
     steps = session_state["steps"]
     if not steps:
-        print("📋 Step list is empty")
+        print("Step list is empty")
         return
 
-    print("📋 **Current Project Steps:**")
+    print("**Current Project Steps:**")
     for i, step in enumerate(steps, 1):
-        status_emoji = {
-            "pending": "⏳",
-            "in_progress": "🔄",
-            "completed": "✅",
-            "blocked": "🚫",
-            "cancelled": "❌",
-        }.get(step["status"], "❓")
+        status_label = {
+            "pending": "[PENDING]",
+            "in_progress": "[IN_PROGRESS]",
+            "completed": "[COMPLETED]",
+            "blocked": "[BLOCKED]",
+            "cancelled": "[CANCELLED]",
+        }.get(step["status"], "[UNKNOWN]")
 
-        priority_emoji = {"high": "🔥", "medium": "📝", "low": "💤"}.get(
-            step.get("priority", "medium"), "📝"
+        priority_label = {"high": "[HIGH]", "medium": "[MEDIUM]", "low": "[LOW]"}.get(
+            step.get("priority", "medium"), "[MEDIUM]"
         )
 
         print(
-            f"  {i}. {status_emoji} {priority_emoji} **{step['name']}** (assigned to: {step['assignee']}, status: {step['status']})"
+            f"  {i}. {status_label} {priority_label} **{step['name']}** (assigned to: {step['assignee']}, status: {step['status']})"
         )
         if "notes" in step:
-            print(f"     💬 Notes: {step['notes']}")
+            print(f"     Notes: {step['notes']}")
     print()
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Project Management Workflow Tests")
+    print("Starting Project Management Workflow Tests")
 
     # Example 1: Add multiple steps with different priorities
     print("=" * 60)
-    print("📝 Example 1: Add Multiple Steps")
+    print("Example 1: Add Multiple Steps")
     print("=" * 60)
     project_workflow.print_response(
         input="Add a high priority step called 'Setup Database' assigned to Alice, and a medium priority step called 'Create API' assigned to Bob"
     )
     print_current_steps(project_workflow)
-    print(f"🔍 Workflow Session State: {project_workflow.get_session_state()}")
+    print(f"Workflow Session State: {project_workflow.get_session_state()}")
     print()
 
     # Example 2: Update step status
     print("=" * 60)
-    print("🔄 Example 2: Update Step Status")
+    print("Example 2: Update Step Status")
     print("=" * 60)
     project_workflow.print_response(
         input="Mark 'Setup Database' as in_progress with notes 'Started database schema design'"
     )
     print_current_steps(project_workflow)
-    print(f"🔍 Workflow Session State: {project_workflow.get_session_state()}")
+    print(f"Workflow Session State: {project_workflow.get_session_state()}")
     print()
 
     # Example 3: Reassign and complete a step
     print("=" * 60)
-    print("✅ Example 3: Reassign and Complete Step")
+    print("Example 3: Reassign and Complete Step")
     print("=" * 60)
     project_workflow.print_response(
         input="Reassign 'Create API' to Charlie, then mark it as completed with notes 'API endpoints implemented and tested'"
     )
     print_current_steps(project_workflow)
-    print(f"🔍 Workflow Session State: {project_workflow.get_session_state()}")
+    print(f"Workflow Session State: {project_workflow.get_session_state()}")
     print()
 
     # Example 4: Add more steps and manage them
     print("=" * 60)
-    print("📋 Example 4: Add and Manage More Steps")
+    print("Example 4: Add and Manage More Steps")
     print("=" * 60)
     project_workflow.print_response(
         input="Add a low priority step 'Write Tests' assigned to Dave, then mark 'Setup Database' as completed"
     )
     print_current_steps(project_workflow)
-    print(f"🔍 Workflow Session State: {project_workflow.get_session_state()}")
+    print(f"Workflow Session State: {project_workflow.get_session_state()}")
     print()
 
     # Example 5: Delete a step
     print("=" * 60)
-    print("🗑️ Example 5: Delete Step")
+    print("Example 5: Delete Step")
     print("=" * 60)
     project_workflow.print_response(
         input="Delete the 'Write Tests' step and add a high priority 'Deploy to Production' step assigned to Eve"
     )
     print_current_steps(project_workflow)
-    print(f"🔍 Workflow Session State: {project_workflow.get_session_state()}")
+    print(f"Workflow Session State: {project_workflow.get_session_state()}")

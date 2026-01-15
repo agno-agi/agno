@@ -126,7 +126,7 @@ coordinated_reasoning_team = Team(
 
 async def async_reasoning_demo():
     """Demonstrate async coordinated reasoning RAG with streaming."""
-    print("🧠 Async Coordinated Reasoning RAG Team Demo")
+    print(" Async Coordinated Reasoning RAG Team Demo")
     print("=" * 60)
 
     query = "What are Agents and how do they work with tools? Explain the reasoning behind their design."
@@ -144,7 +144,7 @@ async def async_reasoning_demo():
 
 def sync_reasoning_demo():
     """Demonstrate sync coordinated reasoning RAG."""
-    print("🧠 Coordinated Reasoning RAG Team Demo")
+    print(" Coordinated Reasoning RAG Team Demo")
     print("=" * 50)
 
     query = "What are Agents and how do they work with tools? Explain the reasoning behind their design."

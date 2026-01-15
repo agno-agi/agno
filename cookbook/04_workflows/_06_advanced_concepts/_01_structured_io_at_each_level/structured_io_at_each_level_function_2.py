@@ -84,13 +84,13 @@ def enhanced_analysis_function(step_input: StepInput) -> StepOutput:
     previous_step_content = step_input.previous_step_content
 
     print("\n" + "=" * 60)
-    print("🔍 ENHANCED CUSTOM FUNCTION WITH STRUCTURED OUTPUT")
+    print("ENHANCED CUSTOM FUNCTION WITH STRUCTURED OUTPUT")
     print("=" * 60)
 
-    print(f"\n📝 Input Message Type: {type(message)}")
-    print(f"📝 Input Message Value: {message}")
+    print(f"\nInput Message Type: {type(message)}")
+    print(f"Input Message Value: {message}")
 
-    print(f"\n📊 Previous Step Content Type: {type(previous_step_content)}")
+    print(f"\nPrevious Step Content Type: {type(previous_step_content)}")
 
     # Analysis results
     key_findings = []
@@ -100,11 +100,11 @@ def enhanced_analysis_function(step_input: StepInput) -> StepOutput:
     data_quality_score = 0.9
 
     if previous_step_content:
-        print("\n🔍 Previous Step Content Analysis:")
+        print("\nPrevious Step Content Analysis:")
 
         if isinstance(previous_step_content, ResearchFindings):
             structured_data_detected = True
-            print("✅ Detected ResearchFindings BaseModel")
+            print("[OK] Detected ResearchFindings BaseModel")
             print(f"   Topic: {previous_step_content.topic}")
             print(
                 f"   Key Insights: {len(previous_step_content.key_insights)} insights"
@@ -161,7 +161,7 @@ def enhanced_analysis_function(step_input: StepInput) -> StepOutput:
         data_quality_score=data_quality_score,
     )
 
-    print("\n📋 Analysis Results (BaseModel):")
+    print("\nAnalysis Results (BaseModel):")
     print(f"   Analysis Type: {analysis_report.analysis_type}")
     print(f"   Structured Data: {analysis_report.structured_data_detected}")
     print(f"   Confidence: {analysis_report.confidence_score}")
@@ -176,7 +176,7 @@ def simple_data_processor(step_input: StepInput) -> StepOutput:
     """
     Simple function that demonstrates accessing different content types
     """
-    print("\n🔧 SIMPLE DATA PROCESSOR")
+    print("\nSIMPLE DATA PROCESSOR")
     print(f"Previous step content type: {type(step_input.previous_step_content)}")
 
     # Access the structured data directly

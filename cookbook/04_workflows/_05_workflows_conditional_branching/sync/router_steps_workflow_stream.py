@@ -75,10 +75,10 @@ def research_router(step_input: StepInput) -> List[Step]:
     ]
 
     if any(keyword in topic for keyword in tech_keywords):
-        print(f"🔍 Tech topic detected: Using HackerNews research for '{topic}'")
+        print(f"Tech topic detected: Using HackerNews research for '{topic}'")
         return [research_hackernews]
     else:
-        print(f"🌐 General topic detected: Using web research for '{topic}'")
+        print(f"General topic detected: Using web research for '{topic}'")
         return [research_web]
 
 

@@ -39,14 +39,14 @@ agent = Agent(
 
 
 def demonstrate_tools():
-    print("Apify Tools Exploration 🔍")
+    print("Apify Tools Exploration")
 
     # RAG Web Search Demonstrations
-    print("\n1.1 🕵️ RAG Web Search Scenarios:")
+    print("\n1.1 RAG Web Search Scenarios:")
     prompt = "Research the latest AI ethics guidelines from top tech companies. Compile a summary from at least 3 different sources comparing their approaches using RAG Web Browser."
     agent.print_response(prompt, show_full_reasoning=True)
 
-    print("\n1.2 🕵️ RAG Web Search Scenarios:")
+    print("\n1.2 RAG Web Search Scenarios:")
     prompt = "Carefully extract the key introduction details from https://docs.agno.com/introduction"  #  Extract content from specific website
     agent.print_response(prompt)
 

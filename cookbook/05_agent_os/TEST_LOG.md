@@ -5,7 +5,7 @@ Testing Agent OS examples in `cookbook/05_agent_os/`.
 **Test Environment:**
 - Python: `.venvs/demo/bin/python`
 - Database: PostgreSQL with PgVector (for database examples)
-- Date: 2026-01-14
+- Date: 2026-01-15 (updated), 2026-01-14 (initial)
 
 **Test Method:** Server-based examples tested for initialization (imports, agent/team creation) without starting the server.
 
@@ -92,6 +92,20 @@ Testing Agent OS examples in `cookbook/05_agent_os/`.
 **Fixes Applied:**
 1. Fixed path references in CLAUDE.md (`06_agent_os` -> `05_agent_os`)
 2. Fixed path references in TEST_LOG.md (`06_agent_os` -> `05_agent_os`)
+
+**Fixes Applied (2026-01-15):**
+1. **Model IDs** (3 files, 4 occurrences):
+   - `interfaces/whatsapp/agent_with_media.py` - `gemini-2.0-flash` -> `gemini-3-flash-preview`
+   - `interfaces/whatsapp/agent_with_user_memory.py` - `gemini-2.0-flash` -> `gemini-3-flash-preview` (x2)
+   - `advanced_demo/teams_demo.py` - `gemini-2.0-flash` -> `gemini-3-flash-preview`
+
+2. **Emojis Removed** (7 files):
+   - `advanced_demo/teams_demo.py` - Removed 5 emojis from instructions
+   - `middleware/agent_os_with_custom_middleware.py` - Removed emojis from logging
+   - `workflow/workflow_with_loop.py` - Removed status emojis
+   - `workflow/workflow_with_nested_steps.py` - Removed status emojis
+   - `workflow/workflow_with_router.py` - Removed emojis from print statements
+   - `demo.py` - Removed emoji from team instructions
 
 **Key Features Verified:**
 - Core AgentOS setup and initialization

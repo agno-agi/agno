@@ -173,7 +173,7 @@ def simple_team_coordination_check(run_output: TeamRunOutput, team: Team) -> Non
 
 async def main():
     """Demonstrate output validation post-hooks for teams."""
-    print("🔍 Team Output Validation Post-Hook Examples")
+    print("Team Output Validation Post-Hook Examples")
     print("=" * 60)
 
     # Team with comprehensive output validation
@@ -221,7 +221,7 @@ async def main():
     )
 
     # Test 1: Well-coordinated team response (should pass validation)
-    print("\n✅ Test 1: Well-coordinated legal team response")
+    print("\n[TEST 1] Well-coordinated legal team response")
     print("-" * 40)
     try:
         await team_with_validation.aprint_response(
@@ -233,13 +233,13 @@ async def main():
             Please provide comprehensive guidance covering corporate structure, tax considerations, and risk management.
             """
         )
-        print("✅ Team response passed validation")
+        print("[OK] Team response passed validation")
     except OutputCheckError as e:
-        print(f"❌ Validation failed: {e}")
+        print(f"[ERROR] Validation failed: {e}")
         print(f"   Trigger: {e.check_trigger}")
 
     # Test 2: Force a poorly coordinated response (should fail validation)
-    print("\n❌ Test 2: Poorly coordinated team response")
+    print("\n[TEST 2] Poorly coordinated team response")
     print("-" * 40)
 
     # Create a team that might not coordinate well
@@ -266,19 +266,19 @@ async def main():
     try:
         await poor_coordination_team.aprint_response(input="What's 2+2?")
     except OutputCheckError as e:
-        print(f"❌ Team validation failed as expected: {e}")
+        print(f"[ERROR] Team validation failed as expected: {e}")
         print(f"   Trigger: {e.check_trigger}")
 
     # Test 3: Normal response with simple validation
-    print("\n✅ Test 3: Normal response with simple team validation")
+    print("\n[TEST 3] Normal response with simple team validation")
     print("-" * 40)
     try:
         await team_simple.aprint_response(
             input="Create a blog post about the benefits of remote work, ensuring it's well-written and properly edited."
         )
-        print("✅ Response passed simple team validation")
+        print("[OK] Response passed simple team validation")
     except OutputCheckError as e:
-        print(f"❌ Validation failed: {e}")
+        print(f"[ERROR] Validation failed: {e}")
         print(f"   Trigger: {e.check_trigger}")
 
 

@@ -7,7 +7,7 @@ from agno.team import Team
 transcription_specialist = Agent(
     name="Transcription Specialist",
     role="Convert audio to accurate text transcriptions",
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-3-flash-preview"),
     instructions=[
         "Transcribe audio with high accuracy",
         "Identify speakers clearly as Speaker A, Speaker B, etc.",
@@ -18,7 +18,7 @@ transcription_specialist = Agent(
 content_analyzer = Agent(
     name="Content Analyzer",
     role="Analyze transcribed content for insights",
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-3-flash-preview"),
     instructions=[
         "Analyze transcription for key themes and insights",
         "Provide summaries and extract important information",
@@ -28,7 +28,7 @@ content_analyzer = Agent(
 # Create a team for collaborative audio-to-text processing
 audio_team = Team(
     name="Audio Analysis Team",
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-3-flash-preview"),
     members=[transcription_specialist, content_analyzer],
     instructions=[
         "Work together to transcribe and analyze audio content.",

@@ -52,4 +52,4 @@ if response.images and response.images[0].content:
     with open(output_path, "wb") as f:
         f.write(response.images[0].content)
 
-    print(f"✅ Image was succesfully generated and saved to: {output_path}")
+    print(f"Image was succesfully generated and saved to: {output_path}")

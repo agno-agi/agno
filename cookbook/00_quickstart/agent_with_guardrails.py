@@ -124,9 +124,9 @@ if __name__ == "__main__":
 
         try:
             agent_with_guardrails.print_response(prompt, stream=True)
-            print("\n✅ Request processed successfully")
+            print("\n[OK] Request processed successfully")
         except InputCheckError as e:
-            print(f"\n🛑 Blocked: {e.message}")
+            print(f"\n[BLOCKED] {e.message}")
             print(f"   Trigger: {e.check_trigger}")
 
 # ============================================================================

@@ -28,7 +28,7 @@ file_agent = Agent(
 
 video_agent = Agent(
     name="Video Understanding Agent",
-    model=Gemini(id="gemini-2.0-flash"),
+    model=Gemini(id="gemini-3-flash-preview"),
     id="video-understanding-agent",
     role="Answer questions about video files",
     db=db,
@@ -57,7 +57,7 @@ web_agent = Agent(
     tools=[DuckDuckGoTools()],
     id="web_agent",
     instructions=[
-        "You are an experienced web researcher and news analyst! 🔍",
+        "You are an experienced web researcher and news analyst.",
     ],
     enable_user_memories=True,
     markdown=True,
@@ -73,7 +73,7 @@ finance_agent = Agent(
         YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
     ],
     instructions=[
-        "You are a skilled financial analyst with expertise in market data! 📊",
+        "You are a skilled financial analyst with expertise in market data.",
         "Follow these steps when analyzing financial data:",
         "Start with the latest stock price, trading volume, and daily range",
         "Present detailed analyst recommendations and consensus target prices",
@@ -113,7 +113,7 @@ research_team = Team(
     model=OpenAIChat(id="gpt-4o"),
     id="research_team",
     instructions=[
-        "You are the lead researcher of a research team! 🔍",
+        "You are the lead researcher of a research team.",
     ],
     enable_user_memories=True,
     add_datetime_to_context=True,
@@ -130,7 +130,7 @@ multimodal_team = Team(
     respond_directly=True,
     id="multimodal_team",
     instructions=[
-        "You are the lead editor of a prestigious financial news desk! 📰",
+        "You are the lead editor of a prestigious financial news desk.",
     ],
     enable_user_memories=True,
     db=db,
@@ -150,7 +150,7 @@ financial_news_team = Team(
     respond_directly=True,
     id="financial_news_team",
     instructions=[
-        "You are the lead editor of a prestigious financial news desk! 📰",
+        "You are the lead editor of a prestigious financial news desk.",
         "If you are given a file send it to the file agent.",
         "If you are given an audio file send it to the audio agent.",
         "If you are given a video file send it to the video agent.",

@@ -55,15 +55,15 @@ team = Team(name="Q & A team", members=[web_agent], tools=[answer_from_known_que
 team.print_response("What is the capital of France?", stream=True)
 
 # Check if team has session state and display information
-print("\n📊 Team Session Info:")
+print("\nTeam Session Info:")
 print(f"   Session ID: {team.session_id}")
 print(f"   Session State: {team.session_state}")
 
 # Show team capabilities
-print("\n🔧 Team Tools Available:")
+print("\nTeam Tools Available:")
 for t in team.tools:
     print(f"   - {t.name}: {t.description}")
 
-print("\n👥 Team Members:")
+print("\nTeam Members:")
 for member in team.members:
     print(f"   - {member.name}: {member.role}")

@@ -1,4 +1,4 @@
-"""🔧 Example: Using the GeminiTools Toolkit for Image Generation
+"""Example: Using the GeminiTools Toolkit for Image Generation
 
 An Agent using the Gemini image generation tool.
 

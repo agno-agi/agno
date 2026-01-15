@@ -130,7 +130,7 @@ distributed_pgvector_team = Team(
 
 async def async_pgvector_rag_demo():
     """Demonstrate async distributed PgVector RAG processing."""
-    print("🐘 Async Distributed PgVector RAG Demo")
+    print("Async Distributed PgVector RAG Demo")
     print("=" * 40)
 
     query = "How do I make chicken and galangal in coconut milk soup? What are the key ingredients and techniques?"
@@ -146,14 +146,14 @@ async def async_pgvector_rag_demo():
         # Run async distributed PgVector RAG
         await distributed_pgvector_team.aprint_response(input=query)
     except Exception as e:
-        print(f"❌ Error: {e}")
-        print("💡 Make sure PostgreSQL with pgvector is running!")
+        print(f"Error: {e}")
+        print("Make sure PostgreSQL with pgvector is running!")
         print("   Run: ./cookbook/run_pgvector.sh")
 
 
 def sync_pgvector_rag_demo():
     """Demonstrate sync distributed PgVector RAG processing."""
-    print("🐘 Distributed PgVector RAG Demo")
+    print("Distributed PgVector RAG Demo")
     print("=" * 35)
 
     query = "How do I make chicken and galangal in coconut milk soup? What are the key ingredients and techniques?"
@@ -169,14 +169,14 @@ def sync_pgvector_rag_demo():
         # Run distributed PgVector RAG
         distributed_pgvector_team.print_response(input=query)
     except Exception as e:
-        print(f"❌ Error: {e}")
-        print("💡 Make sure PostgreSQL with pgvector is running!")
+        print(f"Error: {e}")
+        print("Make sure PostgreSQL with pgvector is running!")
         print("   Run: ./cookbook/run_pgvector.sh")
 
 
 def complex_query_demo():
     """Demonstrate distributed RAG for complex culinary queries."""
-    print("👨‍🍳 Complex Culinary Query with Distributed PgVector RAG")
+    print("Complex Culinary Query with Distributed PgVector RAG")
     print("=" * 60)
 
     query = """I'm planning a Thai dinner party for 8 people. Can you help me plan a complete menu?
@@ -197,8 +197,8 @@ def complex_query_demo():
 
         distributed_pgvector_team.print_response(input=query)
     except Exception as e:
-        print(f"❌ Error: {e}")
-        print("💡 Make sure PostgreSQL with pgvector is running!")
+        print(f"Error: {e}")
+        print("Make sure PostgreSQL with pgvector is running!")
         print("   Run: ./cookbook/run_pgvector.sh")
 
 

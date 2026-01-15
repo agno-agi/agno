@@ -17,8 +17,8 @@ print("=" * 60)
 technical_store = model.create_file_search_store(display_name="Technical Documentation")
 marketing_store = model.create_file_search_store(display_name="Marketing Content")
 
-print(f"✓ Created technical store: {technical_store.name}")
-print(f"✓ Created marketing store: {marketing_store.name}")
+print(f"[OK] Created technical store: {technical_store.name}")
+print(f"[OK] Created marketing store: {marketing_store.name}")
 
 # Upload files with custom chunking and metadata
 print("\n" + "=" * 60)
@@ -66,9 +66,9 @@ marketing_operation = model.upload_to_file_search_store(
 # Wait for both uploads
 print("\nWaiting for uploads to complete...")
 model.wait_for_operation(tech_operation)
-print("✓ Technical document uploaded")
+print("[OK] Technical document uploaded")
 model.wait_for_operation(marketing_operation)
-print("✓ Marketing document uploaded")
+print("[OK] Marketing document uploaded")
 
 # List documents in each store
 print("\n" + "=" * 60)
@@ -160,7 +160,7 @@ print("Document metadata management...")
 print("=" * 60)
 
 if tech_docs:
-    print(f"✓ Document retrieved: {tech_docs[0].display_name}")
+    print(f"[OK] Document retrieved: {tech_docs[0].display_name}")
     print(f"  Document ID: {tech_docs[0].name}")
     # Note: Document update API is not yet available in the current SDK version
     print("  (Metadata update API coming soon)")
@@ -171,9 +171,9 @@ print("Cleaning up...")
 print("=" * 60)
 
 model.delete_file_search_store(technical_store.name)
-print(f"✓ Deleted {technical_store.name}")
+print(f"[OK] Deleted {technical_store.name}")
 
 model.delete_file_search_store(marketing_store.name)
-print(f"✓ Deleted {marketing_store.name}")
+print(f"[OK] Deleted {marketing_store.name}")
 
-print("\n✓ Example completed successfully!")
+print("\n[OK] Example completed successfully!")

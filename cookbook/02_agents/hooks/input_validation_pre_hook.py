@@ -75,7 +75,7 @@ def comprehensive_input_validation(run_input: RunInput) -> None:
 
 
 def main():
-    print("🚀 Input Validation Pre-Hook Example")
+    print("Input Validation Pre-Hook Example")
     print("=" * 60)
 
     # Create a financial advisor agent with comprehensive hooks
@@ -97,7 +97,7 @@ def main():
     )
 
     # Test 1: Valid financial question (should work normally with enhanced formatting)
-    print("\n🟢 Test 1: Valid financial question")
+    print("\n[TEST 1] Valid financial question")
     print("-" * 40)
     try:
         response = agent.run(
@@ -111,33 +111,33 @@ def main():
             Do you have advice for me?
             """
         )
-        print("✅ Success! Response validated by pre-hook:")
+        print("[OK] Success! Response validated by pre-hook:")
         print(response.content)
     except Exception as e:
-        print(f"❌ Unexpected error: {e}")
+        print(f"[ERROR] Unexpected error: {e}")
 
     # Test 2: Input with insufficient detail (should trigger pre-hook)
-    print("\n🔴 Test 2: Vague input (insufficient detail)")
+    print("\n[TEST 2] Vague input (insufficient detail)")
     print("-" * 40)
     try:
         response = agent.run(input="Help me invest")
         print(response.content)
     except InputCheckError as e:
-        print(f"❌ Pre-hook validation failed: {e}")
+        print(f"[BLOCKED] Pre-hook validation failed: {e}")
         print(f"   Trigger: {e.check_trigger}")
 
     # Test 3: Irrelevant request (should trigger pre-hook)
-    print("\n🔴 Test 3: Off-topic request")
+    print("\n[TEST 3] Off-topic request")
     print("-" * 40)
     try:
         response = agent.run(input="What's the best pizza recipe?")
         print(response.content)
     except InputCheckError as e:
-        print(f"❌ Pre-hook validation failed: {e}")
+        print(f"[BLOCKED] Pre-hook validation failed: {e}")
         print(f"   Trigger: {e.check_trigger}")
 
     # Test 4: Potentially harmful content (should trigger pre-hook)
-    print("\n🔴 Test 4: Potentially unsafe content")
+    print("\n[TEST 4] Potentially unsafe content")
     print("-" * 40)
     try:
         response = agent.run(
@@ -145,7 +145,7 @@ def main():
         )
         print(response.content)
     except InputCheckError as e:
-        print(f"❌ Pre-hook validation failed: {e}")
+        print(f"[BLOCKED] Pre-hook validation failed: {e}")
         print(f"   Trigger: {e.check_trigger}")
 
 

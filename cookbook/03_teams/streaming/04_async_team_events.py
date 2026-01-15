@@ -83,25 +83,25 @@ async def run_team_with_events(prompt: str):
             TeamRunEvent.run_started,
             TeamRunEvent.run_completed,
         ]:
-            print(f"\n🎯 TEAM EVENT: {run_response_event.event}")
+            print(f"\nTEAM EVENT: {run_response_event.event}")
 
         # Handle team tool call events
         if run_response_event.event in [TeamRunEvent.tool_call_started]:
-            print(f"\n🔧 TEAM TOOL STARTED: {run_response_event.tool.tool_name}")
+            print(f"\nTEAM TOOL STARTED: {run_response_event.tool.tool_name}")
             print(f"   Args: {run_response_event.tool.tool_args}")
 
         if run_response_event.event in [TeamRunEvent.tool_call_completed]:
-            print(f"\n✅ TEAM TOOL COMPLETED: {run_response_event.tool.tool_name}")
+            print(f"\nTEAM TOOL COMPLETED: {run_response_event.tool.tool_name}")
             print(f"   Result: {run_response_event.tool.result}")
 
         # Handle member-level events
         if run_response_event.event in [RunEvent.tool_call_started]:
-            print(f"\n🤖 MEMBER TOOL STARTED: {run_response_event.agent_id}")
+            print(f"\nMEMBER TOOL STARTED: {run_response_event.agent_id}")
             print(f"   Tool: {run_response_event.tool.tool_name}")
             print(f"   Args: {run_response_event.tool.tool_args}")
 
         if run_response_event.event in [RunEvent.tool_call_completed]:
-            print(f"\n✅ MEMBER TOOL COMPLETED: {run_response_event.agent_id}")
+            print(f"\nMEMBER TOOL COMPLETED: {run_response_event.agent_id}")
             print(f"   Tool: {run_response_event.tool.tool_name}")
             print(
                 f"   Result: {run_response_event.tool.result[:100]}..."
@@ -110,7 +110,7 @@ async def run_team_with_events(prompt: str):
         # Handle content generation
         if run_response_event.event in [TeamRunEvent.run_content]:
             if not content_started:
-                print("\n📝 CONTENT:")
+                print("\nCONTENT:")
                 content_started = True
             else:
                 print(run_response_event.content, end="")

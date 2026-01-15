@@ -58,11 +58,11 @@ def research_evaluator(outputs: List[StepOutput]) -> bool:
     for output in outputs:
         if output.content and len(output.content) > 200:
             print(
-                f"✅ Research evaluation passed - found substantial content ({len(output.content)} chars)"
+                f"[PASS] Research evaluation passed - found substantial content ({len(output.content)} chars)"
             )
             return True
 
-    print("❌ Research evaluation failed - need more substantial research")
+    print("[FAIL] Research evaluation failed - need more substantial research")
     return False
 
 

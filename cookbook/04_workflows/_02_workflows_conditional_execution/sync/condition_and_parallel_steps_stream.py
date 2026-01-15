@@ -146,5 +146,5 @@ if __name__ == "__main__":
             stream=True,
         )
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"[ERROR] {e}")
     print()

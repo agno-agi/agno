@@ -202,7 +202,7 @@ if __name__ == "__main__":
         self_learning_agent.print_response(query, stream=True)
     else:
         print("=" * 60)
-        print("🧠 Self-Learning Agent")
+        print(" Self-Learning Agent")
         print("   GPU Poor Continuous Learning with Gemini 3 Flash")
         print("=" * 60)
         print("\nType 'quit' to exit.\n")

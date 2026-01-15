@@ -66,47 +66,47 @@ def data_analysis_function(step_input: StepInput) -> StepOutput:
     previous_step_content = step_input.previous_step_content
 
     print("\n" + "=" * 60)
-    print("🔍 CUSTOM FUNCTION DATA ANALYSIS")
+    print("CUSTOM FUNCTION DATA ANALYSIS")
     print("=" * 60)
 
-    print(f"\n📝 Input Message Type: {type(message)}")
-    print(f"📝 Input Message Value: {message}")
+    print(f"\nInput Message Type: {type(message)}")
+    print(f"Input Message Value: {message}")
 
-    print(f"\n📊 Previous Step Content Type: {type(previous_step_content)}")
+    print(f"\nPrevious Step Content Type: {type(previous_step_content)}")
 
     # Try to parse if it's structured data
     analysis_results = []
 
     if previous_step_content:
-        print("\n🔍 Previous Step Content Preview:")
+        print("\nPrevious Step Content Preview:")
         print("Topic: ", previous_step_content.topic, "\n")
         print("Key Insights: ", previous_step_content.key_insights, "\n")
         print(
             "Trending Technologies: ", previous_step_content.trending_technologies, "\n"
         )
 
-        analysis_results.append("✅ Received structured data (BaseModel)")
+        analysis_results.append("[OK] Received structured data (BaseModel)")
 
         # If it's a BaseModel, try to access its fields
         analysis_results.append(
-            f"✅ BaseModel type: {type(previous_step_content).__name__}"
+            f"[OK] BaseModel type: {type(previous_step_content).__name__}"
         )
         try:
             model_dict = previous_step_content.model_dump()
-            analysis_results.append(f"✅ Model fields: {list(model_dict.keys())}")
+            analysis_results.append(f"[OK] Model fields: {list(model_dict.keys())}")
 
             # If it's ResearchFindings, extract specific data
             if hasattr(previous_step_content, "topic"):
                 analysis_results.append(
-                    f"✅ Research Topic: {previous_step_content.topic}"
+                    f"[OK] Research Topic: {previous_step_content.topic}"
                 )
             if hasattr(previous_step_content, "confidence_score"):
                 analysis_results.append(
-                    f"✅ Confidence Score: {previous_step_content.confidence_score}"
+                    f"[OK] Confidence Score: {previous_step_content.confidence_score}"
                 )
 
         except Exception as e:
-            analysis_results.append(f"❌ Error accessing BaseModel: {e}")
+            analysis_results.append(f"[ERROR] Error accessing BaseModel: {e}")
 
     # Create enhanced analysis
     enhanced_analysis = f"""
@@ -123,7 +123,7 @@ def data_analysis_function(step_input: StepInput) -> StepOutput:
         Based on the data analysis, the content planning step should receive this processed information.
     """.strip()
 
-    print("\n📋 Analysis Results:")
+    print("\nAnalysis Results:")
     for result in analysis_results:
         print(f"   {result}")
 

@@ -60,21 +60,21 @@ def simulate_zoom_scheduling(
     meeting_id = random.randint(100000000, 999999999)
     zoom_url = f"https://zoom.us/j/{meeting_id}"
 
-    result = "✅ Zoom call scheduled successfully!\n"
-    result += f"📅 Time: {scheduled_time.strftime('%Y-%m-%d %H:%M')} IST\n"
-    result += f"🔗 Meeting URL: {zoom_url}\n"
-    result += f"👤 Participant: {candidate_name} ({candidate_email})"
+    result = "Zoom call scheduled successfully!\n"
+    result += f"Time: {scheduled_time.strftime('%Y-%m-%d %H:%M')} IST\n"
+    result += f"Meeting URL: {zoom_url}\n"
+    result += f"Participant: {candidate_name} ({candidate_email})"
 
     return result
 
 
 def simulate_email_sending(agent: Agent, to_email: str, subject: str, body: str) -> str:
     """Simulate email sending"""
-    result = "📧 Email sent successfully!\n"
-    result += f"📮 To: {to_email}\n"
-    result += f"📝 Subject: {subject}\n"
-    result += f"✉️ Body length: {len(body)} characters\n"
-    result += f"🕐 Sent at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    result = "Email sent successfully!\n"
+    result += f"To: {to_email}\n"
+    result += f"Subject: {subject}\n"
+    result += f"Body length: {len(body)} characters\n"
+    result += f"Sent at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
     return result
 
@@ -143,34 +143,34 @@ async def recruitment_execution(
     resumes: List[str] = kwargs.get("candidate_resume_urls", [])
 
     if not resumes:
-        yield "❌ No candidate resume URLs provided"
+        yield "No candidate resume URLs provided"
 
     if not jd:
-        yield "❌ No job description provided"
+        yield "No job description provided"
 
-    print(f"🚀 Starting recruitment process for {len(resumes)} candidates")
-    print(f"📋 Job Description: {jd[:100]}{'...' if len(jd) > 100 else ''}")
+    print(f"Starting recruitment process for {len(resumes)} candidates")
+    print(f"Job Description: {jd[:100]}{'...' if len(jd) > 100 else ''}")
 
     selected_candidates: List[ScreeningResult] = []
 
     # Phase 1: Screening
-    print("\n📊 PHASE 1: CANDIDATE SCREENING")
+    print("\nPHASE 1: CANDIDATE SCREENING")
     print("=" * 50)
 
     for i, url in enumerate(resumes, 1):
-        print(f"\n🔍 Processing candidate {i}/{len(resumes)}")
+        print(f"\nProcessing candidate {i}/{len(resumes)}")
 
         # Extract resume text (with caching)
         if url not in session_state:
-            print(f"📄 Extracting text from: {url}")
+            print(f"Extracting text from: {url}")
             session_state[url] = extract_text_from_pdf(url)
         else:
-            print("📋 Using cached resume content")
+            print("Using cached resume content")
 
         resume_text = session_state[url]
 
         if not resume_text:
-            print("❌ Could not extract text from resume")
+            print("Could not extract text from resume")
             continue
 
         # Screen the candidate
@@ -193,27 +193,27 @@ async def recruitment_execution(
             if hasattr(response, "content") and response.content:
                 candidate = response.content
 
-        print(f"👤 Candidate: {candidate.name}")
-        print(f"📧 Email: {candidate.email}")
-        print(f"⭐ Score: {candidate.score}/10")
+        print(f"Candidate: {candidate.name}")
+        print(f"Email: {candidate.email}")
+        print(f"Score: {candidate.score}/10")
         print(
-            f"💭 Feedback: {candidate.feedback[:150]}{'...' if len(candidate.feedback) > 150 else ''}"
+            f"Feedback: {candidate.feedback[:150]}{'...' if len(candidate.feedback) > 150 else ''}"
         )
 
         if candidate.score >= 5.0:
             selected_candidates.append(candidate)
-            print("✅ SELECTED for interview!")
+            print("SELECTED for interview!")
         else:
-            print("❌ Not selected (score below 5.0)")
+            print("Not selected (score below 5.0)")
 
     # Phase 2: Interview Scheduling & Email Communication
     if selected_candidates:
-        print("\n📅 PHASE 2: INTERVIEW SCHEDULING")
+        print("\nPHASE 2: INTERVIEW SCHEDULING")
         print("=" * 50)
 
         for i, candidate in enumerate(selected_candidates, 1):
             print(
-                f"\n🗓️ Scheduling interview {i}/{len(selected_candidates)} for {candidate.name}"
+                f"\nScheduling interview {i}/{len(selected_candidates)} for {candidate.name}"
             )
 
             # Schedule interview
@@ -231,8 +231,8 @@ async def recruitment_execution(
                 if hasattr(response, "content") and response.content:
                     scheduled_call = response.content
 
-            print(f"📅 Scheduled for: {scheduled_call.call_time}")
-            print(f"🔗 Meeting URL: {scheduled_call.url}")
+            print(f"Scheduled for: {scheduled_call.call_time}")
+            print(f"Meeting URL: {scheduled_call.url}")
 
             # Write congratulatory email
             email_prompt = f"""
@@ -250,7 +250,7 @@ async def recruitment_execution(
                 if hasattr(response, "content") and response.content:
                     email_content = response.content
 
-            print(f"✏️ Email subject: {email_content.subject}")
+            print(f"Email subject: {email_content.subject}")
 
             # Send email
             send_prompt = f"""
@@ -282,7 +282,7 @@ recruitment_workflow = Workflow(
 
 if __name__ == "__main__":
     # Test with sample data
-    print("🧪 Testing Employee Recruitment Workflow with Simulated Tools")
+    print("Testing Employee Recruitment Workflow with Simulated Tools")
     print("=" * 60)
 
     asyncio.run(
@@ -297,12 +297,12 @@ if __name__ == "__main__":
         Join our team building the future of agentic software
 
         Requirements:
-        🧠 You know your way around Python, typescript, docker, and AWS.
-        ⚙️ Love to build in public and contribute to open source.
-        🚀 Are ok dealing with the pressure of an early-stage startup.
-        🏆 Want to be a part of the biggest technological shift since the internet.
-        🌟 Bonus: experience with infrastructure as code.
-        🌟 Bonus: starred Agno repo.
+        - You know your way around Python, typescript, docker, and AWS.
+        - Love to build in public and contribute to open source.
+        - Are ok dealing with the pressure of an early-stage startup.
+        - Want to be a part of the biggest technological shift since the internet.
+        - Bonus: experience with infrastructure as code.
+        - Bonus: starred Agno repo.
         """,
             stream=True,
         )

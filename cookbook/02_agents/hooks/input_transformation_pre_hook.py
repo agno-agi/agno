@@ -47,9 +47,6 @@ def transform_input(
     log_debug(f"Transformed input: {run_input.input_content}")
 
 
-print("🚀 Input Transformation Pre-Hook Example")
-print("=" * 60)
-
 # Create a financial advisor agent with comprehensive hooks
 agent = Agent(
     name="Financial Advisor",
@@ -69,9 +66,13 @@ agent = Agent(
     debug_mode=True,
 )
 
-agent.print_response(
-    input="I'm 35 years old and want to start investing for retirement. moderate risk tolerance. retirement savings in IRAs/401(k)s= $100,000. total savings is $200,000. my net worth is $300,000",
-    session_id="test_session",
-    user_id="test_user",
-    stream=True,
-)
+if __name__ == "__main__":
+    print("Input Transformation Pre-Hook Example")
+    print("=" * 60)
+
+    agent.print_response(
+        input="I'm 35 years old and want to start investing for retirement. moderate risk tolerance. retirement savings in IRAs/401(k)s= $100,000. total savings is $200,000. my net worth is $300,000",
+        session_id="test_session",
+        user_id="test_user",
+        stream=True,
+    )

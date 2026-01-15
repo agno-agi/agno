@@ -15,7 +15,7 @@ async def create_and_populate_store(model: Gemini, documents_dir: Path):
     """Create a File Search store and upload all documents from a directory."""
     print(f"Creating File Search store: {STORE_NAME}")
     store = await model.async_create_file_search_store(display_name=STORE_NAME)
-    print(f"✓ Store created: {store.name}")
+    print(f"[OK] Store created: {store.name}")
 
     # Find all supported documents
     supported_extensions = [".txt", ".pdf", ".md", ".json", ".py", ".js", ".ts"]
@@ -72,7 +72,7 @@ async def create_and_populate_store(model: Gemini, documents_dir: Path):
     for filename, operation in upload_operations:
         try:
             await model.async_wait_for_operation(operation, max_wait=300)
-            print(f"  ✓ {filename} indexed")
+            print(f"  [OK] {filename} indexed")
         except TimeoutError:
             print(f"  ✗ {filename} timed out")
         except Exception as e:
@@ -173,7 +173,7 @@ async def main():
     print("=" * 80)
 
     documents = await model.async_list_documents(store.name)
-    print(f"\n✓ Total documents in store: {len(documents)}")
+    print(f"\n[OK] Total documents in store: {len(documents)}")
     print("\nDocuments:")
     for doc in documents[:10]:  # Show first 10
         print(f"  - {doc.display_name}")
@@ -205,8 +205,8 @@ async def main():
     for citations in all_citations:
         all_sources.update(citations["sources"])
 
-    print(f"\n✓ Total unique sources referenced: {len(all_sources)}")
-    print(f"✓ Document coverage: {len(all_sources)}/{len(documents)} documents")
+    print(f"\n[OK] Total unique sources referenced: {len(all_sources)}")
+    print(f"[OK] Document coverage: {len(all_sources)}/{len(documents)} documents")
 
     # Step 5: Cleanup
     print("\n" + "=" * 80)
@@ -215,12 +215,12 @@ async def main():
 
     try:
         await model.async_delete_file_search_store(store.name, force=True)
-        print(f"✓ Store deleted: {store.name}")
+        print(f"[OK] Store deleted: {store.name}")
     except Exception as e:
         print(f"✗ Error deleting store: {e}")
 
     print("\n" + "=" * 80)
-    print("✓ RAG Pipeline completed successfully!")
+    print("[OK] RAG Pipeline completed successfully!")
     print("=" * 80)
 
 

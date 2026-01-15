@@ -25,7 +25,7 @@ todoist_agent_all = Agent(
         "You can create, read, update, delete tasks and manage projects.",
     ],
     id="todoist-agent-all",
-    model=Gemini("gemini-2.0-flash-exp"),
+    model=Gemini("gemini-3-flash-preview"),
     tools=[TodoistTools()],
     markdown=True,
 )
@@ -40,7 +40,7 @@ todoist_agent = Agent(
         "You have read access to all tasks and projects.",
     ],
     id="todoist-agent-safe",
-    model=Gemini("gemini-2.0-flash-exp"),
+    model=Gemini("gemini-3-flash-preview"),
     tools=[TodoistTools(exclude_tools=["delete_task"])],
     markdown=True,
 )

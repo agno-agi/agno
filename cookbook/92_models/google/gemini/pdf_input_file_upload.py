@@ -38,7 +38,7 @@ while retrieved_file is None and retries < 3:
 
 if retrieved_file is not None:
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-3-flash-preview"),
         markdown=True,
         add_history_to_context=True,
     )

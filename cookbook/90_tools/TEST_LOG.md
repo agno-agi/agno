@@ -62,6 +62,24 @@ Testing tool examples in `cookbook/90_tools/`.
 1. Fixed CLAUDE.md path reference (`cookbook/14_tools/` -> `cookbook/90_tools/`)
 2. Fixed TEST_LOG.md path reference
 3. Fixed 9 additional files with path references in mcp/ subfolder
+4. Fixed model IDs in 4 files (6 occurrences):
+   - `webbrowser_tools.py` - 2x `gemini-2.0-flash` -> `gemini-3-flash-preview`
+   - `todoist_tools.py` - 2x `gemini-2.0-flash-exp` -> `gemini-3-flash-preview`
+   - `google_bigquery_tools.py` - 1x `gemini-2.0-flash` -> `gemini-3-flash-preview`
+   - `whatsapp_tools.py` - 1x `gemini-2.0-flash` -> `gemini-3-flash-preview`
+5. Removed emojis from 12 files:
+   - `visualization_tools.py` - Removed chart emojis from print statements and docstring
+   - `notion_tools.py` - Removed search emoji
+   - `nano_banana_tools.py` - Removed checkmark emoji
+   - `docker_tools.py` - Replaced emojis with `[ERROR]` label
+   - `custom_tool_events.py` - Removed checkmark emoji
+   - `apify_tools.py` - Removed exploration emojis
+   - `models/gemini_video_generation.py` - Removed wrench emoji from docstring
+   - `models/gemini_image_generation.py` - Removed wrench emoji from docstring
+   - `mcp/pipedream_slack.py` - Removed speech emoji from docstring
+   - `mcp/pipedream_google_calendar.py` - Removed calendar emoji from docstring
+   - `mcp/pipedream_auth.py` - Removed lock emoji from docstring
+   - `mcp/mcp_toolbox_demo/hotel_management_workflows.py` - Removed hotel/checkmark emojis
 
 **Key Features Verified:**
 - Calculator tools (multiply, add, etc.)

@@ -1,5 +1,5 @@
 """
-🔒 Using Pipedream MCP servers with authentication
+Using Pipedream MCP servers with authentication
 
 This is an example of how to use Pipedream MCP servers with authentication.
 This is useful if your app is interfacing with the MCP servers in behalf of your users.

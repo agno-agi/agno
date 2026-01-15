@@ -55,12 +55,12 @@ try:
 
     if not trace:
         print(
-            "\n❌ No trace found. Make sure openinference-instrumentation-agno is installed."
+            "\n[ERROR] No trace found. Make sure openinference-instrumentation-agno is installed."
         )
     else:
-        print("\n📊 Found trace for run")
+        print("\n Found trace for run")
 
-        print(f"\n🔍 Trace ID: {trace.trace_id[:16]}...")
+        print(f"\n Trace ID: {trace.trace_id[:16]}...")
         print(f"   Name: {trace.name}")
         print(f"   Status: {trace.status}")
         print(f"   Duration: {trace.duration_ms}ms")
@@ -154,7 +154,7 @@ try:
 
             # Show any error messages
             if span.status_code == "ERROR" and span.status_message:
-                print(f"        {indent}  ❌ Error: {span.status_message}")
+                print(f"        {indent}  [ERROR] Error: {span.status_message}")
 
             # Show important generic attributes (excluding the ones we already showed)
             important_attrs = {
@@ -202,13 +202,13 @@ try:
                     print(f"        {indent}    • {key}: {value_str}")
 
         print("\n" + "=" * 60)
-        print("\n📈 Summary:")
+        print("\n Summary:")
         print(f"   • Trace: {trace.trace_id[:16]}...")
         print(f"   • Total Spans: {len(spans)}")
         print(f"   • Errors: {trace.error_count}")
 
 except Exception as e:
-    print(f"\n❌ Error querying traces: {e}")
+    print(f"\n[ERROR] Error querying traces: {e}")
     import traceback
 
     traceback.print_exc()

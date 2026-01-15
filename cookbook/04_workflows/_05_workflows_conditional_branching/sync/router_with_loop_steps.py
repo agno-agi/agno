@@ -61,11 +61,11 @@ def research_quality_check(outputs: List[StepOutput]) -> bool:
     for output in outputs:
         if output.content and len(output.content) > 300:
             print(
-                f"✅ Research quality check passed - found substantial content ({len(output.content)} chars)"
+                f"[PASS] Research quality check passed - found substantial content ({len(output.content)} chars)"
             )
             return True
 
-    print("❌ Research quality check failed - need more substantial research")
+    print("[FAIL] Research quality check failed - need more substantial research")
     return False
 
 
@@ -111,12 +111,10 @@ def research_strategy_router(step_input: StepInput) -> List[Step]:
     if any(keyword in topic for keyword in deep_tech_keywords) or (
         "tech" in topic and len(topic.split()) > 3
     ):
-        print(
-            f"🔬 Deep tech topic detected: Using iterative research loop for '{topic}'"
-        )
+        print(f"Deep tech topic detected: Using iterative research loop for '{topic}'")
         return [deep_tech_research_loop]
     else:
-        print(f"🌐 Simple topic detected: Using basic web research for '{topic}'")
+        print(f"Simple topic detected: Using basic web research for '{topic}'")
         return [research_web]
 
 

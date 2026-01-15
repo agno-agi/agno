@@ -1,4 +1,4 @@
-"""🤔 DeepKnowledge - An AI Agent that iteratively searches a knowledge base to answer questions
+"""DeepKnowledge - An AI Agent that iteratively searches a knowledge base to answer questions
 
 This agent performs iterative searches through its knowledge base, breaking down complex
 queries into sub-questions, and synthesizing comprehensive answers. It's designed to explore
@@ -184,7 +184,7 @@ def deep_knowledge_agent():
     session_id = handle_session_selection()
     agent = create_agent(session_id)
 
-    print("\n🤔 Welcome to DeepKnowledge - Your Advanced Research Assistant! 📚")
+    print("\n Welcome to DeepKnowledge - Your Advanced Research Assistant! ")
     if session_id is None:
         session_id = agent.session_id
         if session_id is not None:

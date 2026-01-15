@@ -30,7 +30,7 @@ class MovieScript(BaseModel):
 
 # Agent that uses structured outputs
 structured_output_agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-001"),
+    model=Gemini(id="gemini-3-flash-preview"),
     description="You write movie scripts.",
     output_schema=MovieScript,
 )

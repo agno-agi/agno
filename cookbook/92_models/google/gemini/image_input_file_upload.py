@@ -8,7 +8,7 @@ from google.generativeai import upload_file
 from google.generativeai.types import file_types
 
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-3-flash-preview"),
     tools=[DuckDuckGoTools()],
     markdown=True,
 )

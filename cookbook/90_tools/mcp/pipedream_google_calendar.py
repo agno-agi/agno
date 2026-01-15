@@ -1,5 +1,5 @@
 """
-🗓️ Pipedream Google Calendar MCP
+Pipedream Google Calendar MCP
 
 This example shows how to use Pipedream MCP servers (in this case the Google Calendar one) with Agno Agents.
 

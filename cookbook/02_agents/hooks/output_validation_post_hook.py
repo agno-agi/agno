@@ -116,7 +116,7 @@ def simple_length_validation(run_output: RunOutput) -> None:
 
 async def main():
     """Demonstrate output validation post-hooks."""
-    print("🔍 Output Validation Post-Hook Example")
+    print("Output Validation Post-Hook Example")
     print("=" * 60)
 
     # Agent with comprehensive output validation
@@ -142,19 +142,19 @@ async def main():
     )
 
     # Test 1: Good response (should pass validation)
-    print("\n✅ Test 1: Well-formed response")
+    print("\n[TEST 1] Well-formed response")
     print("-" * 40)
     try:
         await agent_with_validation.aprint_response(
             input="How do I reset my password on my Microsoft account?"
         )
-        print("✅ Response passed validation")
+        print("[OK] Response passed validation")
     except OutputCheckError as e:
-        print(f"❌ Validation failed: {e}")
+        print(f"[ERROR] Validation failed: {e}")
         print(f"   Trigger: {e.check_trigger}")
 
     # Test 2: Force a short response (should fail simple validation)
-    print("\n❌ Test 2: Too brief response")
+    print("\n[TEST 2] Too brief response")
     print("-" * 40)
     try:
         # Use a more constrained instruction to get a brief response
@@ -166,19 +166,19 @@ async def main():
         )
         await brief_agent.aprint_response(input="What is the capital of France?")
     except OutputCheckError as e:
-        print(f"❌ Validation failed: {e}")
+        print(f"[ERROR] Validation failed: {e}")
         print(f"   Trigger: {e.check_trigger}")
 
     # Test 3: Normal response with simple validation
-    print("\n✅ Test 3: Normal response with simple validation")
+    print("\n[TEST 3] Normal response with simple validation")
     print("-" * 40)
     try:
         await agent_simple.aprint_response(
             input="Explain what a database is in simple terms."
         )
-        print("✅ Response passed simple validation")
+        print("[OK] Response passed simple validation")
     except OutputCheckError as e:
-        print(f"❌ Validation failed: {e}")
+        print(f"[ERROR] Validation failed: {e}")
         print(f"   Trigger: {e.check_trigger}")
 
 

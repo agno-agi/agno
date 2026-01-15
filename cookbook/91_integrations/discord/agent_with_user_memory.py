@@ -10,7 +10,7 @@ db = SqliteDb(db_file="tmp/discord_client_cookbook.db")
 
 personal_agent = Agent(
     name="Basic Agent",
-    model=Gemini(id="gemini-2.0-flash"),
+    model=Gemini(id="gemini-3-flash-preview"),
     tools=[DuckDuckGoTools()],
     add_history_to_context=True,
     num_history_runs=3,

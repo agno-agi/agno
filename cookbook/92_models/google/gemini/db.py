@@ -10,7 +10,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-001"),
+    model=Gemini(id="gemini-3-flash-preview"),
     db=db,
     tools=[DuckDuckGoTools()],
     add_history_to_context=True,

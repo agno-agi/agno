@@ -33,16 +33,16 @@ def security_gate(step_input: StepInput) -> StepOutput:
     Security gate that stops deployment if vulnerabilities found
     """
     security_result = step_input.previous_step_content or ""
-    print(f"🔍 Security scan result: {security_result}")
+    print(f"Security scan result: {security_result}")
 
     if "VULNERABLE" in security_result.upper():
         return StepOutput(
-            content="🚨 SECURITY ALERT: Critical vulnerabilities detected. Deployment blocked for security reasons.",
+            content="[ALERT] SECURITY ALERT: Critical vulnerabilities detected. Deployment blocked for security reasons.",
             stop=True,  # Stop the entire workflow to prevent insecure deployment
         )
     else:
         return StepOutput(
-            content="✅ Security check passed. Proceeding with deployment...",
+            content="[OK] Security check passed. Proceeding with deployment...",
             stop=False,
         )
 

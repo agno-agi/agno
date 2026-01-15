@@ -139,7 +139,7 @@ distributed_search_team = Team(
 
 async def async_distributed_search():
     """Demonstrate async distributed search with infinity reranking."""
-    print("⚡ Async Distributed Search with Infinity Reranker Demo")
+    print("Async Distributed Search with Infinity Reranker Demo")
     print("=" * 65)
 
     query = "How do Agents work with tools and what are the performance considerations?"
@@ -158,7 +158,7 @@ async def async_distributed_search():
 
 def sync_distributed_search():
     """Demonstrate sync distributed search with infinity reranking."""
-    print("⚡ Distributed Search with Infinity Reranker Demo")
+    print("Distributed Search with Infinity Reranker Demo")
     print("=" * 55)
 
     query = "How do Agents work with tools and what are the performance considerations?"
@@ -183,7 +183,7 @@ if __name__ == "__main__":
 
         sync_distributed_search()
     except Exception as e:
-        print(f"❌ Error: {e}")
-        print("\n💡 Make sure Infinity server is running:")
+        print(f"Error: {e}")
+        print("\nMake sure Infinity server is running:")
         print("   pip install 'infinity-emb[all]'")
         print("   infinity_emb v2 --model-id BAAI/bge-reranker-base --port 7997")

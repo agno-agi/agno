@@ -131,7 +131,7 @@ def download_skill_files(
                                 continue
                             seen_file_ids.add(file_id)
 
-                            print(f"📄 Found file ID: {file_id}")
+                            print(f" Found file ID: {file_id}")
 
                             try:
                                 # Download the file
@@ -186,10 +186,10 @@ def download_skill_files(
                                     f.write(file_data)
 
                                 downloaded_files.append(filepath)
-                                print(f"✅ Downloaded: {filepath}")
+                                print(f"[OK] Downloaded: {filepath}")
 
                             except Exception as e:
-                                print(f"❌ Failed to download file {file_id}: {e}")
+                                print(f"[ERROR] Failed to download file {file_id}: {e}")
 
     return downloaded_files
 

@@ -4,7 +4,7 @@ Testing workflow examples in `cookbook/04_workflows/`.
 
 **Test Environment:**
 - Python: `.venvs/demo/bin/python`
-- Date: 2026-01-14
+- Date: 2026-01-15 (updated), 2026-01-14 (initial)
 
 ---
 
@@ -107,6 +107,26 @@ Testing workflow examples in `cookbook/04_workflows/`.
 **Fixes Applied:**
 1. Fixed path references in CLAUDE.md (`05_workflows` -> `04_workflows`)
 2. Fixed path references in TEST_LOG.md (`05_workflows` -> `04_workflows`)
+
+**Fixes Applied (2026-01-15):**
+1. `_06_advanced_concepts/_06_guardrails/prompt_injection_workflow.py` - Removed all emojis from print statements
+2. `_06_advanced_concepts/_10_other/workflow_cancel_a_run.py` - Removed all emojis from print statements
+3. `_06_advanced_concepts/_01_structured_io_at_each_level/structured_io_at_each_level_function.py` - Removed emojis
+4. `_06_advanced_concepts/_01_structured_io_at_each_level/structured_io_at_each_level_function_1.py` - Removed emojis
+5. `_06_advanced_concepts/_01_structured_io_at_each_level/structured_io_at_each_level_function_2.py` - Removed emojis
+6. `_04_workflows_parallel_execution/sync/parallel_and_condition_steps_stream.py` - Removed error emoji
+7. `_04_workflows_parallel_execution/async/parallel_and_condition_steps_stream.py` - Removed error emoji
+8. `_06_advanced_concepts/_05_background_execution/background_execution_using_websocket/websocket_server.py` - Removed all emojis
+9. `_06_advanced_concepts/_05_background_execution/background_execution_using_websocket/websocket_client.py` - Removed all emojis (20+ occurrences)
+
+**Remaining Emoji Files (lower priority):**
+- `_06_advanced_concepts/_02_early_stopping/` (7 files)
+- `_06_advanced_concepts/_04_shared_session_state/` (2 files)
+- `_06_advanced_concepts/_07_workflow_history/` (5 files)
+- `_06_advanced_concepts/_09_long_running_workflows/` (2 files)
+- `_05_workflows_conditional_branching/sync/router_with_loop_steps.py`
+- `_03_workflows_loop_execution/` (multiple files)
+- `_02_workflows_conditional_execution/` (multiple files)
 
 **Known Issues:**
 1. Pydantic deprecation warnings in structured_io files (`min_items` -> `min_length`)
