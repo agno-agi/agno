@@ -251,6 +251,13 @@ class WebsiteReader(Reader):
             self.delay()
 
             try:
+                # Validate URL is safe before each fetch (SSRF protection for crawled links)
+                try:
+                    _validate_url_safe(current_url)
+                except ValueError as e:
+                    log_warning(f"Skipping unsafe URL {current_url}: {e}")
+                    continue
+
                 log_debug(f"Crawling: {current_url}")
 
                 response = (
@@ -364,6 +371,13 @@ class WebsiteReader(Reader):
                 await self.async_delay()
 
                 try:
+                    # Validate URL is safe before each fetch (SSRF protection for crawled links)
+                    try:
+                        _validate_url_safe(current_url)
+                    except ValueError as e:
+                        log_warning(f"Skipping unsafe URL {current_url}: {e}")
+                        continue
+
                     log_debug(f"Crawling asynchronously: {current_url}")
                     response = await client.get(current_url, timeout=self.timeout, follow_redirects=True)
                     response.raise_for_status()
