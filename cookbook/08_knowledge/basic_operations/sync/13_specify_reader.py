@@ -23,7 +23,7 @@ knowledge = Knowledge(
 # Use a specific reader
 knowledge.add_content(
     name="CV",
-    path="cookbook/knowledge/testing_resources/cv_1.pdf",
+    path="cookbook/08_knowledge/testing_resources/cv_1.pdf",
     metadata={"user_tag": "Engineering Candidates"},
     reader=PDFReader(),
 )

@@ -1,5 +1,6 @@
 import json
 from functools import partial
+from typing import TYPE_CHECKING, Optional, Union
 from uuid import uuid4
 
 from agno.utils.log import log_debug, log_exception
@@ -15,28 +16,68 @@ except (ImportError, ModuleNotFoundError):
 from agno.media import Image
 from agno.tools.function import ToolResult
 
+if TYPE_CHECKING:
+    from agno.agent import Agent
+    from agno.run import RunContext
+    from agno.team.team import Team
+    from agno.tools.mcp.mcp import MCPTools
+    from agno.tools.mcp.multi_mcp import MultiMCPTools
 
-def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
+
+def get_entrypoint_for_tool(
+    tool: MCPTool,
+    session: ClientSession,
+    mcp_tools_instance: Optional[Union["MCPTools", "MultiMCPTools"]] = None,
+    server_idx: int = 0,
+):
     """
     Return an entrypoint for an MCP tool.
 
     Args:
         tool: The MCP tool to create an entrypoint for
-        session: The session to use
+        session: The MCP ClientSession to use
+        mcp_tools_instance: Optional MCPTools or MultiMCPTools instance
+        server_idx: Index of the server (for MultiMCPTools)
 
     Returns:
         Callable: The entrypoint function for the tool
     """
 
-    async def call_tool(tool_name: str, **kwargs) -> ToolResult:
+    async def call_tool(
+        tool_name: str,
+        run_context: Optional["RunContext"] = None,
+        agent: Optional["Agent"] = None,
+        team: Optional["Team"] = None,
+        **kwargs,
+    ) -> ToolResult:
+        # Execute the MCP tool call
         try:
-            await session.send_ping()
-        except Exception as e:
-            log_exception(e)
+            # Get the appropriate session for this run
+            # If mcp_tools_instance has header_provider and run_context is provided,
+            # this will create/reuse a session with dynamic headers
+            if mcp_tools_instance and hasattr(mcp_tools_instance, "get_session_for_run"):
+                # Import here to avoid circular imports
+                from agno.tools.mcp.multi_mcp import MultiMCPTools
 
-        try:
+                # For MultiMCPTools, pass server_idx; for MCPTools, only pass run_context
+                if isinstance(mcp_tools_instance, MultiMCPTools):
+                    active_session = await mcp_tools_instance.get_session_for_run(
+                        run_context=run_context, server_idx=server_idx, agent=agent, team=team
+                    )
+                else:
+                    active_session = await mcp_tools_instance.get_session_for_run(
+                        run_context=run_context, agent=agent, team=team
+                    )
+            else:
+                active_session = session
+
+            try:
+                await active_session.send_ping()
+            except Exception as e:
+                log_exception(e)
+
             log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
-            result: CallToolResult = await session.call_tool(tool_name, kwargs)  # type: ignore
+            result: CallToolResult = await active_session.call_tool(tool_name, kwargs)  # type: ignore
 
             # Return an error if the tool call failed
             if result.isError:

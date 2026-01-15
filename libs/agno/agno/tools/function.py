@@ -54,9 +54,17 @@ class UserInputField:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "UserInputField":
+        type_mapping = {"str": str, "int": int, "float": float, "bool": bool, "list": list, "dict": dict}
+        field_type_raw = data["field_type"]
+        if isinstance(field_type_raw, str):
+            field_type = type_mapping.get(field_type_raw, str)
+        elif isinstance(field_type_raw, type):
+            field_type = field_type_raw
+        else:
+            field_type = str
         return cls(
             name=data["name"],
-            field_type=eval(data["field_type"]),  # Convert string type name to actual type
+            field_type=field_type,
             description=data["description"],
             value=data["value"],
         )
@@ -1139,10 +1147,15 @@ class FunctionCall(BaseModel):
                 else:
                     result = self.function.entrypoint(**entrypoint_args, **self.arguments)
 
+                # Handle both sync and async entrypoints
                 if isasyncgenfunction(self.function.entrypoint):
                     self.result = result  # Store async generator directly
+                elif iscoroutinefunction(self.function.entrypoint):
+                    self.result = await result  # Await coroutine result
+                elif isgeneratorfunction(self.function.entrypoint):
+                    self.result = result  # Store sync generator directly
                 else:
-                    self.result = await result
+                    self.result = result  # Sync function, result is already computed
 
             # Only cache if not a generator
             if self.function.cache_results and not (isgenerator(self.result) or isasyncgen(self.result)):

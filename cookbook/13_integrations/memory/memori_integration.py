@@ -15,8 +15,8 @@ Session = sessionmaker(bind=engine)
 
 model = OpenAIChat(id="gpt-4o-mini")
 
-# Initialize Memori and register with Agno
-mem = Memori(conn=Session).agno.register(openai_chat=model)
+# Initialize Memori and register with LLM client
+mem = Memori(conn=Session).llm.register(model.get_client())
 mem.attribution(entity_id="cookbook-agent", process_id="demo-session")
 mem.config.storage.build()
 

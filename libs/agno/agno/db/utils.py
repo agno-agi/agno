@@ -2,10 +2,32 @@
 
 import json
 from datetime import date, datetime
+from typing import Any, Dict
 from uuid import UUID
 
 from agno.models.message import Message
 from agno.models.metrics import Metrics
+
+
+def get_sort_value(record: Dict[str, Any], sort_by: str) -> Any:
+    """Get the sort value for a record, with fallback to created_at for updated_at.
+
+    When sorting by 'updated_at', this function falls back to 'created_at' if
+    'updated_at' is None. This ensures pre-2.0 records (which may have NULL
+    updated_at values) are sorted correctly by their creation time.
+
+    Args:
+        record: The record dictionary to get the sort value from
+        sort_by: The field to sort by
+
+    Returns:
+        The value to use for sorting
+    """
+    value = record.get(sort_by)
+    # For updated_at, fall back to created_at if updated_at is None
+    if value is None and sort_by == "updated_at":
+        value = record.get("created_at")
+    return value
 
 
 class CustomJSONEncoder(json.JSONEncoder):

@@ -102,7 +102,7 @@ class Qdrant(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
 
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
@@ -423,12 +423,12 @@ class Qdrant(VectorDb):
                         # Fall back to individual embedding
                         for doc in documents:
                             if self.search_type in [SearchType.vector, SearchType.hybrid]:
-                                doc.embed(embedder=self.embedder)
+                                await doc.async_embed(embedder=self.embedder)
             else:
                 # Use individual embedding
                 for doc in documents:
                     if self.search_type in [SearchType.vector, SearchType.hybrid]:
-                        doc.embed(embedder=self.embedder)
+                        await doc.async_embed(embedder=self.embedder)
 
         async def process_document(document):
             cleaned_content = document.content.replace("\x00", "\ufffd")
@@ -634,7 +634,7 @@ class Qdrant(VectorDb):
         limit: int,
         formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
-        dense_embedding = self.embedder.get_embedding(query)
+        dense_embedding = await self.embedder.async_get_embedding(query)
 
         # TODO(v2.0.0): Remove this conditional and always use named vectors
         if self.use_named_vectors:
@@ -683,7 +683,7 @@ class Qdrant(VectorDb):
         limit: int,
         formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
-        dense_embedding = self.embedder.get_embedding(query)
+        dense_embedding = await self.embedder.async_get_embedding(query)
         sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
         call = await self.async_client.query_points(
             collection_name=self.collection,

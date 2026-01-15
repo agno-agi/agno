@@ -17,7 +17,7 @@ except ImportError:
 from agno.knowledge.chunking.strategy import ChunkingStrategy
 from agno.knowledge.document.base import Document
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import log_info
+from agno.utils.log import log_debug
 
 
 def _get_chonkie_embedder_wrapper(embedder: Embedder):
@@ -87,7 +87,7 @@ class SemanticChunking(ChunkingStrategy):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()  # type: ignore
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder = embedder
         self.chunk_size = chunk_size
         self.similarity_threshold = similarity_threshold

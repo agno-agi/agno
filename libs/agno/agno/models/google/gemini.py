@@ -466,7 +466,12 @@ class Gemini(Model):
 
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
-            error_message = str(e.response) if hasattr(e, "response") else str(e)
+            error_message = str(e)
+            if hasattr(e, "response"):
+                if hasattr(e.response, "text"):
+                    error_message = e.response.text
+                else:
+                    error_message = str(e.response)
             raise ModelProviderError(
                 message=error_message,
                 status_code=e.code if hasattr(e, "code") and e.code is not None else 502,
@@ -518,8 +523,14 @@ class Gemini(Model):
 
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
+            error_message = str(e)
+            if hasattr(e, "response"):
+                if hasattr(e.response, "text"):
+                    error_message = e.response.text
+                else:
+                    error_message = str(e.response)
             raise ModelProviderError(
-                message=str(e.response) if hasattr(e, "response") else str(e),
+                message=error_message,
                 status_code=e.code if hasattr(e, "code") and e.code is not None else 502,
                 model_name=self.name,
                 model_id=self.id,
@@ -574,8 +585,14 @@ class Gemini(Model):
 
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
+            error_message = str(e)
+            if hasattr(e, "response"):
+                if hasattr(e.response, "text"):
+                    error_message = e.response.text
+                else:
+                    error_message = str(e.response)
             raise ModelProviderError(
-                message=str(e.response) if hasattr(e, "response") else str(e),
+                message=error_message,
                 status_code=e.code if hasattr(e, "code") and e.code is not None else 502,
                 model_name=self.name,
                 model_id=self.id,
@@ -628,8 +645,14 @@ class Gemini(Model):
 
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
+            error_message = str(e)
+            if hasattr(e, "response"):
+                if hasattr(e.response, "text"):
+                    error_message = e.response.text
+                else:
+                    error_message = str(e.response)
             raise ModelProviderError(
-                message=str(e.response) if hasattr(e, "response") else str(e),
+                message=error_message,
                 status_code=e.code if hasattr(e, "code") and e.code is not None else 502,
                 model_name=self.name,
                 model_id=self.id,
@@ -649,7 +672,6 @@ class Gemini(Model):
             compress_tool_results: Whether to compress tool results.
         """
         formatted_messages: List = []
-        file_content: Optional[Union[GeminiFile, Part]] = None
         system_message = None
 
         for message in messages:
@@ -772,13 +794,10 @@ class Gemini(Model):
                     for file in message.files:
                         file_content = self._format_file_for_message(file)
                         if isinstance(file_content, Part):
-                            formatted_messages.append(file_content)
+                            message_parts.append(file_content)
 
             final_message = Content(role=role, parts=message_parts)
             formatted_messages.append(final_message)
-
-            if isinstance(file_content, GeminiFile):
-                formatted_messages.insert(0, file_content)
 
         return formatted_messages, system_message
 
@@ -913,6 +932,16 @@ class Gemini(Model):
 
         # Case 2: File is a URL
         elif file.url is not None:
+            # Case 2a: GCS URI (gs://) - pass directly to Gemini (supports up to 2GB)
+            if file.url.startswith("gs://") and file.mime_type:
+                return Part.from_uri(file_uri=file.url, mime_type=file.mime_type)
+
+            # Case 2b: HTTPS URL with mime_type - pass directly to Gemini (supports up to 100MB)
+            # This enables pre-signed URLs from S3/Azure and public URLs without downloading
+            if file.url.startswith("https://") and file.mime_type:
+                return Part.from_uri(file_uri=file.url, mime_type=file.mime_type)
+
+            # Case 2c: URL without mime_type - download and detect (existing behavior)
             url_content = file.file_url_content
             if url_content is not None:
                 content, mime_type = url_content

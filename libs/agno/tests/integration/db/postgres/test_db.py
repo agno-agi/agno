@@ -26,7 +26,7 @@ def test_init_with_db_url():
 def test_create_session_table_integration(postgres_db_real):
     """Test actual session table creation with PostgreSQL"""
     # Create table
-    postgres_db_real._create_table("test_sessions", "sessions", "test_schema")
+    postgres_db_real._create_table("test_sessions", "sessions")
 
     # Verify table exists in database with correct schema
     with postgres_db_real.Session() as sess:
@@ -62,7 +62,7 @@ def test_create_session_table_integration(postgres_db_real):
 
 def test_create_metrics_table_with_constraints(postgres_db_real):
     """Test creating metrics table with unique constraints"""
-    postgres_db_real._create_table("test_metrics", "metrics", "test_schema")
+    postgres_db_real._create_table("test_metrics", "metrics")
 
     # Verify unique constraint exists
     with postgres_db_real.Session() as sess:
@@ -80,7 +80,7 @@ def test_create_metrics_table_with_constraints(postgres_db_real):
 
 def test_create_table_with_indexes(postgres_db_real):
     """Test that indexes are created correctly"""
-    postgres_db_real._create_table("test_memories", "memories", "test_schema")
+    postgres_db_real._create_table("test_memories", "memories")
 
     # Verify indexes exist
     with postgres_db_real.Session() as sess:
@@ -107,7 +107,7 @@ def test_get_table_with_create_table_if_not_found(postgres_db_real):
 def test_get_or_create_existing_table(postgres_db_real):
     """Test getting an existing table"""
     # First create the table
-    postgres_db_real._create_table("test_sessions", "sessions", "test_schema")
+    postgres_db_real._create_table("test_sessions", "sessions")
 
     # Clear the cached table attribute
     if hasattr(postgres_db_real, "session_table"):
@@ -115,7 +115,7 @@ def test_get_or_create_existing_table(postgres_db_real):
 
     # Now get it again - should not recreate
     with patch.object(postgres_db_real, "_create_table") as mock_create:
-        table = postgres_db_real._get_or_create_table("test_sessions", "sessions", "test_schema")
+        table = postgres_db_real._get_or_create_table("test_sessions", "sessions")
 
         # Should not call create since table exists
         mock_create.assert_not_called()
@@ -126,8 +126,8 @@ def test_get_or_create_existing_table(postgres_db_real):
 def test_full_workflow(postgres_db_real):
     """Test a complete workflow of creating and using tables"""
     # Get tables (will create them)
-    session_table = postgres_db_real._get_table("sessions")
-    postgres_db_real._get_table("memories")
+    session_table = postgres_db_real._get_table("sessions", create_table_if_not_found=True)
+    postgres_db_real._get_table("memories", create_table_if_not_found=True)
 
     # Verify tables are cached
     assert hasattr(postgres_db_real, "session_table")

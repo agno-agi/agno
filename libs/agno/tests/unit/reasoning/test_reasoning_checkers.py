@@ -66,6 +66,42 @@ def test_gemini_reasoning_model_with_both_params():
     assert is_gemini_reasoning_model(model) is True
 
 
+def test_gemini_3_pro_model():
+    """Test Gemini 3 Pro model returns True."""
+    model = MockModel(
+        class_name="Gemini",
+        model_id="gemini-3-pro",
+    )
+    assert is_gemini_reasoning_model(model) is True
+
+
+def test_gemini_3_flash_model():
+    """Test Gemini 3 Flash model returns True."""
+    model = MockModel(
+        class_name="Gemini",
+        model_id="gemini-3-flash",
+    )
+    assert is_gemini_reasoning_model(model) is True
+
+
+def test_gemini_3_deepthink_model():
+    """Test Gemini 3 DeepThink model returns True."""
+    model = MockModel(
+        class_name="Gemini",
+        model_id="gemini-3-pro-deepthink",
+    )
+    assert is_gemini_reasoning_model(model) is True
+
+
+def test_gemini_3_0_version_model():
+    """Test Gemini 3.0 version model returns True."""
+    model = MockModel(
+        class_name="Gemini",
+        model_id="gemini-3.0-flash",
+    )
+    assert is_gemini_reasoning_model(model) is True
+
+
 def test_gemini_non_reasoning_model():
     """Test Gemini 1.5 model without thinking support returns False."""
     model = MockModel(
@@ -141,6 +177,24 @@ def test_openai_chat_with_4_5_in_id():
     model = MockModel(
         class_name="OpenAIChat",
         model_id="claude-sonnet-4.5",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_chat_with_5_1_in_id():
+    """Test OpenAIChat model with 5.1 in ID returns True (GPT-5.1)."""
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="gpt-5.1",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_chat_with_5_2_in_id():
+    """Test OpenAIChat model with 5.2 in ID returns True."""
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="gpt-5.2-turbo",
     )
     assert is_openai_reasoning_model(model) is True
 
@@ -380,11 +434,47 @@ def test_deepseek_with_reasoner_model():
     assert is_deepseek_reasoning_model(model) is True
 
 
-def test_deepseek_with_different_model_id():
-    """Test DeepSeek model with different ID returns False."""
+def test_deepseek_with_r1_model():
+    """Test DeepSeek model with deepseek-r1 ID returns True."""
+    model = MockModel(
+        class_name="DeepSeek",
+        model_id="deepseek-r1",
+    )
+    assert is_deepseek_reasoning_model(model) is True
+
+
+def test_deepseek_with_r1_distill_model():
+    """Test DeepSeek model with deepseek-r1-distill variant returns True."""
+    model = MockModel(
+        class_name="DeepSeek",
+        model_id="deepseek-r1-distill-qwen-32b",
+    )
+    assert is_deepseek_reasoning_model(model) is True
+
+
+def test_deepseek_with_r1_distill_llama_model():
+    """Test DeepSeek model with deepseek-r1-distill-llama variant returns True."""
+    model = MockModel(
+        class_name="DeepSeek",
+        model_id="deepseek-r1-distill-llama-70b",
+    )
+    assert is_deepseek_reasoning_model(model) is True
+
+
+def test_deepseek_with_chat_model():
+    """Test DeepSeek model with deepseek-chat returns False (not a reasoning model)."""
     model = MockModel(
         class_name="DeepSeek",
         model_id="deepseek-chat",
+    )
+    assert is_deepseek_reasoning_model(model) is False
+
+
+def test_deepseek_with_v3_model():
+    """Test DeepSeek model with v3 (non-reasoning) returns False."""
+    model = MockModel(
+        class_name="DeepSeek",
+        model_id="deepseek-v3",
     )
     assert is_deepseek_reasoning_model(model) is False
 

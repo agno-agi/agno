@@ -95,7 +95,7 @@ async def team_response_streamer(
         )
         yield format_sse_event(error_response)
 
-    except Exception as e:
+    except BaseException as e:
         import traceback
 
         traceback.print_exc()
@@ -169,11 +169,11 @@ def get_team_router(
         kwargs = await get_request_kwargs(request, create_team_run)
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            if user_id:
+            if user_id and user_id != request.state.user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = request.state.user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
-            if session_id:
+            if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
             session_id = request.state.session_id
         if hasattr(request.state, "session_state") and request.state.session_state is not None:
@@ -194,7 +194,7 @@ def get_team_router(
 
         logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
 
-        team = get_team_by_id(team_id, os.teams)
+        team = get_team_by_id(team_id, os.teams, create_fresh=True)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -321,11 +321,11 @@ def get_team_router(
         team_id: str,
         run_id: str,
     ):
-        team = get_team_by_id(team_id, os.teams)
+        team = get_team_by_id(team_id, os.teams, create_fresh=True)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        cancelled = team.cancel_run(run_id=run_id)
+        cancelled = await team.acancel_run(run_id=run_id)
         if not cancelled:
             raise HTTPException(status_code=500, detail="Failed to cancel run - run not found or already completed")
 
@@ -526,7 +526,7 @@ def get_team_router(
         dependencies=[Depends(require_resource_access("teams", "read", "team_id"))],
     )
     async def get_team(team_id: str, request: Request) -> TeamResponse:
-        team = get_team_by_id(team_id, os.teams)
+        team = get_team_by_id(team_id, os.teams, create_fresh=True)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
