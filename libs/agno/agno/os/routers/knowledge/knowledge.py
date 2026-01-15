@@ -111,6 +111,14 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     ):
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
 
+        # Validate name is not empty/whitespace only
+        if name is not None and not name.strip():
+            raise HTTPException(status_code=400, detail="Content name cannot be empty or whitespace only")
+
+        # Validate text_content is not empty/whitespace only (if provided)
+        if text_content is not None and not text_content.strip():
+            raise HTTPException(status_code=400, detail="Text content cannot be empty or whitespace only")
+
         parsed_metadata = None
         if metadata:
             try:
@@ -356,7 +364,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     async def get_content(
         request: Request,
         limit: Optional[int] = Query(default=20, description="Number of content entries to return", ge=1),
-        page: Optional[int] = Query(default=1, description="Page number", ge=0),
+        page: Optional[int] = Query(default=1, description="Page number", ge=1),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
@@ -491,6 +499,10 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             await knowledge.delete_content_by_id(content_id=content_id, db_id=db_id, headers=headers)
         else:
+            # Check if content exists before deleting - return 404 if not found
+            content = await knowledge.aget_content_by_id(content_id=content_id)
+            if content is None:
+                raise HTTPException(status_code=404, detail=f"Content {content_id} not found")
             await knowledge.aremove_content_by_id(content_id=content_id)
 
         return ContentResponseSchema(
@@ -567,11 +579,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
 
         knowledge_status, status_message = await knowledge.aget_content_status(content_id=content_id)
 
-        # Handle the case where content is not found
+        # Handle the case where content is not found - return 404
         if knowledge_status is None:
-            return ContentStatusResponse(
-                status=ContentStatus.FAILED, status_message=status_message or "Content not found"
-            )
+            raise HTTPException(status_code=404, detail=f"Content {content_id} not found")
 
         # Convert knowledge ContentStatus to schema ContentStatus (they have same values)
         if hasattr(knowledge_status, "value"):
@@ -596,6 +606,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
 
         return ContentStatusResponse(status=status, status_message=status_message or "")
 
+    # Note: The search endpoint uses db_id in request body (via VectorSearchRequestSchema),
+    # not as a query parameter. This is intentional because:
+    # 1. POST requests typically use JSON body for complex queries with filters
+    # 2. Body parameters are more secure for potentially sensitive db_id values
+    # 3. Consistent with other search APIs (Elasticsearch, etc.)
     @router.post(
         "/knowledge/search",
         status_code=200,

@@ -7,6 +7,12 @@ import pytest
 from agno.knowledge.chunking.code import CodeChunking
 from agno.knowledge.document.base import Document
 
+# Skip all tests in this module if tree-sitter is not installed
+try:
+    import tree_sitter_language_pack  # noqa: F401
+except ImportError:
+    pytestmark = pytest.mark.skip(reason="tree-sitter-language-pack not installed")
+
 
 @pytest.fixture
 def sample_python_code():
@@ -324,15 +330,16 @@ def test_code_chunking_custom_tokenizer_subclass(sample_python_code):
 
 
 def test_code_chunking_no_document_id(sample_python_code):
-    """Test chunking document without id."""
+    """Test chunking document without explicit id falls back to name."""
     chunker = CodeChunking(language="python")
     doc = Document(content=sample_python_code, name="test.py")  # No id
 
     chunks = chunker.chunk(doc)
 
     assert len(chunks) > 0
-    # Chunks should have None id
-    assert all(chunk.id is None for chunk in chunks)
+    # After bug fix: Chunks should use name-based IDs (fallback to document.name)
+    assert all(chunk.id is not None for chunk in chunks)
+    assert chunks[0].id.startswith("test.py_")
 
 
 def test_code_chunking_lazy_initialization(sample_python_code):

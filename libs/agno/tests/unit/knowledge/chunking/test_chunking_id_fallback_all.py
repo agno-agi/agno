@@ -130,9 +130,15 @@ class TestCodeChunkingIdFallback:
         try:
             from agno.knowledge.chunking.code import CodeChunking
 
-            return CodeChunking(chunk_size=100)
+            # Create chunker with explicit language to avoid magika dependency
+            chunker = CodeChunking(chunk_size=100, language="python")
+            # Force initialization to detect missing dependencies early
+            chunker._initialize_chunker()
+            return chunker
         except ImportError:
             pytest.skip("chonkie[code] not installed")
+        except ModuleNotFoundError as e:
+            pytest.skip(f"CodeChunking dependency not installed: {e}")
 
     @pytest.fixture
     def code_document_with_id(self):

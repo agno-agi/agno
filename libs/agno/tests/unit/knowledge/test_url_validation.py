@@ -127,4 +127,5 @@ class TestUrlValidationEarlyReturn:
 
         # Valid URLs should return the path
         assert url_processing_with_early_return("https://example.com/file.pdf") == "/file.pdf"
-        assert url_processing_with_early_return("https://example.com") == ""
+        # Note: Path("") returns "." (current directory), not empty string
+        assert url_processing_with_early_return("https://example.com") == "."

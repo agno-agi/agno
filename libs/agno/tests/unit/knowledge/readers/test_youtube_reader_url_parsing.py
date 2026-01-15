@@ -8,7 +8,12 @@ Bug Report: KNOWLEDGE-003 (FIXED)
 
 import pytest
 
-from agno.knowledge.reader.youtube_reader import YouTubeReader
+# Skip all tests if youtube_transcript_api is not installed
+try:
+    from agno.knowledge.reader.youtube_reader import YouTubeReader
+except ImportError:
+    pytestmark = pytest.mark.skip(reason="youtube_transcript_api not installed")
+    YouTubeReader = None  # type: ignore
 
 
 class TestYouTubeVideoIdExtraction:

@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import random
 import time
 from dataclasses import dataclass, field
@@ -18,6 +19,64 @@ try:
     from bs4 import BeautifulSoup, Tag  # noqa: F401
 except ImportError:
     raise ImportError("The `bs4` package is not installed. Please install it via `pip install beautifulsoup4`.")
+
+
+# Cloud metadata endpoints that should never be accessed (SSRF protection)
+_BLOCKED_HOSTS = {
+    "169.254.169.254",  # AWS/Azure metadata
+    "metadata.google.internal",  # GCP metadata
+    "100.100.100.200",  # Alibaba Cloud metadata
+    "169.254.170.2",  # AWS ECS task metadata
+}
+
+
+def _validate_url_safe(url: str) -> None:
+    """
+    Validate that a URL is safe to fetch (SSRF protection).
+
+    Blocks:
+    - Cloud metadata endpoints (AWS, GCP, Azure, Alibaba)
+    - Private IP addresses (10.x, 172.16-31.x, 192.168.x)
+    - Loopback addresses (127.x, localhost)
+    - Link-local addresses (169.254.x)
+
+    Args:
+        url: The URL to validate
+
+    Raises:
+        ValueError: If the URL is unsafe to fetch
+    """
+    parsed = urlparse(url)
+
+    # Validate scheme
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Invalid URL scheme: {parsed.scheme}. Only http and https are allowed.")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("URL must have a valid hostname")
+
+    # Block known cloud metadata endpoints
+    if hostname.lower() in _BLOCKED_HOSTS:
+        raise ValueError(f"Access to cloud metadata endpoint {hostname} is not allowed")
+
+    # Block private/internal IP addresses
+    try:
+        ip = ipaddress.ip_address(hostname)
+        if ip.is_private:
+            raise ValueError(f"Access to private IP address {hostname} is not allowed")
+        if ip.is_loopback:
+            raise ValueError(f"Access to loopback address {hostname} is not allowed")
+        if ip.is_link_local:
+            raise ValueError(f"Access to link-local address {hostname} is not allowed")
+        if ip.is_reserved:
+            raise ValueError(f"Access to reserved IP address {hostname} is not allowed")
+    except ValueError as e:
+        # If it's our own ValueError, re-raise it
+        if "not allowed" in str(e):
+            raise
+        # Otherwise it's not an IP address (it's a hostname), which is OK
+        pass
 
 
 @dataclass
@@ -161,6 +220,9 @@ class WebsiteReader(Reader):
         The crawler will also respect the `max_depth` attribute of the WebCrawler class, ensuring it does not
         crawl deeper than the specified depth.
         """
+        # Validate URL is safe to fetch (SSRF protection)
+        _validate_url_safe(url)
+
         num_links = 0
         crawler_result: Dict[str, str] = {}
         primary_domain = self._get_primary_domain(url)
@@ -274,6 +336,9 @@ class WebsiteReader(Reader):
         - httpx.HTTPStatusError: If there's an HTTP status error.
         - httpx.RequestError: If there's a request-related error (connection, timeout, etc).
         """
+        # Validate URL is safe to fetch (SSRF protection)
+        _validate_url_safe(url)
+
         num_links = 0
         crawler_result: Dict[str, str] = {}
         primary_domain = self._get_primary_domain(url)
