@@ -2034,7 +2034,13 @@ class Knowledge:
                 self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
 
             return content_row.to_dict()
-        return None
+
+        else:
+            if self.name:
+                log_debug(f"Contents DB not found for knowledge base: {self.name}")
+            else:
+                log_debug("Contents DB not found for knowledge base")
+            return None
 
     async def _aupdate_content(self, content: Content) -> Optional[Dict[str, Any]]:
         if self.contents_db:

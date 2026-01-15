@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.3.24"
+version = "2.3.26"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -66,7 +66,6 @@ dev = [
 ]
 
 os = ["fastapi", "uvicorn", "PyJWT"]
-
 
 # Dependencies for Telemetry
 opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]
@@ -175,7 +174,7 @@ pptx = ["python-pptx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
 markdown = ["unstructured", "markdown", "aiofiles"]
-chonkie = ["chonkie[st]", "chonkie"]
+chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol"]
@@ -345,11 +344,13 @@ integration-tests = [
 
 # Dependencies for demo application
 demo = [
+    "agno[dev]",
     "anthropic",
     "chromadb",
     "ddgs",
     "fastapi[standard]",
     "google-genai",
+    "matplotlib",
     "mcp",
     "nest_asyncio",
     "openai",
