@@ -89,7 +89,8 @@ def _clean_json_content(content: str) -> str:
     if "```json" in content:
         content = content.split("```json")[-1].strip()
         parts = content.split("```")
-        parts.pop(-1)
+        if len(parts) > 1:
+            parts.pop(-1)
         content = "".join(parts)
     elif "```" in content:
         content = content.split("```")[1].strip()
