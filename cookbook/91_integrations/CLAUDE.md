@@ -22,7 +22,7 @@ This folder contains **third-party integration** examples - observability platfo
 
 **Run a cookbook:**
 ```bash
-.venvs/demo/bin/python cookbook/13_integrations/observability/langfuse_via_openinference.py
+.venvs/demo/bin/python cookbook/91_integrations/observability/langfuse_via_openinference.py
 ```
 
 ---
