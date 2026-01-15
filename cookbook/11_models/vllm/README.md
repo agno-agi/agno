@@ -67,8 +67,8 @@ vLLM embedders can load and run embedding models locally without requiring a ser
    ```
 
 5. **Examples**:
-   - Basic usage: `cookbook/knowledge/embedders/vllm_embedder.py`
-   - With batching: `cookbook/knowledge/embedders/vllm_embedder_batching.py`
+   - Basic usage: `cookbook/08_knowledge/embedders/vllm_embedder.py`
+   - With batching: `cookbook/08_knowledge/embedders/vllm_embedder_batching.py`
 
 ### Local vs Remote Mode
 
