@@ -1454,11 +1454,14 @@ class Knowledge:
                 content.status_message = f"Invalid URL format: {content.url}"
                 await self._aupdate_content(content)
                 log_warning(f"Invalid URL format: {content.url}")
+                return
         except Exception as e:
             content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             await self._aupdate_content(content)
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
+            return
+
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
@@ -1551,11 +1554,13 @@ class Knowledge:
                 content.status_message = f"Invalid URL format: {content.url}"
                 self._update_content(content)
                 log_warning(f"Invalid URL format: {content.url}")
+                return
         except Exception as e:
             content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             self._update_content(content)
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
+            return
 
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)

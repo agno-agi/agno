@@ -34,6 +34,6 @@ class RowChunking(ChunkingStrategy):
             if chunk_content:  # Skip empty rows
                 meta_data = document.meta_data.copy()
                 meta_data["row_number"] = start_index + i  # Preserve logical row numbering
-                chunk_id = f"{document.id}_row_{start_index + i}" if document.id else None
+                chunk_id = self._generate_chunk_id(document, start_index + i, chunk_content)
                 chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk_content))
         return chunks
