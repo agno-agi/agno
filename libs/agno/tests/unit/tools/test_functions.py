@@ -726,3 +726,115 @@ def test_tool_decorator_with_complex_types():
     assert complex_types_func.parameters["properties"]["param2"]["type"] == "object"
     assert complex_types_func.parameters["properties"]["param3"]["type"] == "boolean"
     assert "param3" not in complex_types_func.parameters["required"]
+
+
+def test_wrap_callable_skips_framework_params():
+    """Test that _wrap_callable skips validation for functions with framework-injected parameters.
+
+    Framework parameters (agent, team, run_context, session_state, dependencies) are injected
+    by the framework at runtime and should not trigger Pydantic's validate_call decorator.
+    This prevents issues with forward reference resolution in complex types like Agent.
+    """
+    from agno.agent import Agent
+    from agno.run import RunContext
+    from agno.team.team import Team
+
+    # Test with agent parameter
+    @tool
+    def func_with_agent(agent: Agent, param1: str) -> str:
+        """Function with agent parameter."""
+        return param1
+
+    func_with_agent.process_entrypoint()
+    # Should NOT be wrapped (no _wrapped_for_validation attribute or it's False)
+    assert not getattr(func_with_agent.entrypoint, "_wrapped_for_validation", False)
+
+    # Test with team parameter
+    @tool
+    def func_with_team(team: Team, param1: str) -> str:
+        """Function with team parameter."""
+        return param1
+
+    func_with_team.process_entrypoint()
+    assert not getattr(func_with_team.entrypoint, "_wrapped_for_validation", False)
+
+    # Test with run_context parameter
+    @tool
+    def func_with_run_context(run_context: RunContext, param1: str) -> str:
+        """Function with run_context parameter."""
+        return param1
+
+    func_with_run_context.process_entrypoint()
+    assert not getattr(func_with_run_context.entrypoint, "_wrapped_for_validation", False)
+
+    # Test with session_state parameter
+    @tool
+    def func_with_session_state(session_state: Dict, param1: str) -> str:
+        """Function with session_state parameter."""
+        return param1
+
+    func_with_session_state.process_entrypoint()
+    assert not getattr(func_with_session_state.entrypoint, "_wrapped_for_validation", False)
+
+    # Test with dependencies parameter
+    @tool
+    def func_with_dependencies(dependencies: Dict, param1: str) -> str:
+        """Function with dependencies parameter."""
+        return param1
+
+    func_with_dependencies.process_entrypoint()
+    assert not getattr(func_with_dependencies.entrypoint, "_wrapped_for_validation", False)
+
+    # Test that regular functions ARE wrapped
+    @tool
+    def func_without_framework_params(param1: str, param2: int) -> str:
+        """Function without framework parameters."""
+        return f"{param1}-{param2}"
+
+    func_without_framework_params.process_entrypoint()
+    assert getattr(func_without_framework_params.entrypoint, "_wrapped_for_validation", False)
+
+
+def test_wrap_callable_no_warning_with_agent_param(caplog):
+    """Test that no warning is emitted when processing tools with agent parameter."""
+    import logging
+
+    from agno.agent import Agent
+
+    caplog.set_level(logging.WARNING)
+
+    @tool
+    def get_user_details(agent: Agent) -> Dict:
+        """Get user details from agent dependencies."""
+        return {"name": "test"}
+
+    # Process entrypoint - this should NOT emit any warnings
+    get_user_details.process_entrypoint()
+
+    # Check no warnings about BaseDb or validate decorator
+    warning_messages = [record.message for record in caplog.records if record.levelno >= logging.WARNING]
+    basedb_warnings = [msg for msg in warning_messages if "BaseDb" in msg or "validate decorator" in msg]
+    assert len(basedb_warnings) == 0, f"Unexpected warnings: {basedb_warnings}"
+
+
+@pytest.mark.asyncio
+async def test_wrap_callable_skips_async_framework_params():
+    """Test that async functions with framework parameters are not wrapped."""
+    from agno.agent import Agent
+    from agno.run import RunContext
+
+    @tool
+    async def async_func_with_agent(agent: Agent, param1: str) -> str:
+        """Async function with agent parameter."""
+        return param1
+
+    async_func_with_agent.process_entrypoint()
+    assert not getattr(async_func_with_agent.entrypoint, "_wrapped_for_validation", False)
+
+    @tool
+    async def async_func_with_run_context(run_context: RunContext, param1: str) -> str:
+        """Async function with run_context parameter."""
+        return param1
+
+    async_func_with_run_context.process_entrypoint()
+    assert not getattr(async_func_with_run_context.entrypoint, "_wrapped_for_validation", False)

@@ -488,10 +488,15 @@ class Function(BaseModel):
         # Don't wrap callables that are already wrapped with validate_call
         elif getattr(func, "_wrapped_for_validation", False):
             return func
-        # Don't wrap functions with session_state parameter
-        # session_state needs to be passed by reference, not copied by pydantic's validation
-        elif "session_state" in signature(func).parameters:
+
+        # Don't wrap functions with framework-injected parameters
+        # These parameters (agent, team, run_context, session_state, dependencies) are
+        # injected by the framework at runtime and shouldn't be validated by Pydantic.
+        sig = signature(func)
+        framework_params = {"agent", "team", "run_context", "session_state", "dependencies"}
+        if framework_params & set(sig.parameters.keys()):
             return func
+
         # Wrap the callable with validate_call
         else:
             wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
