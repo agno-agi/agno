@@ -25,8 +25,21 @@ class FastEmbedEmbedder(Embedder):
     id: str = "BAAI/bge-small-en-v1.5"
     dimensions: Optional[int] = 384
 
+    # Cache the model to avoid loading GBs of weights on every call
+    _model: Optional[TextEmbedding] = None
+
+    def __post_init__(self):
+        """Initialize lazily - model will be created on first use."""
+        self._model = None
+
+    def _get_model(self) -> TextEmbedding:
+        """Get or create the embedding model (lazy initialization)."""
+        if self._model is None:
+            self._model = TextEmbedding(model_name=self.id)
+        return self._model
+
     def get_embedding(self, text: str) -> List[float]:
-        model = TextEmbedding(model_name=self.id)
+        model = self._get_model()  # Reuse cached model instead of creating new one
         embeddings = model.embed(text)
         embedding_list = list(embeddings)[0]
         if isinstance(embedding_list, np.ndarray):
@@ -49,7 +62,7 @@ class FastEmbedEmbedder(Embedder):
         """Async version using thread executor for CPU-bound operations."""
         import asyncio
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()  # Use get_running_loop() instead of deprecated get_event_loop()
         # Run the CPU-bound operation in a thread executor
         return await loop.run_in_executor(None, self.get_embedding, text)
 
@@ -57,6 +70,6 @@ class FastEmbedEmbedder(Embedder):
         """Async version using thread executor for CPU-bound operations."""
         import asyncio
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()  # Use get_running_loop() instead of deprecated get_event_loop()
         # Run the CPU-bound operation in a thread executor
         return await loop.run_in_executor(None, self.get_embedding_and_usage, text)
