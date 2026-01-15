@@ -35,6 +35,31 @@ from agno.vectordb.pgvector.index import HNSW, Ivfflat
 from agno.vectordb.search import SearchType
 
 
+def _quote_identifier(identifier: str) -> str:
+    """
+    Safely quote a PostgreSQL identifier to prevent SQL injection.
+
+    PostgreSQL identifiers are quoted with double quotes, and any embedded
+    double quotes are escaped by doubling them.
+
+    Args:
+        identifier: The identifier to quote (table name, index name, etc.)
+
+    Returns:
+        A safely quoted identifier string.
+
+    Raises:
+        ValueError: If the identifier is empty or contains null bytes.
+    """
+    if not identifier:
+        raise ValueError("Identifier cannot be empty")
+    if "\x00" in identifier:
+        raise ValueError("Identifier cannot contain null bytes")
+    # Escape embedded double quotes by doubling them
+    escaped = identifier.replace('"', '""')
+    return f'"{escaped}"'
+
+
 class PgVector(VectorDb):
     """
     PgVector class for managing vector operations with PostgreSQL and pgvector.
@@ -1209,7 +1234,10 @@ class PgVector(VectorDb):
         """
         try:
             with self.Session() as sess, sess.begin():
-                drop_index_sql = f'DROP INDEX IF EXISTS "{self.schema}"."{index_name}";'
+                # Use properly quoted identifiers to prevent SQL injection
+                quoted_schema = _quote_identifier(self.schema)
+                quoted_index_name = _quote_identifier(index_name)
+                drop_index_sql = f"DROP INDEX IF EXISTS {quoted_schema}.{quoted_index_name};"
                 sess.execute(text(drop_index_sql))
         except Exception as e:
             log_error(f"Error dropping index '{index_name}': {e}")
@@ -1304,9 +1332,13 @@ class PgVector(VectorDb):
             f"and distance metric: {index_distance}"
         )
 
-        # Create index
+        # Create index with properly quoted identifiers to prevent SQL injection
+        if not self.vector_index.name:
+            raise ValueError("Index name is required for IvfFlat index creation")
+        quoted_index_name = _quote_identifier(self.vector_index.name)
+        quoted_table_name = _quote_identifier(table_fullname)
         create_index_sql = text(
-            f'CREATE INDEX "{self.vector_index.name}" ON {table_fullname} '
+            f"CREATE INDEX {quoted_index_name} ON {quoted_table_name} "
             f"USING ivfflat (embedding {index_distance}) "
             f"WITH (lists = :num_lists);"
         )
@@ -1330,9 +1362,13 @@ class PgVector(VectorDb):
             f"and distance metric: {index_distance}"
         )
 
-        # Create index
+        # Create index with properly quoted identifiers to prevent SQL injection
+        if not self.vector_index.name:
+            raise ValueError("Index name is required for HNSW index creation")
+        quoted_index_name = _quote_identifier(self.vector_index.name)
+        quoted_table_name = _quote_identifier(table_fullname)
         create_index_sql = text(
-            f'CREATE INDEX "{self.vector_index.name}" ON {table_fullname} '
+            f"CREATE INDEX {quoted_index_name} ON {quoted_table_name} "
             f"USING hnsw (embedding {index_distance}) "
             f"WITH (m = :m, ef_construction = :ef_construction);"
         )
@@ -1362,9 +1398,11 @@ class PgVector(VectorDb):
         try:
             with self.Session() as sess, sess.begin():
                 log_debug(f"Creating GIN index '{gin_index_name}' on table '{self.table.fullname}'.")
-                # Create index
+                # Create index with properly quoted identifiers to prevent SQL injection
+                quoted_gin_index_name = _quote_identifier(gin_index_name)
+                quoted_table_name = _quote_identifier(self.table.fullname)
                 create_gin_index_sql = text(
-                    f'CREATE INDEX "{gin_index_name}" ON {self.table.fullname} '
+                    f"CREATE INDEX {quoted_gin_index_name} ON {quoted_table_name} "
                     f"USING GIN (to_tsvector({self.content_language}, content));"
                 )
                 sess.execute(create_gin_index_sql)
@@ -1399,12 +1437,10 @@ class PgVector(VectorDb):
             with self.Session() as sess, sess.begin():
                 stmt = self.table.delete().where(self.table.c.id == id)
                 sess.execute(stmt)
-                sess.commit()
                 log_info(f"Deleted records with id '{id}' from table '{self.table.fullname}'.")
                 return True
         except Exception as e:
             log_error(f"Error deleting rows from table '{self.table.fullname}': {e}")
-            sess.rollback()
             return False
 
     def delete_by_name(self, name: str) -> bool:
@@ -1415,12 +1451,10 @@ class PgVector(VectorDb):
             with self.Session() as sess, sess.begin():
                 stmt = self.table.delete().where(self.table.c.name == name)
                 sess.execute(stmt)
-                sess.commit()
                 log_info(f"Deleted records with name '{name}' from table '{self.table.fullname}'.")
                 return True
         except Exception as e:
             log_error(f"Error deleting rows from table '{self.table.fullname}': {e}")
-            sess.rollback()
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
@@ -1431,12 +1465,10 @@ class PgVector(VectorDb):
             with self.Session() as sess, sess.begin():
                 stmt = self.table.delete().where(self.table.c.meta_data.contains(metadata))
                 sess.execute(stmt)
-                sess.commit()
                 log_info(f"Deleted records with metadata '{metadata}' from table '{self.table.fullname}'.")
                 return True
         except Exception as e:
             log_error(f"Error deleting rows from table '{self.table.fullname}': {e}")
-            sess.rollback()
             return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
@@ -1447,12 +1479,10 @@ class PgVector(VectorDb):
             with self.Session() as sess, sess.begin():
                 stmt = self.table.delete().where(self.table.c.content_id == content_id)
                 sess.execute(stmt)
-                sess.commit()
                 log_info(f"Deleted records with content ID '{content_id}' from table '{self.table.fullname}'.")
                 return True
         except Exception as e:
             log_error(f"Error deleting rows from table '{self.table.fullname}': {e}")
-            sess.rollback()
             return False
 
     def _delete_by_content_hash(self, content_hash: str) -> bool:
@@ -1463,12 +1493,10 @@ class PgVector(VectorDb):
             with self.Session() as sess, sess.begin():
                 stmt = self.table.delete().where(self.table.c.content_hash == content_hash)
                 sess.execute(stmt)
-                sess.commit()
                 log_info(f"Deleted records with content hash '{content_hash}' from table '{self.table.fullname}'.")
                 return True
         except Exception as e:
             log_error(f"Error deleting rows from table '{self.table.fullname}': {e}")
-            sess.rollback()
             return False
 
     def __deepcopy__(self, memo):

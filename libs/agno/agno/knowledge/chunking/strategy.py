@@ -1,3 +1,26 @@
+"""Chunking strategies for splitting documents into smaller pieces for vector storage.
+
+This module provides the base class and factory for all chunking strategies. The key
+innovation is the unified ID generation system that ensures all chunks have valid,
+deterministic IDs even when source documents lack explicit identifiers.
+
+ID Generation Fallback (implemented in _generate_chunk_id):
+    1. document.id   - Use if available (e.g., "doc123_1", "doc123_2")
+    2. document.name - Fallback if id is None (e.g., "my_file_1", "my_file_2")
+    3. content hash  - Final fallback using MD5 (e.g., "chunk_a3f2b8c9d1e4_1")
+
+This three-tier approach solves a critical bug where documents from APIs (which often
+lack explicit IDs) would produce chunks with id=None, causing database insert failures.
+
+Example:
+    >>> from agno.knowledge.chunking.fixed import FixedSizeChunking
+    >>> from agno.knowledge.document.base import Document
+    >>> doc = Document(content="Hello world")  # No id or name
+    >>> chunker = FixedSizeChunking(chunk_size=5)
+    >>> chunks = chunker.chunk(doc)
+    >>> chunks[0].id  # Returns "chunk_3e25960a79d_1" (hash-based)
+"""
+
 import hashlib
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -7,26 +30,43 @@ from agno.knowledge.document.base import Document
 
 
 class ChunkingStrategy(ABC):
-    """Base class for chunking strategies"""
+    """Base class for all chunking strategies.
+
+    All chunking strategies inherit from this class and get access to:
+    - _generate_chunk_id(): Unified ID generation with fallback logic
+    - clean_text(): Text normalization that preserves paragraph structure
+
+    Subclasses must implement the chunk() method to define their splitting logic.
+    """
 
     @abstractmethod
     def chunk(self, document: Document) -> List[Document]:
         raise NotImplementedError
 
     def _generate_chunk_id(self, document: Document, chunk_number: int, content: Optional[str] = None) -> str:
-        """Generate a unique chunk ID.
+        """Generate a unique, deterministic chunk ID.
 
-        Uses document.id or document.name if available, otherwise falls back
-        to a content hash to ensure unique IDs even for documents without
-        explicit identifiers.
+        This method implements a three-tier fallback strategy to ensure every chunk
+        gets a valid ID, which is required for database storage. Without this, documents
+        created from API responses or programmatically (without explicit IDs) would
+        fail to insert into vector databases.
+
+        Fallback order:
+            1. document.id   -> "{document.id}_{chunk_number}"
+            2. document.name -> "{document.name}_{chunk_number}"
+            3. content hash  -> "chunk_{md5_hash[:12]}_{chunk_number}"
+
+        The hash-based fallback is deterministic: the same content always produces
+        the same ID. This enables idempotent upserts and reproducible results.
 
         Args:
             document: The source document being chunked
-            chunk_number: The 1-based index of this chunk
-            content: Optional content to hash (defaults to document.content)
+            chunk_number: The 1-based index of this chunk (e.g., 1, 2, 3...)
+            content: Optional chunk content to hash. If provided, hashes the chunk
+                     instead of the full document, giving more granular IDs.
 
         Returns:
-            A unique string ID for the chunk
+            A non-None string ID like "doc123_1" or "chunk_a3f2b8c9d1e4_1"
         """
         if document.id:
             return f"{document.id}_{chunk_number}"

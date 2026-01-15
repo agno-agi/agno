@@ -330,7 +330,9 @@ class Milvus(VectorDb):
             bool: True if a document with the given name exists, False otherwise.
         """
         if self.client:
-            expr = f"name == '{name}'"
+            # Escape special characters to prevent injection attacks
+            escaped_name = self._escape_milvus_value(name)
+            expr = f'name == "{escaped_name}"'
             scroll_result = self.client.query(
                 collection_name=self.collection,
                 filter=expr,
@@ -359,7 +361,9 @@ class Milvus(VectorDb):
             bool: True if a document with the given content hash exists, False otherwise.
         """
         if self.client:
-            expr = f'content_hash == "{content_hash}"'
+            # Escape special characters to prevent injection attacks
+            escaped_hash = self._escape_milvus_value(content_hash)
+            expr = f'content_hash == "{escaped_hash}"'
             scroll_result = self.client.query(
                 collection_name=self.collection,
                 filter=expr,
@@ -379,7 +383,9 @@ class Milvus(VectorDb):
             bool: True if documents were deleted, False otherwise.
         """
         if self.client:
-            expr = f'content_hash == "{content_hash}"'
+            # Escape special characters to prevent injection attacks
+            escaped_hash = self._escape_milvus_value(content_hash)
+            expr = f'content_hash == "{escaped_hash}"'
             self.client.delete(collection_name=self.collection, filter=expr)
             log_info(f"Deleted documents with content_hash '{content_hash}' from collection '{self.collection}'.")
             return True
@@ -995,7 +1001,7 @@ class Milvus(VectorDb):
         return self.client.has_collection(self.collection)
 
     def get_count(self) -> int:
-        return self.client.get_collection_stats(collection_name="test_collection")["row_count"]
+        return self.client.get_collection_stats(collection_name=self.collection)["row_count"]
 
     def delete(self) -> bool:
         if self.client:
@@ -1041,8 +1047,9 @@ class Milvus(VectorDb):
             if not self.name_exists(name):
                 return False
 
-            # Delete by name using Milvus delete operation with filter
-            expr = f'name == "{name}"'
+            # Escape special characters to prevent injection attacks
+            escaped_name = self._escape_milvus_value(name)
+            expr = f'name == "{escaped_name}"'
             self.client.delete(collection_name=self.collection, filter=expr)
             log_info(f"Deleted documents with name '{name}' from collection '{self.collection}'.")
             return True
@@ -1089,8 +1096,9 @@ class Milvus(VectorDb):
         try:
             log_debug(f"Milvus VectorDB : Deleting documents with content_id {content_id}")
 
-            # Delete by content_id using Milvus delete operation with filter
-            expr = f'content_id == "{content_id}"'
+            # Escape special characters to prevent injection attacks
+            escaped_content_id = self._escape_milvus_value(content_id)
+            expr = f'content_id == "{escaped_content_id}"'
             self.client.delete(collection_name=self.collection, filter=expr)
             log_info(f"Deleted documents with content_id '{content_id}' from collection '{self.collection}'.")
             return True

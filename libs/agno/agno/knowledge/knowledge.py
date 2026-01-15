@@ -1474,7 +1474,8 @@ class Knowledge:
             await self._aprocess_lightrag_content(content, KnowledgeContentOrigin.URL)
             return
 
-        # 2. Validate URL
+        # 2. Validate URL - must have scheme (http/https) and netloc (domain)
+        # Early return on invalid URLs prevents AttributeError on parsed_url.path later
         try:
             from urllib.parse import urlparse
 
@@ -1484,13 +1485,13 @@ class Knowledge:
                 content.status_message = f"Invalid URL format: {content.url}"
                 await self._aupdate_content(content)
                 log_warning(f"Invalid URL format: {content.url}")
-                return
+                return  # Critical: exit early to avoid undefined parsed_url usage
         except Exception as e:
             content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             await self._aupdate_content(content)
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
-            return
+            return  # Critical: exit early to avoid undefined parsed_url usage
 
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)
@@ -1574,7 +1575,8 @@ class Knowledge:
             self._process_lightrag_content(content, KnowledgeContentOrigin.URL)
             return
 
-        # 2. Validate URL
+        # 2. Validate URL - must have scheme (http/https) and netloc (domain)
+        # Early return on invalid URLs prevents AttributeError on parsed_url.path later
         try:
             from urllib.parse import urlparse
 
@@ -1584,13 +1586,13 @@ class Knowledge:
                 content.status_message = f"Invalid URL format: {content.url}"
                 self._update_content(content)
                 log_warning(f"Invalid URL format: {content.url}")
-                return
+                return  # Critical: exit early to avoid undefined parsed_url usage
         except Exception as e:
             content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             self._update_content(content)
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
-            return
+            return  # Critical: exit early to avoid undefined parsed_url usage
 
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)

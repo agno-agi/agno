@@ -223,6 +223,7 @@ class WebSearchReader(Reader):
             return []
 
         documents: List[Document] = []
+        urls_processed = 0
 
         for result in search_results:
             url = result.get("url", "")
@@ -235,7 +236,7 @@ class WebSearchReader(Reader):
             self._visited_urls.add(url)
 
             # Add delay between requests to be respectful
-            if len(documents) > 0:
+            if urls_processed > 0:
                 time.sleep(self.delay_between_requests)
 
             # Fetch content from URL
@@ -253,8 +254,11 @@ class WebSearchReader(Reader):
             else:
                 documents.append(document)
 
-            # Stop if we've reached max_results
-            if len(documents) >= self.max_results:
+            # Track successfully processed URLs
+            urls_processed += 1
+
+            # Stop if we've reached max_results (counts source URLs, not chunks)
+            if urls_processed >= self.max_results:
                 break
 
         log_debug(f"Created {len(documents)} documents from web search")
@@ -301,10 +305,11 @@ class WebSearchReader(Reader):
                 return None
 
         documents = []
+        urls_processed = 0
         # Reuse a single AsyncClient for all URLs (connection pooling)
         async with httpx.AsyncClient(timeout=self.request_timeout) as client:
             for i, result in enumerate(search_results):
-                if i > 0:
+                if urls_processed > 0:
                     await asyncio.sleep(self.delay_between_requests)
 
                 doc = await fetch_url_async(client, result)
@@ -315,7 +320,11 @@ class WebSearchReader(Reader):
                     else:
                         documents.append(doc)
 
-                    if len(documents) >= self.max_results:
+                    # Track successfully processed URLs
+                    urls_processed += 1
+
+                    # Stop if we've reached max_results (counts source URLs, not chunks)
+                    if urls_processed >= self.max_results:
                         break
 
         log_debug(f"Created {len(documents)} documents from async web search")

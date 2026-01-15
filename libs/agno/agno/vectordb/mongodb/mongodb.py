@@ -1,4 +1,5 @@
 import asyncio
+import re
 import time
 from importlib import metadata
 from typing import Any, Dict, List, Optional, Union
@@ -714,8 +715,10 @@ class MongoDb(VectorDb):
         """Perform a keyword-based search."""
         try:
             collection = self._get_collection()
+            # Escape regex special characters to prevent injection attacks (ReDoS, data exfiltration)
+            escaped_query = re.escape(query)
             cursor = collection.find(
-                {"content": {"$regex": query, "$options": "i"}},
+                {"content": {"$regex": escaped_query, "$options": "i"}},
                 {"_id": 1, "name": 1, "content": 1, "meta_data": 1, "content_id": 1},
             ).limit(limit)
             results = [

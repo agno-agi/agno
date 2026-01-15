@@ -40,6 +40,16 @@ class YouTubeReader(Reader):
         Raises:
             ValueError: If URL format is not recognized or video ID is invalid
         """
+        # Strip whitespace
+        url = url.strip()
+
+        # Validate URL scheme (prevent file://, javascript:, etc.)
+        if not url.startswith(("http://", "https://")):
+            raise ValueError(f"Invalid URL scheme. Only http:// and https:// are allowed: {url}")
+
+        # Strip URL fragment before processing (prevent injection via #)
+        url = url.split("#")[0]
+
         video_id = None
 
         # Handle youtu.be short URL format
@@ -54,11 +64,18 @@ class YouTubeReader(Reader):
         if not video_id:
             raise ValueError(f"Could not extract video ID from URL: {url}")
 
-        # YouTube video IDs are exactly 11 characters
+        # Strip whitespace from extracted ID
+        video_id = video_id.strip()
+
+        # YouTube video IDs are exactly 11 characters and contain only alphanumeric chars, hyphens, and underscores
         if len(video_id) != 11:
             raise ValueError(
                 f"Invalid video ID '{video_id}' extracted from URL: {url}. YouTube video IDs must be 11 characters."
             )
+
+        # Validate video ID characters (YouTube IDs only contain: A-Z, a-z, 0-9, -, _)
+        if not all(c.isalnum() or c in "-_" for c in video_id):
+            raise ValueError(f"Invalid characters in video ID '{video_id}'. Only alphanumeric, -, and _ are allowed.")
 
         return video_id
 

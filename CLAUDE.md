@@ -175,7 +175,8 @@ pytest libs/agno/tests/unit/test_agent.py
 **Always run these scripts before pushing code or creating a PR:**
 
 ```bash
-# Activate the virtual environment first
+# IMPORTANT: Always activate the virtual environment first!
+# The scripts depend on packages installed in .venv
 source .venv/bin/activate
 
 # Format all code (ruff format)
@@ -184,6 +185,8 @@ source .venv/bin/activate
 # Validate all code (ruff check, mypy)
 ./scripts/validate.sh
 ```
+
+**Critical:** You MUST activate the virtual environment before running format.sh and validate.sh. These scripts use ruff and mypy which are installed in .venv. Running without activation will either fail or use system-wide tools with different versions.
 
 Both scripts must pass with no errors before code review.
 
@@ -196,3 +199,4 @@ Both scripts must pass with no errors before code review.
 - Don't use emojis in examples and print lines
 - Don't skip async variants of public methods
 - Don't push code without running `./scripts/format.sh` and `./scripts/validate.sh`
+- Don't run format.sh or validate.sh without first activating the virtual environment (`source .venv/bin/activate`)
