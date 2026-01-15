@@ -35,7 +35,7 @@ class DayAggregatedMetrics(BaseModel):
             team_runs_count=metrics_dict.get("team_runs_count", 0),
             team_sessions_count=metrics_dict.get("team_sessions_count", 0),
             token_metrics=metrics_dict.get("token_metrics", {}),
-            updated_at=metrics_dict.get("updated_at", 0),
+            updated_at=metrics_dict.get("updated_at", metrics_dict.get("created_at", 0)),
             users_count=metrics_dict.get("users_count", 0),
             workflow_runs_count=metrics_dict.get("workflow_runs_count", 0),
             workflow_sessions_count=metrics_dict.get("workflow_sessions_count", 0),

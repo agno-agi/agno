@@ -51,8 +51,11 @@ class TeamRunInput:
             return self.input_content.model_dump_json(exclude_none=True)
         elif isinstance(self.input_content, Message):
             return json.dumps(self.input_content.to_dict())
-        elif isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], Message):
-            return json.dumps([m.to_dict() for m in self.input_content])
+        elif isinstance(self.input_content, list):
+            try:
+                return json.dumps(self.to_dict().get("input_content"))
+            except Exception:
+                return str(self.input_content)
         else:
             return str(self.input_content)
 
@@ -67,22 +70,15 @@ class TeamRunInput:
                 result["input_content"] = self.input_content.model_dump(exclude_none=True)
             elif isinstance(self.input_content, Message):
                 result["input_content"] = self.input_content.to_dict()
-
-            # Handle input_content provided as a list of Message objects
-            elif (
-                isinstance(self.input_content, list)
-                and self.input_content
-                and isinstance(self.input_content[0], Message)
-            ):
-                result["input_content"] = [m.to_dict() for m in self.input_content]
-
-            # Handle input_content provided as a list of dicts
-            elif (
-                isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], dict)
-            ):
-                for content in self.input_content:
-                    # Handle media input
-                    if isinstance(content, dict):
+            elif isinstance(self.input_content, list):
+                serialized_items: List[Any] = []
+                for item in self.input_content:
+                    if isinstance(item, Message):
+                        serialized_items.append(item.to_dict())
+                    elif isinstance(item, BaseModel):
+                        serialized_items.append(item.model_dump(exclude_none=True))
+                    elif isinstance(item, dict):
+                        content = dict(item)
                         if content.get("images"):
                             content["images"] = [
                                 img.to_dict() if isinstance(img, Image) else img for img in content["images"]
@@ -99,7 +95,11 @@ class TeamRunInput:
                             content["files"] = [
                                 file.to_dict() if isinstance(file, File) else file for file in content["files"]
                             ]
-                result["input_content"] = self.input_content
+                        serialized_items.append(content)
+                    else:
+                        serialized_items.append(item)
+
+                result["input_content"] = serialized_items
             else:
                 result["input_content"] = self.input_content
 

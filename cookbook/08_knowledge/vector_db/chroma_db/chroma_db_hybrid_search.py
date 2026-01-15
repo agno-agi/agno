@@ -15,18 +15,22 @@ The RRF algorithm fuses rankings from both search methods using:
 """
 
 import asyncio
+from textwrap import dedent
 
 from agno.agent import Agent
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.chroma import ChromaDb
-from agno.vectordb.search import SearchType
+from agno.models.openai import OpenAIChat
+from agno.vectordb.chroma import ChromaDb, SearchType
 
-# Create Knowledge Instance with ChromaDB using Hybrid Search
+# ============================================================================
+# Setup knowledge base with ChromaDB for storing Agno documentation
+# ============================================================================
 knowledge = Knowledge(
-    name="Thai Recipes Knowledge Base",
-    description="Knowledge base for Thai recipes with hybrid search (RRF fusion)",
+    name="Agno Documentation",
+    description="Knowledge base for Agno framework documentation",
     vector_db=ChromaDb(
-        collection="thai_recipes_hybrid",
+        name="agno_docs",
         path="tmp/chromadb_hybrid",
         persistent_client=True,
         # Enable hybrid search - combines vector similarity with keyword matching using RRF
@@ -35,29 +39,81 @@ knowledge = Knowledge(
         # Higher values (e.g., 60) give more weight to lower-ranked results,
         # Lower values make top results more dominant. Default is 60 (per original RRF paper).
         hybrid_rrf_k=60,
+        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
+    max_results=10,
 )
 
-# Load content into the knowledge base
-asyncio.run(
-    knowledge.add_content_async(
-        name="Thai Recipes",
-        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-        metadata={"doc_type": "recipe_book", "cuisine": "thai"},
-    )
+# ============================================================================
+# Description & Instructions for the agent
+# ============================================================================
+description = dedent(
+    """\
+    You are AgnoAssist — an AI Agent built to help developers learn and master the Agno framework.
+    Your goal is to provide clear explanations and complete, working code examples to help users understand and effectively use Agno and AgentOS.\
+    """
+)
+
+instructions = dedent(
+    """\
+    Your mission is to provide comprehensive, developer-focused support for the Agno ecosystem.
+
+    Follow this structured process to ensure accurate and actionable responses:
+
+    1. **Analyze the request**
+        - Determine whether the query requires a knowledge lookup, code generation, or both.
+        - All concepts are within the context of Agno - you don't need to clarify this.
+
+    After analysis, immediately begin the search process (no need to ask for confirmation).
+
+    2. **Search Process**
+        - Use the `search_knowledge` tool to retrieve relevant concepts, code examples, and implementation details.
+        - Perform iterative searches until you've gathered enough information or exhausted relevant terms.
+
+    Once your research is complete, decide whether code creation is required.
+    If it is, ask the user if they'd like you to generate an Agent for them.
+
+    3. **Code Creation**
+        - Provide fully working code examples that can be run as-is.
+        - Always use `agent.run()` (not `agent.print_response()`).
+        - Include all imports, setup, and dependencies.
+        - Add clear comments, type hints, and docstrings.
+        - Demonstrate usage with example queries.
+
+        Example:
+        ```python
+        from agno.agent import Agent
+        from agno.tools.duckduckgo import DuckDuckGoTools
+
+        agent = Agent(tools=[DuckDuckGoTools()])
+
+        response = agent.run("What's happening in France?")
+        print(response)
+        ```
+    """
 )
 
 # Create an agent with the hybrid search knowledge base
 agent = Agent(
+    name="Agno Knowledge Agent",
+    model=OpenAIChat(id="gpt-5-mini"),
     knowledge=knowledge,
-    search_knowledge=True,
-    instructions="You are a helpful Thai cooking assistant. Use the knowledge base to answer questions about Thai recipes.",
+    instructions=instructions,
+    description=description,
 )
 
-# Hybrid search will:
-# 1. Find semantically similar documents (via dense embeddings)
-# 2. Find documents containing query keywords (via FTS)
-# 3. Fuse results using RRF for optimal ranking
-agent.print_response("What are the ingredients for Massaman curry?", markdown=True)
 
-agent.print_response("How do I make Thai basil chicken?", markdown=True)
+if __name__ == "__main__":
+    # Load Agno documentation into the knowledge base
+    asyncio.run(
+        knowledge.add_content_async(
+            name="Agno Documentation",
+            url="https://docs.agno.com/llms-full.txt",
+        )
+    )
+
+    # Hybrid search will:
+    # 1. Find semantically similar documents (via dense embeddings)
+    # 2. Find documents containing query keywords (via FTS)
+    # 3. Fuse results using RRF for optimal ranking
+    agent.print_response("How do I create an agent with tools?", markdown=True)

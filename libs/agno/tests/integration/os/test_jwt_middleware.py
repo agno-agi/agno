@@ -38,11 +38,16 @@ def jwt_token():
 def jwt_test_agent():
     """Create a test agent with a tool that accesses JWT data from request state."""
 
-    return Agent(
+    agent = Agent(
         name="jwt-test-agent",
         db=InMemoryDb(),
         instructions="You are a test agent that can access JWT information and user profiles.",
     )
+    # Override deep_copy to return the same instance for testing
+    # This is needed because AgentOS uses create_fresh=True which calls deep_copy,
+    # and our mocks need to be on the same instance that gets used
+    agent.deep_copy = lambda **kwargs: agent
+    return agent
 
 
 @pytest.fixture
@@ -1532,3 +1537,507 @@ def test_validate_false_with_authorization_checks_scopes(jwt_test_agent):
 
     response = client.get("/agents", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
+
+
+# --- Audience Verification Tests ---
+def test_audience_verification_with_explicit_audience_success(jwt_test_agent):
+    """Test that tokens with matching explicit audience are accepted when verify_audience=True."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+        verify_audience=True,
+        audience="test-audience-123",  # Explicit audience
+    )
+
+    client = TestClient(app)
+
+    # Create token with matching audience
+    payload = {
+        "sub": "test_user_123",
+        "aud": "test-audience-123",  # Matches explicit audience
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "Audience match success"}})()
+
+    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_run_output
+
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"message": "Test audience match", "stream": "false"},
+        )
+
+        assert response.status_code == 200
+        mock_arun.assert_called_once()
+
+
+def test_audience_verification_with_explicit_audience_failure(jwt_test_agent):
+    """Test that tokens with non-matching explicit audience are rejected when verify_audience=True."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+        verify_audience=True,
+        audience="test-audience-123",  # Explicit audience
+    )
+
+    client = TestClient(app)
+
+    # Create token with non-matching audience
+    payload = {
+        "sub": "test_user_123",
+        "aud": "wrong-audience-456",  # Doesn't match explicit audience
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    response = client.post(
+        "/agents/jwt-test-agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "Should fail", "stream": "false"},
+    )
+
+    assert response.status_code == 401
+    assert "Invalid token audience" in response.json()["detail"]
+
+
+def test_audience_verification_with_agent_os_id(jwt_test_agent):
+    """Test that tokens with matching agent_os_id are accepted when verify_audience=True without explicit audience."""
+
+    agent_os_id = "test-agent-os-789"
+    agent_os = AgentOS(id=agent_os_id, agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+        verify_audience=True,
+        # No explicit audience - should use agent_os_id
+    )
+
+    client = TestClient(app)
+
+    # Create token with matching agent_os_id as audience
+    payload = {
+        "sub": "test_user_123",
+        "aud": agent_os_id,  # Matches agent_os_id
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "AgentOS ID match success"}})()
+
+    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_run_output
+
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"message": "Test agent_os_id match", "stream": "false"},
+        )
+
+        assert response.status_code == 200
+        mock_arun.assert_called_once()
+
+
+def test_audience_verification_with_agent_os_id_failure(jwt_test_agent):
+    """Test that tokens with non-matching agent_os_id are rejected when verify_audience=True without explicit audience."""
+
+    agent_os_id = "test-agent-os-789"
+    agent_os = AgentOS(id=agent_os_id, agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+        verify_audience=True,
+        # No explicit audience - should use agent_os_id
+    )
+
+    client = TestClient(app)
+
+    # Create token with non-matching audience
+    payload = {
+        "sub": "test_user_123",
+        "aud": "wrong-agent-os-id",  # Doesn't match agent_os_id
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    response = client.post(
+        "/agents/jwt-test-agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "Should fail", "stream": "false"},
+    )
+
+    assert response.status_code == 401
+    assert "Invalid token audience" in response.json()["detail"]
+
+
+def test_audience_verification_disabled(jwt_test_agent):
+    """Test that audience is not checked when verify_audience=False."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+        verify_audience=False,  # Audience verification disabled
+        audience="test-audience-123",
+    )
+
+    client = TestClient(app)
+
+    # Create token with non-matching audience (should still work since verify_audience=False)
+    payload = {
+        "sub": "test_user_123",
+        "aud": "wrong-audience-456",  # Doesn't match, but should be ignored
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "Audience ignored"}})()
+
+    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_run_output
+
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"message": "Test audience ignored", "stream": "false"},
+        )
+
+        assert response.status_code == 200
+        mock_arun.assert_called_once()
+
+
+def test_audience_verification_with_custom_audience_claim(jwt_test_agent):
+    """Test that custom audience claim name works correctly."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+        verify_audience=True,
+        audience="test-audience-123",
+        audience_claim="custom_aud",  # Custom audience claim name
+    )
+
+    client = TestClient(app)
+
+    # Create token with custom audience claim name
+    payload = {
+        "sub": "test_user_123",
+        "custom_aud": "test-audience-123",  # Using custom claim name
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    mock_run_output = type(
+        "MockRunOutput", (), {"to_dict": lambda self: {"content": "Custom audience claim success"}}
+    )()
+
+    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_run_output
+
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"message": "Test custom audience claim", "stream": "false"},
+        )
+
+        assert response.status_code == 200
+        mock_arun.assert_called_once()
+
+
+def test_audience_verification_with_multiple_audiences(jwt_test_agent):
+    """Test that tokens with multiple audiences (list) work correctly."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+        verify_audience=True,
+        audience=["test-audience-123", "test-audience-456"],  # Multiple audiences
+    )
+
+    client = TestClient(app)
+
+    # Create token with one of the allowed audiences
+    payload = {
+        "sub": "test_user_123",
+        "aud": ["test-audience-123", "other-audience"],  # Contains one matching audience
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    mock_run_output = type("MockRunOutput", (), {"to_dict": lambda self: {"content": "Multiple audiences success"}})()
+
+    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_run_output
+
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"message": "Test multiple audiences", "stream": "false"},
+        )
+
+        assert response.status_code == 200
+        mock_arun.assert_called_once()
+
+
+def test_audience_verification_with_multiple_audiences_failure(jwt_test_agent):
+    """Test that tokens with non-matching multiple audiences are rejected."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+        verify_audience=True,
+        audience=["test-audience-123", "test-audience-456"],  # Multiple audiences
+    )
+
+    client = TestClient(app)
+
+    # Create token with non-matching audiences
+    payload = {
+        "sub": "test_user_123",
+        "aud": ["wrong-audience-1", "wrong-audience-2"],  # None match
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    response = client.post(
+        "/agents/jwt-test-agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "Should fail", "stream": "false"},
+    )
+
+    assert response.status_code == 401
+    assert "Invalid token audience" in response.json()["detail"]
+
+
+def test_audience_verification_explicit_overrides_agent_os_id(jwt_test_agent):
+    """Test that explicit audience parameter takes precedence over agent_os_id."""
+
+    agent_os_id = "test-agent-os-789"
+    agent_os = AgentOS(id=agent_os_id, agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+        verify_audience=True,
+        audience="explicit-audience-123",  # Explicit audience should override agent_os_id
+    )
+
+    client = TestClient(app)
+
+    # Create token with explicit audience (not agent_os_id)
+    payload = {
+        "sub": "test_user_123",
+        "aud": "explicit-audience-123",  # Matches explicit audience, not agent_os_id
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    mock_run_output = type(
+        "MockRunOutput", (), {"to_dict": lambda self: {"content": "Explicit audience override success"}}
+    )()
+
+    with patch.object(jwt_test_agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = mock_run_output
+
+        response = client.post(
+            "/agents/jwt-test-agent/runs",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"message": "Test explicit audience override", "stream": "false"},
+        )
+
+        assert response.status_code == 200
+        mock_arun.assert_called_once()
+
+    # Token with agent_os_id should fail (explicit audience takes precedence)
+    payload2 = {
+        "sub": "test_user_123",
+        "aud": agent_os_id,  # Matches agent_os_id but not explicit audience
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token2 = jwt.encode(payload2, JWT_SECRET, algorithm="HS256")
+
+    response = client.post(
+        "/agents/jwt-test-agent/runs",
+        headers={"Authorization": f"Bearer {token2}"},
+        data={"message": "Should fail", "stream": "false"},
+    )
+
+    assert response.status_code == 401
+    assert "Invalid token audience" in response.json()["detail"]
+
+
+def test_audience_stored_in_request_state(jwt_test_agent):
+    """Test that audience claim is stored in request.state."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    @app.get("/test-audience-state")
+    async def test_endpoint(request: Request):
+        return {
+            "audience": getattr(request.state, "audience", None),
+        }
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+        verify_audience=False,  # Don't verify, just extract
+    )
+
+    client = TestClient(app)
+
+    payload = {
+        "sub": "test_user_123",
+        "aud": "test-audience-123",
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    response = client.get("/test-audience-state", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["audience"] == "test-audience-123"
+
+
+def test_audience_verification_missing_aud_claim(jwt_test_agent):
+    """Test that tokens without aud claim are rejected with clear error when verify_audience=True."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+        verify_audience=True,
+        audience="test-audience-123",
+    )
+
+    client = TestClient(app)
+
+    # Create token WITHOUT aud claim
+    payload = {
+        "sub": "test_user_123",
+        # No "aud" claim
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    response = client.post(
+        "/agents/jwt-test-agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "Should fail", "stream": "false"},
+    )
+
+    assert response.status_code == 401
+    assert 'missing the "aud" claim' in response.json()["detail"]
+    assert "Audience verification requires" in response.json()["detail"]
+
+
+def test_audience_verification_missing_custom_audience_claim(jwt_test_agent):
+    """Test that tokens without custom audience claim are rejected with clear error."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        user_id_claim="sub",
+        validate=True,
+        verify_audience=True,
+        audience="test-audience-123",
+        audience_claim="custom_aud",  # Custom audience claim name
+    )
+
+    client = TestClient(app)
+
+    # Create token WITHOUT custom_aud claim
+    payload = {
+        "sub": "test_user_123",
+        # No "custom_aud" claim
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    response = client.post(
+        "/agents/jwt-test-agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "Should fail", "stream": "false"},
+    )
+
+    assert response.status_code == 401
+    assert 'missing the "custom_aud" claim' in response.json()["detail"]

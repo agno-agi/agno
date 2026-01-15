@@ -37,12 +37,18 @@ from agno.models.metrics import Metrics
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunContentEvent, RunEvent, RunOutput
 from agno.run.cancel import (
-    cancel_run as cancel_run_global,
+    acancel_run as acancel_run_global,
 )
 from agno.run.cancel import (
+    acleanup_run,
+    araise_if_cancelled,
+    aregister_run,
     cleanup_run,
     raise_if_cancelled,
     register_run,
+)
+from agno.run.cancel import (
+    cancel_run as cancel_run_global,
 )
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
@@ -1879,6 +1885,7 @@ class Workflow:
         """Execute a specific pipeline by name asynchronously"""
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
+        await aregister_run(run_context.run_id)
         # Read existing session from database
         workflow_session, run_context.session_state = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=run_context.session_state
@@ -1902,14 +1909,14 @@ class Workflow:
             elif isasyncgenfunction(self.steps):  # type: ignore
                 async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
                 async for chunk in async_gen:
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                     else:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
-                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                 workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
             workflow_run_response.status = RunStatus.completed
 
@@ -1929,7 +1936,7 @@ class Workflow:
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Async Executing step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -1944,7 +1951,7 @@ class Workflow:
                     )
 
                     # Check for cancellation before executing step
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     step_output = await step.aexecute(  # type: ignore[union-attr]
                         step_input,
@@ -1962,7 +1969,7 @@ class Workflow:
                     )
 
                     # Check for cancellation after step execution
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
@@ -2042,7 +2049,7 @@ class Workflow:
         else:
             self.save_session(session=workflow_session)
         # Always clean up the run tracking
-        cleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_run(workflow_run_response.run_id)  # type: ignore
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -2064,6 +2071,8 @@ class Workflow:
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
+
+        await aregister_run(run_context.run_id)
 
         # Read existing session from database
         workflow_session, run_context.session_state = await self._aload_or_create_session(
@@ -2096,7 +2105,7 @@ class Workflow:
                 content = ""
                 async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
                 async for chunk in async_gen:
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                         yield chunk
@@ -2131,7 +2140,7 @@ class Workflow:
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     if workflow_run_response.run_id:
-                        raise_if_cancelled(workflow_run_response.run_id)
+                        await araise_if_cancelled(workflow_run_response.run_id)
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Async streaming step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -2169,7 +2178,7 @@ class Workflow:
                         background_tasks=background_tasks,
                     ):
                         if workflow_run_response.run_id:
-                            raise_if_cancelled(workflow_run_response.run_id)
+                            await araise_if_cancelled(workflow_run_response.run_id)
 
                         # Accumulate partial data from streaming events
                         partial_step_content = self._accumulate_partial_step_data(event, partial_step_content)  # type: ignore
@@ -2399,7 +2408,7 @@ class Workflow:
             await self._alog_workflow_telemetry(session_id=session_id, run_id=workflow_run_response.run_id)
 
         # Always clean up the run tracking
-        cleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_run(workflow_run_response.run_id)  # type: ignore
 
     async def _arun_background(
         self,
@@ -3119,7 +3128,8 @@ class Workflow:
         if stream:
 
             async def _stream():
-                session, session_state_loaded = await self._aload_session_for_workflow_agent(
+                await aregister_run(run_context.run_id)
+                session, _ = await self._aload_session_for_workflow_agent(
                     run_context.session_id, run_context.user_id, run_context.session_state
                 )
                 async for event in self._arun_workflow_agent_stream(
@@ -3137,7 +3147,8 @@ class Workflow:
         else:
 
             async def _execute():
-                session, session_state_loaded = await self._aload_session_for_workflow_agent(
+                await aregister_run(run_context.run_id)
+                session, _ = await self._aload_session_for_workflow_agent(
                     run_context.session_id, run_context.user_id, run_context.session_state
                 )
                 return await self._arun_workflow_agent(
@@ -3488,6 +3499,17 @@ class Workflow:
         """
         return cancel_run_global(run_id)
 
+    async def acancel_run(self, run_id: str) -> bool:
+        """Cancel a running workflow execution (async version).
+
+        Args:
+            run_id (str): The run_id to cancel.
+
+        Returns:
+            bool: True if the run was found and marked for cancellation, False otherwise.
+        """
+        return await acancel_run_global(run_id)
+
     @overload
     def run(
         self,
@@ -3790,7 +3812,6 @@ class Workflow:
 
         # Set the id for the run and register it immediately for cancellation tracking
         run_id = run_id or str(uuid4())
-        register_run(run_id)
 
         self.initialize_workflow()
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -4460,3 +4481,202 @@ class Workflow:
                 session_id=session_id,
                 **kwargs,
             )
+
+    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> "Workflow":
+        """Create and return a deep copy of this Workflow, optionally updating fields.
+
+        This creates a fresh Workflow instance with isolated mutable state while sharing
+        heavy resources like database connections. Steps containing agents/teams are also
+        deep copied to ensure complete isolation.
+
+        Args:
+            update: Optional dictionary of fields to override in the new Workflow.
+
+        Returns:
+            Workflow: A new Workflow instance with copied state.
+        """
+        from copy import copy, deepcopy
+        from dataclasses import fields
+
+        from agno.utils.log import log_debug, log_warning
+
+        # Extract the fields to set for the new Workflow
+        fields_for_new_workflow: Dict[str, Any] = {}
+
+        for f in fields(self):
+            # Skip private fields (not part of __init__ signature)
+            if f.name.startswith("_"):
+                continue
+
+            field_value = getattr(self, f.name)
+            if field_value is not None:
+                # Special handling for steps that may contain agents/teams
+                if f.name == "steps" and field_value is not None:
+                    fields_for_new_workflow[f.name] = self._deep_copy_steps(field_value)
+                # Special handling for workflow agent
+                elif f.name == "agent" and field_value is not None:
+                    if hasattr(field_value, "deep_copy"):
+                        fields_for_new_workflow[f.name] = field_value.deep_copy()
+                    else:
+                        fields_for_new_workflow[f.name] = field_value
+                # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
+                elif f.name == "db":
+                    fields_for_new_workflow[f.name] = field_value
+                # For compound types, attempt a deep copy
+                elif isinstance(field_value, (list, dict, set)):
+                    try:
+                        fields_for_new_workflow[f.name] = deepcopy(field_value)
+                    except Exception:
+                        try:
+                            fields_for_new_workflow[f.name] = copy(field_value)
+                        except Exception as e:
+                            log_warning(f"Failed to copy field: {f.name} - {e}")
+                            fields_for_new_workflow[f.name] = field_value
+                # For pydantic models, attempt a model_copy
+                elif isinstance(field_value, BaseModel):
+                    try:
+                        fields_for_new_workflow[f.name] = field_value.model_copy(deep=True)
+                    except Exception:
+                        try:
+                            fields_for_new_workflow[f.name] = field_value.model_copy(deep=False)
+                        except Exception:
+                            fields_for_new_workflow[f.name] = field_value
+                # For other types, attempt a shallow copy
+                else:
+                    try:
+                        fields_for_new_workflow[f.name] = copy(field_value)
+                    except Exception:
+                        fields_for_new_workflow[f.name] = field_value
+
+        # Update fields if provided
+        if update:
+            fields_for_new_workflow.update(update)
+
+        # Create a new Workflow
+        try:
+            new_workflow = self.__class__(**fields_for_new_workflow)
+            log_debug(f"Created new {self.__class__.__name__}")
+            return new_workflow
+        except Exception as e:
+            from agno.utils.log import log_error
+
+            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
+            raise
+
+    def _deep_copy_steps(self, steps: Any) -> Any:
+        """Deep copy workflow steps, handling nested agents and teams."""
+        from agno.workflow.steps import Steps
+
+        if steps is None:
+            return None
+
+        # Handle Steps container
+        if isinstance(steps, Steps):
+            copied_steps = []
+            if steps.steps:
+                for step in steps.steps:
+                    copied_steps.append(self._deep_copy_single_step(step))
+            return Steps(steps=copied_steps)
+
+        # Handle list of steps
+        if isinstance(steps, list):
+            return [self._deep_copy_single_step(step) for step in steps]
+
+        # Handle callable steps
+        if callable(steps):
+            return steps
+
+        # Handle single step
+        return self._deep_copy_single_step(steps)
+
+    def _deep_copy_single_step(self, step: Any) -> Any:
+        """Deep copy a single step, handling nested agents and teams."""
+        from copy import copy, deepcopy
+
+        from agno.agent import Agent
+        from agno.team import Team
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.router import Router
+        from agno.workflow.step import Step
+        from agno.workflow.steps import Steps
+
+        # Handle Step with agent or team
+        if isinstance(step, Step):
+            step_kwargs: Dict[str, Any] = {}
+            if step.name:
+                step_kwargs["name"] = step.name
+            if step.description:
+                step_kwargs["description"] = step.description
+            if step.executor:
+                step_kwargs["executor"] = step.executor
+            if step.agent:
+                step_kwargs["agent"] = step.agent.deep_copy() if hasattr(step.agent, "deep_copy") else step.agent
+            if step.team:
+                step_kwargs["team"] = step.team.deep_copy() if hasattr(step.team, "deep_copy") else step.team
+            # Copy Step configuration attributes
+            for attr in [
+                "max_retries",
+                "timeout_seconds",
+                "skip_on_failure",
+                "strict_input_validation",
+                "add_workflow_history",
+                "num_history_runs",
+            ]:
+                if hasattr(step, attr):
+                    value = getattr(step, attr)
+                    # Only include non-default values to avoid overriding defaults
+                    if value is not None:
+                        step_kwargs[attr] = value
+            return Step(**step_kwargs)
+
+        # Handle direct Agent
+        if isinstance(step, Agent):
+            return step.deep_copy() if hasattr(step, "deep_copy") else step
+
+        # Handle direct Team
+        if isinstance(step, Team):
+            return step.deep_copy() if hasattr(step, "deep_copy") else step
+
+        # Handle Parallel steps
+        if isinstance(step, Parallel):
+            copied_parallel_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            return Parallel(*copied_parallel_steps, name=step.name, description=step.description)
+
+        # Handle Loop steps
+        if isinstance(step, Loop):
+            copied_loop_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            return Loop(
+                steps=copied_loop_steps,
+                name=step.name,
+                description=step.description,
+                max_iterations=step.max_iterations,
+                end_condition=step.end_condition,
+            )
+
+        # Handle Condition steps
+        if isinstance(step, Condition):
+            copied_condition_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            return Condition(
+                evaluator=step.evaluator, steps=copied_condition_steps, name=step.name, description=step.description
+            )
+
+        # Handle Router steps
+        if isinstance(step, Router):
+            copied_choices = [self._deep_copy_single_step(s) for s in step.choices] if step.choices else []
+            return Router(choices=copied_choices, name=step.name, description=step.description, selector=step.selector)
+
+        # Handle Steps container
+        if isinstance(step, Steps):
+            copied_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            return Steps(name=step.name, description=step.description, steps=copied_steps)
+
+        # For other types, attempt deep copy
+        try:
+            return deepcopy(step)
+        except Exception:
+            try:
+                return copy(step)
+            except Exception:
+                return step

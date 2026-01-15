@@ -57,8 +57,8 @@ class ChromaDb(VectorDb):
     ChromaDb class for managing vector operations with ChromaDB.
 
     Args:
-        collection: The name of the ChromaDB collection.
-        name: Name of the vector database.
+        collection: The name of the ChromaDB collection. If not provided, derived from 'name'.
+        name: Name of the vector database. Also used as collection name if 'collection' is not provided.
         description: Description of the vector database.
         id: Unique identifier for this vector database instance.
         embedder: The embedder to use when embedding the document contents.
@@ -79,7 +79,7 @@ class ChromaDb(VectorDb):
 
     def __init__(
         self,
-        collection: str,
+        collection: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
         id: Optional[str] = None,
@@ -92,9 +92,13 @@ class ChromaDb(VectorDb):
         reranker: Optional[Reranker] = None,
         **kwargs,
     ):
-        # Validate required parameters
-        if not collection:
-            raise ValueError("Collection name must be provided.")
+        # Derive collection from name if not provided
+        if collection is None:
+            if name is not None:
+                # Sanitize name: lowercase and replace spaces with underscores
+                collection = name.lower().replace(" ", "_")
+            else:
+                raise ValueError("Either 'collection' or 'name' must be provided.")
 
         # Dynamic ID generation based on unique identifiers
         if id is None:
@@ -113,7 +117,7 @@ class ChromaDb(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         # Distance metric
         self.distance: Distance = distance

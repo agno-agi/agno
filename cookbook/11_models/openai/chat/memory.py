@@ -29,7 +29,7 @@ agent = Agent(
 )
 
 # -*- Share personal information
-agent.print_response("My name is john billings?", stream=True)
+agent.print_response("My name is john billings", stream=True)
 # -*- Print memories and summary
 if agent.db:
     pprint(agent.get_user_memories(user_id="test_user"))
@@ -38,7 +38,7 @@ if agent.db:
     )
 
 # -*- Share personal information
-agent.print_response("I live in nyc?", stream=True)
+agent.print_response("I live in nyc", stream=True)
 # -*- Print memories and summary
 if agent.db:
     pprint(agent.get_user_memories(user_id="test_user"))
@@ -47,7 +47,7 @@ if agent.db:
     )
 
 # -*- Share personal information
-agent.print_response("I'm going to a concert tomorrow?", stream=True)
+agent.print_response("I'm going to a concert tomorrow", stream=True)
 # -*- Print memories and summary
 if agent.db:
     pprint(agent.get_user_memories(user_id="test_user"))

@@ -6,6 +6,8 @@ from agno.run.base import RunStatus
 from agno.run.workflow import (
     ConditionExecutionCompletedEvent,
     ConditionExecutionStartedEvent,
+    StepCompletedEvent,
+    StepStartedEvent,
     WorkflowCompletedEvent,
     WorkflowRunOutput,
 )
@@ -337,3 +339,147 @@ async def test_async_condition_streaming(shared_db):
     assert len(condition_completed) == 1
     assert len(workflow_completed) == 1
     assert condition_started[0].condition_result is True
+
+
+# ============================================================================
+# EARLY TERMINATION / STOP PROPAGATION TESTS
+# ============================================================================
+
+
+def early_stop_step(step_input: StepInput) -> StepOutput:
+    """Step that requests early termination."""
+    return StepOutput(
+        content="Early stop requested",
+        success=True,
+        stop=True,
+    )
+
+
+def should_not_run_step(step_input: StepInput) -> StepOutput:
+    """Step that should not run after early stop."""
+    return StepOutput(
+        content="This step should not have run",
+        success=True,
+    )
+
+
+def test_condition_propagates_stop_flag():
+    """Test that Condition propagates stop flag from inner steps to workflow."""
+    condition = Condition(
+        name="Stop Condition",
+        evaluator=True,
+        steps=[early_stop_step],
+    )
+    step_input = StepInput(input="test")
+
+    result = condition.execute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is True, "Condition should propagate stop=True from inner step"
+
+
+def test_condition_stop_propagation_in_workflow(shared_db):
+    """Test that workflow stops when Condition's inner step returns stop=True."""
+    workflow = Workflow(
+        name="Stop Propagation Test",
+        db=shared_db,
+        steps=[
+            Condition(
+                name="stop_condition",
+                evaluator=True,
+                steps=[early_stop_step],
+            ),
+            should_not_run_step,  # This should NOT execute
+        ],
+    )
+
+    response = workflow.run(input="test")
+
+    assert isinstance(response, WorkflowRunOutput)
+    # Should only have 1 step result (the Condition), not 2
+    assert len(response.step_results) == 1, "Workflow should stop after Condition with stop=True"
+    assert response.step_results[0].stop is True
+
+
+def test_condition_streaming_propagates_stop(shared_db):
+    """Test that streaming Condition propagates stop flag and stops workflow."""
+    workflow = Workflow(
+        name="Streaming Stop Test",
+        db=shared_db,
+        steps=[
+            Condition(
+                name="stop_condition",
+                evaluator=True,
+                steps=[early_stop_step],
+            ),
+            should_not_run_step,
+        ],
+    )
+
+    events = list(workflow.run(input="test", stream=True, stream_events=True))
+
+    # Verify that the Condition completed with stop propagation
+    condition_completed = [e for e in events if isinstance(e, ConditionExecutionCompletedEvent)]
+    assert len(condition_completed) == 1
+
+    # Check that inner step has stop=True in results
+    step_results = condition_completed[0].step_results or []
+    assert len(step_results) == 1
+    assert step_results[0].stop is True
+
+    # Most importantly: verify should_not_run_step was NOT executed
+    # by checking there's no StepStartedEvent/StepCompletedEvent for it
+    step_events = [e for e in events if isinstance(e, (StepStartedEvent, StepCompletedEvent))]
+    step_names = [e.step_name for e in step_events]
+    assert "should_not_run_step" not in step_names, "Workflow should have stopped before should_not_run_step"
+
+
+@pytest.mark.asyncio
+async def test_async_condition_propagates_stop():
+    """Test that async Condition propagates stop flag."""
+    condition = Condition(
+        name="Async Stop Condition",
+        evaluator=True,
+        steps=[early_stop_step],
+    )
+    step_input = StepInput(input="test")
+
+    result = await condition.aexecute(step_input)
+
+    assert isinstance(result, StepOutput)
+    assert result.stop is True, "Async Condition should propagate stop=True from inner step"
+
+
+@pytest.mark.asyncio
+async def test_async_condition_streaming_propagates_stop(shared_db):
+    """Test that async streaming Condition propagates stop flag and stops workflow."""
+    workflow = Workflow(
+        name="Async Streaming Stop Test",
+        db=shared_db,
+        steps=[
+            Condition(
+                name="stop_condition",
+                evaluator=True,
+                steps=[early_stop_step],
+            ),
+            should_not_run_step,
+        ],
+    )
+
+    events = []
+    async for event in workflow.arun(input="test", stream=True, stream_events=True):
+        events.append(event)
+
+    # Verify that the Condition completed with stop propagation
+    condition_completed = [e for e in events if isinstance(e, ConditionExecutionCompletedEvent)]
+    assert len(condition_completed) == 1
+
+    # Check that inner step has stop=True in results
+    step_results = condition_completed[0].step_results or []
+    assert len(step_results) == 1
+    assert step_results[0].stop is True
+
+    # Most importantly: verify should_not_run_step was NOT executed
+    step_events = [e for e in events if isinstance(e, (StepStartedEvent, StepCompletedEvent))]
+    step_names = [e.step_name for e in step_events]
+    assert "should_not_run_step" not in step_names, "Workflow should have stopped before should_not_run_step"
