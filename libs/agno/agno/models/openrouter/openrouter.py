@@ -1,12 +1,12 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Type, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel
 
 from agno.exceptions import ModelAuthenticationError
-from agno.models.openai.like import OpenAILike
 from agno.models.message import Message
+from agno.models.openai.like import OpenAILike
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 
@@ -140,14 +140,14 @@ class OpenRouter(OpenAILike):
                 message_dict["reasoning_details"] = message.provider_data["reasoning_details"]
         return message_dict
 
-    def _extract_reasoning_from_obj(self, obj: Any) -> tuple[Any, Optional[str]]:
+    def _extract_reasoning_from_obj(self, obj: Any) -> Tuple[Any, Optional[str]]:
         """Extract reasoning_details and reasoning text from a response object."""
-        reasoning_details = getattr(obj, 'reasoning_details', None)
-        if not reasoning_details and hasattr(obj, 'model_extra') and obj.model_extra:
-            reasoning_details = obj.model_extra.get('reasoning_details')
-        reasoning_text = getattr(obj, 'reasoning', None)
-        if not reasoning_text and hasattr(obj, 'model_extra') and obj.model_extra:
-            reasoning_text = obj.model_extra.get('reasoning')
+        reasoning_details = getattr(obj, "reasoning_details", None)
+        if not reasoning_details and hasattr(obj, "model_extra") and obj.model_extra:
+            reasoning_details = obj.model_extra.get("reasoning_details")
+        reasoning_text = getattr(obj, "reasoning", None)
+        if not reasoning_text and hasattr(obj, "model_extra") and obj.model_extra:
+            reasoning_text = obj.model_extra.get("reasoning")
         return reasoning_details, reasoning_text
 
     def _apply_reasoning_to_response(self, model_response: ModelResponse, obj: Any) -> None:
@@ -167,8 +167,8 @@ class OpenRouter(OpenAILike):
     ) -> ModelResponse:
         """Parse response, extracting reasoning_details for Gemini models."""
         model_response = super()._parse_provider_response(response, response_format=response_format)
-        if self._should_preserve_reasoning() and hasattr(response, 'choices') and response.choices:
-            message = getattr(response.choices[0], 'message', None)
+        if self._should_preserve_reasoning() and hasattr(response, "choices") and response.choices:
+            message = getattr(response.choices[0], "message", None)
             if message:
                 self._apply_reasoning_to_response(model_response, message)
         return model_response
@@ -176,8 +176,8 @@ class OpenRouter(OpenAILike):
     def _parse_provider_response_delta(self, response_delta: Any) -> ModelResponse:
         """Parse streaming delta, extracting reasoning_details."""
         model_response = super()._parse_provider_response_delta(response_delta)
-        if self._should_preserve_reasoning() and hasattr(response_delta, 'choices') and response_delta.choices:
-            delta = getattr(response_delta.choices[0], 'delta', None)
+        if self._should_preserve_reasoning() and hasattr(response_delta, "choices") and response_delta.choices:
+            delta = getattr(response_delta.choices[0], "delta", None)
             if delta:
                 self._apply_reasoning_to_response(model_response, delta)
         return model_response
