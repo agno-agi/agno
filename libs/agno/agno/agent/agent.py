@@ -11882,17 +11882,17 @@ def get_agents(
     """
     agents: List[Agent] = []
     try:
-        agents = db.list_entities(entity_type=ComponentType.AGENT)
-        for agent in agents:
-            config = db.get_config(entity_id=agent["component_id"])
+        components, _ = db.list_components(component_type=ComponentType.AGENT)
+        for component in components:
+            config = db.get_config(component_id=component["component_id"])
             if config is not None:
                 agent_config = config.get("config")
                 if agent_config is not None:
-                    component_id = agent["component_id"]
+                    component_id = component["component_id"]
                     if "id" not in agent_config:
                         agent_config["id"] = component_id
                     agent = Agent.from_dict(agent_config, registry=registry)
-                    # Ensure agent.id is set to the entity_id (the id used to load the agent)
+                    # Ensure agent.id is set to the component_id (the id used to load the agent)
                     # This ensures events use the correct agent_id
                     agent.id = component_id
                     agent.db = db

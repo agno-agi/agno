@@ -4747,7 +4747,7 @@ def get_workflow_by_id(
         Workflow instance or None.
     """
     try:
-        row = db.get_config(entity_id=id, version=version, label=label)
+        row = db.get_config(component_id=id, version=version, label=label)
         if row is None:
             return None
 
@@ -4757,12 +4757,12 @@ def get_workflow_by_id(
 
         resolved_version = row.get("version")
 
-        # Get refs for this workflow version
-        refs = db.get_links(entity_id=id, version=resolved_version) if resolved_version else []
+        # Get links for this workflow version
+        links = db.get_links(component_id=id, version=resolved_version) if resolved_version else []
 
-        workflow = Workflow.from_dict(cfg, db=db, refs=refs, registry=registry)
+        workflow = Workflow.from_dict(cfg, db=db, refs=links, registry=registry)
 
-        # Ensure workflow.id is set to the entity_id (the id used to load the workflow)
+        # Ensure workflow.id is set to the component_id (the id used to load the workflow)
         # This ensures events use the correct workflow_id
         workflow.id = id
 
@@ -4790,19 +4790,19 @@ def get_workflows(
     """Get all workflows from the database"""
     workflows: List[Workflow] = []
     try:
-        entities = db.list_entities(entity_type=ComponentType.WORKFLOW)
-        for entity in entities:
-            config = db.get_config(entity_id=entity["entity_id"])
+        components, _ = db.list_components(component_type=ComponentType.WORKFLOW)
+        for component in components:
+            config = db.get_config(component_id=component["component_id"])
             if config is not None:
                 workflow_config = config.get("config")
                 if workflow_config is not None:
-                    entity_id = entity["entity_id"]
+                    component_id = component["component_id"]
                     if "id" not in workflow_config:
-                        workflow_config["id"] = entity_id
+                        workflow_config["id"] = component_id
                     workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
-                    # Ensure workflow.id is set to the entity_id (the id used to load the workflow)
+                    # Ensure workflow.id is set to the component_id (the id used to load the workflow)
                     # This ensures events use the correct workflow_id
-                    workflow.id = entity_id
+                    workflow.id = component_id
                     workflow.db = db
                     workflows.append(workflow)
         return workflows
