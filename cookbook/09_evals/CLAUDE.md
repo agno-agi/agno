@@ -22,7 +22,7 @@ This folder contains **evaluation** examples - how to measure agent accuracy, re
 
 **Run a cookbook:**
 ```bash
-.venvs/demo/bin/python cookbook/12_evals/accuracy/accuracy_basic.py
+.venvs/demo/bin/python cookbook/09_evals/accuracy/accuracy_basic.py
 ```
 
 ---
