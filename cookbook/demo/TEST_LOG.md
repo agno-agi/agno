@@ -142,25 +142,95 @@ Testing all agents, teams, and workflows in `cookbook/01_demo/` to verify they w
 
 ### planning_agent.py
 
-**Status:** PASS (Import verified)
+**Status:** PASS
 
 **Description:** Autonomous planning agent that breaks down complex goals into steps and executes them.
+
+**Test:** "Create a competitor analysis for OpenAI vs Anthropic vs Google"
+
+**Result:** Comprehensive 11-section competitor analysis including:
+- **Company Profiles:** Latest funding, valuations, revenue for all three
+- **Product Portfolio Comparison:** Full model lineups with specs
+- **Pricing Strategy Analysis:** Detailed API pricing tables for all three
+- **Strategic Focus & Differentiation:** OpenAI (consumer-first), Anthropic (enterprise safety), Google (ecosystem)
+- **Competitive Strengths & Weaknesses:** Pros/cons with risk factors for each
+- **Market Share Analysis:** Enterprise AI (Anthropic 40%), Coding (Anthropic 54%)
+- **Technology Comparison:** Reasoning, coding, multimodal, speed, safety
+- **Business Model & Monetization:** Revenue streams, strategies
+- **Strategic Partnerships:** Microsoft, Amazon, Google, Apple deals
+- **Future Outlook:** 2026 predictions, competitive dynamics
+- **Key Takeaways:** Decision guide for enterprises choosing AI partner
+
+**Key Finding:** "The AI competitive landscape is defined by three distinct strategies: OpenAI's consumer-first blitz, Anthropic's enterprise safety focus, and Google's ecosystem leverage."
+
+**Tools Used:**
+- ReasoningTools (think, analyze) - Structured planning
+- ParallelTools (parallel_search) - Web research for current data
+- PythonTools available but not needed for this task
 
 ---
 
 ### image_analyst_agent.py
 
-**Status:** PASS (Import verified)
+**Status:** PASS
 
 **Description:** Multi-modal agent that analyzes images, charts, and screenshots via URLs.
+
+**Test:** Analyze a financial trading chart image from Unsplash
+
+**Result:** Comprehensive chart analysis including:
+- **Chart Type Identification:** Correctly identified candlestick chart (Japanese candlesticks)
+- **Technical Indicators:** Identified 4 different moving average lines (blue, cyan, yellow, green)
+- **Trend Analysis:** Detected "strong bearish trend" with lower highs and lower lows
+- **Pattern Recognition:** Noted potential reversal/bounce at chart's right edge
+- **Trading Insight:** "Bearish market condition requiring caution before entering long positions"
+
+**Output Format:**
+```
+## Image Analysis
+### What I See - Chart description
+### Key Information - Chart type, indicators, trends, patterns
+### Analysis - Interpretation and trading insights
+```
+
+**Tools Used:**
+- ReasoningTools (think) - Structured analysis approach
+- Vision capabilities (native Claude Sonnet multimodal)
+
+**Note:** Must use `Image(url='...')` class from `agno.media`, not plain URL strings. SVG format not supported - use PNG/JPG.
 
 ---
 
 ### web_intelligence_agent.py
 
-**Status:** PASS (Import verified)
+**Status:** PASS
 
 **Description:** Agent that deeply analyzes websites and extracts structured intelligence.
+
+**Test:** "Analyze anthropic.com and summarize their product offerings"
+
+**Result:** Comprehensive website intelligence report including:
+- **Company Overview:** Mission, target audience, value proposition
+- **Products & Services:**
+  - Claude AI Models table (Opus, Sonnet, Haiku with versions and use cases)
+  - Consumer Plans table (Free, Pro $17-20/mo, Max $100+/mo, Team, Enterprise)
+  - API Pricing table (per million tokens for all models)
+  - Specialized Products (Claude Code, Chrome extension, Excel, Slack, MCP)
+- **Key Differentiators:** Constitutional AI, Extended Thinking, Performance Leadership, 67% cost reduction
+- **Performance Benchmarks:** Comparison table (MMLU Pro, GPQA, MATH, HumanEval, Speed)
+- **Pricing Strategy Summary:** By user segment (Individuals, Developers, Enterprise)
+- **Final Assessment:** Market positioning and competitive analysis
+
+**Key Data Extracted:**
+- Opus 4.5: $5/$25 per MTok (67% cheaper than 4.1)
+- Sonnet 4.5: $3/$15 per MTok
+- Haiku 4.5: $1/$5 per MTok
+- Pro plan: $17/month (annual) or $20/month
+- Context window: 200K standard, 1M beta for Sonnet 4+
+
+**Tools Used:**
+- ParallelTools (parallel_extract) - Website content extraction
+- ReasoningTools (think, analyze) - Structured analysis
 
 ---
 
@@ -237,13 +307,37 @@ Testing all agents, teams, and workflows in `cookbook/01_demo/` to verify they w
 
 ### startup_analyst_workflow.py
 
-**Status:** PASS (Import verified)
+**Status:** PASS
 
 **Description:** Complete due diligence pipeline with 4 phases:
 1. Quick Snapshot - Company profile, market position, recent news (parallel)
 2. Strategic Analysis - Deep dive on business model and competitive moat
 3. Critical Review - Devil's Advocate challenges findings
 4. Final Report - Synthesize into actionable recommendations
+
+**Test:** "Due diligence on: Perplexity AI"
+
+**Result:** Comprehensive VC-quality due diligence report including:
+- **Verdict:** STRONG PASS with detailed rationale
+- **Executive Summary:** 5 key takeaways (unit economics broken, legal exposure, competitive moat eroding)
+- **Bull Case:** Product-market fit, strategic partnerships ($400M Snap deal), technical differentiation
+- **Bear Case:** 167% cost ratio on inference, 80/20 publisher split, 10+ lawsuits, $20B valuation trap
+- **Competitive Analysis Table:** 5 competitors rated by threat level
+- **Risk Assessment:** 4 critical risks, 5 high/moderate risks with probability and impact ratings
+- **Key Metrics Table:** 15 metrics with traffic light assessment
+- **Conditions to Change Assessment:** 5 specific requirements for investability
+
+**Key Finding:** "Inference costs (167% of revenue) + Publisher split (keep only 20%) = Structural losses that worsen with scale"
+
+**Workflow Phases Executed:**
+1. Quick Snapshot (3 parallel agents) - Company Profile, Market Analysis, Recent News
+2. Consolidate Snapshot - Merged parallel outputs
+3. Strategic Analysis - Deep strategic analysis with ReasoningTools
+4. Critical Review - Devil's advocate challenge
+5. Consolidate All - Merged all analysis
+6. Final Report - Synthesized into actionable report
+
+**Note:** Must use `arun()` (async) not `run()` because consolidation steps are async functions
 
 ---
 
