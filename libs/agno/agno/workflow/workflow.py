@@ -350,9 +350,16 @@ class Workflow:
                     config["db"] = PostgresDb.from_dict(db_data)
                 except Exception as e:
                     log_error(f"Error reconstructing DB from dictionary: {e}")
-                    del config["db"]
-            else:
-                del config["db"]
+                    config["db"] = None
+            elif db_type == "sqlite":
+                try:
+                    from agno.db.sqlite import SqliteDb
+
+                    config["db"] = SqliteDb.from_dict(db_data)
+                except Exception as e:
+                    log_error(f"Error reconstructing DB from dictionary: {e}")
+                    config["db"] = None
+            # TODO: Extend support for other DB types and create a db_from_dict method.
 
         # --- Handle Schema reconstruction ---
         # TODO: implement input_schema deserialization
@@ -621,6 +628,7 @@ class Workflow:
         session_state["workflow_id"] = self.id
         if self.name:
             session_state["workflow_name"] = self.name
+
         return session_state
 
     def _generate_workflow_session_name(self) -> str:

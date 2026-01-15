@@ -458,14 +458,31 @@ def get_agent_by_id(
 
 
 def get_team_by_id(
-    team_id: str, teams: Optional[List[Union[Team, RemoteTeam]]] = None
+    team_id: str,
+    teams: Optional[List[Union[Team, RemoteTeam]]] = None,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    registry: Optional[Registry] = None,
 ) -> Optional[Union[Team, RemoteTeam]]:
-    if team_id is None or teams is None:
+    if team_id is None:
         return None
 
-    for team in teams:
-        if team.id == team_id:
+    # Try to get the team from the list of teams
+    if teams:
+        for team in teams:
+            if team.id == team_id:
+                return team
+
+    # Try to get the team from the database
+    if db:
+        from agno.team.team import get_team_by_id as get_team_by_id_db
+
+        try:
+            team = get_team_by_id_db(db=db, id=team_id, registry=registry)
             return team
+        except Exception as e:
+            logger.error(f"Error getting team {team_id} from database: {e}")
+            return None
+
     return None
 
 

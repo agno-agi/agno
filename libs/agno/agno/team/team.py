@@ -34,7 +34,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
-from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
+from agno.db.base import AsyncBaseDb, BaseDb, PrimitiveType, SessionType, UserMemory
 from agno.eval.base import BaseEval
 from agno.exceptions import (
     InputCheckError,
@@ -76,6 +76,7 @@ from agno.run.team import (
     TeamRunOutput,
     TeamRunOutputEvent,
 )
+from agno.registry.registry import Registry
 from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
@@ -426,6 +427,8 @@ class Team:
     # --- Team Storage ---
     # Metadata stored with this team
     metadata: Optional[Dict[str, Any]] = None
+    # Version of the team config (set when loaded from DB)
+    version: Optional[int] = None
 
     # --- Team Reasoning ---
     reasoning: bool = False
@@ -912,6 +915,22 @@ class Team:
             user_id = self.user_id
 
         return session_id, user_id
+
+    def _initialize_session_state(
+        self,
+        session_state: Dict[str, Any],
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Initialize the session state for the team."""
+        if user_id:
+            session_state["current_user_id"] = user_id
+        if session_id is not None:
+            session_state["current_session_id"] = session_id
+        if run_id is not None:
+            session_state["current_run_id"] = run_id
+        return session_state
 
     def _has_async_db(self) -> bool:
         """Return True if the db the team is equipped with is an Async implementation"""
@@ -2014,6 +2033,666 @@ class Team:
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
+    # ==================== Serialization Methods ====================
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the Team to a dictionary.
+
+        This method serializes all team attributes to a dictionary format that can be stored
+        and later reconstructed using from_dict(). Non-serializable attributes like callables
+        and complex objects are handled appropriately.
+
+        Returns:
+            Dict[str, Any]: Dictionary representation of the team configuration
+        """
+        config: Dict[str, Any] = {}
+
+        # --- Team settings ---
+        if self.id is not None:
+            config["id"] = self.id
+        if self.name is not None:
+            config["name"] = self.name
+        if self.role is not None:
+            config["role"] = self.role
+        if self.description is not None:
+            config["description"] = self.description
+
+        # --- Model ---
+        if self.model is not None:
+            if isinstance(self.model, Model):
+                config["model"] = self.model.to_dict()
+            else:
+                config["model"] = str(self.model)
+
+        # --- Members ---
+        # Serialize member agents/teams
+        if self.members:
+            serialized_members = []
+            for member in self.members:
+                if isinstance(member, Agent):
+                    serialized_members.append({
+                        "type": "agent",
+                        "id": member.id,
+                        "config": member.to_dict(),
+                    })
+                elif isinstance(member, Team):
+                    serialized_members.append({
+                        "type": "team",
+                        "id": member.id,
+                        "config": member.to_dict(),
+                    })
+            config["members"] = serialized_members
+
+        # --- Execution settings ---
+        if self.respond_directly:
+            config["respond_directly"] = self.respond_directly
+        if self.delegate_to_all_members:
+            config["delegate_to_all_members"] = self.delegate_to_all_members
+        if not self.determine_input_for_members:
+            config["determine_input_for_members"] = self.determine_input_for_members
+
+        # --- User settings ---
+        if self.user_id is not None:
+            config["user_id"] = self.user_id
+
+        # --- Session settings ---
+        if self.session_id is not None:
+            config["session_id"] = self.session_id
+        if self.session_state is not None:
+            config["session_state"] = self.session_state
+        if self.add_session_state_to_context:
+            config["add_session_state_to_context"] = self.add_session_state_to_context
+        if self.enable_agentic_state:
+            config["enable_agentic_state"] = self.enable_agentic_state
+        if self.overwrite_db_session_state:
+            config["overwrite_db_session_state"] = self.overwrite_db_session_state
+        if self.cache_session:
+            config["cache_session"] = self.cache_session
+        if self.add_team_history_to_members:
+            config["add_team_history_to_members"] = self.add_team_history_to_members
+        if self.num_team_history_runs != 3:
+            config["num_team_history_runs"] = self.num_team_history_runs
+        if self.share_member_interactions:
+            config["share_member_interactions"] = self.share_member_interactions
+        if self.search_session_history:
+            config["search_session_history"] = self.search_session_history
+        if self.num_history_sessions is not None:
+            config["num_history_sessions"] = self.num_history_sessions
+        if self.read_chat_history:
+            config["read_chat_history"] = self.read_chat_history
+
+        # --- System message settings ---
+        if self.instructions is not None and not callable(self.instructions):
+            config["instructions"] = self.instructions
+        if self.expected_output is not None:
+            config["expected_output"] = self.expected_output
+        if self.additional_context is not None:
+            config["additional_context"] = self.additional_context
+        if self.markdown:
+            config["markdown"] = self.markdown
+        if self.add_datetime_to_context:
+            config["add_datetime_to_context"] = self.add_datetime_to_context
+        if self.add_location_to_context:
+            config["add_location_to_context"] = self.add_location_to_context
+        if self.timezone_identifier is not None:
+            config["timezone_identifier"] = self.timezone_identifier
+        if self.add_name_to_context:
+            config["add_name_to_context"] = self.add_name_to_context
+        if self.add_member_tools_to_context:
+            config["add_member_tools_to_context"] = self.add_member_tools_to_context
+        if self.system_message is not None and isinstance(self.system_message, str):
+            config["system_message"] = self.system_message
+        if self.system_message_role != "system":
+            config["system_message_role"] = self.system_message_role
+        if self.introduction is not None:
+            config["introduction"] = self.introduction
+        if not self.resolve_in_context:
+            config["resolve_in_context"] = self.resolve_in_context
+
+        # --- Database settings ---
+        if self.db is not None:
+            config["db"] = self.db.to_dict()
+
+        # --- Dependencies ---
+        if self.dependencies is not None:
+            config["dependencies"] = self.dependencies
+        if self.add_dependencies_to_context:
+            config["add_dependencies_to_context"] = self.add_dependencies_to_context
+
+        # --- Knowledge settings ---
+        if self.knowledge_filters is not None:
+            config["knowledge_filters"] = self.knowledge_filters
+        if self.enable_agentic_knowledge_filters:
+            config["enable_agentic_knowledge_filters"] = self.enable_agentic_knowledge_filters
+        if self.add_knowledge_to_context:
+            config["add_knowledge_to_context"] = self.add_knowledge_to_context
+        if self.update_knowledge:
+            config["update_knowledge"] = self.update_knowledge
+        if self.references_format != "json":
+            config["references_format"] = self.references_format
+
+        # --- Tools ---
+        if self.tools:
+            serialized_tools = []
+            for tool in self.tools:
+                try:
+                    if isinstance(tool, Function):
+                        serialized_tools.append(tool.to_dict())
+                    elif isinstance(tool, Toolkit):
+                        # Serialize toolkit functions
+                        for func in tool.functions.values():
+                            serialized_tools.append(func.to_dict())
+                    elif callable(tool):
+                        # Convert callable to Function and serialize
+                        func = Function.from_callable(tool)
+                        serialized_tools.append(func.to_dict())
+                except Exception as e:
+                    log_warning(f"Could not serialize tool {tool}: {e}")
+            if serialized_tools:
+                config["tools"] = serialized_tools
+
+        if self.tool_call_limit is not None:
+            config["tool_call_limit"] = self.tool_call_limit
+        if self.tool_choice is not None:
+            config["tool_choice"] = self.tool_choice
+        if self.get_member_information_tool:
+            config["get_member_information_tool"] = self.get_member_information_tool
+        if not self.search_knowledge:
+            config["search_knowledge"] = self.search_knowledge
+
+        # --- Structured output ---
+        if self.input_schema is not None:
+            config["input_schema"] = self.input_schema.__name__
+        if self.output_schema is not None:
+            if isinstance(self.output_schema, type) and issubclass(self.output_schema, BaseModel):
+                config["output_schema"] = self.output_schema.__name__
+            else:
+                config["output_schema"] = self.output_schema
+        if self.parser_model is not None:
+            if isinstance(self.parser_model, Model):
+                config["parser_model"] = self.parser_model.to_dict()
+            else:
+                config["parser_model"] = str(self.parser_model)
+        if self.parser_model_prompt is not None:
+            config["parser_model_prompt"] = self.parser_model_prompt
+        if self.output_model is not None:
+            if isinstance(self.output_model, Model):
+                config["output_model"] = self.output_model.to_dict()
+            else:
+                config["output_model"] = str(self.output_model)
+        if self.output_model_prompt is not None:
+            config["output_model_prompt"] = self.output_model_prompt
+        if self.use_json_mode:
+            config["use_json_mode"] = self.use_json_mode
+        if not self.parse_response:
+            config["parse_response"] = self.parse_response
+
+        # --- Memory settings ---
+        if self.enable_agentic_memory:
+            config["enable_agentic_memory"] = self.enable_agentic_memory
+        if self.enable_user_memories:
+            config["enable_user_memories"] = self.enable_user_memories
+        if self.add_memories_to_context is not None:
+            config["add_memories_to_context"] = self.add_memories_to_context
+        if self.enable_session_summaries:
+            config["enable_session_summaries"] = self.enable_session_summaries
+        if self.add_session_summary_to_context is not None:
+            config["add_session_summary_to_context"] = self.add_session_summary_to_context
+
+        # --- History settings ---
+        if self.add_history_to_context:
+            config["add_history_to_context"] = self.add_history_to_context
+        if self.num_history_runs is not None:
+            config["num_history_runs"] = self.num_history_runs
+        if self.num_history_messages is not None:
+            config["num_history_messages"] = self.num_history_messages
+        if self.max_tool_calls_from_history is not None:
+            config["max_tool_calls_from_history"] = self.max_tool_calls_from_history
+
+        # --- Compression settings ---
+        if self.compress_tool_results:
+            config["compress_tool_results"] = self.compress_tool_results
+
+        # --- Reasoning settings ---
+        if self.reasoning:
+            config["reasoning"] = self.reasoning
+        if self.reasoning_model is not None:
+            if isinstance(self.reasoning_model, Model):
+                config["reasoning_model"] = self.reasoning_model.to_dict()
+            else:
+                config["reasoning_model"] = str(self.reasoning_model)
+        if self.reasoning_min_steps != 1:
+            config["reasoning_min_steps"] = self.reasoning_min_steps
+        if self.reasoning_max_steps != 10:
+            config["reasoning_max_steps"] = self.reasoning_max_steps
+
+        # --- Streaming settings ---
+        if self.stream is not None:
+            config["stream"] = self.stream
+        if self.stream_events is not None:
+            config["stream_events"] = self.stream_events
+        if not self.stream_member_events:
+            config["stream_member_events"] = self.stream_member_events
+        if self.store_events:
+            config["store_events"] = self.store_events
+        if self.store_member_responses:
+            config["store_member_responses"] = self.store_member_responses
+
+        # --- Media settings ---
+        if not self.send_media_to_model:
+            config["send_media_to_model"] = self.send_media_to_model
+        if not self.store_media:
+            config["store_media"] = self.store_media
+        if not self.store_tool_messages:
+            config["store_tool_messages"] = self.store_tool_messages
+        if not self.store_history_messages:
+            config["store_history_messages"] = self.store_history_messages
+
+        # --- Debug settings ---
+        if self.debug_mode:
+            config["debug_mode"] = self.debug_mode
+        if self.debug_level != 1:
+            config["debug_level"] = self.debug_level
+        if self.show_members_responses:
+            config["show_members_responses"] = self.show_members_responses
+
+        # --- Retry settings ---
+        if self.retries != 0:
+            config["retries"] = self.retries
+        if self.delay_between_retries != 1:
+            config["delay_between_retries"] = self.delay_between_retries
+        if self.exponential_backoff:
+            config["exponential_backoff"] = self.exponential_backoff
+
+        # --- Metadata ---
+        if self.metadata is not None:
+            config["metadata"] = self.metadata
+
+        # --- Telemetry ---
+        if not self.telemetry:
+            config["telemetry"] = self.telemetry
+
+        return config
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional["Registry"] = None,
+        db: Optional["BaseDb"] = None,
+        refs: Optional[List[Dict[str, Any]]] = None,
+    ) -> "Team":
+        """
+        Create a Team from a dictionary.
+
+        This method reconstructs a Team instance from a dictionary representation,
+        typically created by to_dict(). Complex objects like Model are reconstructed
+        from their serialized forms.
+
+        Args:
+            data: Dictionary containing team configuration
+            registry: Optional registry for rehydrating tools
+            db: Optional database for loading members from refs
+            refs: Optional refs for this team version (to load members from DB)
+
+        Returns:
+            Team: Reconstructed team instance
+        """
+        from agno.registry import Registry
+
+        # Create a copy to avoid modifying the original
+        config = data.copy()
+
+        # --- Handle Model reconstruction ---
+        if "model" in config:
+            model_data = config["model"]
+            if isinstance(model_data, dict):
+                if "id" in model_data:
+                    config["model"] = f"{model_data['provider']}:{model_data['id']}"
+            config["model"] = get_model(config["model"])
+
+        # --- Handle Members reconstruction ---
+        # If we have refs and db, load members from database
+        if refs and db:
+            from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
+
+            reconstructed_members = []
+            # Sort refs by position to maintain order
+            member_refs = sorted(
+                [r for r in refs if r.get("ref_kind") in ("team_member_agent", "team_member_team")],
+                key=lambda r: r.get("position", 0),
+            )
+            for ref in member_refs:
+                child_entity_id = ref.get("child_entity_id")
+                child_version = ref.get("child_version")
+                ref_kind = ref.get("ref_kind")
+
+                if ref_kind == "team_member_agent" and child_entity_id:
+                    agent = get_agent_by_id_db(db=db, id=child_entity_id, version=child_version, registry=registry)
+                    if agent:
+                        reconstructed_members.append(agent)
+                elif ref_kind == "team_member_team" and child_entity_id:
+                    # Load nested team recursively
+                    nested_team = cls.load(team_id=child_entity_id, db=db, version=child_version, registry=registry)
+                    if nested_team:
+                        reconstructed_members.append(nested_team)
+
+            if reconstructed_members:
+                config["members"] = reconstructed_members
+        # Fall back to embedded member configs if no refs/db
+        elif "members" in config and config["members"]:
+            reconstructed_members = []
+            for member_data in config["members"]:
+                member_type = member_data.get("type")
+                member_config = member_data.get("config", {})
+
+                if member_type == "agent":
+                    reconstructed_members.append(Agent.from_dict(member_config, registry=registry))
+                elif member_type == "team":
+                    reconstructed_members.append(cls.from_dict(member_config, registry=registry))
+            config["members"] = reconstructed_members
+
+        # --- Handle reasoning_model reconstruction ---
+        if "reasoning_model" in config:
+            reasoning_model_data = config["reasoning_model"]
+            if isinstance(reasoning_model_data, dict):
+                if "id" in reasoning_model_data:
+                    config["reasoning_model"] = f"{reasoning_model_data['provider']}:{reasoning_model_data['id']}"
+            config["reasoning_model"] = get_model(config["reasoning_model"])
+
+        # --- Handle parser_model reconstruction ---
+        if "parser_model" in config:
+            parser_model_data = config["parser_model"]
+            if isinstance(parser_model_data, dict):
+                if "id" in parser_model_data:
+                    config["parser_model"] = f"{parser_model_data['provider']}:{parser_model_data['id']}"
+            config["parser_model"] = get_model(config["parser_model"])
+
+        # --- Handle output_model reconstruction ---
+        if "output_model" in config:
+            output_model_data = config["output_model"]
+            if isinstance(output_model_data, dict):
+                if "id" in output_model_data:
+                    config["output_model"] = f"{output_model_data['provider']}:{output_model_data['id']}"
+            config["output_model"] = get_model(config["output_model"])
+
+        # --- Handle tools reconstruction ---
+        if "tools" in config and config["tools"]:
+            if registry:
+                config["tools"] = [registry.rehydrate_function(t) for t in config["tools"]]
+            else:
+                log_warning(
+                    "No registry provided, tools will not be rehydrated. Please provide a registry to rehydrate tools."
+                )
+
+        # --- Handle DB reconstruction ---
+        if "db" in config and isinstance(config["db"], dict):
+            db_data = config["db"]
+            db_type = db_data.get("type")
+
+            if db_type == "postgres":
+                try:
+                    from agno.db.postgres import PostgresDb
+
+                    config["db"] = PostgresDb.from_dict(db_data)
+                except Exception as e:
+                    log_error(f"Error reconstructing DB from dictionary: {e}")
+                    config["db"] = None
+            elif db_type == "sqlite":
+                try:
+                    from agno.db.sqlite import SqliteDb
+
+                    config["db"] = SqliteDb.from_dict(db_data)
+                except Exception as e:
+                    log_error(f"Error reconstructing DB from dictionary: {e}")
+                    config["db"] = None
+
+        # --- Handle Schema reconstruction ---
+        if "input_schema" in config and config["input_schema"] and registry:
+            config["input_schema"] = registry.schemas.get(config["input_schema"])
+
+        if "output_schema" in config and config["output_schema"] and registry:
+            if isinstance(config["output_schema"], str):
+                config["output_schema"] = registry.schemas.get(config["output_schema"])
+
+        # Create and return the team
+        return cls(**config)
+
+    # ==================== Config Database Functions ====================
+
+    def save(
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        stage: str = "published",
+        label: Optional[str] = None,
+        notes: Optional[str] = None,
+        set_current: bool = True,
+        publish: bool = False,
+        upsert_version: bool = False,
+    ) -> int:
+        """
+        Save the team configuration to the database, including member agents/teams.
+
+        Args:
+            db: Database to save to (uses self.db if not provided)
+            stage: Config stage ("draft" or "published")
+            label: Optional version label
+            notes: Optional notes for this version
+            set_current: Whether to set this as the current version
+            publish: If True, sets stage to "published"
+            upsert_version: If True, updates the current version instead of creating new
+
+        Returns:
+            int: The version number of the saved config
+        """
+        from agno.agent.agent import Agent
+
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+
+        try:
+            # Track saved entity versions for pinning refs
+            saved_versions: Dict[str, int] = {}
+
+            # Collect all refs for members
+            all_refs: List[Dict[str, Any]] = []
+
+            # Save each member (Agent or nested Team) and collect refs
+            for position, member in enumerate(self.members or []):
+                if isinstance(member, Agent):
+                    # Save member agent
+                    member_version = member.save(
+                        db=db_,
+                        stage=stage,
+                        label=label,
+                        notes=notes,
+                        set_current=set_current,
+                        publish=publish,
+                        upsert_version=upsert_version,
+                    )
+                    saved_versions[member.id] = member_version
+
+                    # Add ref for this member agent
+                    all_refs.append({
+                        "ref_kind": "team_member_agent",
+                        "ref_key": member.id,
+                        "child_entity_id": member.id,
+                        "child_version": member_version,
+                        "position": position,
+                    })
+
+                elif isinstance(member, Team):
+                    # Save nested team (recursive)
+                    member_version = member.save(
+                        db=db_,
+                        stage=stage,
+                        label=label,
+                        notes=notes,
+                        set_current=set_current,
+                        publish=publish,
+                        upsert_version=upsert_version,
+                    )
+                    saved_versions[member.id] = member_version
+
+                    # Add ref for this nested team
+                    all_refs.append({
+                        "ref_kind": "team_member_team",
+                        "ref_key": member.id,
+                        "child_entity_id": member.id,
+                        "child_version": member_version,
+                        "position": position,
+                    })
+
+            # Ensure team entity exists
+            db_.upsert_entity(
+                entity_id=self.id,
+                entity_type=PrimitiveType.TEAM,
+                name=getattr(self, "name", self.id),
+                description=getattr(self, "description", None),
+                metadata=getattr(self, "metadata", None),
+            )
+
+            # Determine version to update (if overwriting)
+            version_to_update = None
+            if upsert_version:
+                entity = db_.get_entity(self.id)
+                if entity and entity.get("current_version"):
+                    version_to_update = entity["current_version"]
+
+            # Create or update config with refs
+            config = db_.upsert_config(
+                entity_id=self.id,
+                version=version_to_update,
+                config=self.to_dict(),
+                version_label=label,
+                stage="published" if publish else stage,
+                notes=notes,
+                set_current=set_current,
+                refs=all_refs if all_refs else None,
+            )
+
+            return config["version"]
+
+        except Exception as e:
+            log_error(f"Error saving Team to database: {e}")
+            raise
+
+    @classmethod
+    def load(
+        cls,
+        team_id: str,
+        *,
+        db: "BaseDb",
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+        registry: Optional["Registry"] = None,
+    ) -> Optional["Team"]:
+        """
+        Load a team by id from the database.
+
+        Args:
+            team_id: The team ID to load
+            db: Database to load from
+            version: Specific version to load (uses current if not provided)
+            label: Load by label instead of version
+            registry: Optional registry for rehydrating tools
+
+        Returns:
+            Team: Loaded team instance, or None if not found
+        """
+        if not db:
+            raise ValueError("Db not initialized or provided")
+
+        data = db.get_config(entity_id=team_id, version=version if version is not None else None, label=label)
+        if data is None:
+            return None
+
+        resolved_version = data.get("version") if isinstance(data, dict) else None
+
+        # Get refs for this team version to load members from DB
+        refs = db.get_refs(entity_id=team_id, version=resolved_version) if resolved_version else []
+
+        team = cls.from_dict(
+            data["config"] if "config" in data else data,
+            registry=registry,
+            db=db,
+            refs=refs,
+        )
+
+        team.id = team_id
+        if resolved_version:
+            team.version = int(resolved_version)
+        team.db = db
+        return team
+
+    def delete(
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        hard_delete: bool = False,
+    ) -> bool:
+        """
+        Delete the team entity from the database.
+
+        Args:
+            db: Database to delete from (uses self.db if not provided)
+            hard_delete: If True, permanently deletes. Otherwise soft-deletes.
+
+        Returns:
+            bool: True if deleted, False if not found
+        """
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+
+        return db_.delete_entity(entity_id=self.id, hard_delete=hard_delete)
+
+    def delete_version(
+        self,
+        *,
+        version: int,
+        db: Optional["BaseDb"] = None,
+    ) -> bool:
+        """
+        Delete a specific config version.
+        """
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+
+        if hasattr(db_, "delete_config_version"):
+            return db_.delete_config_version(entity_id=self.id, version=version)
+
+        raise NotImplementedError("Db does not support deleting a specific version yet")
+
+    def publish(
+        self,
+        *,
+        version: Optional[int] = None,
+        db: Optional["BaseDb"] = None,
+        set_current: bool = True,
+        pin_refs: bool = True,
+    ) -> bool:
+        """
+        Publish a draft version.
+        """
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+
+        version_to_publish = version
+        if version_to_publish is None:
+            entity = db_.get_entity(self.id)
+            if entity and entity.get("current_version"):
+                version_to_publish = entity["current_version"]
+            else:
+                raise ValueError("No version specified and no current version set")
+
+        return db_.publish_config(entity_id=self.id, version=version_to_publish, pin_refs=pin_refs)
+
     @overload
     def run(
         self,
@@ -2148,11 +2827,15 @@ class Team:
         team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=team_session)
 
-        # Initialize session state. Get it from DB if relevant.
-        session_state = self._load_session_state(
-            session=team_session,
+        # Initialize session state
+        session_state = self._initialize_session_state(
             session_state=session_state if session_state is not None else {},
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_id,
         )
+        # Update session state from DB
+        session_state = self._load_session_state(session=team_session, session_state=session_state)
 
         # Determine runtime dependencies
         dependencies = dependencies if dependencies is not None else self.dependencies
@@ -2326,12 +3009,18 @@ class Team:
 
                     # 2. Update metadata and session state
                     self._update_metadata(session=team_session)
-
-                    # Initialize session state. Get it from DB if relevant.
-                    run_context.session_state = self._load_session_state(
-                        session=team_session,
+                    # Initialize session state
+                    run_context.session_state = self._initialize_session_state(
                         session_state=run_context.session_state if run_context.session_state is not None else {},
+                        user_id=user_id,
+                        session_id=session_id,
+                        run_id=run_response.run_id,
                     )
+                    # Update session state from DB
+                    if run_context.session_state is not None:
+                        run_context.session_state = self._load_session_state(
+                            session=team_session, session_state=run_context.session_state
+                        )
 
                     run_input = cast(TeamRunInput, run_response.input)
 
@@ -2627,12 +3316,18 @@ class Team:
 
                     # 3. Update metadata and session state
                     self._update_metadata(session=team_session)
-
-                    # Initialize session state. Get it from DB if relevant.
-                    run_context.session_state = self._load_session_state(
-                        session=team_session,
+                    # Initialize session state
+                    run_context.session_state = self._initialize_session_state(
                         session_state=run_context.session_state if run_context.session_state is not None else {},
+                        user_id=user_id,
+                        session_id=session_id,
+                        run_id=run_response.run_id,
                     )
+                    # Update session state from DB
+                    if run_context.session_state is not None:
+                        run_context.session_state = self._load_session_state(
+                            session=team_session, session_state=run_context.session_state
+                        )  # type: ignore
 
                     # 4. Execute pre-hooks
                     run_input = cast(TeamRunInput, run_response.input)
@@ -9238,3 +9933,106 @@ class Team:
             )
         except Exception as e:
             log_debug(f"Could not create Team run telemetry event: {e}")
+
+
+def get_team_by_id(
+    db: "BaseDb",
+    id: str,
+    version: Optional[int] = None,
+    label: Optional[str] = None,
+    registry: Optional["Registry"] = None,
+) -> Optional["Team"]:
+    """
+    Get a Team by id from the database (new entities/configs schema).
+
+    Resolution order:
+    - if version is provided: load that version
+    - elif label is provided: load that labeled version
+    - else: load entity.current_version
+
+    Args:
+        db: Database handle.
+        id: Team entity_id.
+        version: Optional integer config version.
+        label: Optional version_label.
+        registry: Optional Registry for reconstructing unserializable components.
+
+    Returns:
+        Team instance or None.
+    """
+    try:
+        row = db.get_config(entity_id=id, version=version, label=label)
+        if row is None:
+            return None
+
+        cfg = row.get("config") if isinstance(row, dict) else None
+        if cfg is None:
+            raise ValueError(f"Invalid config found for team {id}")
+
+        resolved_version = row.get("version")
+
+        # Get refs for this team version to load members from DB
+        refs = db.get_refs(entity_id=id, version=resolved_version) if resolved_version else []
+
+        team = Team.from_dict(cfg, registry=registry, db=db, refs=refs)
+
+        team.id = id
+
+        try:
+            team.version = int(resolved_version)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+        try:
+            team.db = db  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+        return team
+
+    except Exception as e:
+        log_error(f"Error loading Team {id} from database: {e}")
+        return None
+
+
+def get_teams(
+    db: "BaseDb",
+    registry: Optional["Registry"] = None,
+) -> List["Team"]:
+    """
+    Get all teams from the database.
+
+    Args:
+        db: Database to load teams from
+        registry: Optional registry for rehydrating tools
+
+    Returns:
+        List of Team instances loaded from the database
+    """
+    teams: List[Team] = []
+    try:
+        entities = db.list_entities(entity_type=PrimitiveType.TEAM.value)
+        for entity in entities:
+            entity_id = entity["entity_id"]
+            config = db.get_config(entity_id=entity_id)
+            if config is not None:
+                team_config = config.get("config")
+                if team_config is not None:
+                    resolved_version = config.get("version")
+                    # Get refs for this team version
+                    refs = db.get_refs(entity_id=entity_id, version=resolved_version) if resolved_version else []
+
+                    if "id" not in team_config:
+                        team_config["id"] = entity_id
+                    team = Team.from_dict(team_config, registry=registry, db=db, refs=refs)
+                    # Ensure team.id is set to the entity_id
+                    team.id = entity_id
+                    team.db = db
+                    if resolved_version:
+                        team.version = int(resolved_version)
+                    teams.append(team)
+        return teams
+
+    except Exception as e:
+        log_error(f"Error loading Teams from database: {e}")
+        return []

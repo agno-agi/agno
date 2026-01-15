@@ -7,7 +7,7 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
-from agno.db.base import BaseDb, SessionType
+from agno.db.base import BaseDb, PrimitiveType, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -55,6 +55,9 @@ class SqliteDb(BaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        entity_table: Optional[str] = None,
+        config_table: Optional[str] = None,
+        entity_ref_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -79,6 +82,9 @@ class SqliteDb(BaseDb):
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
+            entity_table (Optional[str]): Name of the table to store entities.
+            config_table (Optional[str]): Name of the table to store configurations.
+            entity_ref_table (Optional[str]): Name of the table to store entity references.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -99,6 +105,9 @@ class SqliteDb(BaseDb):
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
+            entity_table=entity_table,
+            config_table=config_table,
+            entity_ref_table=entity_ref_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -124,6 +133,38 @@ class SqliteDb(BaseDb):
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
+
+    # -- Serialization methods --
+    def to_dict(self) -> Dict[str, Any]:
+        base = super().to_dict()
+        base.update(
+            {
+                "db_file": self.db_file,
+                "db_url": self.db_url,
+                "type": "sqlite",
+            }
+        )
+        return base
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SqliteDb":
+        return cls(
+            db_file=data.get("db_file"),
+            db_url=data.get("db_url"),
+            session_table=data.get("session_table"),
+            culture_table=data.get("culture_table"),
+            memory_table=data.get("memory_table"),
+            metrics_table=data.get("metrics_table"),
+            eval_table=data.get("eval_table"),
+            knowledge_table=data.get("knowledge_table"),
+            traces_table=data.get("traces_table"),
+            spans_table=data.get("spans_table"),
+            versions_table=data.get("versions_table"),
+            entity_table=data.get("entity_table"),
+            config_table=data.get("config_table"),
+            entity_ref_table=data.get("entity_ref_table"),
+            id=data.get("id"),
+        )
 
     def close(self) -> None:
         """Close database connections and dispose of the connection pool.
@@ -156,6 +197,9 @@ class SqliteDb(BaseDb):
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
+            (self.entity_table_name, "entities"),
+            (self.config_table_name, "configs"),
+            (self.entity_ref_table_name, "entity_refs"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -165,6 +209,12 @@ class SqliteDb(BaseDb):
         """
         Create a table with the appropriate schema based on the table type.
 
+        Supports:
+        - _unique_constraints: [{"name": "...", "columns": [...]}]
+        - __primary_key__: ["col1", "col2", ...]
+        - __foreign_keys__: [{"columns":[...], "ref_table":"...", "ref_columns":[...]}]
+        - column-level foreign_key: "logical_table.column" (resolved via _resolve_* helpers)
+
         Args:
             table_name (str): Name of the table to create
             table_type (str): Type of table (used to get schema definition)
@@ -173,48 +223,104 @@ class SqliteDb(BaseDb):
             Table: SQLAlchemy Table object
         """
         try:
+            from sqlalchemy.schema import ForeignKeyConstraint, PrimaryKeyConstraint
+
             # Pass traces_table_name for spans table foreign key resolution
             table_schema = get_table_schema_definition(table_type, traces_table_name=self.trace_table_name).copy()
 
             columns: List[Column] = []
             indexes: List[str] = []
-            unique_constraints: List[str] = []
-            schema_unique_constraints = table_schema.pop("_unique_constraints", [])
 
-            # Get the columns, indexes, and unique constraints from the table schema
+            # Extract special schema keys before iterating columns
+            schema_unique_constraints = table_schema.pop("_unique_constraints", [])
+            schema_primary_key = table_schema.pop("__primary_key__", None)
+            schema_foreign_keys = table_schema.pop("__foreign_keys__", [])
+
+            # Build columns
             for col_name, col_config in table_schema.items():
                 column_args = [col_name, col_config["type"]()]
-                column_kwargs = {}
+                column_kwargs: Dict[str, Any] = {}
 
-                if col_config.get("primary_key", False):
+                # Column-level PK only if no composite PK is defined
+                if col_config.get("primary_key", False) and schema_primary_key is None:
                     column_kwargs["primary_key"] = True
+
                 if "nullable" in col_config:
                     column_kwargs["nullable"] = col_config["nullable"]
+
+                if "default" in col_config:
+                    column_kwargs["default"] = col_config["default"]
+
                 if col_config.get("index", False):
                     indexes.append(col_name)
+
                 if col_config.get("unique", False):
                     column_kwargs["unique"] = True
-                    unique_constraints.append(col_name)
 
-                # Handle foreign key constraint
+                # Single-column FK
                 if "foreign_key" in col_config:
-                    column_args.append(ForeignKey(col_config["foreign_key"]))
+                    fk_ref = self._resolve_fk_reference(col_config["foreign_key"])
+                    column_args.append(ForeignKey(fk_ref))
 
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
             table = Table(table_name, self.metadata, *columns)
 
-            # Add multi-column unique constraints with table-specific names
+            # Composite PK
+            if schema_primary_key is not None:
+                missing = [c for c in schema_primary_key if c not in table.c]
+                if missing:
+                    raise ValueError(f"Composite PK references missing columns in {table_name}: {missing}")
+
+                pk_constraint_name = f"{table_name}_pkey"
+                table.append_constraint(PrimaryKeyConstraint(*schema_primary_key, name=pk_constraint_name))
+
+            # Composite FKs
+            for fk_config in schema_foreign_keys:
+                fk_columns = fk_config["columns"]
+                ref_table_logical = fk_config["ref_table"]
+                ref_columns = fk_config["ref_columns"]
+
+                if len(fk_columns) != len(ref_columns):
+                    raise ValueError(
+                        f"Composite FK in {table_name} has mismatched columns/ref_columns: {fk_columns} vs {ref_columns}"
+                    )
+
+                missing = [c for c in fk_columns if c not in table.c]
+                if missing:
+                    raise ValueError(f"Composite FK references missing columns in {table_name}: {missing}")
+
+                resolved_ref_table = self._resolve_table_name(ref_table_logical)
+                fk_constraint_name = f"{table_name}_{'_'.join(fk_columns)}_fkey"
+
+                ref_column_strings = [f"{resolved_ref_table}.{col}" for col in ref_columns]
+
+                table.append_constraint(
+                    ForeignKeyConstraint(
+                        fk_columns,
+                        ref_column_strings,
+                        name=fk_constraint_name,
+                    )
+                )
+
+            # Multi-column unique constraints
             for constraint in schema_unique_constraints:
                 constraint_name = f"{table_name}_{constraint['name']}"
                 constraint_columns = constraint["columns"]
+
+                missing = [c for c in constraint_columns if c not in table.c]
+                if missing:
+                    raise ValueError(f"Unique constraint references missing columns in {table_name}: {missing}")
+
                 table.append_constraint(UniqueConstraint(*constraint_columns, name=constraint_name))
 
-            # Add indexes to the table definition
+            # Indexes
             for idx_col in indexes:
+                if idx_col not in table.c:
+                    raise ValueError(f"Index references missing column in {table_name}: {idx_col}")
                 idx_name = f"idx_{table_name}_{idx_col}"
-                table.append_constraint(Index(idx_name, idx_col))
+                Index(idx_name, table.c[idx_col])  # Correct way; do NOT append as constraint
 
             # Create table
             table_created = False
@@ -225,7 +331,7 @@ class SqliteDb(BaseDb):
             else:
                 log_debug(f"Table '{table_name}' already exists, skipping creation")
 
-            # Create indexes
+            # Create indexes (SQLite)
             for idx in table.indexes:
                 try:
                     # Check if index already exists
@@ -237,8 +343,8 @@ class SqliteDb(BaseDb):
                             continue
 
                     idx.create(self.db_engine)
-
                     log_debug(f"Created index: {idx.name} for table {table_name}")
+
                 except Exception as e:
                     log_warning(f"Error creating index {idx.name}: {e}")
 
@@ -255,6 +361,41 @@ class SqliteDb(BaseDb):
             print_exc()
             log_error(f"Could not create table '{table_name}': {e}")
             raise e
+
+    def _resolve_fk_reference(self, fk_ref: str) -> str:
+        """
+        Resolve a simple foreign key reference to the actual table name.
+
+        Accepts:
+        - "logical_table.column"  -> "{resolved_table}.{column}"
+        - already-qualified refs  -> returned as-is
+        """
+        parts = fk_ref.split(".")
+        if len(parts) == 2:
+            table, column = parts
+            resolved_table = self._resolve_table_name(table)
+            return f"{resolved_table}.{column}"
+        return fk_ref
+
+    def _resolve_table_name(self, logical_name: str) -> str:
+        """
+        Resolve logical table name to configured table name.
+        """
+        table_map = {
+            "entities": self.entity_table_name,
+            "configs": self.config_table_name,
+            "entity_refs": self.entity_ref_table_name,
+            "traces": self.trace_table_name,
+            "spans": self.span_table_name,
+            "sessions": self.session_table_name,
+            "memories": self.memory_table_name,
+            "metrics": self.metrics_table_name,
+            "evals": self.eval_table_name,
+            "knowledge": self.knowledge_table_name,
+            "culture": self.culture_table_name,
+            "versions": self.versions_table_name,
+        }
+        return table_map.get(logical_name, logical_name)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
@@ -333,6 +474,39 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.versions_table
+
+        elif table_type == "entities":
+            self.entity_table = self._get_or_create_table(
+                table_name=self.entity_table_name,
+                table_type="entities",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.entity_table
+
+        elif table_type == "configs":
+            # Ensure entities table exists first (configs references entities)
+            if create_table_if_not_found:
+                self._get_table(table_type="entities", create_table_if_not_found=True)
+
+            self.config_table = self._get_or_create_table(
+                table_name=self.config_table_name,
+                table_type="configs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.config_table
+
+        elif table_type == "entity_refs":
+            # Ensure entities and configs tables exist first
+            if create_table_if_not_found:
+                self._get_table(table_type="entities", create_table_if_not_found=True)
+                self._get_table(table_type="configs", create_table_if_not_found=True)
+
+            self.entity_ref_table = self._get_or_create_table(
+                table_name=self.entity_ref_table_name,
+                table_type="entity_refs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.entity_ref_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -2912,3 +3086,762 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_error(f"Error upserting cultural knowledge: {e}")
             raise e
+
+    # --- Entities ---
+    def get_entity(
+        self,
+        entity_id: str,
+        entity_type: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Get an entity by ID.
+
+        Args:
+            entity_id: The entity ID.
+            entity_type: Optional type filter (agent|team|workflow).
+
+        Returns:
+            Entity dictionary or None if not found.
+        """
+        try:
+            table = self._get_table(table_type="entities")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                stmt = select(table).where(
+                    table.c.entity_id == entity_id,
+                    table.c.deleted_at.is_(None),
+                )
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+
+                result = sess.execute(stmt).fetchone()
+                return dict(result._mapping) if result else None
+
+        except Exception as e:
+            log_error(f"Error getting entity: {e}")
+            raise
+
+    def upsert_entity(
+        self,
+        entity_id: str,
+        entity_type: Optional[PrimitiveType] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Create or update an entity.
+
+        Args:
+            entity_id: Unique identifier.
+            entity_type: Type (agent|team|workflow). Required for create, optional for update.
+            name: Display name.
+            description: Optional description.
+            metadata: Optional metadata dict.
+
+        Returns:
+            Created/updated entity dictionary.
+
+        Raises:
+            ValueError: If creating and entity_type is not provided.
+        """
+        try:
+            table = self._get_table(table_type="entities", create_table_if_not_found=True)
+
+            with self.Session() as sess, sess.begin():
+                existing = sess.execute(select(table).where(table.c.entity_id == entity_id)).fetchone()
+
+                if existing is None:
+                    # Create new entity
+                    if entity_type is None:
+                        raise ValueError("entity_type is required when creating a new entity")
+
+                    sess.execute(
+                        table.insert().values(
+                            entity_id=entity_id,
+                            entity_type=entity_type.value if hasattr(entity_type, "value") else entity_type,
+                            name=name or entity_id,
+                            description=description,
+                            current_version=None,
+                            metadata=metadata,
+                            created_at=int(time.time()),
+                        )
+                    )
+                    log_debug(f"Created entity {entity_id}")
+
+                elif existing.deleted_at is not None:
+                    # Reactivate soft-deleted
+                    if entity_type is None:
+                        raise ValueError("entity_type is required when reactivating a deleted entity")
+
+                    sess.execute(
+                        table.update()
+                        .where(table.c.entity_id == entity_id)
+                        .values(
+                            entity_type=entity_type.value if hasattr(entity_type, "value") else entity_type,
+                            name=name or entity_id,
+                            description=description,
+                            current_version=None,
+                            metadata=metadata,
+                            updated_at=int(time.time()),
+                            deleted_at=None,
+                        )
+                    )
+                    log_debug(f"Reactivated entity {entity_id}")
+
+                else:
+                    # Update existing
+                    updates: Dict[str, Any] = {"updated_at": int(time.time())}
+                    if entity_type is not None:
+                        updates["entity_type"] = entity_type.value if hasattr(entity_type, "value") else entity_type
+                    if name is not None:
+                        updates["name"] = name
+                    if description is not None:
+                        updates["description"] = description
+                    if metadata is not None:
+                        updates["metadata"] = metadata
+
+                    sess.execute(table.update().where(table.c.entity_id == entity_id).values(**updates))
+                    log_debug(f"Updated entity {entity_id}")
+
+            result = self.get_entity(entity_id)
+            if result is None:
+                raise ValueError(f"Failed to get entity {entity_id} after upsert")
+            return result
+
+        except Exception as e:
+            log_error(f"Error upserting entity: {e}")
+            raise
+
+    def delete_entity(
+        self,
+        entity_id: str,
+        hard_delete: bool = False,
+    ) -> bool:
+        """Delete an entity and all its configs/refs.
+
+        Args:
+            entity_id: The entity ID.
+            hard_delete: If True, permanently delete. Otherwise soft-delete.
+
+        Returns:
+            True if deleted, False if not found.
+        """
+        try:
+            entities_table = self._get_table(table_type="entities")
+            configs_table = self._get_table(table_type="configs")
+            refs_table = self._get_table(table_type="entity_refs")
+
+            if entities_table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                if hard_delete:
+                    # Delete refs where this entity is parent or child
+                    if refs_table is not None:
+                        sess.execute(refs_table.delete().where(refs_table.c.parent_entity_id == entity_id))
+                        sess.execute(refs_table.delete().where(refs_table.c.child_entity_id == entity_id))
+                    # Delete configs
+                    if configs_table is not None:
+                        sess.execute(configs_table.delete().where(configs_table.c.entity_id == entity_id))
+                    # Delete entity
+                    result = sess.execute(entities_table.delete().where(entities_table.c.entity_id == entity_id))
+                else:
+                    # Soft delete
+                    now = int(time.time())
+                    result = sess.execute(
+                        entities_table.update()
+                        .where(entities_table.c.entity_id == entity_id)
+                        .values(deleted_at=now, current_version=None)
+                    )
+
+            return result.rowcount > 0
+
+        except Exception as e:
+            log_error(f"Error deleting entity: {e}")
+            raise
+
+    def list_entities(
+        self,
+        entity_type: Optional[str] = None,
+        include_deleted: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """List all entities, optionally filtered by type.
+
+        Args:
+            entity_type: Filter by type (agent|team|workflow).
+            include_deleted: Include soft-deleted entities.
+
+        Returns:
+            List of entity dictionaries.
+        """
+        try:
+            table = self._get_table(table_type="entities")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table).order_by(table.c.created_at.desc())
+
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+                if not include_deleted:
+                    stmt = stmt.where(table.c.deleted_at.is_(None))
+
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results]
+
+        except Exception as e:
+            log_error(f"Error listing entities: {e}")
+            raise
+
+    # --- Config ---
+    def get_config(
+        self,
+        entity_id: str,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Get a config by entity ID and version/label.
+
+        Args:
+            entity_id: The entity ID.
+            version: Specific version number. If None, uses current.
+            label: Version label to lookup. Ignored if version is provided.
+
+        Returns:
+            Config dictionary or None if not found.
+        """
+        try:
+            configs_table = self._get_table(table_type="configs")
+            entities_table = self._get_table(table_type="entities")
+
+            if configs_table is None or entities_table is None:
+                return None
+
+            with self.Session() as sess:
+                if version is not None:
+                    # Direct version lookup
+                    stmt = select(configs_table).where(
+                        configs_table.c.entity_id == entity_id,
+                        configs_table.c.version == version,
+                    )
+                elif label is not None:
+                    # Label lookup
+                    stmt = select(configs_table).where(
+                        configs_table.c.entity_id == entity_id,
+                        configs_table.c.version_label == label,
+                    )
+                else:
+                    # Get current version from entity
+                    entity = sess.execute(
+                        select(entities_table.c.current_version).where(entities_table.c.entity_id == entity_id)
+                    ).fetchone()
+
+                    if entity is None or entity.current_version is None:
+                        return None
+
+                    stmt = select(configs_table).where(
+                        configs_table.c.entity_id == entity_id,
+                        configs_table.c.version == entity.current_version,
+                    )
+
+                result = sess.execute(stmt).fetchone()
+                return dict(result._mapping) if result else None
+
+        except Exception as e:
+            log_error(f"Error getting config: {e}")
+            raise
+
+    def upsert_config(
+        self,
+        entity_id: str,
+        config: Dict[str, Any],
+        version: Optional[int] = None,
+        version_label: Optional[str] = None,
+        stage: str = "draft",
+        notes: Optional[str] = None,
+        set_current: bool = True,
+        refs: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Create or update a config version for an entity.
+
+        Args:
+            entity_id: The entity ID.
+            config: The config data.
+            version: If None, creates new version. If provided, updates that version.
+            version_label: Optional human-readable label.
+            stage: "draft" or "published".
+            notes: Optional notes.
+            set_current: Whether to set as current version.
+            refs: Optional list of refs to create/replace with this config.
+
+        Returns:
+            Created/updated config dictionary.
+
+        Raises:
+            ValueError: If entity doesn't exist, version not found, or label conflict.
+        """
+        try:
+            configs_table = self._get_table(table_type="configs", create_table_if_not_found=True)
+            entities_table = self._get_table(table_type="entities")
+            refs_table = self._get_table(table_type="entity_refs", create_table_if_not_found=True)
+
+            with self.Session() as sess, sess.begin():
+                # Verify entity exists
+                entity = sess.execute(
+                    select(entities_table).where(
+                        entities_table.c.entity_id == entity_id,
+                        entities_table.c.deleted_at.is_(None),
+                    )
+                ).fetchone()
+                if entity is None:
+                    raise ValueError(f"Entity {entity_id} not found")
+
+                # Check label uniqueness (exclude current version if updating)
+                if version_label is not None:
+                    label_query = select(configs_table).where(
+                        configs_table.c.entity_id == entity_id,
+                        configs_table.c.version_label == version_label,
+                    )
+                    if version is not None:
+                        label_query = label_query.where(configs_table.c.version != version)
+
+                    existing_label = sess.execute(label_query).fetchone()
+                    if existing_label:
+                        raise ValueError(f"Label '{version_label}' already exists for {entity_id}")
+
+                # Validate refs for published configs
+                if stage == "published" and refs:
+                    for ref in refs:
+                        if ref.get("child_version") is None:
+                            raise ValueError(
+                                f"Published configs must have pinned refs. "
+                                f"Ref to {ref['child_entity_id']} has no version."
+                            )
+
+                if version is None:
+                    # CREATE: Get next version number
+                    max_version = sess.execute(
+                        select(configs_table.c.version)
+                        .where(configs_table.c.entity_id == entity_id)
+                        .order_by(configs_table.c.version.desc())
+                        .limit(1)
+                    ).scalar()
+                    new_version = (max_version or 0) + 1
+
+                    sess.execute(
+                        configs_table.insert().values(
+                            entity_id=entity_id,
+                            version=new_version,
+                            version_label=version_label,
+                            stage=stage,
+                            config=config,
+                            notes=notes,
+                            created_at=int(time.time()),
+                        )
+                    )
+                    final_version = new_version
+                    log_debug(f"Created config {entity_id} v{final_version}")
+
+                else:
+                    # UPDATE: Verify version exists
+                    existing = sess.execute(
+                        select(configs_table).where(
+                            configs_table.c.entity_id == entity_id,
+                            configs_table.c.version == version,
+                        )
+                    ).fetchone()
+                    if existing is None:
+                        raise ValueError(f"Config {entity_id} v{version} not found")
+
+                    sess.execute(
+                        configs_table.update()
+                        .where(
+                            configs_table.c.entity_id == entity_id,
+                            configs_table.c.version == version,
+                        )
+                        .values(
+                            version_label=version_label,
+                            stage=stage,
+                            config=config,
+                            notes=notes,
+                            updated_at=int(time.time()),
+                        )
+                    )
+                    final_version = version
+                    log_debug(f"Updated config {entity_id} v{final_version}")
+
+                # Handle refs (delete old, insert new)
+                if refs is not None and refs_table is not None:
+                    # Delete existing refs for this version
+                    sess.execute(
+                        refs_table.delete().where(
+                            refs_table.c.parent_entity_id == entity_id,
+                            refs_table.c.parent_version == final_version,
+                        )
+                    )
+                    # Insert new refs
+                    for ref in refs:
+                        sess.execute(
+                            refs_table.insert().values(
+                                parent_entity_id=entity_id,
+                                parent_version=final_version,
+                                ref_kind=ref["ref_kind"],
+                                ref_key=ref["ref_key"],
+                                child_entity_id=ref["child_entity_id"],
+                                child_version=ref.get("child_version"),
+                                position=ref["position"],
+                                meta=ref.get("meta"),
+                                created_at=int(time.time()),
+                            )
+                        )
+
+                # Update current version pointer
+                if set_current:
+                    sess.execute(
+                        entities_table.update()
+                        .where(entities_table.c.entity_id == entity_id)
+                        .values(current_version=final_version, updated_at=int(time.time()))
+                    )
+
+            result = self.get_config(entity_id, version=final_version)
+            if result is None:
+                raise ValueError(f"Failed to get config {entity_id} v{final_version} after upsert")
+            return result
+
+        except Exception as e:
+            log_error(f"Error upserting config: {e}")
+            raise
+
+    def list_config_versions(
+        self,
+        entity_id: str,
+    ) -> List[Dict[str, Any]]:
+        """List all config versions for an entity.
+
+        Args:
+            entity_id: The entity ID.
+
+        Returns:
+            List of config dictionaries, newest first.
+        """
+        try:
+            table = self._get_table(table_type="configs")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.entity_id == entity_id).order_by(table.c.version.desc())
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results]
+
+        except Exception as e:
+            log_error(f"Error listing config versions: {e}")
+            raise
+
+    def set_current_version(
+        self,
+        entity_id: str,
+        version: int,
+    ) -> bool:
+        """Set a specific version as current.
+
+        Args:
+            entity_id: The entity ID.
+            version: The version to set as current.
+
+        Returns:
+            True if successful, False if version not found.
+        """
+        try:
+            configs_table = self._get_table(table_type="configs")
+            entities_table = self._get_table(table_type="entities")
+
+            if configs_table is None or entities_table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                # Verify version exists
+                exists = sess.execute(
+                    select(configs_table).where(
+                        configs_table.c.entity_id == entity_id,
+                        configs_table.c.version == version,
+                    )
+                ).fetchone()
+                if exists is None:
+                    return False
+
+                # Update pointer
+                sess.execute(
+                    entities_table.update()
+                    .where(entities_table.c.entity_id == entity_id)
+                    .values(current_version=version, updated_at=int(time.time()))
+                )
+
+            log_debug(f"Set {entity_id} current version to {version}")
+            return True
+
+        except Exception as e:
+            log_error(f"Error setting current version: {e}")
+            raise
+
+    def publish_config(
+        self,
+        entity_id: str,
+        version: int,
+        pin_refs: bool = True,
+    ) -> bool:
+        """Publish a config version, optionally pinning all refs.
+
+        Args:
+            entity_id: The entity ID.
+            version: The version to publish.
+            pin_refs: If True, resolve and pin all NULL child_versions.
+
+        Returns:
+            True if successful, False if version not found.
+        """
+        try:
+            configs_table = self._get_table(table_type="configs")
+            refs_table = self._get_table(table_type="entity_refs")
+            entities_table = self._get_table(table_type="entities")
+
+            if configs_table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                # Verify version exists
+                config_row = sess.execute(
+                    select(configs_table).where(
+                        configs_table.c.entity_id == entity_id,
+                        configs_table.c.version == version,
+                    )
+                ).fetchone()
+                if config_row is None:
+                    return False
+
+                # Pin refs if requested
+                if pin_refs and refs_table is not None:
+                    refs = sess.execute(
+                        select(refs_table).where(
+                            refs_table.c.parent_entity_id == entity_id,
+                            refs_table.c.parent_version == version,
+                            refs_table.c.child_version.is_(None),
+                        )
+                    ).fetchall()
+
+                    for ref in refs:
+                        # Resolve current version
+                        child_current = sess.execute(
+                            select(entities_table.c.current_version).where(
+                                entities_table.c.entity_id == ref.child_entity_id
+                            )
+                        ).scalar()
+
+                        if child_current is None:
+                            raise ValueError(f"Cannot pin ref to {ref.child_entity_id}: no current version")
+
+                        # Update ref
+                        sess.execute(
+                            refs_table.update()
+                            .where(
+                                refs_table.c.parent_entity_id == entity_id,
+                                refs_table.c.parent_version == version,
+                                refs_table.c.ref_kind == ref.ref_kind,
+                                refs_table.c.ref_key == ref.ref_key,
+                            )
+                            .values(child_version=child_current, updated_at=int(time.time()))
+                        )
+
+                # Update stage
+                sess.execute(
+                    configs_table.update()
+                    .where(
+                        configs_table.c.entity_id == entity_id,
+                        configs_table.c.version == version,
+                    )
+                    .values(stage="published", updated_at=int(time.time()))
+                )
+
+            log_debug(f"Published {entity_id} v{version}")
+            return True
+
+        except Exception as e:
+            log_error(f"Error publishing config: {e}")
+            raise
+
+    # -- References --
+    def get_refs(
+        self,
+        entity_id: str,
+        version: int,
+        ref_kind: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get refs for a config version.
+
+        Args:
+            entity_id: The entity ID.
+            version: The config version.
+            ref_kind: Optional filter by ref kind (member|step).
+
+        Returns:
+            List of ref dictionaries, ordered by position.
+        """
+        try:
+            table = self._get_table(table_type="entity_refs")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = (
+                    select(table)
+                    .where(
+                        table.c.parent_entity_id == entity_id,
+                        table.c.parent_version == version,
+                    )
+                    .order_by(table.c.position)
+                )
+                if ref_kind is not None:
+                    stmt = stmt.where(table.c.ref_kind == ref_kind)
+
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results]
+
+        except Exception as e:
+            log_error(f"Error getting refs: {e}")
+            raise
+
+    def get_dependents(
+        self,
+        entity_id: str,
+        version: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Find all entities that reference this entity.
+
+        Args:
+            entity_id: The entity ID to find dependents of.
+            version: Optional specific version. If None, finds refs to any version.
+
+        Returns:
+            List of ref dictionaries showing what depends on this entity.
+        """
+        try:
+            table = self._get_table(table_type="entity_refs")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.child_entity_id == entity_id)
+                if version is not None:
+                    stmt = stmt.where(table.c.child_version == version)
+
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results]
+
+        except Exception as e:
+            log_error(f"Error getting dependents: {e}")
+            raise
+
+    def resolve_version(
+        self,
+        entity_id: str,
+        version: Optional[int],
+    ) -> Optional[int]:
+        """Resolve a version number, handling NULL (current) case.
+
+        Args:
+            entity_id: The entity ID.
+            version: Version number or None for current.
+
+        Returns:
+            Resolved version number or None if entity not found.
+        """
+        if version is not None:
+            return version
+
+        try:
+            entities_table = self._get_table(table_type="entities")
+            if entities_table is None:
+                return None
+
+            with self.Session() as sess:
+                result = sess.execute(
+                    select(entities_table.c.current_version).where(entities_table.c.entity_id == entity_id)
+                ).scalar()
+                return result
+
+        except Exception as e:
+            log_error(f"Error resolving version: {e}")
+            raise
+
+    def load_entity_graph(
+        self,
+        entity_id: str,
+        version: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Load an entity with its full resolved graph.
+
+        Args:
+            entity_id: The entity ID.
+            version: Specific version or None for current.
+
+        Returns:
+            Dictionary with entity, config, refs, and resolved children.
+        """
+        try:
+            # Get entity
+            entity = self.get_entity(entity_id)
+            if entity is None:
+                return None
+
+            # Resolve version
+            resolved_version = self.resolve_version(entity_id, version)
+            if resolved_version is None:
+                return None
+
+            # Get config
+            config = self.get_config(entity_id, version=resolved_version)
+            if config is None:
+                return None
+
+            # Get refs
+            refs = self.get_refs(entity_id, resolved_version)
+
+            # Resolve children recursively
+            children = []
+            resolved_versions: Dict[str, Optional[int]] = {entity_id: resolved_version}
+
+            for ref in refs:
+                child_version = self.resolve_version(
+                    ref["child_entity_id"],
+                    ref["child_version"],
+                )
+                resolved_versions[ref["child_entity_id"]] = child_version
+
+                child_graph = self.load_entity_graph(
+                    ref["child_entity_id"],
+                    version=child_version,
+                )
+
+                if child_graph:
+                    # Merge nested resolved versions
+                    resolved_versions.update(child_graph.get("resolved_versions", {}))
+
+                children.append(
+                    {
+                        "ref": ref,
+                        "graph": child_graph,
+                    }
+                )
+
+            return {
+                "entity": entity,
+                "config": config,
+                "children": children,
+                "resolved_versions": resolved_versions,
+            }
+
+        except Exception as e:
+            log_error(f"Error loading entity graph: {e}")
+            raise
