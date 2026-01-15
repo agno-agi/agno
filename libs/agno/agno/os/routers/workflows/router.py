@@ -636,6 +636,7 @@ def get_workflow_router(
         stream: bool = Form(True),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
+        version: Optional[int] = Form(None),
     ):
         kwargs = await get_request_kwargs(request, create_workflow_run)
 
@@ -664,7 +665,7 @@ def get_workflow_router(
             kwargs["metadata"] = metadata
 
         # Retrieve the workflow by ID
-        workflow = get_workflow_by_id(workflow_id, os.workflows, os.db, os.registry)
+        workflow = get_workflow_by_id(workflow_id, os.workflows, os.db, os.registry, version=version)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 

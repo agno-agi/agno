@@ -167,6 +167,7 @@ def get_team_router(
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
+        version: Optional[int] = Form(None),
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
 
@@ -196,7 +197,7 @@ def get_team_router(
 
         logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
 
-        team = get_team_by_id(team_id, os.teams, os.db, registry)
+        team = get_team_by_id(team_id, os.teams, os.db, registry, version=version)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
