@@ -5,12 +5,13 @@ Testing all cookbooks in `cookbook/08_learning/` to verify they work as expected
 **Test Environment:**
 - Python: `.venvs/demo/bin/python`
 - Database: PostgreSQL with PgVector at `localhost:5532`
-- Date: 2026-01-11
+- Last Verified: 2026-01-15 (originally tested 2026-01-11)
 
 **Changes Tested:**
 - Renamed `memories` to `user_memory` throughout (field, property, learning_type)
 - Added new `08_custom_stores/` folder with custom store examples
 - All cookbooks use `agent.get_learning_machine()` for accessing stores
+- Added new `09_decision_logs/` folder with DecisionLogStore examples
 
 ---
 
@@ -479,11 +480,61 @@ Testing all cookbooks in `cookbook/08_learning/` to verify they work as expected
 
 ---
 
+## 09_decision_logs/
+
+### 1_basic_decision_log.py
+
+**Status:** PASS
+
+**Description:** Tests AGENTIC mode where the agent explicitly logs decisions using the `log_decision` tool.
+
+**Test:** Asked agent to help choose between Python and JavaScript for web scraping.
+- Agent received `log_decision`, `record_outcome`, and `search_decisions` tools
+- Agent used `search_decisions` to check for prior related decisions
+- Found a previously logged decision about gathering project requirements
+- Provided comprehensive recommendation based on project needs
+
+**Decision Logged:**
+- "Gather information about the specific needs of the web scraping project."
+- Reasoning: "Understanding the specifics of the project will help in recommending the best language, as both Python and JavaScript have their own strengths and weaknesses in web scraping."
+
+**Result:** AGENTIC mode works correctly. Agent can log decisions with reasoning and search past decisions.
+
+---
+
+### 2_decision_log_always.py
+
+**Status:** PARTIAL PASS
+
+**Description:** Tests ALWAYS mode where tool calls are automatically logged as decisions.
+
+**Test:** Asked agent about latest developments in AI agents.
+- Agent used DuckDuckGo news search tool successfully
+- Agent provided comprehensive response with 5 news items
+
+**Issue:** Auto-logging did not capture the tool call.
+- Learning extraction runs in a background thread during each model iteration
+- At the time of extraction, the messages don't yet include the tool call
+- This is a timing limitation of ALWAYS mode for Decision Logs
+
+**Recommendation:** Use AGENTIC mode for Decision Logs. It provides more value because:
+1. Agent explicitly records decisions with reasoning
+2. Agent can search and learn from past decisions
+3. More control over what gets logged
+
+**Result:** Agent functionality works, but ALWAYS auto-logging needs improvement.
+
+---
+
+## 09_decision_logs COMPLETE - 1.5/2 tests passed
+
+---
+
 ## TESTING COMPLETE
 
 **Summary:**
-- Total cookbooks tested: 26
-- All passed: 26/26
+- Total cookbooks tested: 28
+- Passed: 27/28 (1 partial pass for ALWAYS mode timing issue)
 
 **Key Changes Validated:**
 1. `memories` → `user_memory` rename works correctly
@@ -497,6 +548,10 @@ Testing all cookbooks in `cookbook/08_learning/` to verify they work as expected
 5. `learning=True` shorthand works
 6. Graceful degradation without DB
 7. Claude models work (use `claude-sonnet-4-5` or newer)
+8. Decision Logs (NEW)
+   - AGENTIC mode: Agent logs decisions with `log_decision` tool
+   - Tools: `log_decision`, `record_outcome`, `search_decisions`
+   - ALWAYS mode: Has timing limitation (processes before tool calls complete)
 
 **Migration Note:**
 The `upsert_learning` in postgres.py does NOT update `learning_type` on conflict - it only updates `content`, `metadata`, and `updated_at`. If you have existing data with `learning_type="memories"`, you need to either:
