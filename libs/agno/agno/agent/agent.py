@@ -9113,27 +9113,34 @@ class Agent:
                             run_response.references.append(references)
 
                             # Append knowledge context to the last user message
+                            # Create a copy to avoid mutating the original input
                             knowledge_context = self._convert_documents_to_string(docs_from_knowledge)
                             msg = input[last_user_msg_index]
                             if isinstance(msg, Message) and msg.content is not None:
                                 original_content = get_text_from_message(msg.content)
-                                msg.content = (
+                                new_content = (
                                     original_content
                                     + "\n\nUse the following references from the knowledge base if it helps:\n"
                                     + "<references>\n"
                                     + knowledge_context
                                     + "\n</references>"
                                 )
+                                # Create a copy with updated content
+                                input[last_user_msg_index] = msg.model_copy(update={"content": new_content})
                             elif isinstance(msg, dict):
                                 msg_content = msg.get("content")
                                 if msg_content is not None:
                                     original_content = get_text_from_message(msg_content)
-                                    msg["content"] = (
+                                    new_content = (
                                         original_content
                                         + "\n\nUse the following references from the knowledge base if it helps:\n"
                                         + "<references>\n"
                                         + knowledge_context
                                         + "\n</references>"
+                                    )
+                                    # Create a Message with updated content
+                                    input[last_user_msg_index] = Message.model_validate(  # type: ignore[call-overload]
+                                        {**msg, "content": new_content}
                                     )
                         retrieval_timer.stop()
                         log_debug(f"Time to get references for messages array: {retrieval_timer.elapsed:.4f}s")
@@ -9378,27 +9385,34 @@ class Agent:
                             run_response.references.append(references)
 
                             # Append knowledge context to the last user message
+                            # Create a copy to avoid mutating the original input
                             knowledge_context = self._convert_documents_to_string(docs_from_knowledge)
                             msg = input[last_user_msg_index]
                             if isinstance(msg, Message) and msg.content is not None:
                                 original_content = get_text_from_message(msg.content)
-                                msg.content = (
+                                new_content = (
                                     original_content
                                     + "\n\nUse the following references from the knowledge base if it helps:\n"
                                     + "<references>\n"
                                     + knowledge_context
                                     + "\n</references>"
                                 )
+                                # Create a copy with updated content
+                                input[last_user_msg_index] = msg.model_copy(update={"content": new_content})
                             elif isinstance(msg, dict):
                                 msg_content = msg.get("content")
                                 if msg_content is not None:
                                     original_content = get_text_from_message(msg_content)
-                                    msg["content"] = (
+                                    new_content = (
                                         original_content
                                         + "\n\nUse the following references from the knowledge base if it helps:\n"
                                         + "<references>\n"
                                         + knowledge_context
                                         + "\n</references>"
+                                    )
+                                    # Create a Message with updated content
+                                    input[last_user_msg_index] = Message.model_validate(  # type: ignore[call-overload]
+                                        {**msg, "content": new_content}
                                     )
                         retrieval_timer.stop()
                         log_debug(f"Time to get references for messages array: {retrieval_timer.elapsed:.4f}s")
