@@ -1378,6 +1378,9 @@ class MongoDb(VectorDb):
             metadata (Dict[str, Any]): The metadata to update
         """
         try:
+            # Ensure client is initialized before use
+            if self._client is None:
+                self._get_client()
             collection = self._client[self.database][self.collection_name]  # type: ignore
 
             # Create query filter for content_id
