@@ -7478,6 +7478,7 @@ class Agent:
         id: str,
         *,
         db: "BaseDb",
+        registry: Optional["Registry"] = None,
         label: Optional[str] = None,
         version: Optional[int] = None,
     ) -> Optional["Agent"]:
@@ -7501,7 +7502,7 @@ class Agent:
         if config is None:
             return None
 
-        agent = cls.from_dict(config)
+        agent = cls.from_dict(config, db=db, registry=registry)
         agent.id = id
         agent.db = db
 

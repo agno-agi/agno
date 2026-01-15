@@ -486,6 +486,7 @@ class Workflow:
         id: str,
         *,
         db: "BaseDb",
+        registry: Optional["Registry"] = None,
         label: Optional[str] = None,
         version: Optional[int] = None,
     ) -> Optional["Workflow"]:
@@ -509,7 +510,7 @@ class Workflow:
         if config is None:
             return None
 
-        workflow = cls.from_dict(config)
+        workflow = cls.from_dict(config, db=db, registry=registry)
 
         workflow.id = id
         workflow.db = db
