@@ -1,16 +1,4 @@
-"""
-Tests for URL validation in Knowledge class.
-
-Bug Reports: K1, K2
-- _aload_from_url() was missing return statements after URL validation failures
-- _load_from_url() was missing return statements after URL validation failures
-
-This caused:
-1. Invalid URLs to continue processing instead of returning early
-2. AttributeError crashes when parsed_url was undefined after exceptions
-
-FIX: Added return statements after both validation failure paths in both methods.
-"""
+"""Tests for URL validation in Knowledge class."""
 
 from urllib.parse import urlparse
 
@@ -92,40 +80,26 @@ class TestUrlValidationBehavior:
 
 
 class TestUrlValidationEarlyReturn:
-    """Verify that URL validation returns early on invalid URLs.
-
-    The bug fix added return statements after validation failures to prevent
-    continued processing of invalid URLs.
-    """
+    """Test URL validation returns early on invalid URLs."""
 
     def test_invalid_url_returns_early(self):
-        """Processing should stop immediately for invalid URLs.
-
-        This tests the fix: before, the code would continue after setting
-        status to FAILED. Now it returns immediately.
-        """
+        """Processing should stop immediately for invalid URLs."""
         from pathlib import Path
 
         def url_processing_with_early_return(url: str) -> str | None:
-            """Simulates the FIXED code with proper early returns."""
+            """Simulate URL processing with early returns."""
             try:
                 parsed_url = urlparse(url)
                 if not all([parsed_url.scheme, parsed_url.netloc]):
-                    # FIX: Return early instead of continuing
                     return None
             except Exception:
-                # FIX: Return early on exception
                 return None
 
-            # Only reached for valid URLs
             return str(Path(parsed_url.path))
 
-        # Invalid URLs should return None (early return)
         assert url_processing_with_early_return("not-a-valid-url") is None
         assert url_processing_with_early_return("") is None
         assert url_processing_with_early_return("://bad") is None
 
-        # Valid URLs should return the path
         assert url_processing_with_early_return("https://example.com/file.pdf") == "/file.pdf"
-        # Path("") becomes Path(".") in Python, so empty path returns "."
         assert url_processing_with_early_return("https://example.com") == "."
