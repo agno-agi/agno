@@ -11,8 +11,8 @@ import asyncio
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.memory import MemoryTools
+from agno.tools.websearch import WebSearchTools
 
 db = SqliteDb(db_file="tmp/memory.db")
 
@@ -24,10 +24,10 @@ memory_tools = MemoryTools(
 
 agent = Agent(
     model=OpenAIChat(id="gpt-5-mini"),
-    tools=[memory_tools, DuckDuckGoTools()],
+    tools=[memory_tools, WebSearchTools()],
     instructions=[
         "You are a trip planner bot and you are helping the user plan their trip.",
-        "You should use the DuckDuckGoTools to get information about the destination and activities.",
+        "You should use the WebSearchTools to get information about the destination and activities.",
         "You should use the MemoryTools to store information about the user for future reference.",
         "Don't ask the user for more information, make up what you don't know.",
     ],

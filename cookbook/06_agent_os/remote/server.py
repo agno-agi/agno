@@ -10,7 +10,7 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.vectordb.chroma import ChromaDb
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
@@ -70,7 +70,7 @@ researcher = Agent(
         "Provide well-researched, accurate responses.",
     ],
     markdown=True,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
 )
 
 # =============================================================================

@@ -5,7 +5,7 @@ In this example, we have two agents that share the same memory.
 from agno.agent.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -33,7 +33,7 @@ chat_agent.print_response("What are my hobbies?", stream=True, user_id=john_doe_
 research_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     description="You are a research assistant that can help users with their research questions",
-    tools=[DuckDuckGoTools(cache_results=True)],
+    tools=[WebSearchTools()],
     db=db,
     update_memory_on_run=True,
 )

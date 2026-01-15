@@ -233,13 +233,13 @@ def test_cancel_agent_with_tool_calls(shared_db):
     Note: In sync streaming, a RunCancelledEvent is yielded when the run is cancelled.
     We verify that events were collected before cancellation.
     """
-    from agno.tools.duckduckgo import DuckDuckGoTools
+    from agno.tools.websearch import WebSearchTools
 
     agent = Agent(
         name="Tool Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
         instructions="You are a research agent. Search for information and provide detailed responses.",
-        tools=[DuckDuckGoTools()],
+        tools=[WebSearchTools()],
         db=shared_db,
     )
 

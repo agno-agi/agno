@@ -6,8 +6,8 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
@@ -22,7 +22,7 @@ hackernews_agent = Agent(
 web_agent = Agent(
     name="Web Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="Search the web for the latest news and trends",
 )
 

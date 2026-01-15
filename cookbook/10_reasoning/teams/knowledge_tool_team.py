@@ -2,8 +2,8 @@ from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.knowledge import KnowledgeTools
+from agno.tools.websearch import WebSearchTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 agno_docs = Knowledge(
@@ -29,7 +29,7 @@ web_agent = Agent(
     name="Web Search Agent",
     role="Handle web search requests",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="Always include sources",
     add_datetime_to_context=True,
 )
@@ -38,7 +38,7 @@ finance_agent = Agent(
     name="Finance Agent",
     role="Handle financial data requests",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools(enable_search=True)],
+    tools=[WebSearchTools(enable_news=False)],
     add_datetime_to_context=True,
 )
 

@@ -1,8 +1,8 @@
 from typing import List
 
 from agno.agent import Agent
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow import Loop, Step, Workflow
 from agno.workflow.types import StepInput, StepOutput
 
@@ -10,7 +10,7 @@ from agno.workflow.types import StepInput, StepOutput
 research_agent = Agent(
     name="Research Agent",
     role="Research specialist",
-    tools=[HackerNewsTools(), DuckDuckGoTools()],
+    tools=[HackerNewsTools(), WebSearchTools()],
     instructions="You are a research specialist. Research the given topic thoroughly.",
     markdown=True,
 )
