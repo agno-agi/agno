@@ -601,7 +601,7 @@ class ConfigCreate(BaseModel):
     set_current: bool = Field(True, description="Set as current version")
 
 
-class ConfigResponse(BaseModel):
+class ComponentConfigResponse(BaseModel):
     component_id: str
     version: int
     label: Optional[str] = None

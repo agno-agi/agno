@@ -9,12 +9,12 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     BadRequestResponse,
+    ComponentConfigResponse,
     ComponentCreate,
     ComponentResponse,
     ComponentType,
     ComponentUpdate,
     ConfigCreate,
-    ConfigResponse,
     ConfigUpdate,
     InternalServerErrorResponse,
     NotFoundResponse,
@@ -238,7 +238,7 @@ def attach_routes(
 
     @router.get(
         "/components/{component_id}/configs",
-        response_model=List[ConfigResponse],
+        response_model=List[ComponentConfigResponse],
         response_model_exclude_none=True,
         status_code=200,
         operation_id="list_configs",
@@ -248,17 +248,17 @@ def attach_routes(
     async def list_configs(
         component_id: str = Path(description="Component ID"),
         include_config: bool = Query(True, description="Include full config blob"),
-    ) -> List[ConfigResponse]:
+    ) -> List[ComponentConfigResponse]:
         try:
             configs = os_db.list_configs(component_id, include_config=include_config)
-            return [ConfigResponse(**c) for c in configs]
+            return [ComponentConfigResponse(**c) for c in configs]
         except Exception as e:
             log_error(f"Error listing configs: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.post(
         "/components/{component_id}/configs",
-        response_model=ConfigResponse,
+        response_model=ComponentConfigResponse,
         response_model_exclude_none=True,
         status_code=201,
         operation_id="create_config",
@@ -268,7 +268,7 @@ def attach_routes(
     async def create_config(
         component_id: str = Path(description="Component ID"),
         body: ConfigCreate = Body(description="Config data"),
-    ) -> ConfigResponse:
+    ) -> ComponentConfigResponse:
         try:
             config = os_db.upsert_config(
                 component_id=component_id,
@@ -279,7 +279,7 @@ def attach_routes(
                 notes=body.notes,
                 links=body.links,
             )
-            return ConfigResponse(**config)
+            return ComponentConfigResponse(**config)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -288,7 +288,7 @@ def attach_routes(
 
     @router.patch(
         "/components/{component_id}/configs/{version}",
-        response_model=ConfigResponse,
+        response_model=ComponentConfigResponse,
         response_model_exclude_none=True,
         status_code=200,
         operation_id="update_config",
@@ -299,7 +299,7 @@ def attach_routes(
         component_id: str = Path(description="Component ID"),
         version: int = Path(description="Version number"),
         body: ConfigUpdate = Body(description="Config fields to update"),
-    ) -> ConfigResponse:
+    ) -> ComponentConfigResponse:
         try:
             config = os_db.upsert_config(
                 component_id=component_id,
@@ -310,7 +310,7 @@ def attach_routes(
                 notes=body.notes,
                 links=body.links,
             )
-            return ConfigResponse(**config)
+            return ComponentConfigResponse(**config)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
@@ -319,7 +319,7 @@ def attach_routes(
 
     @router.get(
         "/components/{component_id}/configs/current",
-        response_model=ConfigResponse,
+        response_model=ComponentConfigResponse,
         response_model_exclude_none=True,
         status_code=200,
         operation_id="get_current_config",
@@ -328,12 +328,12 @@ def attach_routes(
     )
     async def get_current_config(
         component_id: str = Path(description="Component ID"),
-    ) -> ConfigResponse:
+    ) -> ComponentConfigResponse:
         try:
             config = os_db.get_config(component_id)
             if config is None:
                 raise HTTPException(status_code=404, detail=f"No current config for {component_id}")
-            return ConfigResponse(**config)
+            return ComponentConfigResponse(**config)
         except HTTPException:
             raise
         except Exception as e:
@@ -342,7 +342,7 @@ def attach_routes(
 
     @router.get(
         "/components/{component_id}/configs/{version}",
-        response_model=ConfigResponse,
+        response_model=ComponentConfigResponse,
         response_model_exclude_none=True,
         status_code=200,
         operation_id="get_config",
@@ -352,13 +352,13 @@ def attach_routes(
     async def get_config_version(
         component_id: str = Path(description="Component ID"),
         version: int = Path(description="Version number"),
-    ) -> ConfigResponse:
+    ) -> ComponentConfigResponse:
         try:
             config = os_db.get_config(component_id, version=version)
 
             if config is None:
                 raise HTTPException(status_code=404, detail=f"Config {component_id} v{version} not found")
-            return ConfigResponse(**config)
+            return ComponentConfigResponse(**config)
         except HTTPException:
             raise
         except Exception as e:
