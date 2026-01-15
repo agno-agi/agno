@@ -2062,6 +2062,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         requires_confirmation=True,
+                        silent=fc.function.silent,
                     )
                 )
 
@@ -2081,6 +2082,7 @@ class Model(ABC):
                         tool_args=fc.arguments,
                         requires_user_input=True,
                         user_input_schema=user_input_schema,
+                        silent=fc.function.silent,
                     )
                 )
 
@@ -2129,6 +2131,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         external_execution_required=True,
+                        silent=fc.function.silent,
                     )
                 )
 
@@ -2223,6 +2226,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         requires_confirmation=True,
+                        silent=fc.function.silent,
                     )
                 )
             # If the function requires user input, we yield a message to the user
@@ -2241,6 +2245,7 @@ class Model(ABC):
                         tool_args=fc.arguments,
                         requires_user_input=True,
                         user_input_schema=user_input_schema,
+                        silent=fc.function.silent,
                     )
                 )
             # If the function is from the user control flow tools, we handle it here
@@ -2293,6 +2298,7 @@ class Model(ABC):
                         tool_name=fc.function.name,
                         tool_args=fc.arguments,
                         external_execution_required=True,
+                        silent=fc.function.silent,
                     )
                 )
 
