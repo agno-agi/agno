@@ -1,6 +1,6 @@
 """Example of a Team using the `coordinate` mode to play the role of a CEO of a Startup.
 
-1. Run: `pip install agno exa_py slack_sdk pgvector psycopg` to install the dependencies
+1. Run: `uv pip install agno exa_py slack_sdk pgvector psycopg` to install the dependencies
 2. Add the following environment variables:
 - `EXA_API_KEY`
 - `SLACK_TOKEN`

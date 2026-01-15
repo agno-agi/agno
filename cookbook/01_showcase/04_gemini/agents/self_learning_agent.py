@@ -211,7 +211,7 @@ if __name__ == "__main__":
             try:
                 user_input = input("You: ").strip()
                 if user_input.lower() in ("quit", "exit", "q"):
-                    print("\n👋 Goodbye!")
+                    print("\nGoodbye!")
                     break
                 if not user_input:
                     continue
@@ -221,5 +221,5 @@ if __name__ == "__main__":
                 print()
 
             except KeyboardInterrupt:
-                print("\n\n👋 Goodbye!")
+                print("\n\nGoodbye!")
                 break

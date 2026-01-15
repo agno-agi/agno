@@ -9,7 +9,7 @@ This workflow helps entrepreneurs validate their startup ideas by:
 Quick Start:
 --------------------------------------------------------------------------------
 1. Install dependencies:
-   pip install openai agno
+   uv pip install openai agno
 
 2. Set environment variables:
    - OPENAI_API_KEY

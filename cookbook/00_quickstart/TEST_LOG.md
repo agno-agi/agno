@@ -11,199 +11,110 @@ Testing results for `cookbook/00_quickstart/` examples.
 
 ## Test Summary
 
-| Phase | Tests | Passed | Status |
-|:------|:------|:-------|:-------|
-| Phase 1: Basic | 3 | 3 | PASS |
-| Phase 2: Persistence | 3 | 3 | PASS |
-| Phase 3: Knowledge | 2 | 2 | PASS |
-| Phase 4: Safety | 2 | 2 | PASS |
-| Phase 5: Multi-Agent | 2 | 2 | PASS |
-| **Total** | **12** | **12** | **ALL PASS** |
+| File | Status | Notes |
+|------|--------|-------|
+| agent_with_tools.py | PASS | Fetched NVDA data, comprehensive brief |
+| agent_with_structured_output.py | PASS | Returned typed StockAnalysis object |
+| agent_with_typed_input_output.py | PASS | Input/output schema validation working |
+| agent_with_storage.py | PASS | Multi-turn conversation persistence |
+| agent_with_memory.py | PASS | User preferences stored and recalled |
+| agent_with_state_management.py | PASS | Watchlist state maintained |
+| agent_search_over_knowledge.py | PASS | ChromaDb hybrid search working |
+| custom_tool_for_self_learning.py | PASS | Custom save_learning tool integrated |
+| agent_with_guardrails.py | PASS | PII/injection/spam blocked correctly |
+| human_in_the_loop.py | MANUAL | Requires user input |
+| multi_agent_team.py | PASS | Bull/Bear analysis synthesized |
+| sequential_workflow.py | PASS | 3-step pipeline executed |
+| run.py | SKIPPED | Server entrypoint |
 
-**Skipped:** 1 (server)
-- `run.py` - Server entrypoint
-
----
-
-## Phase 1: Basic (No DB)
-
-### agent_with_tools.py
-
-**Status:** PASS
-
-**Description:** Basic agent with YFinanceTools for fetching stock data.
-
-**Result:** Agent fetched NVIDIA stock data (price $188.18, market cap $4.58T, P/E 46.46) and provided comprehensive investment brief with key drivers, risks, and analyst sentiment.
+**Total: 11/11 automated tests PASS**
 
 ---
 
-### agent_with_structured_output.py
+## Test Details
 
-**Status:** PASS
+### Phase 1: Basic (No DB)
 
-**Description:** Agent returns typed Pydantic objects (StockAnalysis).
+**agent_with_tools.py** - PASS
+- Fetched NVIDIA stock data via YFinanceTools
+- Returned comprehensive investment brief with key drivers and risks
 
-**Result:** Agent returned structured StockAnalysis object with all typed fields including current_price ($188.23), key_drivers, key_risks, and recommendation (Strong Buy).
+**agent_with_structured_output.py** - PASS
+- Returned typed StockAnalysis Pydantic object
+- All fields populated correctly (price, market_cap, key_drivers, etc.)
 
----
+**agent_with_typed_input_output.py** - PASS
+- Input schema (AnalysisRequest) validated
+- Output schema (StockAnalysis) enforced
+- Both dict and Pydantic model inputs work
 
-### agent_with_typed_input_output.py
+### Phase 2: Persistence (SQLite)
 
-**Status:** PASS
+**agent_with_storage.py** - PASS
+- Turn 1: Analyzed NVIDIA
+- Turn 2: Compared to Tesla (remembered context)
+- Turn 3: Synthesized recommendation based on full conversation
 
-**Description:** Full type safety on input (StockQuery) and output (StockAnalysis) schemas.
+**agent_with_memory.py** - PASS
+- Stored user preferences (AI/semiconductor stocks, moderate risk)
+- Recommendations tailored to stored preferences
+- Memory retrieved via `get_user_memories()`
 
-**Result:** Agent accepted typed input and returned typed output with proper validation.
-
----
-
-## Phase 2: Persistence (SQLite)
-
-### agent_with_storage.py
-
-**Status:** PASS
-
-**Description:** Persistent conversations across runs using SQLite.
-
-**Result:**
-- Turn 1: Analyzed NVIDIA (comprehensive brief)
-- Turn 2: Compared to Tesla (remembered NVDA context)
-- Turn 3: Provided recommendation based on full conversation
-
----
-
-### agent_with_memory.py
-
-**Status:** PASS
-
-**Description:** MemoryManager for storing and recalling user preferences.
-
-**Result:**
-- Agent learned user preferences (AI/semiconductor stocks, moderate risk)
-- Recommendations tailored to preferences
-- Memory stored and retrieved successfully
-
----
-
-### agent_with_state_management.py
-
-**Status:** PASS
-
-**Description:** Session state management for tracking structured data (watchlist).
-
-**Result:**
-- Added NVDA, AAPL, GOOGL to watchlist via state management
+**agent_with_state_management.py** - PASS
+- Added NVDA, AAPL, GOOGL to watchlist via custom tools
 - Agent queried prices for all watched stocks
-- Final state correctly reflected watchlist
+- State persisted: `{'watchlist': ['NVDA', 'AAPL', 'GOOGL']}`
 
----
+### Phase 3: Knowledge (ChromaDb)
 
-## Phase 3: Knowledge (ChromaDb)
+**agent_search_over_knowledge.py** - PASS
+- Loaded Agno docs into ChromaDb
+- Hybrid search returned relevant results
+- Agent synthesized comprehensive answer about Agno framework
 
-### agent_search_over_knowledge.py
+**custom_tool_for_self_learning.py** - PASS
+- Custom `save_learning` tool integrated
+- Learnings saved to knowledge base
+- Retrieved saved learnings via search
 
-**Status:** PASS
+### Phase 4: Safety
 
-**Description:** Knowledge base with hybrid search over Agno documentation.
+**agent_with_guardrails.py** - PASS
+- Normal query: Processed successfully
+- PII (SSN): BLOCKED - "Potential PII detected"
+- Prompt injection: BLOCKED - "Potential jailbreaking detected"
+- Spam (excessive exclamations): BLOCKED by custom guardrail
 
-**Result:**
-- Loaded Agno documentation into ChromaDb
-- Searched knowledge base for "What is Agno?"
-- Provided comprehensive answer about Framework, AgentOS Runtime, and Control Plane
+**human_in_the_loop.py** - MANUAL
+- Requires user input for confirmation prompts
+- Code structure verified correct
 
----
+### Phase 5: Multi-Agent
 
-### custom_tool_for_self_learning.py
+**multi_agent_team.py** - PASS
+- Bull Analyst: Provided optimistic case
+- Bear Analyst: Provided cautionary perspective
+- Team Leader: Synthesized both views with comparison table
 
-**Status:** PASS
-
-**Description:** Custom tools for saving and searching learnings in knowledge base.
-
-**Result:**
-- Custom save_learning tool properly integrated
-- Successfully searched and retrieved learnings from knowledge base
-
----
-
-## Phase 4: Safety
-
-### agent_with_guardrails.py
-
-**Status:** PASS
-
-**Description:** Input validation with PII detection, prompt injection blocking, and custom spam detection.
-
-**Result:**
-- Normal query (P/E ratio): Processed successfully with detailed response
-- PII (SSN 123-45-6789): BLOCKED - "Potential PII detected"
-- Prompt injection ("Ignore previous instructions"): BLOCKED - "Potential jailbreaking or prompt injection detected"
-- Spam (excessive exclamations): BLOCKED - "Input appears to be spam"
-
-**Note:** Guardrails correctly block invalid requests. The ERROR logs confirm blocking behavior.
-
----
-
-### human_in_the_loop.py
-
-**Status:** PASS (Manual)
-
-**Description:** Require user confirmation before executing sensitive tools.
-
-**Result:** Interactive test - requires user input to confirm/reject tool execution. Code structure verified correct.
-
----
-
-## Phase 5: Multi-Agent
-
-### multi_agent_team.py
-
-**Status:** PASS
-
-**Description:** Multi-agent team with Bull and Bear analysts coordinated by team leader.
-
-**Result:**
-- Bull Analyst provided optimistic case for NVIDIA
-- Bear Analyst provided cautionary perspective
-- Team synthesized both views with comparison table
-- Final recommendation with confidence levels
-
----
-
-### sequential_workflow.py
-
-**Status:** PASS
-
-**Description:** Sequential workflow pipeline with 3 steps (Data -> Analysis -> Report).
-
-**Result:**
-- Step 1 (Data Collection): Fetched stock fundamentals
-- Step 2 (Analysis): Deep-dive on strengths/weaknesses
-- Step 3 (Report Writing): Final recommendation with metrics table
-
----
-
-## Skipped Tests
-
-### run.py
-
-**Status:** SKIPPED (Server)
-
-**Reason:** Agent OS entrypoint - starts a server for web UI interaction.
+**sequential_workflow.py** - PASS
+- Step 1 (Data Gathering): Fetched stock fundamentals
+- Step 2 (Analysis): Identified strengths/weaknesses
+- Step 3 (Report Writing): Produced concise investment brief
 
 ---
 
 ## Code Quality Notes
 
-- Removed emojis from `agent_with_guardrails.py` and `human_in_the_loop.py` per CLAUDE.md guidelines
-- All examples demonstrate ONE concept clearly
-- Documentation and comments are thorough
-- README progression is logical: Basic -> Output Control -> Persistence -> Knowledge -> Safety -> Multi-Agent
+- All examples use correct model ID: `gemini-3-flash-preview`
+- No emojis in code (per CLAUDE.md guidelines)
+- Each file demonstrates ONE concept clearly
+- Well-documented with helpful comments
+- README progression is logical
 
 ---
 
-## Notes
+## Known Observations
 
-- All Gemini-based tests passing with `gemini-3-flash-preview` model
-- Storage (SQLite), Knowledge (ChromaDb), Memory, State all working correctly
-- Multi-agent teams and workflows functioning as expected
-- Guardrails correctly blocking PII, injection, and spam
+1. **Debug warning in workflows**: "Failed to broadcast through manager: no running event loop" appears but doesn't affect execution - this is related to async event broadcasting in sync context.
+
+2. **Guardrails behavior**: The `print_response` method handles `InputCheckError` internally, showing ERROR logs but not raising to calling code. The try/except pattern in the example demonstrates the API but the guardrails block at the framework level.

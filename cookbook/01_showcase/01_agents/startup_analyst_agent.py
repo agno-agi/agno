@@ -5,7 +5,7 @@ This agent acts as a startup analyst that can perform comprehensive due diligenc
 
 Prerequisites:
 - Set SGAI_API_KEY environment variable with your ScrapeGraph API key
-- Install dependencies: pip install scrapegraph-py agno openai
+- Install dependencies: uv pip install scrapegraph-py agno openai
 """
 
 from textwrap import dedent

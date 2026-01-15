@@ -23,7 +23,7 @@ Example companies to analyze:
 - "PFE, JNJ, MRNA" (Healthcare Focus)
 - "XOM, CVX, BP" (Energy Sector)
 
-Run `pip install openai yfinance agno` to install dependencies.
+Run `uv pip install openai yfinance agno` to install dependencies.
 """
 
 import asyncio
