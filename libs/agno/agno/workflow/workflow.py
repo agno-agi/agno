@@ -487,6 +487,7 @@ class Workflow:
         *,
         db: "BaseDb",
         label: Optional[str] = None,
+        version: Optional[int] = None,
     ) -> Optional["Workflow"]:
         """
         Load a workflow by id.
@@ -500,7 +501,7 @@ class Workflow:
             The workflow loaded from the database or None if not found.
         """
 
-        data: Optional[Dict[str, Any]] = db.get_config(component_id=id, label=label)
+        data: Optional[Dict[str, Any]] = db.get_config(component_id=id, label=label, version=version)
         if data is None:
             return None
 
@@ -511,10 +512,8 @@ class Workflow:
         workflow = cls.from_dict(config)
 
         workflow.id = id
-        # If your get_config returns the entire configs row, set version:
-        if isinstance(data, dict) and "version" in data:
-            workflow.version = int(data["version"])
         workflow.db = db
+
         return workflow
 
     def delete(
@@ -4765,16 +4764,7 @@ def get_workflow_by_id(
         # Ensure workflow.id is set to the component_id (the id used to load the workflow)
         # This ensures events use the correct workflow_id
         workflow.id = id
-
-        try:
-            workflow.version = int(resolved_version)
-        except Exception:
-            pass
-
-        try:
-            workflow.db = db
-        except Exception:
-            pass
+        workflow.db = db
 
         return workflow
 

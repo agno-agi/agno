@@ -448,7 +448,7 @@ def get_agent_by_id(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            agent = get_agent_by_id_db(db=db, id=agent_id, registry=registry)
+            agent = get_agent_by_id_db(db=db, id=agent_id, registry=registry, version=version)
             return agent
         except Exception as e:
             logger.error(f"Error getting agent {agent_id} from database: {e}")

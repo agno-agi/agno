@@ -440,6 +440,7 @@ def get_team_router(
         # Also load teams from database
         if os.db:
             from agno.team.team import get_teams
+
             db_teams = get_teams(db=os.db, registry=registry)
             for db_team in db_teams:
                 team_response = await TeamResponse.from_team(team=db_team)

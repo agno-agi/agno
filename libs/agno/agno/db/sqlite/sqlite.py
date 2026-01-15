@@ -3193,7 +3193,9 @@ class SqliteDb(BaseDb):
                     # Update existing
                     updates: Dict[str, Any] = {"updated_at": int(time.time())}
                     if component_type is not None:
-                        updates["component_type"] = component_type.value if hasattr(component_type, "value") else component_type
+                        updates["component_type"] = (
+                            component_type.value if hasattr(component_type, "value") else component_type
+                        )
                     if name is not None:
                         updates["name"] = name
                     if description is not None:
@@ -3245,7 +3247,9 @@ class SqliteDb(BaseDb):
                     if configs_table is not None:
                         sess.execute(configs_table.delete().where(configs_table.c.component_id == component_id))
                     # Delete component
-                    result = sess.execute(components_table.delete().where(components_table.c.component_id == component_id))
+                    result = sess.execute(
+                        components_table.delete().where(components_table.c.component_id == component_id)
+                    )
                 else:
                     # Soft delete
                     now = int(time.time())

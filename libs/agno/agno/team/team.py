@@ -53,6 +53,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
+from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from agno.run.cancel import (
@@ -76,7 +77,6 @@ from agno.run.team import (
     TeamRunOutput,
     TeamRunOutputEvent,
 )
-from agno.registry.registry import Registry
 from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
@@ -2071,17 +2071,21 @@ class Team:
             serialized_members = []
             for member in self.members:
                 if isinstance(member, Agent):
-                    serialized_members.append({
-                        "type": "agent",
-                        "id": member.id,
-                        "config": member.to_dict(),
-                    })
+                    serialized_members.append(
+                        {
+                            "type": "agent",
+                            "id": member.id,
+                            "config": member.to_dict(),
+                        }
+                    )
                 elif isinstance(member, Team):
-                    serialized_members.append({
-                        "type": "team",
-                        "id": member.id,
-                        "config": member.to_dict(),
-                    })
+                    serialized_members.append(
+                        {
+                            "type": "team",
+                            "id": member.id,
+                            "config": member.to_dict(),
+                        }
+                    )
             config["members"] = serialized_members
 
         # --- Execution settings ---
@@ -2476,14 +2480,16 @@ class Team:
                         saved_versions[member.id] = member_version
 
                     # Add link for this member agent
-                    all_links.append({
-                        "link_kind": "member",
-                        "link_key": member.id,
-                        "child_component_id": member.id,
-                        "child_version": member_version,
-                        "position": position,
-                        "metadata": {"type": "agent"},
-                    })
+                    all_links.append(
+                        {
+                            "link_kind": "member",
+                            "link_key": member.id,
+                            "child_component_id": member.id,
+                            "child_version": member_version,
+                            "position": position,
+                            "metadata": {"type": "agent"},
+                        }
+                    )
 
                 elif isinstance(member, Team):
                     # Save nested team (recursive)
@@ -2497,14 +2503,16 @@ class Team:
                         saved_versions[member.id] = member_version
 
                     # Add link for this nested team
-                    all_links.append({
-                        "link_kind": "member",
-                        "link_key": member.id,
-                        "child_component_id": member.id,
-                        "child_version": member_version,
-                        "position": position,
-                        "metadata": {"type": "team"},
-                    })
+                    all_links.append(
+                        {
+                            "link_kind": "member",
+                            "link_key": member.id,
+                            "child_component_id": member.id,
+                            "child_version": member_version,
+                            "position": position,
+                            "metadata": {"type": "team"},
+                        }
+                    )
 
             # Create or update component
             db_.upsert_component(
@@ -9894,9 +9902,6 @@ def get_team_by_id(
         team = Team.from_dict(cfg, registry=registry)
 
         team.id = id
-        # If your get_config returns the entire configs row, set version:
-        if isinstance(row, dict) and "version" in row:
-            team.version = int(row["version"])
         team.db = db
 
         return team
@@ -9935,8 +9940,6 @@ def get_teams(
                     # Ensure team.id is set to the component_id
                     team.id = component_id
                     team.db = db
-                    if isinstance(config, dict) and "version" in config:
-                        team.version = int(config["version"])
                     teams.append(team)
         return teams
 

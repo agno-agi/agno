@@ -413,10 +413,6 @@ class Agent:
     store_events: bool = False
     events_to_skip: Optional[List[RunEvent]] = None
 
-    # --- Agent Configuration ---
-    # The version of the agent configuration to use
-    version: Optional[str] = None
-
     # --- If this Agent is part of a team ---
     # If this Agent is part of a team, this is the role of the agent in the team
     role: Optional[str] = None
@@ -549,7 +545,6 @@ class Agent:
         stream_events: Optional[bool] = None,
         store_events: bool = False,
         events_to_skip: Optional[List[RunEvent]] = None,
-        version: Optional[str] = None,
         role: Optional[str] = None,
         culture_manager: Optional[CultureManager] = None,
         enable_agentic_culture: bool = False,
@@ -682,7 +677,6 @@ class Agent:
         self.stream_events = stream_events
 
         self.store_events = store_events
-        self.version = version
         self.role = role
         # By default, we skip the run response content event
         self.events_to_skip = events_to_skip
@@ -7163,10 +7157,6 @@ class Agent:
             config["store_events"] = self.store_events
         # Skip events_to_skip as it contains RunEvent enums
 
-        # --- Agent configuration settings ---
-        if self.version is not None:
-            config["version"] = self.version
-
         # --- Role and culture settings ---
         if self.role is not None:
             config["role"] = self.role
@@ -7421,8 +7411,6 @@ class Agent:
             stream=config.get("stream"),
             stream_events=config.get("stream_events"),
             store_events=config.get("store_events", False),
-            # --- Agent configuration settings ---
-            version=config.get("version"),
             role=config.get("role"),
             # --- Culture settings ---
             # culture_manager=config.get("culture_manager"),  # TODO
@@ -7491,6 +7479,7 @@ class Agent:
         *,
         db: "BaseDb",
         label: Optional[str] = None,
+        version: Optional[int] = None,
     ) -> Optional["Agent"]:
         """
         Load an agent by id.
@@ -7504,7 +7493,7 @@ class Agent:
             The agent loaded from the database or None if not found.
         """
 
-        data = db.get_config(component_id=id, label=label)
+        data = db.get_config(component_id=id, label=label, version=version)
         if data is None:
             return None
 
@@ -7513,12 +7502,9 @@ class Agent:
             return None
 
         agent = cls.from_dict(config)
-
         agent.id = id
-        # If your get_config returns the entire configs row, set version:
-        if isinstance(data, dict) and "version" in data:
-            agent.version = int(data["version"])
         agent.db = db
+
         return agent
 
     def delete(
@@ -11824,6 +11810,7 @@ class Agent:
 def get_agent_by_id(
     db: "BaseDb",
     id: str,
+    version: Optional[int] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
 ) -> Optional["Agent"]:
@@ -11844,7 +11831,7 @@ def get_agent_by_id(
         Agent instance or None.
     """
     try:
-        row = db.get_config(component_id=id, label=label)
+        row = db.get_config(component_id=id, label=label, version=version)
         if row is None:
             return None
 
@@ -11853,13 +11840,7 @@ def get_agent_by_id(
             raise ValueError(f"Invalid config found for agent {id}")
 
         agent = Agent.from_dict(cfg, registry=registry)
-
         agent.id = id
-
-        try:
-            agent.version = int(row["version"])  # type: ignore[attr-defined]
-        except Exception:
-            pass
 
         try:
             agent.db = db  # type: ignore[attr-defined]

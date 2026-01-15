@@ -48,7 +48,7 @@ def get_components_router(
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
         },
     )
-    return attach_routes(router=router, os_db=os_db)
+    return attach_routes(router=router, os_db=os_db, registry=registry)
 
 
 def attach_routes(
