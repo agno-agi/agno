@@ -573,13 +573,28 @@ class WorkflowRunOutput:
 
         if self.step_results:
             flattened_responses = []
-            for step_response in self.step_results:
-                if isinstance(step_response, list):
+
+            def flatten_step_output(step_output):
+                """Recursively flatten step outputs including nested steps from Condition, Router, Loop, etc."""
+                result = []
+                if isinstance(step_output, list):
                     # Handle List[StepOutput] from workflow components like Steps
-                    flattened_responses.extend([s.to_dict() for s in step_response])
+                    for item in step_output:
+                        result.extend(flatten_step_output(item))
                 else:
-                    # Handle single StepOutput
-                    flattened_responses.append(step_response.to_dict())
+                    # Add the step itself as a dict
+                    step_dict = step_output.to_dict()
+                    result.append(step_dict)
+
+                    # If step has nested steps (Condition, Router, Loop, Parallel, etc.), flatten them too
+                    if hasattr(step_output, "steps") and step_output.steps:
+                        for nested_step in step_output.steps:
+                            result.extend(flatten_step_output(nested_step))
+
+                return result
+
+            for step_response in self.step_results:
+                flattened_responses.extend(flatten_step_output(step_response))
             _dict["step_results"] = flattened_responses
 
         if self.step_executor_runs:
