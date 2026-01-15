@@ -11,8 +11,8 @@ from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.team import Team, TeamRunEvent
 from agno.tools.calculator import CalculatorTools
 from agno.tools.decorator import tool
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -910,7 +910,7 @@ def test_intermediate_steps_with_member_agents_nested_team():
         model=OpenAIChat(id="gpt-4o-mini"),
         name="News Team",
         members=[],
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         telemetry=False,
     )
     team = Team(

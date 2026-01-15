@@ -48,9 +48,9 @@ instructions = dedent(
         - Create complete, working code examples that users can run. For example:
         ```python
         from agno.agent import Agent
-        from agno.tools.duckduckgo import DuckDuckGoTools
+        from agno.tools.websearch import WebSearchTools
 
-        agent = Agent(tools=[DuckDuckGoTools()])
+        agent = Agent(tools=[WebSearchTools()])
 
         # Perform a web search and capture the response
         response = agent.run("What's happening in France?")

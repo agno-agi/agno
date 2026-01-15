@@ -1,8 +1,8 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 from db import db
 
@@ -12,7 +12,7 @@ web_agent = Agent(
     role="Handle web search requests and general research",
     id="web_agent",
     model=OpenAIChat(id="gpt-4.1"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     db=db,
     update_memory_on_run=True,
     instructions=[

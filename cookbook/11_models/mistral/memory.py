@@ -9,7 +9,7 @@ Steps:
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.mistral.mistral import MistralChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 # Setup the database
@@ -17,7 +17,7 @@ db = PostgresDb(db_url=db_url)
 
 agent = Agent(
     model=MistralChat(id="mistral-large-latest"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     # Pass the database to the Agent
     db=db,
     # Enable user memories

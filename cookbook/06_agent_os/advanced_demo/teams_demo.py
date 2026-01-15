@@ -5,8 +5,8 @@ from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -54,7 +54,7 @@ web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     id="web_agent",
     instructions=[
         "You are an experienced web researcher and news analyst! 🔍",
@@ -99,7 +99,7 @@ research_agent = Agent(
     id="research_agent",
     model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a research agent"],
-    tools=[DuckDuckGoTools(), ExaTools()],
+    tools=[WebSearchTools(), ExaTools()],
     update_memory_on_run=True,
     db=db,
 )
