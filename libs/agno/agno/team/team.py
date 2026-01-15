@@ -396,7 +396,9 @@ class Team:
     # Enable the agent to manage memories of the user
     enable_agentic_memory: bool = False
     # If True, the agent creates/updates user memories at the end of runs
-    enable_user_memories: bool = False
+    update_memory_on_run: bool = False
+    # Soon to be deprecated. Use update_memory_on_run
+    enable_user_memories: Optional[bool] = None
     # If True, the agent adds a reference to the user memories in the response
     add_memories_to_context: Optional[bool] = None
     # If True, the agent creates/updates session summaries at the end of runs
@@ -546,7 +548,8 @@ class Team:
         parse_response: bool = True,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         enable_agentic_memory: bool = False,
-        enable_user_memories: bool = False,
+        update_memory_on_run: bool = False,
+        enable_user_memories: Optional[bool] = None,  # Soon to be deprecated. Use update_memory_on_run
         add_memories_to_context: Optional[bool] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_session_summaries: bool = False,
@@ -671,7 +674,17 @@ class Team:
         self.db = db
 
         self.enable_agentic_memory = enable_agentic_memory
-        self.enable_user_memories = enable_user_memories
+
+        if enable_user_memories is not None:
+            log_debug(
+                "The 'enable_user_memories' parameter is deprecated and will be removed in future versions. "
+                "Use 'update_memory_on_run' instead."
+            )
+            self.update_memory_on_run = enable_user_memories
+        else:
+            self.update_memory_on_run = update_memory_on_run
+        self.enable_user_memories = self.update_memory_on_run  # Soon to be deprecated. Use update_memory_on_run
+
         self.add_memories_to_context = add_memories_to_context
         self.memory_manager = memory_manager
         self.enable_session_summaries = enable_session_summaries
@@ -863,7 +876,7 @@ class Team:
 
         if self.add_memories_to_context is None:
             self.add_memories_to_context = (
-                self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None
+                self.update_memory_on_run or self.enable_agentic_memory or self.memory_manager is not None
             )
 
     def _set_session_summary_manager(self) -> None:
@@ -951,7 +964,7 @@ class Team:
         self.set_id()
 
         # Set the memory manager and session summary manager
-        if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
+        if self.update_memory_on_run or self.enable_agentic_memory or self.memory_manager is not None:
             self._set_memory_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
             self._set_session_summary_manager()
@@ -3892,7 +3905,7 @@ class Team:
             user_message_str is not None
             and user_message_str.strip() != ""
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
         ):
             log_debug("Managing user memories")
             self.memory_manager.create_user_memories(
@@ -3913,7 +3926,7 @@ class Team:
             user_message_str is not None
             and user_message_str.strip() != ""
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
         ):
             log_debug("Managing user memories")
             await self.memory_manager.acreate_user_memories(
@@ -3950,7 +3963,7 @@ class Team:
         if (
             run_messages.user_message is not None
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
             and not self.enable_agentic_memory
         ):
             log_debug("Starting memory creation in background task.")
@@ -3982,7 +3995,7 @@ class Team:
         if (
             run_messages.user_message is not None
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
             and not self.enable_agentic_memory
         ):
             log_debug("Starting memory creation in background thread.")

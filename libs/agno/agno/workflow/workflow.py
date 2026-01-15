@@ -4510,6 +4510,7 @@ class Workflow:
             return new_workflow
         except Exception as e:
             from agno.utils.log import log_error
+
             log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
             raise
 

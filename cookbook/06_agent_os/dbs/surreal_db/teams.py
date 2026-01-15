@@ -14,7 +14,7 @@ web_agent = Agent(
     model=OpenAIChat(id="gpt-4.1"),
     tools=[DuckDuckGoTools()],
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     instructions=[
         "Search for current and relevant information on financial topics",
         "Always include sources and publication dates",
@@ -31,7 +31,7 @@ finance_agent = Agent(
     model=OpenAIChat(id="gpt-4.1"),
     tools=[YFinanceTools()],
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     instructions=[
         "You are a financial data specialist and your goal is to generate comprehensive and accurate financial reports.",
         "Use tables to display stock prices, fundamentals (P/E, Market Cap, Revenue), and recommendations.",
@@ -65,7 +65,7 @@ reasoning_finance_team = Team(
         "Dont use emojis",
     ],
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     markdown=True,
     show_members_responses=True,
     add_datetime_to_context=True,
