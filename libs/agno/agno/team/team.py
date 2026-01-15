@@ -34,7 +34,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
-from agno.db.base import AsyncBaseDb, BaseDb, PrimitiveType, SessionType, UserMemory
+from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType, UserMemory
 from agno.eval.base import BaseEval
 from agno.exceptions import (
     InputCheckError,
@@ -2320,8 +2320,6 @@ class Team:
         cls,
         data: Dict[str, Any],
         registry: Optional["Registry"] = None,
-        db: Optional["BaseDb"] = None,
-        refs: Optional[List[Dict[str, Any]]] = None,
     ) -> "Team":
         """
         Create a Team from a dictionary.
@@ -2333,8 +2331,6 @@ class Team:
         Args:
             data: Dictionary containing team configuration
             registry: Optional registry for rehydrating tools
-            db: Optional database for loading members from refs
-            refs: Optional refs for this team version (to load members from DB)
 
         Returns:
             Team: Reconstructed team instance
@@ -2352,36 +2348,8 @@ class Team:
                     config["model"] = f"{model_data['provider']}:{model_data['id']}"
             config["model"] = get_model(config["model"])
 
-        # --- Handle Members reconstruction ---
-        # If we have refs and db, load members from database
-        if refs and db:
-            from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
-
-            reconstructed_members = []
-            # Sort refs by position to maintain order
-            member_refs = sorted(
-                [r for r in refs if r.get("ref_kind") in ("team_member_agent", "team_member_team")],
-                key=lambda r: r.get("position", 0),
-            )
-            for ref in member_refs:
-                child_entity_id = ref.get("child_entity_id")
-                child_version = ref.get("child_version")
-                ref_kind = ref.get("ref_kind")
-
-                if ref_kind == "team_member_agent" and child_entity_id:
-                    agent = get_agent_by_id_db(db=db, id=child_entity_id, version=child_version, registry=registry)
-                    if agent:
-                        reconstructed_members.append(agent)
-                elif ref_kind == "team_member_team" and child_entity_id:
-                    # Load nested team recursively
-                    nested_team = cls.load(team_id=child_entity_id, db=db, version=child_version, registry=registry)
-                    if nested_team:
-                        reconstructed_members.append(nested_team)
-
-            if reconstructed_members:
-                config["members"] = reconstructed_members
-        # Fall back to embedded member configs if no refs/db
-        elif "members" in config and config["members"]:
+        # --- Handle Members reconstruction from embedded member configs ---
+        if "members" in config and config["members"]:
             reconstructed_members = []
             for member_data in config["members"]:
                 member_type = member_data.get("type")
@@ -2468,24 +2436,18 @@ class Team:
         stage: str = "published",
         label: Optional[str] = None,
         notes: Optional[str] = None,
-        set_current: bool = True,
-        publish: bool = False,
-        upsert_version: bool = False,
-    ) -> int:
+    ) -> Optional[int]:
         """
-        Save the team configuration to the database, including member agents/teams.
+        Save the team component and config to the database, including member agents/teams.
 
         Args:
-            db: Database to save to (uses self.db if not provided)
-            stage: Config stage ("draft" or "published")
-            label: Optional version label
-            notes: Optional notes for this version
-            set_current: Whether to set this as the current version
-            publish: If True, sets stage to "published"
-            upsert_version: If True, updates the current version instead of creating new
+            db: The database to save the component and config to.
+            stage: The stage of the component. Defaults to "published".
+            label: The label of the component.
+            notes: The notes of the component.
 
         Returns:
-            int: The version number of the saved config
+            int: The version number of the saved config, or None on error.
         """
         from agno.agent.agent import Agent
 
@@ -2494,13 +2456,13 @@ class Team:
             raise ValueError("Db not initialized or provided")
 
         try:
-            # Track saved entity versions for pinning refs
+            # Track saved component versions for pinning links
             saved_versions: Dict[str, int] = {}
 
-            # Collect all refs for members
-            all_refs: List[Dict[str, Any]] = []
+            # Collect all links for members
+            all_links: List[Dict[str, Any]] = []
 
-            # Save each member (Agent or nested Team) and collect refs
+            # Save each member (Agent or nested Team) and collect links
             for position, member in enumerate(self.members or []):
                 if isinstance(member, Agent):
                     # Save member agent
@@ -2509,19 +2471,18 @@ class Team:
                         stage=stage,
                         label=label,
                         notes=notes,
-                        set_current=set_current,
-                        publish=publish,
-                        upsert_version=upsert_version,
                     )
-                    saved_versions[member.id] = member_version
+                    if member_version is not None:
+                        saved_versions[member.id] = member_version
 
-                    # Add ref for this member agent
-                    all_refs.append({
-                        "ref_kind": "team_member_agent",
-                        "ref_key": member.id,
-                        "child_entity_id": member.id,
+                    # Add link for this member agent
+                    all_links.append({
+                        "link_kind": "member",
+                        "link_key": member.id,
+                        "child_component_id": member.id,
                         "child_version": member_version,
                         "position": position,
+                        "metadata": {"type": "agent"},
                     })
 
                 elif isinstance(member, Team):
@@ -2531,50 +2492,40 @@ class Team:
                         stage=stage,
                         label=label,
                         notes=notes,
-                        set_current=set_current,
-                        publish=publish,
-                        upsert_version=upsert_version,
                     )
-                    saved_versions[member.id] = member_version
+                    if member_version is not None:
+                        saved_versions[member.id] = member_version
 
-                    # Add ref for this nested team
-                    all_refs.append({
-                        "ref_kind": "team_member_team",
-                        "ref_key": member.id,
-                        "child_entity_id": member.id,
+                    # Add link for this nested team
+                    all_links.append({
+                        "link_kind": "member",
+                        "link_key": member.id,
+                        "child_component_id": member.id,
                         "child_version": member_version,
                         "position": position,
+                        "metadata": {"type": "team"},
                     })
 
-            # Ensure team entity exists
-            db_.upsert_entity(
-                entity_id=self.id,
-                entity_type=PrimitiveType.TEAM,
+            # Create or update component
+            db_.upsert_component(
+                component_id=self.id,
+                component_type=ComponentType.TEAM,
                 name=getattr(self, "name", self.id),
                 description=getattr(self, "description", None),
                 metadata=getattr(self, "metadata", None),
             )
 
-            # Determine version to update (if overwriting)
-            version_to_update = None
-            if upsert_version:
-                entity = db_.get_entity(self.id)
-                if entity and entity.get("current_version"):
-                    version_to_update = entity["current_version"]
-
-            # Create or update config with refs
+            # Create or update config with links
             config = db_.upsert_config(
-                entity_id=self.id,
-                version=version_to_update,
+                component_id=self.id,
                 config=self.to_dict(),
-                version_label=label,
-                stage="published" if publish else stage,
+                links=all_links if all_links else None,
+                label=label,
+                stage=stage,
                 notes=notes,
-                set_current=set_current,
-                refs=all_refs if all_refs else None,
             )
 
-            return config["version"]
+            return config.get("version")
 
         except Exception as e:
             log_error(f"Error saving Team to database: {e}")
@@ -2583,48 +2534,37 @@ class Team:
     @classmethod
     def load(
         cls,
-        team_id: str,
+        id: str,
         *,
         db: "BaseDb",
-        version: Optional[int] = None,
         label: Optional[str] = None,
-        registry: Optional["Registry"] = None,
     ) -> Optional["Team"]:
         """
-        Load a team by id from the database.
+        Load a team by id.
 
         Args:
-            team_id: The team ID to load
-            db: Database to load from
-            version: Specific version to load (uses current if not provided)
-            label: Load by label instead of version
-            registry: Optional registry for rehydrating tools
+            id: The id of the team to load.
+            db: The database to load the team from.
+            label: The label of the team to load.
 
         Returns:
-            Team: Loaded team instance, or None if not found
+            The team loaded from the database or None if not found.
         """
-        if not db:
-            raise ValueError("Db not initialized or provided")
 
-        data = db.get_config(entity_id=team_id, version=version if version is not None else None, label=label)
+        data = db.get_config(component_id=id, label=label)
         if data is None:
             return None
 
-        resolved_version = data.get("version") if isinstance(data, dict) else None
+        config = data.get("config")
+        if config is None:
+            return None
 
-        # Get refs for this team version to load members from DB
-        refs = db.get_refs(entity_id=team_id, version=resolved_version) if resolved_version else []
+        team = cls.from_dict(config)
 
-        team = cls.from_dict(
-            data["config"] if "config" in data else data,
-            registry=registry,
-            db=db,
-            refs=refs,
-        )
-
-        team.id = team_id
-        if resolved_version:
-            team.version = int(resolved_version)
+        team.id = id
+        # If your get_config returns the entire configs row, set version:
+        if isinstance(data, dict) and "version" in data:
+            team.version = int(data["version"])
         team.db = db
         return team
 
@@ -2635,20 +2575,20 @@ class Team:
         hard_delete: bool = False,
     ) -> bool:
         """
-        Delete the team entity from the database.
+        Delete the team component.
 
         Args:
-            db: Database to delete from (uses self.db if not provided)
-            hard_delete: If True, permanently deletes. Otherwise soft-deletes.
+            db: The database to delete the component from.
+            hard_delete: Whether to hard delete the component.
 
         Returns:
-            bool: True if deleted, False if not found
+            True if the component was deleted, False otherwise.
         """
         db_ = db or self.db
         if not db_:
             raise ValueError("Db not initialized or provided")
 
-        return db_.delete_entity(entity_id=self.id, hard_delete=hard_delete)
+        return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
 
     def delete_version(
         self,
@@ -2658,40 +2598,22 @@ class Team:
     ) -> bool:
         """
         Delete a specific config version.
+
+        Args:
+            version: The version to delete.
+            db: The database to delete from (uses self.db if not provided).
+
+        Returns:
+            True if the version was deleted, False otherwise.
         """
         db_ = db or self.db
         if not db_:
             raise ValueError("Db not initialized or provided")
 
-        if hasattr(db_, "delete_config_version"):
-            return db_.delete_config_version(entity_id=self.id, version=version)
+        if hasattr(db_, "delete_config"):
+            return db_.delete_config(component_id=self.id, version=version)
 
-        raise NotImplementedError("Db does not support deleting a specific version yet")
-
-    def publish(
-        self,
-        *,
-        version: Optional[int] = None,
-        db: Optional["BaseDb"] = None,
-        set_current: bool = True,
-        pin_refs: bool = True,
-    ) -> bool:
-        """
-        Publish a draft version.
-        """
-        db_ = db or self.db
-        if not db_:
-            raise ValueError("Db not initialized or provided")
-
-        version_to_publish = version
-        if version_to_publish is None:
-            entity = db_.get_entity(self.id)
-            if entity and entity.get("current_version"):
-                version_to_publish = entity["current_version"]
-            else:
-                raise ValueError("No version specified and no current version set")
-
-        return db_.publish_config(entity_id=self.id, version=version_to_publish, pin_refs=pin_refs)
+        raise NotImplementedError("Db does not support deleting a specific config version yet")
 
     @overload
     def run(
@@ -9943,16 +9865,16 @@ def get_team_by_id(
     registry: Optional["Registry"] = None,
 ) -> Optional["Team"]:
     """
-    Get a Team by id from the database (new entities/configs schema).
+    Get a Team by id from the database.
 
     Resolution order:
     - if version is provided: load that version
     - elif label is provided: load that labeled version
-    - else: load entity.current_version
+    - else: load component.current_version
 
     Args:
         db: Database handle.
-        id: Team entity_id.
+        id: Team component_id.
         version: Optional integer config version.
         label: Optional version_label.
         registry: Optional Registry for reconstructing unserializable components.
@@ -9961,7 +9883,7 @@ def get_team_by_id(
         Team instance or None.
     """
     try:
-        row = db.get_config(entity_id=id, version=version, label=label)
+        row = db.get_config(component_id=id, version=version, label=label)
         if row is None:
             return None
 
@@ -9969,24 +9891,13 @@ def get_team_by_id(
         if cfg is None:
             raise ValueError(f"Invalid config found for team {id}")
 
-        resolved_version = row.get("version")
-
-        # Get refs for this team version to load members from DB
-        refs = db.get_refs(entity_id=id, version=resolved_version) if resolved_version else []
-
-        team = Team.from_dict(cfg, registry=registry, db=db, refs=refs)
+        team = Team.from_dict(cfg, registry=registry)
 
         team.id = id
-
-        try:
-            team.version = int(resolved_version)  # type: ignore[attr-defined]
-        except Exception:
-            pass
-
-        try:
-            team.db = db  # type: ignore[attr-defined]
-        except Exception:
-            pass
+        # If your get_config returns the entire configs row, set version:
+        if isinstance(row, dict) and "version" in row:
+            team.version = int(row["version"])
+        team.db = db
 
         return team
 
@@ -10011,25 +9922,21 @@ def get_teams(
     """
     teams: List[Team] = []
     try:
-        entities = db.list_entities(entity_type=PrimitiveType.TEAM.value)
-        for entity in entities:
-            entity_id = entity["entity_id"]
-            config = db.get_config(entity_id=entity_id)
+        components, _ = db.list_components(component_type=ComponentType.TEAM)
+        for component in components:
+            component_id = component["component_id"]
+            config = db.get_config(component_id=component_id)
             if config is not None:
                 team_config = config.get("config")
                 if team_config is not None:
-                    resolved_version = config.get("version")
-                    # Get refs for this team version
-                    refs = db.get_refs(entity_id=entity_id, version=resolved_version) if resolved_version else []
-
                     if "id" not in team_config:
-                        team_config["id"] = entity_id
-                    team = Team.from_dict(team_config, registry=registry, db=db, refs=refs)
-                    # Ensure team.id is set to the entity_id
-                    team.id = entity_id
+                        team_config["id"] = component_id
+                    team = Team.from_dict(team_config, registry=registry)
+                    # Ensure team.id is set to the component_id
+                    team.id = component_id
                     team.db = db
-                    if resolved_version:
-                        team.version = int(resolved_version)
+                    if isinstance(config, dict) and "version" in config:
+                        team.version = int(config["version"])
                     teams.append(team)
         return teams
 
