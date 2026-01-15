@@ -593,11 +593,9 @@ class Agent:
         self.enable_agentic_memory = enable_agentic_memory
 
         if enable_user_memories is not None:
-            warnings.warn(
+            log_debug(
                 "The 'enable_user_memories' parameter is deprecated and will be removed in future versions. "
-                "Use 'update_memory_on_run' instead.",
-                DeprecationWarning,
-                stacklevel=2,
+                "Use 'update_memory_on_run' instead."
             )
             self.update_memory_on_run = enable_user_memories
         else:
