@@ -346,6 +346,7 @@ class Workflow:
             if db_type == "postgres":
                 try:
                     from agno.db.postgres import PostgresDb
+
                     config["db"] = PostgresDb.from_dict(db_data)
                 except Exception as e:
                     log_error(f"Error reconstructing DB from dictionary: {e}")
@@ -421,7 +422,6 @@ class Workflow:
         steps_config = []
 
         try:
-
             for position, step in enumerate(self.steps or []):
                 if isinstance(step, Step):
                     # TODO: Allow not saving a new config if the agent/team already has a published config and no changes have been made
@@ -497,7 +497,7 @@ class Workflow:
         if data is None:
             return None
 
-        config = data.get("config") 
+        config = data.get("config")
         if config is None:
             return None
 

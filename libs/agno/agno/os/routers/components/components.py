@@ -51,7 +51,9 @@ def get_components_router(
     return attach_routes(router=router, os_db=os_db)
 
 
-def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb], registry: Optional[Registry] = None) -> APIRouter:
+def attach_routes(
+    router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb], registry: Optional[Registry] = None
+) -> APIRouter:
     @router.get(
         "/components",
         response_model=PaginatedResponse[ComponentResponse],
