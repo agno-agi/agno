@@ -7019,8 +7019,6 @@ class Agent:
         if self.tool_choice is not None:
             config["tool_choice"] = self.tool_choice
 
-        # Skip tool_hooks, pre_hooks, post_hooks as they contain callables
-
         # --- Reasoning settings ---
         if self.reasoning:
             config["reasoning"] = self.reasoning
@@ -7108,7 +7106,7 @@ class Agent:
         if self.exponential_backoff:
             config["exponential_backoff"] = self.exponential_backoff
 
-        # Response model settings
+        # --- Schema settings ---
         if self.input_schema is not None:
             if issubclass(self.input_schema, BaseModel):
                 config["input_schema"] = self.input_schema.__name__
@@ -7266,15 +7264,19 @@ class Agent:
 
         # --- Handle Schema reconstruction ---
         if "input_schema" in config and isinstance(config["input_schema"], str):
-            if registry and config["input_schema"] in registry.schemas:
-                config["input_schema"] = registry.schemas[config["input_schema"]]
+            schema_cls = registry.get_schema(config["input_schema"]) if registry else None
+            if schema_cls:
+                config["input_schema"] = schema_cls
             else:
+                log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
                 del config["input_schema"]
 
         if "output_schema" in config and isinstance(config["output_schema"], str):
-            if registry and config["output_schema"] in registry.schemas:
-                config["output_schema"] = registry.schemas[config["output_schema"]]
+            schema_cls = registry.get_schema(config["output_schema"]) if registry else None
+            if schema_cls:
+                config["output_schema"] = schema_cls
             else:
+                log_warning(f"Output schema {config['output_schema']} not found in registry, skipping.")
                 del config["output_schema"]
 
         # --- Handle MemoryManager reconstruction ---
@@ -7445,6 +7447,9 @@ class Agent:
         db_ = db or self.db
         if not db_:
             raise ValueError("Db not initialized or provided")
+
+        if self.id is None:
+            self.id = generate_id_from_name(self.name)
 
         try:
             # Create or update component

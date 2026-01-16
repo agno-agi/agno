@@ -173,7 +173,7 @@ def _get_span_table_schema(traces_table_name: str = "agno_traces", db_schema: st
 COMPONENT_TABLE_SCHEMA = {
     "component_id": {"type": String, "primary_key": True},
     "component_type": {"type": String, "nullable": False, "index": True},  # agent|team|workflow
-    "name": {"type": String, "nullable": False, "index": True},
+    "name": {"type": String, "nullable": True, "index": True},
     "description": {"type": Text, "nullable": True},
     "current_version": {"type": Integer, "nullable": True, "index": True},
     "metadata": {"type": JSONB, "nullable": True},

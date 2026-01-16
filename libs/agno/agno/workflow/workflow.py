@@ -571,12 +571,11 @@ class Workflow:
         config["store_executor_outputs"] = self.store_executor_outputs
 
         # --- Schema settings ---
-        # TODO: implement input_schema serialization
-        # if self.input_schema is not None:
-        #     if isinstance(self.input_schema, type) and issubclass(self.input_schema, BaseModel):
-        #         config["input_schema"] = self.input_schema.__name__
-        #     elif isinstance(self.input_schema, dict):
-        #         config["input_schema"] = self.input_schema
+        if self.input_schema is not None:
+            if issubclass(self.input_schema, BaseModel):
+                config["input_schema"] = self.input_schema.__name__
+            elif isinstance(self.input_schema, dict):
+                config["input_schema"] = self.input_schema
 
         # --- Metadata ---
         if self.metadata is not None:
@@ -638,12 +637,13 @@ class Workflow:
             # TODO: Extend support for other DB types and create a db_from_dict method.
 
         # --- Handle Schema reconstruction ---
-        # TODO: implement input_schema deserialization
-        # if "input_schema" in config and isinstance(config["input_schema"], str):
-        #     if registry and config["input_schema"] in registry.schemas:
-        #         config["input_schema"] = registry.schemas[config["input_schema"]]
-        #     else:
-        #         del config["input_schema"]
+        if "input_schema" in config and isinstance(config["input_schema"], str):
+            schema_cls = registry.get_schema(config["input_schema"]) if registry else None
+            if schema_cls:
+                config["input_schema"] = schema_cls
+            else:
+                log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
+                del config["input_schema"]
 
         # --- Handle steps reconstruction ---
         steps = None

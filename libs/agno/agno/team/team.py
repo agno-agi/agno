@@ -8255,27 +8255,30 @@ class Team:
             config["get_member_information_tool"] = self.get_member_information_tool
 
         # --- Schema settings ---
-        # TODO: implement schema serialization
-        # if self.input_schema is not None:
-        #     if isinstance(self.input_schema, type) and issubclass(self.input_schema, BaseModel):
-        #         config["input_schema"] = self.input_schema.__name__
-        #     elif isinstance(self.input_schema, dict):
-        #         config["input_schema"] = self.input_schema
-        # if self.output_schema is not None:
-        #     if isinstance(self.output_schema, type) and issubclass(self.output_schema, BaseModel):
-        #         config["output_schema"] = self.output_schema.__name__
-        #     elif isinstance(self.output_schema, dict):
-        #         config["output_schema"] = self.output_schema
+        if self.input_schema is not None:
+            if issubclass(self.input_schema, BaseModel):
+                config["input_schema"] = self.input_schema.__name__
+            elif isinstance(self.input_schema, dict):
+                config["input_schema"] = self.input_schema
+        if self.output_schema is not None:
+            if issubclass(self.output_schema, BaseModel):
+                config["output_schema"] = self.output_schema.__name__
+            elif isinstance(self.output_schema, dict):
+                config["output_schema"] = self.output_schema
 
         # --- Parser and output settings ---
-        # TODO: implement parser model serialization
-        # if self.parser_model is not None:
-        #     config["parser_model"] = self.parser_model.to_dict() if isinstance(self.parser_model, Model) else str(self.parser_model)
+        if self.parser_model is not None:
+            if isinstance(self.parser_model, Model):
+                config["parser_model"] = self.parser_model.to_dict()
+            else:
+                config["parser_model"] = str(self.parser_model)
         if self.parser_model_prompt is not None:
             config["parser_model_prompt"] = self.parser_model_prompt
-        # TODO: implement output model serialization
-        # if self.output_model is not None:
-        #     config["output_model"] = self.output_model.to_dict() if isinstance(self.output_model, Model) else str(self.output_model)
+        if self.output_model is not None:
+            if isinstance(self.output_model, Model):
+                config["output_model"] = self.output_model.to_dict()
+            else:
+                config["output_model"] = str(self.output_model)
         if self.output_model_prompt is not None:
             config["output_model_prompt"] = self.output_model_prompt
         if self.use_json_mode:
@@ -8478,17 +8481,21 @@ class Team:
                 del config["db"]
 
         # --- Handle Schema reconstruction ---
-        # TODO: implement schema deserialization
-        # if "input_schema" in config and isinstance(config["input_schema"], str):
-        #     if registry and config["input_schema"] in registry.schemas:
-        #         config["input_schema"] = registry.schemas[config["input_schema"]]
-        #     else:
-        #         del config["input_schema"]
-        # if "output_schema" in config and isinstance(config["output_schema"], str):
-        #     if registry and config["output_schema"] in registry.schemas:
-        #         config["output_schema"] = registry.schemas[config["output_schema"]]
-        #     else:
-        #         del config["output_schema"]
+        if "input_schema" in config and isinstance(config["input_schema"], str):
+            schema_cls = registry.get_schema(config["input_schema"]) if registry else None
+            if schema_cls:
+                config["input_schema"] = schema_cls
+            else:
+                log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
+                del config["input_schema"]
+
+        if "output_schema" in config and isinstance(config["output_schema"], str):
+            schema_cls = registry.get_schema(config["output_schema"]) if registry else None
+            if schema_cls:
+                config["output_schema"] = schema_cls
+            else:
+                log_warning(f"Output schema {config['output_schema']} not found in registry, skipping.")
+                del config["output_schema"]
 
         # --- Handle MemoryManager reconstruction ---
         # TODO: implement memory manager deserialization

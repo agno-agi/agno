@@ -142,17 +142,16 @@ class Step:
         data: Dict[str, Any],
         registry: Optional[Registry] = None,
         db: Optional["BaseDb"] = None,
-        refs: Optional[List[Dict[str, Any]]] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
     ) -> "Step":
         """
         Create a Step from a dictionary.
 
-        This method reconstructs a Step instance from a dictionary representation,
-        typically created by to_dict().
-
         Args:
             data: Dictionary containing step configuration
             registry: Optional registry for rehydrating non-serializable objects
+            db: Optional database for loading agents/teams in steps
+            links: Optional links for this step version
 
         Returns:
             Step: Reconstructed step instance

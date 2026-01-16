@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Type
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -25,7 +25,7 @@ class Registry:
     models: List[Model] = field(default_factory=list)
     dbs: List[BaseDb] = field(default_factory=list)
     vector_dbs: List[VectorDb] = field(default_factory=list)
-    schemas: Dict[str, BaseModel] = field(default_factory=dict)
+    schemas: List[BaseModel] = field(default_factory=list)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[str, Callable]:
@@ -45,3 +45,9 @@ class Registry:
         func = Function.from_dict(func_dict)
         func.entrypoint = self._entrypoint_lookup.get(func.name)
         return func
+
+    def get_schema(self, name: str) -> Optional[Type[BaseModel]]:
+        """Get a schema by name."""
+        if self.schemas:
+            return next((s for s in self.schemas if s.__name__ == name), None)
+        return None
