@@ -38,11 +38,16 @@ def jwt_token():
 def jwt_test_agent():
     """Create a test agent with a tool that accesses JWT data from request state."""
 
-    return Agent(
+    agent = Agent(
         name="jwt-test-agent",
         db=InMemoryDb(),
         instructions="You are a test agent that can access JWT information and user profiles.",
     )
+    # Override deep_copy to return the same instance for testing
+    # This is needed because AgentOS uses create_fresh=True which calls deep_copy,
+    # and our mocks need to be on the same instance that gets used
+    agent.deep_copy = lambda **kwargs: agent
+    return agent
 
 
 @pytest.fixture
