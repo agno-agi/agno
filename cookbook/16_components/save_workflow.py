@@ -41,4 +41,13 @@ content_creation_workflow = Workflow(
 )
 
 # Save the workflow to the database
-workflow_id = content_creation_workflow.save(db=db)
+version = content_creation_workflow.save(db=db)
+print(f"Saved workflow as version {version}")
+
+# By default, saving a workflow will create a new version of the workflow
+
+# Delete the workflow from the database (soft delete by default)
+# content_creation_workflow.delete()
+
+# Hard delete (permanently removes from database)
+# content_creation_workflow.delete(hard_delete=True)

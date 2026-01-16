@@ -1,14 +1,21 @@
 import logging
 import time
+from token import OP
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
-from pydantic import BaseModel, Field
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     BadRequestResponse,
+    ComponentConfigResponse,
+    ComponentCreate,
+    ComponentResponse,
+    ComponentType,
+    ComponentUpdate,
+    ConfigCreate,
+    ConfigUpdate,
     InternalServerErrorResponse,
     NotFoundResponse,
     PaginatedResponse,
@@ -17,79 +24,22 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db
 from agno.registry import Registry
-from agno.remote.base import RemoteDb
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_error
 from agno.utils.string import generate_id_from_name
 
 logger = logging.getLogger(__name__)
 
 
-# ============================================
-# Request/PrimitiveResponse Schemas
-# ============================================
-
-
-class PrimitiveCreate(BaseModel):
-    entity_id: Optional[str] = Field(
-        None, description="Unique identifier for the entity. Auto-generated from name if not provided."
-    )
-    entity_type: str = Field(..., description="Type of entity: agent, team, or workflow")
-    name: str = Field(..., description="Display name")
-    description: Optional[str] = Field(None, description="Optional description")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Optional metadata")
-    # Config parameters are optional, but if provided, they will be used to create the initial config
-    config: Optional[Dict[str, Any]] = Field(None, description="Optional configuration")
-    version_label: Optional[str] = Field(None, description="Optional label (e.g., 'stable')")
-    stage: str = Field("draft", description="Stage: 'draft' or 'published'")
-    notes: Optional[str] = Field(None, description="Optional notes")
-    set_current: bool = Field(True, description="Set as current version")
-
-
-class PrimitiveResponse(BaseModel):
-    entity_id: str
-    entity_type: str
-    name: str
-    description: Optional[str] = None
-    current_version: Optional[int] = None
-    metadata: Optional[Dict[str, Any]] = None
-    created_at: int
-    updated_at: Optional[int] = None
-
-
-class ConfigCreate(BaseModel):
-    config: Dict[str, Any] = Field(..., description="The configuration data")
-    version_label: Optional[str] = Field(None, description="Optional label (e.g., 'stable')")
-    stage: str = Field("draft", description="Stage: 'draft' or 'published'")
-    notes: Optional[str] = Field(None, description="Optional notes")
-    set_current: bool = Field(True, description="Set as current version")
-    upsert_version: bool = Field(False, description="Upsert the version if it already exists")
-
-
-class ConfigResponse(BaseModel):
-    entity_id: str
-    version: int
-    version_label: Optional[str] = None
-    stage: str
-    config: Dict[str, Any]
-    notes: Optional[str] = None
-    created_at: int
-    updated_at: Optional[int] = None
-
-
-# ============================================
-# Router
-# ============================================
-
-
 def get_components_router(
-    os_db: Union[BaseDb, AsyncBaseDb, RemoteDb], registry: Registry, settings: AgnoAPISettings = AgnoAPISettings()
+    os_db: Union[BaseDb, AsyncBaseDb],
+    settings: AgnoAPISettings = AgnoAPISettings(),
+    registry: Optional[Registry] = None,
 ) -> APIRouter:
-    """Create entities and configs router."""
+    """Create components router."""
     router = APIRouter(
         dependencies=[Depends(get_authentication_dependency(settings))],
-        tags=["Entities"],
+        tags=["Components"],
         responses={
             400: {"description": "Bad Request", "model": BadRequestResponse},
             401: {"description": "Unauthorized", "model": UnauthenticatedResponse},
@@ -101,38 +51,37 @@ def get_components_router(
     return attach_routes(router=router, os_db=os_db, registry=registry)
 
 
-def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb, RemoteDb], registry: Registry) -> APIRouter:
-    # ============================================
-    # COMPONENT ENDPOINTS
-    # ============================================
-
+def attach_routes(
+    router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb], registry: Optional[Registry] = None
+) -> APIRouter:
     @router.get(
-        "/entities",
-        response_model=PaginatedResponse[PrimitiveResponse],
+        "/components",
+        response_model=PaginatedResponse[ComponentResponse],
         response_model_exclude_none=True,
         status_code=200,
-        operation_id="list_entities",
-        summary="List Primitives",
-        description="Retrieve a paginated list of entities with optional filtering by type.",
+        operation_id="list_components",
+        summary="List Components",
+        description="Retrieve a paginated list of components with optional filtering by type.",
     )
-    async def list_entities(
-        request: Request,
-        entity_type: Optional[str] = Query(None, description="Filter by type: agent, team, workflow"),
+    async def list_components(
+        component_type: Optional[ComponentType] = Query(None, description="Filter by type: agent, team, workflow"),
         page: int = Query(1, ge=1, description="Page number"),
         limit: int = Query(20, ge=1, le=100, description="Items per page"),
-        db_id: Optional[str] = Query(None, description="Database ID"),
-    ) -> PaginatedResponse[PrimitiveResponse]:
+    ) -> PaginatedResponse[ComponentResponse]:
         try:
             start_time_ms = time.time() * 1000
-            entities = os_db.list_entities(entity_type=entity_type)
+            offset = (page - 1) * limit
 
-            total_count = len(entities)
+            components, total_count = os_db.list_components(
+                component_type=component_type,
+                limit=limit,
+                offset=offset,
+            )
+
             total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
-            start_idx = (page - 1) * limit
-            paginated = entities[start_idx : start_idx + limit]
 
             return PaginatedResponse(
-                data=[PrimitiveResponse(**e) for e in paginated],
+                data=[ComponentResponse(**c) for c in components],
                 meta=PaginationInfo(
                     page=page,
                     limit=limit,
@@ -142,36 +91,28 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb, RemoteDb]
                 ),
             )
         except Exception as e:
-            log_error(f"Error listing entities: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            log_error(f"Error listing components: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.post(
-        "/entities",
-        response_model=PrimitiveResponse,
+        "/components",
+        response_model=ComponentResponse,
         response_model_exclude_none=True,
         status_code=201,
-        operation_id="create_entity",
-        summary="Create Entity",
-        description="Create a new entity (agent, team, or workflow).",
+        operation_id="create_component",
+        summary="Create Component",
+        description="Create a new component (agent, team, or workflow) with initial config.",
     )
-    async def create_entity(
-        request: Request,
-        body: PrimitiveCreate,
-        db_id: Optional[str] = Query(None, description="Database ID"),
-    ) -> PrimitiveResponse:
+    async def create_component(
+        body: ComponentCreate,
+    ) -> ComponentResponse:
         try:
-            # Auto-generate entity_id if not provided
-            entity_id = body.entity_id
-            if entity_id is None:
-                entity_id = generate_id_from_name(body.name)
+            component_id = body.component_id
+            if component_id is None:
+                component_id = generate_id_from_name(body.name)
 
-            entity = os_db.upsert_entity(
-                entity_id=entity_id,
-                entity_type=body.entity_type,
-                name=body.name,
-                description=body.description,
-                metadata=body.metadata,
-            )
+            # TODO: Create links from config
+            # TODO: Use DB from registry
 
             # Prepare config - ensure it's a dict
             config = body.config or {}
@@ -181,7 +122,7 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb, RemoteDb]
                 component_db = config.get("db")
                 if component_db is not None:
                     component_db_id = component_db.get("id")
-                    if component_db_id is not None and component_db_id == db_id:
+                    if component_db_id is not None and component_db_id == os_db.id:
                         db_dict = os_db.to_dict()
                     else:
                         if registry.dbs is not None and len(registry.dbs) > 0:
@@ -195,184 +136,291 @@ def attach_routes(router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb, RemoteDb]
 
             config["db"] = db_dict
 
-            # Create the initial config
-            os_db.upsert_config(
-                entity_id=entity_id,
+            component, _config = os_db.create_component_with_config(
+                component_id=component_id,
+                component_type=body.component_type,
+                name=body.name,
+                description=body.description,
+                metadata=body.metadata,
                 config=config,
-                version_label=body.version_label,
-                stage=body.stage,
+                label=body.label,
+                stage=body.stage or "draft",
                 notes=body.notes,
-                set_current=body.set_current,
             )
-            return PrimitiveResponse(**entity)
+
+            return ComponentResponse(**component)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            log_error(f"Error creating entity: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            log_error(f"Error creating component: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get(
-        "/entities/{entity_id}",
-        response_model=PrimitiveResponse,
+        "/components/{component_id}",
+        response_model=ComponentResponse,
         response_model_exclude_none=True,
         status_code=200,
-        operation_id="get_entity",
-        summary="Get Entity",
-        description="Retrieve an entity by ID.",
+        operation_id="get_component",
+        summary="Get Component",
+        description="Retrieve a component by ID.",
     )
-    async def get_entity(
-        request: Request,
-        entity_id: str = Path(description="Entity ID"),
-        db_id: Optional[str] = Query(None, description="Database ID"),
-    ) -> PrimitiveResponse:
+    async def get_component(
+        component_id: str = Path(description="Component ID"),
+    ) -> ComponentResponse:
         try:
-            entity = os_db.get_entity(entity_id)
-            if entity is None:
-                raise HTTPException(status_code=404, detail=f"Entity {entity_id} not found")
-            return PrimitiveResponse(**entity)
+            component = os_db.get_component(component_id)
+            if component is None:
+                raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+            return ComponentResponse(**component)
         except HTTPException:
             raise
         except Exception as e:
-            log_error(f"Error getting entity: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            log_error(f"Error getting component: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
+
+    @router.patch(
+        "/components/{component_id}",
+        response_model=ComponentResponse,
+        response_model_exclude_none=True,
+        status_code=200,
+        operation_id="update_component",
+        summary="Update Component",
+        description="Partially update a component by ID.",
+    )
+    async def update_component(
+        component_id: str = Path(description="Component ID"),
+        body: ComponentUpdate = Body(description="Component fields to update"),
+    ) -> ComponentResponse:
+        try:
+            existing = os_db.get_component(component_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+
+            update_kwargs: Dict[str, Any] = {"component_id": component_id}
+            if body.name is not None:
+                update_kwargs["name"] = body.name
+            if body.description is not None:
+                update_kwargs["description"] = body.description
+            if body.metadata is not None:
+                update_kwargs["metadata"] = body.metadata
+            if body.component_type is not None:
+                update_kwargs["component_type"] = body.component_type
+
+            component = os_db.upsert_component(**update_kwargs)
+            return ComponentResponse(**component)
+        except HTTPException:
+            raise
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            log_error(f"Error updating component: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.delete(
-        "/entities/{entity_id}",
+        "/components/{component_id}",
         status_code=204,
-        operation_id="delete_entity",
-        summary="Delete Entity",
-        description="Delete an entity and all its configs.",
+        operation_id="delete_component",
+        summary="Delete Component",
+        description="Delete a component by ID.",
     )
-    async def delete_entity(
-        request: Request,
-        entity_id: str = Path(description="Entity ID"),
-        db_id: Optional[str] = Query(None, description="Database ID"),
+    async def delete_component(
+        component_id: str = Path(description="Component ID"),
     ) -> None:
         try:
-            deleted = os_db.delete_entity(entity_id)
+            deleted = os_db.delete_component(component_id)
             if not deleted:
-                raise HTTPException(status_code=404, detail=f"Entity {entity_id} not found")
+                raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
         except HTTPException:
             raise
         except Exception as e:
-            log_error(f"Error deleting entity: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
-
-    # ============================================
-    # CONFIG ENDPOINTS
-    # ============================================
+            log_error(f"Error deleting component: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get(
-        "/entities/{entity_id}/configs",
-        response_model=List[ConfigResponse],
+        "/components/{component_id}/configs",
+        response_model=List[ComponentConfigResponse],
         response_model_exclude_none=True,
         status_code=200,
         operation_id="list_configs",
-        summary="List Config Versions",
-        description="List all config versions for an entity.",
+        summary="List Configs",
+        description="List all configs for a component.",
     )
     async def list_configs(
-        request: Request,
-        entity_id: str = Path(description="Entity ID"),
-        db_id: Optional[str] = Query(None, description="Database ID"),
-    ) -> List[ConfigResponse]:
+        component_id: str = Path(description="Component ID"),
+        include_config: bool = Query(True, description="Include full config blob"),
+    ) -> List[ComponentConfigResponse]:
         try:
-            configs = os_db.list_config_versions(entity_id)
-            return [ConfigResponse(**c) for c in configs]
+            configs = os_db.list_configs(component_id, include_config=include_config)
+            return [ComponentConfigResponse(**c) for c in configs]
         except Exception as e:
             log_error(f"Error listing configs: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.post(
-        "/entities/{entity_id}/configs",
-        response_model=ConfigResponse,
+        "/components/{component_id}/configs",
+        response_model=ComponentConfigResponse,
         response_model_exclude_none=True,
         status_code=201,
         operation_id="create_config",
         summary="Create Config Version",
-        description="Create a new config version for an entity.",
+        description="Create a new config version for a component.",
     )
     async def create_config(
-        request: Request,
-        entity_id: str = Path(description="Entity ID"),
+        component_id: str = Path(description="Component ID"),
         body: ConfigCreate = Body(description="Config data"),
-        db_id: Optional[str] = Query(None, description="Database ID"),
-    ) -> ConfigResponse:
+    ) -> ComponentConfigResponse:
         try:
-            # Determine version to update (if overwriting)
-            version_to_update = None
-            if body.upsert_version:
-                entity = os_db.get_entity(entity_id)
-                if entity and entity.get("current_version"):
-                    version_to_update = entity["current_version"]
-
             config = os_db.upsert_config(
-                entity_id=entity_id,
-                version=version_to_update,
+                component_id=component_id,
+                version=None,  # Always create new
                 config=body.config,
-                version_label=body.version_label,
+                label=body.label,
                 stage=body.stage,
                 notes=body.notes,
-                set_current=body.set_current,
+                links=body.links,
             )
-            return ConfigResponse(**config)
+            return ComponentConfigResponse(**config)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             log_error(f"Error creating config: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
+
+    @router.patch(
+        "/components/{component_id}/configs/{version}",
+        response_model=ComponentConfigResponse,
+        response_model_exclude_none=True,
+        status_code=200,
+        operation_id="update_config",
+        summary="Update Draft Config",
+        description="Update an existing draft config. Cannot update published configs.",
+    )
+    async def update_config(
+        component_id: str = Path(description="Component ID"),
+        version: int = Path(description="Version number"),
+        body: ConfigUpdate = Body(description="Config fields to update"),
+    ) -> ComponentConfigResponse:
+        try:
+            config = os_db.upsert_config(
+                component_id=component_id,
+                version=version,  # Always update existing
+                config=body.config,
+                label=body.label,
+                stage=body.stage,
+                notes=body.notes,
+                links=body.links,
+            )
+            return ComponentConfigResponse(**config)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            log_error(f"Error updating config: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get(
-        "/entities/{entity_id}/configs/current",
-        response_model=ConfigResponse,
+        "/components/{component_id}/configs/current",
+        response_model=ComponentConfigResponse,
         response_model_exclude_none=True,
         status_code=200,
         operation_id="get_current_config",
         summary="Get Current Config",
-        description="Get the current config version for an entity.",
+        description="Get the current config version for a component.",
     )
     async def get_current_config(
-        request: Request,
-        entity_id: str = Path(description="Entity ID"),
-        db_id: Optional[str] = Query(None, description="Database ID"),
-    ) -> ConfigResponse:
+        component_id: str = Path(description="Component ID"),
+    ) -> ComponentConfigResponse:
         try:
-            config = os_db.get_config(entity_id)
+            config = os_db.get_config(component_id)
             if config is None:
-                raise HTTPException(status_code=404, detail=f"No config found for {entity_id}")
-            return ConfigResponse(**config)
+                raise HTTPException(status_code=404, detail=f"No current config for {component_id}")
+            return ComponentConfigResponse(**config)
         except HTTPException:
             raise
         except Exception as e:
             log_error(f"Error getting config: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get(
-        "/entities/{entity_id}/configs/{version}",
-        response_model=ConfigResponse,
+        "/components/{component_id}/configs/{version}",
+        response_model=ComponentConfigResponse,
         response_model_exclude_none=True,
         status_code=200,
         operation_id="get_config",
         summary="Get Config Version",
-        description="Get a specific config version by number or label.",
+        description="Get a specific config version by number.",
     )
-    async def get_component_config(
-        request: Request,
-        entity_id: str = Path(description="Entity ID"),
-        version: str = Path(description="Version number or label"),
-        db_id: Optional[str] = Query(None, description="Database ID"),
-    ) -> ConfigResponse:
+    async def get_config_version(
+        component_id: str = Path(description="Component ID"),
+        version: int = Path(description="Version number"),
+    ) -> ComponentConfigResponse:
         try:
-            try:
-                config = os_db.get_config(entity_id, version=int(version))
-            except ValueError:
-                config = os_db.get_config(entity_id, label=version)
+            config = os_db.get_config(component_id, version=version)
 
             if config is None:
-                raise HTTPException(status_code=404, detail=f"Config {entity_id} v{version} not found")
-            return ConfigResponse(**config)
+                raise HTTPException(status_code=404, detail=f"Config {component_id} v{version} not found")
+            return ComponentConfigResponse(**config)
         except HTTPException:
             raise
         except Exception as e:
             log_error(f"Error getting config: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal server error")
+
+    @router.delete(
+        "/components/{component_id}/configs/{version}",
+        status_code=204,
+        operation_id="delete_config",
+        summary="Delete Config Version",
+        description="Delete a specific draft config version. Cannot delete published or current configs.",
+    )
+    async def delete_config_version(
+        component_id: str = Path(description="Component ID"),
+        version: int = Path(description="Version number"),
+    ) -> None:
+        try:
+            # Resolve version number
+            deleted = os_db.delete_config(component_id, version=version)
+            if not deleted:
+                raise HTTPException(status_code=404, detail=f"Config {component_id} v{version} not found")
+        except HTTPException:
+            raise
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            log_error(f"Error deleting config: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
+
+    @router.post(
+        "/components/{component_id}/configs/{version}/set-current",
+        response_model=ComponentResponse,
+        response_model_exclude_none=True,
+        status_code=200,
+        operation_id="set_current_config",
+        summary="Set Current Config Version",
+        description="Set a published config version as current (for rollback).",
+    )
+    async def set_current_config(
+        component_id: str = Path(description="Component ID"),
+        version: int = Path(description="Version number"),
+    ) -> ComponentResponse:
+        try:
+            success = os_db.set_current_version(component_id, version=version)
+            if not success:
+                raise HTTPException(
+                    status_code=404, detail=f"Component {component_id} or config version {version} not found"
+                )
+
+            # Fetch and return updated component
+            component = os_db.get_component(component_id)
+            if component is None:
+                raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+
+            return ComponentResponse(**component)
+        except HTTPException:
+            raise
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            log_error(f"Error setting current config: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     return router

@@ -434,6 +434,7 @@ def get_agent_by_id(
     agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     registry: Optional[Registry] = None,
+    version: Optional[int] = None,
 ) -> Optional[Union[Agent, RemoteAgent]]:
     if agent_id is None or agents is None:
         return None
@@ -448,7 +449,7 @@ def get_agent_by_id(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            agent = get_agent_by_id_db(db=db, id=agent_id, registry=registry)
+            agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
             return agent
         except Exception as e:
             logger.error(f"Error getting agent {agent_id} from database: {e}")
@@ -461,6 +462,7 @@ def get_team_by_id(
     team_id: str,
     teams: Optional[List[Union[Team, RemoteTeam]]] = None,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    version: Optional[int] = None,
     registry: Optional[Registry] = None,
 ) -> Optional[Union[Team, RemoteTeam]]:
     if team_id is None:
@@ -477,7 +479,7 @@ def get_team_by_id(
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            team = get_team_by_id_db(db=db, id=team_id, registry=registry)
+            team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
             return team
         except Exception as e:
             logger.error(f"Error getting team {team_id} from database: {e}")
@@ -490,6 +492,7 @@ def get_workflow_by_id(
     workflow_id: str,
     workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    version: Optional[int] = None,
     registry: Optional[Registry] = None,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     if workflow_id is None:
@@ -506,7 +509,7 @@ def get_workflow_by_id(
         from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
 
         try:
-            workflow = get_workflow_by_id_db(db=db, id=workflow_id, registry=registry)
+            workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
             return workflow
         except Exception as e:
             logger.error(f"Error getting workflow {workflow_id} from database: {e}")

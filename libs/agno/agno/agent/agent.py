@@ -34,7 +34,7 @@ from pydantic import BaseModel
 
 from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
-from agno.db.base import AsyncBaseDb, BaseDb, PrimitiveType, SessionType, UserMemory
+from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.eval.base import BaseEval
 from agno.exceptions import (
@@ -413,10 +413,6 @@ class Agent:
     store_events: bool = False
     events_to_skip: Optional[List[RunEvent]] = None
 
-    # --- Agent Configuration ---
-    # The version of the agent configuration to use
-    version: Optional[str] = None
-
     # --- If this Agent is part of a team ---
     # If this Agent is part of a team, this is the role of the agent in the team
     role: Optional[str] = None
@@ -549,7 +545,6 @@ class Agent:
         stream_events: Optional[bool] = None,
         store_events: bool = False,
         events_to_skip: Optional[List[RunEvent]] = None,
-        version: Optional[str] = None,
         role: Optional[str] = None,
         culture_manager: Optional[CultureManager] = None,
         enable_agentic_culture: bool = False,
@@ -682,7 +677,6 @@ class Agent:
         self.stream_events = stream_events
 
         self.store_events = store_events
-        self.version = version
         self.role = role
         # By default, we skip the run response content event
         self.events_to_skip = events_to_skip
@@ -6903,21 +6897,17 @@ class Agent:
 
         return agent_session
 
-    # -*- Agent Configuration Functions
+    # -*- Serialization Functions
     def to_dict(self) -> Dict[str, Any]:
         """
         Convert the Agent to a dictionary.
-
-        This method serializes all agent attributes to a dictionary format that can be stored
-        and later reconstructed using from_dict(). Non-serializable attributes like callables
-        and complex objects are handled appropriately.
 
         Returns:
             Dict[str, Any]: Dictionary representation of the agent configuration
         """
         config: Dict[str, Any] = {}
 
-        # --- Agent settings ---
+        # --- Agent Settings ---
         if self.model is not None:
             if isinstance(self.model, Model):
                 config["model"] = self.model.to_dict()
@@ -7163,10 +7153,6 @@ class Agent:
             config["store_events"] = self.store_events
         # Skip events_to_skip as it contains RunEvent enums
 
-        # --- Agent configuration settings ---
-        if self.version is not None:
-            config["version"] = self.version
-
         # --- Role and culture settings ---
         if self.role is not None:
             config["role"] = self.role
@@ -7179,9 +7165,6 @@ class Agent:
         # --- Metadata ---
         if self.metadata is not None:
             config["metadata"] = self.metadata
-
-        # Experimental features settings
-        # TODO: implement experimental features serialization
 
         # --- Context compression settings ---
         if self.compress_tool_results:
@@ -7205,70 +7188,64 @@ class Agent:
         """
         Create an agent from a dictionary.
 
-        This method reconstructs an Agent instance from a dictionary representation,
-        typically created by to_dict(). Complex objects like Model are reconstructed
-        from their serialized forms.
-
         Args:
             data: Dictionary containing agent configuration
+            registry: Optional registry for rehydrating tools and schemas
 
         Returns:
             Agent: Reconstructed agent instance
         """
         from agno.models.utils import get_model
 
-        # Create a copy to avoid modifying the original
         config = data.copy()
 
         # --- Handle Model reconstruction ---
-        # TODO: Implement better model reconstruction for model params
         if "model" in config:
             model_data = config["model"]
-            if isinstance(model_data, dict):
-                # Reconstruct model from dict (convert to string format for get_model)
-                if "id" in model_data:
-                    config["model"] = f"{model_data['provider']}:{model_data['id']}"
-            # get_model will handle string -> Model conversion
-            config["model"] = get_model(config["model"])
+            if isinstance(model_data, dict) and "id" in model_data:
+                config["model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+            elif isinstance(model_data, str):
+                config["model"] = get_model(model_data)
 
         # --- Handle reasoning_model reconstruction ---
-        if "reasoning_model" in config:
-            reasoning_model_data = config["reasoning_model"]
-            if isinstance(reasoning_model_data, dict):
-                if "id" in reasoning_model_data:
-                    config["reasoning_model"] = f"{reasoning_model_data['provider']}:{reasoning_model_data['id']}"
-            config["reasoning_model"] = get_model(config["reasoning_model"])
+        # TODO: implement reasoning model deserialization
+        # if "reasoning_model" in config:
+        #     model_data = config["reasoning_model"]
+        #     if isinstance(model_data, dict) and "id" in model_data:
+        #         config["reasoning_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+        #     elif isinstance(model_data, str):
+        #         config["reasoning_model"] = get_model(model_data)
 
         # --- Handle parser_model reconstruction ---
-        if "parser_model" in config:
-            parser_model_data = config["parser_model"]
-            if isinstance(parser_model_data, dict):
-                if "id" in parser_model_data:
-                    config["parser_model"] = f"{parser_model_data['provider']}:{parser_model_data['id']}"
-            config["parser_model"] = get_model(config["parser_model"])
+        # TODO: implement parser model deserialization
+        # if "parser_model" in config:
+        #     model_data = config["parser_model"]
+        #     if isinstance(model_data, dict) and "id" in model_data:
+        #         config["parser_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+        #     elif isinstance(model_data, str):
+        #         config["parser_model"] = get_model(model_data)
 
         # --- Handle output_model reconstruction ---
-        if "output_model" in config:
-            output_model_data = config["output_model"]
-            if isinstance(output_model_data, dict):
-                if "id" in output_model_data:
-                    config["output_model"] = f"{output_model_data['provider']}:{output_model_data['id']}"
-            config["output_model"] = get_model(config["output_model"])
+        # TODO: implement output model deserialization
+        # if "output_model" in config:
+        #     model_data = config["output_model"]
+        #     if isinstance(model_data, dict) and "id" in model_data:
+        #         config["output_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+        #     elif isinstance(model_data, str):
+        #         config["output_model"] = get_model(model_data)
 
         # --- Handle tools reconstruction ---
         if "tools" in config and config["tools"]:
             if registry:
                 config["tools"] = [registry.rehydrate_function(t) for t in config["tools"]]
             else:
-                log_warning(
-                    "No registry provided, tools will not be rehydrated. Please provide a registry to rehydrate tools."
-                )
+                log_warning("No registry provided, tools will not be rehydrated.")
+                del config["tools"]
 
         # --- Handle DB reconstruction ---
         if "db" in config and isinstance(config["db"], dict):
             db_data = config["db"]
             db_type = db_data.get("type")
-
             if db_type == "postgres":
                 try:
                     from agno.db.postgres import PostgresDb
@@ -7288,56 +7265,163 @@ class Agent:
             # TODO: Extend support for other DB types and create a db_from_dict method.
 
         # --- Handle Schema reconstruction ---
-        if "input_schema" in config and config["input_schema"] and registry:
-            config["input_schema"] = registry.schemas.get(config["input_schema"])
+        if "input_schema" in config and isinstance(config["input_schema"], str):
+            if registry and config["input_schema"] in registry.schemas:
+                config["input_schema"] = registry.schemas[config["input_schema"]]
+            else:
+                del config["input_schema"]
 
-        if "output_schema" in config and config["output_schema"] and registry:
-            config["output_schema"] = registry.schemas.get(config["output_schema"])
+        if "output_schema" in config and isinstance(config["output_schema"], str):
+            if registry and config["output_schema"] in registry.schemas:
+                config["output_schema"] = registry.schemas[config["output_schema"]]
+            else:
+                del config["output_schema"]
 
         # --- Handle MemoryManager reconstruction ---
-        # if "memory_manager" in config:
+        # TODO: implement memory manager deserialization
+        # if "memory_manager" in config and isinstance(config["memory_manager"], dict):
         #     from agno.memory import MemoryManager
-
-        #     memory_manager_data = config["memory_manager"]
-        #     if isinstance(memory_manager_data, dict):
-        #         config["memory_manager"] = MemoryManager.from_dict(memory_manager_data)
+        #     config["memory_manager"] = MemoryManager.from_dict(config["memory_manager"])
 
         # --- Handle SessionSummaryManager reconstruction ---
-        # if "session_summary_manager" in config:
+        # TODO: implement session summary manager deserialization
+        # if "session_summary_manager" in config and isinstance(config["session_summary_manager"], dict):
         #     from agno.session import SessionSummaryManager
-
-        #     session_summary_manager_data = config["session_summary_manager"]
-        #     if isinstance(session_summary_manager_data, dict):
-        #         config["session_summary_manager"] = SessionSummaryManager.from_dict(session_summary_manager_data)
+        #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
 
         # --- Handle CultureManager reconstruction ---
-        # if "culture_manager" in config:
+        # TODO: implement culture manager deserialization
+        # if "culture_manager" in config and isinstance(config["culture_manager"], dict):
         #     from agno.culture import CultureManager
-
-        #     culture_manager_data = config["culture_manager"]
-        #     if isinstance(culture_manager_data, dict):
-        #         config["culture_manager"] = CultureManager.from_dict(culture_manager_data)
+        #     config["culture_manager"] = CultureManager.from_dict(config["culture_manager"])
 
         # --- Handle Knowledge reconstruction ---
-        # if "knowledge" in config:
+        # TODO: implement knowledge deserialization
+        # if "knowledge" in config and isinstance(config["knowledge"], dict):
         #     from agno.knowledge import Knowledge
-
-        #     knowledge_data = config["knowledge"]
-        #     if isinstance(knowledge_data, dict):
-        #         config["knowledge"] = Knowledge.from_dict(knowledge_data)
+        #     config["knowledge"] = Knowledge.from_dict(config["knowledge"])
 
         # --- Handle CompressionManager reconstruction ---
-        # if "compression_manager" in config:
+        # TODO: implement compression manager deserialization
+        # if "compression_manager" in config and isinstance(config["compression_manager"], dict):
         #     from agno.compression.manager import CompressionManager
+        #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
 
-        #     compression_manager_data = config["compression_manager"]
-        #     if isinstance(compression_manager_data, dict):
-        #         config["compression_manager"] = CompressionManager.from_dict(compression_manager_data)
+        # Remove keys that aren't constructor parameters
+        config.pop("team_id", None)
+        config.pop("workflow_id", None)
 
-        # Create and return the agent
-        return cls(**config)
+        return cls(
+            # --- Agent settings ---
+            model=config.get("model"),
+            name=config.get("name"),
+            id=config.get("id"),
+            # --- User settings ---
+            user_id=config.get("user_id"),
+            # --- Session settings ---
+            session_id=config.get("session_id"),
+            session_state=config.get("session_state"),
+            add_session_state_to_context=config.get("add_session_state_to_context", False),
+            enable_agentic_state=config.get("enable_agentic_state", False),
+            overwrite_db_session_state=config.get("overwrite_db_session_state", False),
+            cache_session=config.get("cache_session", False),
+            search_session_history=config.get("search_session_history", False),
+            num_history_sessions=config.get("num_history_sessions"),
+            enable_session_summaries=config.get("enable_session_summaries", False),
+            add_session_summary_to_context=config.get("add_session_summary_to_context"),
+            # session_summary_manager=config.get("session_summary_manager"),  # TODO
+            # --- Dependencies ---
+            dependencies=config.get("dependencies"),
+            add_dependencies_to_context=config.get("add_dependencies_to_context", False),
+            # --- Agentic Memory settings ---
+            # memory_manager=config.get("memory_manager"),  # TODO
+            enable_agentic_memory=config.get("enable_agentic_memory", False),
+            enable_user_memories=config.get("enable_user_memories", False),
+            add_memories_to_context=config.get("add_memories_to_context"),
+            # --- Database settings ---
+            db=config.get("db"),
+            # --- History settings ---
+            add_history_to_context=config.get("add_history_to_context", False),
+            num_history_runs=config.get("num_history_runs"),
+            num_history_messages=config.get("num_history_messages"),
+            max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
+            # --- Knowledge settings ---
+            # knowledge=config.get("knowledge"),  # TODO
+            knowledge_filters=config.get("knowledge_filters"),
+            enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
+            add_knowledge_to_context=config.get("add_knowledge_to_context", False),
+            references_format=config.get("references_format", "json"),
+            # --- Tools ---
+            tools=config.get("tools"),
+            tool_call_limit=config.get("tool_call_limit"),
+            tool_choice=config.get("tool_choice"),
+            # --- Reasoning settings ---
+            reasoning=config.get("reasoning", False),
+            # reasoning_model=config.get("reasoning_model"),  # TODO
+            reasoning_min_steps=config.get("reasoning_min_steps", 1),
+            reasoning_max_steps=config.get("reasoning_max_steps", 10),
+            # --- Default tools settings ---
+            read_chat_history=config.get("read_chat_history", False),
+            search_knowledge=config.get("search_knowledge", True),
+            update_knowledge=config.get("update_knowledge", False),
+            read_tool_call_history=config.get("read_tool_call_history", False),
+            send_media_to_model=config.get("send_media_to_model", True),
+            store_media=config.get("store_media", True),
+            store_tool_messages=config.get("store_tool_messages", True),
+            store_history_messages=config.get("store_history_messages", True),
+            # --- System message settings ---
+            system_message=config.get("system_message"),
+            system_message_role=config.get("system_message_role", "system"),
+            build_context=config.get("build_context", True),
+            # --- Context building settings ---
+            description=config.get("description"),
+            instructions=config.get("instructions"),
+            expected_output=config.get("expected_output"),
+            additional_context=config.get("additional_context"),
+            markdown=config.get("markdown", False),
+            add_name_to_context=config.get("add_name_to_context", False),
+            add_datetime_to_context=config.get("add_datetime_to_context", False),
+            add_location_to_context=config.get("add_location_to_context", False),
+            timezone_identifier=config.get("timezone_identifier"),
+            resolve_in_context=config.get("resolve_in_context", True),
+            # --- User message settings ---
+            user_message_role=config.get("user_message_role", "user"),
+            build_user_context=config.get("build_user_context", True),
+            # --- Response settings ---
+            retries=config.get("retries", 0),
+            delay_between_retries=config.get("delay_between_retries", 1),
+            exponential_backoff=config.get("exponential_backoff", False),
+            # --- Schema settings ---
+            input_schema=config.get("input_schema"),
+            output_schema=config.get("output_schema"),
+            # --- Parser and output settings ---
+            # parser_model=config.get("parser_model"),  # TODO
+            parser_model_prompt=config.get("parser_model_prompt"),
+            # output_model=config.get("output_model"),  # TODO
+            output_model_prompt=config.get("output_model_prompt"),
+            parse_response=config.get("parse_response", True),
+            structured_outputs=config.get("structured_outputs"),
+            use_json_mode=config.get("use_json_mode", False),
+            save_response_to_file=config.get("save_response_to_file"),
+            # --- Streaming settings ---
+            stream=config.get("stream"),
+            stream_events=config.get("stream_events"),
+            store_events=config.get("store_events", False),
+            role=config.get("role"),
+            # --- Culture settings ---
+            # culture_manager=config.get("culture_manager"),  # TODO
+            # --- Metadata ---
+            metadata=config.get("metadata"),
+            # --- Compression settings ---
+            compress_tool_results=config.get("compress_tool_results", False),
+            # compression_manager=config.get("compression_manager"),  # TODO
+            # --- Debug and telemetry settings ---
+            debug_mode=config.get("debug_mode", False),
+            debug_level=config.get("debug_level", 1),
+            telemetry=config.get("telemetry", True),
+        )
 
-    # Config Database Functions
+    # -*- Component and Config Functions
     def save(
         self,
         *,
@@ -7345,44 +7429,43 @@ class Agent:
         stage: str = "published",
         label: Optional[str] = None,
         notes: Optional[str] = None,
-        set_current: bool = True,
-        publish: bool = False,
-        upsert_version: bool = False,
-    ) -> int:
+    ) -> Optional[int]:
+        """
+        Save the agent component and config.
+
+        Args:
+            db: The database to save the component and config to.
+            stage: The stage of the component. Defaults to "published".
+            label: The label of the component.
+            notes: The notes of the component.
+
+        Returns:
+            Optional[int]: The version number of the saved config.
+        """
         db_ = db or self.db
         if not db_:
             raise ValueError("Db not initialized or provided")
 
         try:
-            # Ensure entity exists
-            db_.upsert_entity(
-                entity_id=self.id,
-                entity_type=PrimitiveType.AGENT,
+            # Create or update component
+            db_.upsert_component(
+                component_id=self.id,
+                component_type=ComponentType.AGENT,
                 name=getattr(self, "name", self.id),
                 description=getattr(self, "description", None),
                 metadata=getattr(self, "metadata", None),
             )
 
-            # Determine version to update (if overwriting)
-            version_to_update = None
-            if upsert_version:
-                entity = db_.get_entity(self.id)
-                if entity and entity.get("current_version"):
-                    version_to_update = entity["current_version"]
-
             # Create or update config
             config = db_.upsert_config(
-                entity_id=self.id,
-                version=version_to_update,
+                component_id=self.id,
                 config=self.to_dict(),
-                version_label=label,
-                stage="published" if publish else stage,
+                label=label,
+                stage=stage,
                 notes=notes,
-                set_current=set_current,
-                refs=None,
             )
 
-            return config["version"]
+            return config.get("version")
 
         except Exception as e:
             log_error(f"Error saving Agent to database: {e}")
@@ -7391,33 +7474,37 @@ class Agent:
     @classmethod
     def load(
         cls,
-        agent_id: str,
+        id: str,
         *,
         db: "BaseDb",
-        version: Optional[int] = None,
+        registry: Optional["Registry"] = None,
         label: Optional[str] = None,
+        version: Optional[int] = None,
     ) -> Optional["Agent"]:
         """
         Load an agent by id.
 
-        - If version is provided: loads that version.
-        - Else if label is provided: loads that labeled version.
-        - Else loads the entity's current version.
-        """
-        if not db:
-            raise ValueError("Db not initialized or provided")
+        Args:
+            id: The id of the agent to load.
+            db: The database to load the agent from.
+            label: The label of the agent to load.
 
-        data = db.get_config(entity_id=agent_id, version=version if version is not None else None, label=label)
+        Returns:
+            The agent loaded from the database or None if not found.
+        """
+
+        data = db.get_config(component_id=id, label=label, version=version)
         if data is None:
             return None
 
-        agent = cls.from_dict(data["config"] if "config" in data else data)
+        config = data.get("config")
+        if config is None:
+            return None
 
-        agent.id = agent_id
-        # If your get_config returns the entire configs row, set version:
-        if isinstance(data, dict) and "version" in data:
-            agent.version = int(data["version"])
+        agent = cls.from_dict(config, db=db, registry=registry)
+        agent.id = id
         agent.db = db
+
         return agent
 
     def delete(
@@ -7427,58 +7514,20 @@ class Agent:
         hard_delete: bool = False,
     ) -> bool:
         """
-        Delete the agent entity. For soft delete, marks entity deleted and clears current_version.
-        For hard delete, deletes entity + configs + refs.
+        Delete the agent component.
+
+        Args:
+            db: The database to delete the component from.
+            hard_delete: Whether to hard delete the component.
+
+        Returns:
+            True if the component was deleted, False otherwise.
         """
         db_ = db or self.db
         if not db_:
             raise ValueError("Db not initialized or provided")
 
-        return db_.delete_entity(entity_id=self.id, hard_delete=hard_delete)
-
-    def delete_version(
-        self,
-        *,
-        version: int,
-        db: Optional["BaseDb"] = None,
-    ) -> bool:
-        """
-        Delete (or mark deleted) a specific config version.
-        Only works if your db layer supports deleting versions (stage='deleted' or deleted_at).
-        """
-        db_ = db or self.db
-        if not db_:
-            raise ValueError("Db not initialized or provided")
-
-        # If you implement `delete_config_version`, call it here.
-        if hasattr(db_, "delete_config_version"):
-            return db_.delete_config_version(entity_id=self.id, version=version)
-
-        raise NotImplementedError("Db does not support deleting a specific version yet")
-
-    def publish(
-        self,
-        *,
-        version: Optional[int] = None,
-        db: Optional["BaseDb"] = None,
-        set_current: bool = True,
-        pin_refs: bool = True,
-    ) -> bool:
-        """
-        Publish a draft version.
-        """
-        db_ = db or self.db
-        if not db_:
-            raise ValueError("Db not initialized or provided")
-
-        v = version if version is not None else self.version
-        if v is None:
-            raise ValueError("No version provided and Agent.version is not set")
-
-        ok = db_.publish_config(entity_id=self.id, version=int(v), pin_refs=pin_refs)
-        if ok and set_current:
-            db_.set_current_version(entity_id=self.id, version=int(v))
-        return ok
+        return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
 
     # -*- Public Convenience Functions
     def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
@@ -11769,22 +11818,20 @@ def get_agent_by_id(
     Get an Agent by id from the database (new entities/configs schema).
 
     Resolution order:
-    - if version is provided: load that version
-    - elif label is provided: load that labeled version
-    - else: load entity.current_version
+    - if label is provided: load that labeled version
+    - else: load component.current_version
 
     Args:
         db: Database handle.
         id: Agent entity_id.
-        version: Optional integer config version.
-        label: Optional version_label.
+        label: Optional label.
         registry: Optional Registry for reconstructing unserializable components.
 
     Returns:
         Agent instance or None.
     """
     try:
-        row = db.get_config(entity_id=id, version=version, label=label)
+        row = db.get_config(component_id=id, label=label, version=version)
         if row is None:
             return None
 
@@ -11793,13 +11840,7 @@ def get_agent_by_id(
             raise ValueError(f"Invalid config found for agent {id}")
 
         agent = Agent.from_dict(cfg, registry=registry)
-
         agent.id = id
-
-        try:
-            agent.version = int(row["version"])  # type: ignore[attr-defined]
-        except Exception:
-            pass
 
         try:
             agent.db = db  # type: ignore[attr-defined]
@@ -11822,19 +11863,19 @@ def get_agents(
     """
     agents: List[Agent] = []
     try:
-        entities = db.list_entities(entity_type=PrimitiveType.AGENT)
-        for entity in entities:
-            config = db.get_config(entity_id=entity["entity_id"])
+        components, _ = db.list_components(component_type=ComponentType.AGENT)
+        for component in components:
+            config = db.get_config(component_id=component["component_id"])
             if config is not None:
                 agent_config = config.get("config")
                 if agent_config is not None:
-                    entity_id = entity["entity_id"]
+                    component_id = component["component_id"]
                     if "id" not in agent_config:
-                        agent_config["id"] = entity_id
+                        agent_config["id"] = component_id
                     agent = Agent.from_dict(agent_config, registry=registry)
-                    # Ensure agent.id is set to the entity_id (the id used to load the agent)
+                    # Ensure agent.id is set to the component_id (the id used to load the agent)
                     # This ensures events use the correct agent_id
-                    agent.id = entity_id
+                    agent.id = component_id
                     agent.db = db
                     agents.append(agent)
         return agents

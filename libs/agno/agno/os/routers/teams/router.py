@@ -167,6 +167,7 @@ def get_team_router(
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
+        version: Optional[int] = Form(None),
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
 
@@ -196,7 +197,7 @@ def get_team_router(
 
         logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
 
-        team = get_team_by_id(team_id, os.teams, os.db, registry)
+        team = get_team_by_id(team_id, os.teams, os.db, version=version, registry=registry)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -323,7 +324,7 @@ def get_team_router(
         team_id: str,
         run_id: str,
     ):
-        team = get_team_by_id(team_id, os.teams, os.db, registry)
+        team = get_team_by_id(team_id, os.teams, os.db, registry=registry)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -440,6 +441,7 @@ def get_team_router(
         # Also load teams from database
         if os.db:
             from agno.team.team import get_teams
+
             db_teams = get_teams(db=os.db, registry=registry)
             for db_team in db_teams:
                 team_response = await TeamResponse.from_team(team=db_team)
@@ -533,7 +535,7 @@ def get_team_router(
         dependencies=[Depends(require_resource_access("teams", "read", "team_id"))],
     )
     async def get_team(team_id: str, request: Request) -> TeamResponse:
-        team = get_team_by_id(team_id, os.teams, os.db, registry)
+        team = get_team_by_id(team_id, os.teams, os.db, registry=registry)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 

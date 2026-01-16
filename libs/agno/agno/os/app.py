@@ -313,9 +313,9 @@ class AgentOS:
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
-            get_database_router(self, settings=self.settings),
             get_components_router(os_db=self.db, registry=self.registry),
             get_registry_router(registry=self.registry),
+            get_database_router(self, settings=self.settings),
         ]
 
         # Clear all previously existing routes
@@ -622,9 +622,9 @@ class AgentOS:
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
-            get_database_router(self, settings=self.settings),
             get_components_router(os_db=self.db, registry=self.registry),
             get_registry_router(registry=self.registry),
+            get_database_router(self, settings=self.settings),
         ]
 
         for router in routers:

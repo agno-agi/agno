@@ -20,7 +20,7 @@ class SessionType(str, Enum):
     WORKFLOW = "workflow"
 
 
-class PrimitiveType(str, Enum):
+class ComponentType(str, Enum):
     AGENT = "agent"
     TEAM = "team"
     WORKFLOW = "workflow"
@@ -43,9 +43,9 @@ class BaseDb(ABC):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
-        entity_table: Optional[str] = None,
-        config_table: Optional[str] = None,
-        entity_ref_table: Optional[str] = None,
+        components_table: Optional[str] = None,
+        component_configs_table: Optional[str] = None,
+        component_links_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -58,9 +58,9 @@ class BaseDb(ABC):
         self.trace_table_name = traces_table or "agno_traces"
         self.span_table_name = spans_table or "agno_spans"
         self.versions_table_name = versions_table or "agno_schema_versions"
-        self.entity_table_name = entity_table or "agno_entities"
-        self.config_table_name = config_table or "agno_configs"
-        self.entity_ref_table_name = entity_ref_table or "agno_entity_refs"
+        self.components_table_name = components_table or "agno_components"
+        self.component_configs_table_name = component_configs_table or "agno_component_configs"
+        self.component_links_table_name = component_links_table or "agno_component_links"
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -77,9 +77,9 @@ class BaseDb(ABC):
             "traces_table": self.trace_table_name,
             "spans_table": self.span_table_name,
             "versions_table": self.versions_table_name,
-            "entity_table": self.entity_table_name,
-            "config_table": self.config_table_name,
-            "entity_ref_table": self.entity_ref_table_name,
+            "components_table": self.components_table_name,
+            "component_configs_table": self.component_configs_table_name,
+            "component_links_table": self.component_links_table_name,
         }
 
     @classmethod
@@ -97,9 +97,9 @@ class BaseDb(ABC):
             traces_table=data.get("traces_table"),
             spans_table=data.get("spans_table"),
             versions_table=data.get("versions_table"),
-            entity_table=data.get("entity_table"),
-            config_table=data.get("config_table"),
-            entity_ref_table=data.get("entity_ref_table"),
+            components_table=data.get("components_table"),
+            component_configs_table=data.get("component_configs_table"),
+            component_links_table=data.get("component_links_table"),
             id=data.get("id"),
         )
 

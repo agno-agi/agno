@@ -218,6 +218,7 @@ def get_agent_router(
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
+        version: Optional[str] = Form(None),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
 
@@ -245,7 +246,7 @@ def get_agent_router(
                 log_warning("Metadata parameter passed in both request state and kwargs, using request state")
             kwargs["metadata"] = metadata
 
-        agent = get_agent_by_id(agent_id, os.agents, os.db, registry)
+        agent = get_agent_by_id(agent_id, os.agents, os.db, registry, version=version)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 

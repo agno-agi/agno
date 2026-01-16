@@ -7,7 +7,7 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
-from agno.db.base import BaseDb, PrimitiveType, SessionType
+from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -55,9 +55,9 @@ class SqliteDb(BaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
-        entity_table: Optional[str] = None,
-        config_table: Optional[str] = None,
-        entity_ref_table: Optional[str] = None,
+        components_table: Optional[str] = None,
+        component_configs_table: Optional[str] = None,
+        component_links_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -82,9 +82,9 @@ class SqliteDb(BaseDb):
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
-            entity_table (Optional[str]): Name of the table to store entities.
-            config_table (Optional[str]): Name of the table to store configurations.
-            entity_ref_table (Optional[str]): Name of the table to store entity references.
+            components_table (Optional[str]): Name of the table to store components.
+            component_configs_table (Optional[str]): Name of the table to store component configurations.
+            component_links_table (Optional[str]): Name of the table to store component links.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -105,9 +105,9 @@ class SqliteDb(BaseDb):
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
-            entity_table=entity_table,
-            config_table=config_table,
-            entity_ref_table=entity_ref_table,
+            components_table=components_table,
+            component_configs_table=component_configs_table,
+            component_links_table=component_links_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -160,9 +160,9 @@ class SqliteDb(BaseDb):
             traces_table=data.get("traces_table"),
             spans_table=data.get("spans_table"),
             versions_table=data.get("versions_table"),
-            entity_table=data.get("entity_table"),
-            config_table=data.get("config_table"),
-            entity_ref_table=data.get("entity_ref_table"),
+            components_table=data.get("components_table"),
+            component_configs_table=data.get("component_configs_table"),
+            component_links_table=data.get("component_links_table"),
             id=data.get("id"),
         )
 
@@ -197,9 +197,9 @@ class SqliteDb(BaseDb):
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
-            (self.entity_table_name, "entities"),
-            (self.config_table_name, "configs"),
-            (self.entity_ref_table_name, "entity_refs"),
+            (self.components_table_name, "components"),
+            (self.component_configs_table_name, "component_configs"),
+            (self.component_links_table_name, "component_links"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -382,9 +382,9 @@ class SqliteDb(BaseDb):
         Resolve logical table name to configured table name.
         """
         table_map = {
-            "entities": self.entity_table_name,
-            "configs": self.config_table_name,
-            "entity_refs": self.entity_ref_table_name,
+            "components": self.components_table_name,
+            "component_configs": self.component_configs_table_name,
+            "component_links": self.component_links_table_name,
             "traces": self.trace_table_name,
             "spans": self.span_table_name,
             "sessions": self.session_table_name,
@@ -475,38 +475,38 @@ class SqliteDb(BaseDb):
             )
             return self.versions_table
 
-        elif table_type == "entities":
-            self.entity_table = self._get_or_create_table(
-                table_name=self.entity_table_name,
-                table_type="entities",
+        elif table_type == "components":
+            self.components_table = self._get_or_create_table(
+                table_name=self.components_table_name,
+                table_type="components",
                 create_table_if_not_found=create_table_if_not_found,
             )
-            return self.entity_table
+            return self.components_table
 
-        elif table_type == "configs":
-            # Ensure entities table exists first (configs references entities)
+        elif table_type == "component_configs":
+            # Ensure components table exists first (configs references components)
             if create_table_if_not_found:
-                self._get_table(table_type="entities", create_table_if_not_found=True)
+                self._get_table(table_type="components", create_table_if_not_found=True)
 
-            self.config_table = self._get_or_create_table(
-                table_name=self.config_table_name,
-                table_type="configs",
+            self.component_configs_table = self._get_or_create_table(
+                table_name=self.component_configs_table_name,
+                table_type="component_configs",
                 create_table_if_not_found=create_table_if_not_found,
             )
-            return self.config_table
+            return self.component_configs_table
 
-        elif table_type == "entity_refs":
-            # Ensure entities and configs tables exist first
+        elif table_type == "component_links":
+            # Ensure components and component_configs tables exist first
             if create_table_if_not_found:
-                self._get_table(table_type="entities", create_table_if_not_found=True)
-                self._get_table(table_type="configs", create_table_if_not_found=True)
+                self._get_table(table_type="components", create_table_if_not_found=True)
+                self._get_table(table_type="component_configs", create_table_if_not_found=True)
 
-            self.entity_ref_table = self._get_or_create_table(
-                table_name=self.entity_ref_table_name,
-                table_type="entity_refs",
+            self.component_links_table = self._get_or_create_table(
+                table_name=self.component_links_table_name,
+                table_type="component_links",
                 create_table_if_not_found=create_table_if_not_found,
             )
-            return self.entity_ref_table
+            return self.component_links_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -3087,99 +3087,99 @@ class SqliteDb(BaseDb):
             log_error(f"Error upserting cultural knowledge: {e}")
             raise e
 
-    # --- Entities ---
-    def get_entity(
+    # --- Components ---
+    def get_component(
         self,
-        entity_id: str,
-        entity_type: Optional[str] = None,
+        component_id: str,
+        component_type: Optional[ComponentType] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Get an entity by ID.
+        """Get a component by ID.
 
         Args:
-            entity_id: The entity ID.
-            entity_type: Optional type filter (agent|team|workflow).
+            component_id: The component ID.
+            component_type: Optional type filter (agent|team|workflow).
 
         Returns:
-            Entity dictionary or None if not found.
+            Component dictionary or None if not found.
         """
         try:
-            table = self._get_table(table_type="entities")
+            table = self._get_table(table_type="components")
             if table is None:
                 return None
 
             with self.Session() as sess:
                 stmt = select(table).where(
-                    table.c.entity_id == entity_id,
+                    table.c.component_id == component_id,
                     table.c.deleted_at.is_(None),
                 )
-                if entity_type is not None:
-                    stmt = stmt.where(table.c.entity_type == entity_type)
+                if component_type is not None:
+                    stmt = stmt.where(table.c.component_type == component_type.value)
 
                 result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
 
         except Exception as e:
-            log_error(f"Error getting entity: {e}")
+            log_error(f"Error getting component: {e}")
             raise
 
-    def upsert_entity(
+    def upsert_component(
         self,
-        entity_id: str,
-        entity_type: Optional[PrimitiveType] = None,
+        component_id: str,
+        component_type: Optional[ComponentType] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Create or update an entity.
+        """Create or update a component.
 
         Args:
-            entity_id: Unique identifier.
-            entity_type: Type (agent|team|workflow). Required for create, optional for update.
+            component_id: Unique identifier.
+            component_type: Type (agent|team|workflow). Required for create, optional for update.
             name: Display name.
             description: Optional description.
             metadata: Optional metadata dict.
 
         Returns:
-            Created/updated entity dictionary.
+            Created/updated component dictionary.
 
         Raises:
-            ValueError: If creating and entity_type is not provided.
+            ValueError: If creating and component_type is not provided.
         """
         try:
-            table = self._get_table(table_type="entities", create_table_if_not_found=True)
+            table = self._get_table(table_type="components", create_table_if_not_found=True)
 
             with self.Session() as sess, sess.begin():
-                existing = sess.execute(select(table).where(table.c.entity_id == entity_id)).fetchone()
+                existing = sess.execute(select(table).where(table.c.component_id == component_id)).fetchone()
 
                 if existing is None:
-                    # Create new entity
-                    if entity_type is None:
-                        raise ValueError("entity_type is required when creating a new entity")
+                    # Create new component
+                    if component_type is None:
+                        raise ValueError("component_type is required when creating a new component")
 
                     sess.execute(
                         table.insert().values(
-                            entity_id=entity_id,
-                            entity_type=entity_type.value if hasattr(entity_type, "value") else entity_type,
-                            name=name or entity_id,
+                            component_id=component_id,
+                            component_type=component_type.value if hasattr(component_type, "value") else component_type,
+                            name=name or component_id,
                             description=description,
                             current_version=None,
                             metadata=metadata,
                             created_at=int(time.time()),
                         )
                     )
-                    log_debug(f"Created entity {entity_id}")
+                    log_debug(f"Created component {component_id}")
 
                 elif existing.deleted_at is not None:
                     # Reactivate soft-deleted
-                    if entity_type is None:
-                        raise ValueError("entity_type is required when reactivating a deleted entity")
+                    if component_type is None:
+                        raise ValueError("component_type is required when reactivating a deleted component")
 
                     sess.execute(
                         table.update()
-                        .where(table.c.entity_id == entity_id)
+                        .where(table.c.component_id == component_id)
                         .values(
-                            entity_type=entity_type.value if hasattr(entity_type, "value") else entity_type,
-                            name=name or entity_id,
+                            component_type=component_type.value if hasattr(component_type, "value") else component_type,
+                            name=name or component_id,
                             description=description,
                             current_version=None,
                             metadata=metadata,
@@ -3187,13 +3187,15 @@ class SqliteDb(BaseDb):
                             deleted_at=None,
                         )
                     )
-                    log_debug(f"Reactivated entity {entity_id}")
+                    log_debug(f"Reactivated component {component_id}")
 
                 else:
                     # Update existing
                     updates: Dict[str, Any] = {"updated_at": int(time.time())}
-                    if entity_type is not None:
-                        updates["entity_type"] = entity_type.value if hasattr(entity_type, "value") else entity_type
+                    if component_type is not None:
+                        updates["component_type"] = (
+                            component_type.value if hasattr(component_type, "value") else component_type
+                        )
                     if name is not None:
                         updates["name"] = name
                     if description is not None:
@@ -3201,149 +3203,299 @@ class SqliteDb(BaseDb):
                     if metadata is not None:
                         updates["metadata"] = metadata
 
-                    sess.execute(table.update().where(table.c.entity_id == entity_id).values(**updates))
-                    log_debug(f"Updated entity {entity_id}")
+                    sess.execute(table.update().where(table.c.component_id == component_id).values(**updates))
+                    log_debug(f"Updated component {component_id}")
 
-            result = self.get_entity(entity_id)
+            result = self.get_component(component_id)
             if result is None:
-                raise ValueError(f"Failed to get entity {entity_id} after upsert")
+                raise ValueError(f"Failed to get component {component_id} after upsert")
             return result
 
         except Exception as e:
-            log_error(f"Error upserting entity: {e}")
+            log_error(f"Error upserting component: {e}")
             raise
 
-    def delete_entity(
+    def delete_component(
         self,
-        entity_id: str,
+        component_id: str,
         hard_delete: bool = False,
     ) -> bool:
-        """Delete an entity and all its configs/refs.
+        """Delete a component and all its configs/links.
 
         Args:
-            entity_id: The entity ID.
+            component_id: The component ID.
             hard_delete: If True, permanently delete. Otherwise soft-delete.
 
         Returns:
             True if deleted, False if not found.
         """
         try:
-            entities_table = self._get_table(table_type="entities")
-            configs_table = self._get_table(table_type="configs")
-            refs_table = self._get_table(table_type="entity_refs")
+            components_table = self._get_table(table_type="components")
+            configs_table = self._get_table(table_type="component_configs")
+            links_table = self._get_table(table_type="component_links")
 
-            if entities_table is None:
+            if components_table is None:
                 return False
 
             with self.Session() as sess, sess.begin():
                 if hard_delete:
-                    # Delete refs where this entity is parent or child
-                    if refs_table is not None:
-                        sess.execute(refs_table.delete().where(refs_table.c.parent_entity_id == entity_id))
-                        sess.execute(refs_table.delete().where(refs_table.c.child_entity_id == entity_id))
+                    # Delete links where this component is parent or child
+                    if links_table is not None:
+                        sess.execute(links_table.delete().where(links_table.c.parent_component_id == component_id))
+                        sess.execute(links_table.delete().where(links_table.c.child_component_id == component_id))
                     # Delete configs
                     if configs_table is not None:
-                        sess.execute(configs_table.delete().where(configs_table.c.entity_id == entity_id))
-                    # Delete entity
-                    result = sess.execute(entities_table.delete().where(entities_table.c.entity_id == entity_id))
+                        sess.execute(configs_table.delete().where(configs_table.c.component_id == component_id))
+                    # Delete component
+                    result = sess.execute(
+                        components_table.delete().where(components_table.c.component_id == component_id)
+                    )
                 else:
                     # Soft delete
                     now = int(time.time())
                     result = sess.execute(
-                        entities_table.update()
-                        .where(entities_table.c.entity_id == entity_id)
-                        .values(deleted_at=now, current_version=None)
+                        components_table.update()
+                        .where(components_table.c.component_id == component_id)
+                        .values(deleted_at=now)
                     )
 
             return result.rowcount > 0
 
         except Exception as e:
-            log_error(f"Error deleting entity: {e}")
+            log_error(f"Error deleting component: {e}")
             raise
 
-    def list_entities(
+    def list_components(
         self,
-        entity_type: Optional[str] = None,
+        component_type: Optional[ComponentType] = None,
         include_deleted: bool = False,
-    ) -> List[Dict[str, Any]]:
-        """List all entities, optionally filtered by type.
+        limit: int = 20,
+        offset: int = 0,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List components with pagination.
 
         Args:
-            entity_type: Filter by type (agent|team|workflow).
-            include_deleted: Include soft-deleted entities.
+            component_type: Filter by type (agent|team|workflow).
+            include_deleted: Include soft-deleted components.
+            limit: Maximum number of items to return.
+            offset: Number of items to skip.
 
         Returns:
-            List of entity dictionaries.
+            Tuple of (list of component dicts, total count).
         """
         try:
-            table = self._get_table(table_type="entities")
+            table = self._get_table(table_type="components")
             if table is None:
-                return []
+                return [], 0
 
             with self.Session() as sess:
-                stmt = select(table).order_by(table.c.created_at.desc())
-
-                if entity_type is not None:
-                    stmt = stmt.where(table.c.entity_type == entity_type)
+                # Build base where clause
+                where_clauses = []
+                if component_type is not None:
+                    where_clauses.append(table.c.component_type == component_type.value)
                 if not include_deleted:
-                    stmt = stmt.where(table.c.deleted_at.is_(None))
+                    where_clauses.append(table.c.deleted_at.is_(None))
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(table)
+                for clause in where_clauses:
+                    count_stmt = count_stmt.where(clause)
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Get paginated results
+                stmt = select(table).order_by(
+                    table.c.created_at.desc(),
+                    table.c.component_id,
+                )
+                for clause in where_clauses:
+                    stmt = stmt.where(clause)
+                stmt = stmt.limit(limit).offset(offset)
 
                 results = sess.execute(stmt).fetchall()
-                return [dict(row._mapping) for row in results]
+                return [dict(row._mapping) for row in results], total_count
 
         except Exception as e:
-            log_error(f"Error listing entities: {e}")
+            log_error(f"Error listing components: {e}")
+            raise
+
+    def create_component_with_config(
+        self,
+        component_id: str,
+        component_type: ComponentType,
+        name: Optional[str],
+        config: Dict[str, Any],
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        label: Optional[str] = None,
+        stage: str = "draft",
+        notes: Optional[str] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Create a component with its initial config atomically.
+
+        Args:
+            component_id: Unique identifier.
+            component_type: Type (agent|team|workflow).
+            name: Display name.
+            config: The config data.
+            description: Optional description.
+            metadata: Optional metadata dict.
+            label: Optional config label.
+            stage: "draft" or "published".
+            notes: Optional notes.
+            links: Optional list of links. Each must have child_version set.
+
+        Returns:
+            Tuple of (component dict, config dict).
+
+        Raises:
+            ValueError: If component already exists, invalid stage, or link missing child_version.
+        """
+        if stage not in {"draft", "published"}:
+            raise ValueError(f"Invalid stage: {stage}")
+
+        # Validate links have child_version
+        if links:
+            for link in links:
+                if link.get("child_version") is None:
+                    raise ValueError(f"child_version is required for link to {link['child_component_id']}")
+
+        try:
+            components_table = self._get_table(table_type="components", create_table_if_not_found=True)
+            configs_table = self._get_table(table_type="component_configs", create_table_if_not_found=True)
+            links_table = self._get_table(table_type="component_links", create_table_if_not_found=True)
+
+            if components_table is None:
+                raise ValueError("Components table not found")
+
+            with self.Session() as sess, sess.begin():
+                # Check if component already exists
+                existing = sess.execute(
+                    select(components_table.c.component_id).where(components_table.c.component_id == component_id)
+                ).scalar_one_or_none()
+
+                if existing is not None:
+                    raise ValueError(f"Component {component_id} already exists")
+
+                # Check label uniqueness
+                if label is not None:
+                    existing_label = sess.execute(
+                        select(configs_table.c.version).where(
+                            configs_table.c.component_id == component_id,
+                            configs_table.c.label == label,
+                        )
+                    ).first()
+                    if existing_label:
+                        raise ValueError(f"Label '{label}' already exists for {component_id}")
+
+                now = int(time.time())
+                version = 1
+
+                # Create component
+                sess.execute(
+                    components_table.insert().values(
+                        component_id=component_id,
+                        component_type=component_type.value,
+                        name=name,
+                        description=description,
+                        metadata=metadata,
+                        current_version=version if stage == "published" else None,
+                        created_at=now,
+                    )
+                )
+
+                # Create initial config
+                sess.execute(
+                    configs_table.insert().values(
+                        component_id=component_id,
+                        version=version,
+                        label=label,
+                        stage=stage,
+                        config=config,
+                        notes=notes,
+                        created_at=now,
+                    )
+                )
+
+                # Create links if provided
+                if links and links_table is not None:
+                    for link in links:
+                        sess.execute(
+                            links_table.insert().values(
+                                parent_component_id=component_id,
+                                parent_version=version,
+                                link_kind=link["link_kind"],
+                                link_key=link["link_key"],
+                                child_component_id=link["child_component_id"],
+                                child_version=link["child_version"],
+                                position=link["position"],
+                                meta=link.get("meta"),
+                                created_at=now,
+                            )
+                        )
+
+            # Fetch and return both
+            component = self.get_component(component_id)
+            config_result = self.get_config(component_id, version=version)
+
+            return component, config_result
+
+        except Exception as e:
+            log_error(f"Error creating component with config: {e}")
             raise
 
     # --- Config ---
     def get_config(
         self,
-        entity_id: str,
+        component_id: str,
         version: Optional[int] = None,
         label: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Get a config by entity ID and version/label.
+        """Get a config by component ID and version or label.
 
         Args:
-            entity_id: The entity ID.
+            component_id: The component ID.
             version: Specific version number. If None, uses current.
-            label: Version label to lookup. Ignored if version is provided.
+            label: Config label to lookup. Ignored if version is provided.
 
         Returns:
             Config dictionary or None if not found.
         """
         try:
-            configs_table = self._get_table(table_type="configs")
-            entities_table = self._get_table(table_type="entities")
+            configs_table = self._get_table(table_type="component_configs")
+            components_table = self._get_table(table_type="components")
 
-            if configs_table is None or entities_table is None:
+            if configs_table is None or components_table is None:
                 return None
 
             with self.Session() as sess:
+                # Always verify component exists and is not deleted
+                component = sess.execute(
+                    select(components_table.c.current_version).where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                ).fetchone()
+
+                if component is None:
+                    return None
+
                 if version is not None:
-                    # Direct version lookup
                     stmt = select(configs_table).where(
-                        configs_table.c.entity_id == entity_id,
+                        configs_table.c.component_id == component_id,
                         configs_table.c.version == version,
                     )
                 elif label is not None:
-                    # Label lookup
                     stmt = select(configs_table).where(
-                        configs_table.c.entity_id == entity_id,
-                        configs_table.c.version_label == label,
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.label == label,
                     )
                 else:
-                    # Get current version from entity
-                    entity = sess.execute(
-                        select(entities_table.c.current_version).where(entities_table.c.entity_id == entity_id)
-                    ).fetchone()
-
-                    if entity is None or entity.current_version is None:
+                    if component.current_version is None:
                         return None
-
                     stmt = select(configs_table).where(
-                        configs_table.c.entity_id == entity_id,
-                        configs_table.c.version == entity.current_version,
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == component.current_version,
                     )
 
                 result = sess.execute(stmt).fetchone()
@@ -3355,341 +3507,403 @@ class SqliteDb(BaseDb):
 
     def upsert_config(
         self,
-        entity_id: str,
-        config: Dict[str, Any],
+        component_id: str,
+        config: Optional[Dict[str, Any]] = None,
         version: Optional[int] = None,
-        version_label: Optional[str] = None,
-        stage: str = "draft",
+        label: Optional[str] = None,
+        stage: Optional[str] = None,
         notes: Optional[str] = None,
-        set_current: bool = True,
-        refs: Optional[List[Dict[str, Any]]] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """Create or update a config version for an entity.
+        """Create or update a config version for a component.
+
+        Rules:
+            - Draft configs can be edited freely
+            - Published configs are immutable
+            - Publishing a config automatically sets it as current_version
 
         Args:
-            entity_id: The entity ID.
-            config: The config data.
+            component_id: The component ID.
+            config: The config data. Required for create, optional for update.
             version: If None, creates new version. If provided, updates that version.
-            version_label: Optional human-readable label.
-            stage: "draft" or "published".
+            label: Optional human-readable label.
+            stage: "draft" or "published". Defaults to "draft" for new configs.
             notes: Optional notes.
-            set_current: Whether to set as current version.
-            refs: Optional list of refs to create/replace with this config.
+            links: Optional list of links. Each link must have child_version set.
 
         Returns:
             Created/updated config dictionary.
 
         Raises:
-            ValueError: If entity doesn't exist, version not found, or label conflict.
+            ValueError: If component doesn't exist, version not found, label conflict,
+                        or attempting to update a published config.
         """
+        if stage is not None and stage not in {"draft", "published"}:
+            raise ValueError(f"Invalid stage: {stage}")
+
         try:
-            configs_table = self._get_table(table_type="configs", create_table_if_not_found=True)
-            entities_table = self._get_table(table_type="entities")
-            refs_table = self._get_table(table_type="entity_refs", create_table_if_not_found=True)
+            configs_table = self._get_table(table_type="component_configs", create_table_if_not_found=True)
+            components_table = self._get_table(table_type="components")
+            links_table = self._get_table(table_type="component_links", create_table_if_not_found=True)
+
+            if components_table is None:
+                raise ValueError("Components table not found")
 
             with self.Session() as sess, sess.begin():
-                # Verify entity exists
-                entity = sess.execute(
-                    select(entities_table).where(
-                        entities_table.c.entity_id == entity_id,
-                        entities_table.c.deleted_at.is_(None),
+                # Verify component exists and is not deleted
+                component = sess.execute(
+                    select(components_table.c.component_id).where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
                     )
                 ).fetchone()
-                if entity is None:
-                    raise ValueError(f"Entity {entity_id} not found")
 
-                # Check label uniqueness (exclude current version if updating)
-                if version_label is not None:
-                    label_query = select(configs_table).where(
-                        configs_table.c.entity_id == entity_id,
-                        configs_table.c.version_label == version_label,
+                if component is None:
+                    raise ValueError(f"Component {component_id} not found")
+
+                # Label uniqueness check
+                if label is not None:
+                    label_query = select(configs_table.c.version).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.label == label,
                     )
                     if version is not None:
                         label_query = label_query.where(configs_table.c.version != version)
 
-                    existing_label = sess.execute(label_query).fetchone()
-                    if existing_label:
-                        raise ValueError(f"Label '{version_label}' already exists for {entity_id}")
+                    if sess.execute(label_query).first():
+                        raise ValueError(f"Label '{label}' already exists for {component_id}")
 
-                # Validate refs for published configs
-                if stage == "published" and refs:
-                    for ref in refs:
-                        if ref.get("child_version") is None:
-                            raise ValueError(
-                                f"Published configs must have pinned refs. "
-                                f"Ref to {ref['child_entity_id']} has no version."
-                            )
+                # Validate links have child_version
+                if links:
+                    for link in links:
+                        if link.get("child_version") is None:
+                            raise ValueError(f"child_version is required for link to {link['child_component_id']}")
 
                 if version is None:
-                    # CREATE: Get next version number
+                    if config is None:
+                        raise ValueError("config is required when creating a new version")
+
+                    # Default to draft for new configs
+                    if stage is None:
+                        stage = "draft"
+
                     max_version = sess.execute(
                         select(configs_table.c.version)
-                        .where(configs_table.c.entity_id == entity_id)
+                        .where(configs_table.c.component_id == component_id)
                         .order_by(configs_table.c.version.desc())
                         .limit(1)
                     ).scalar()
-                    new_version = (max_version or 0) + 1
+
+                    final_version = (max_version or 0) + 1
 
                     sess.execute(
                         configs_table.insert().values(
-                            entity_id=entity_id,
-                            version=new_version,
-                            version_label=version_label,
+                            component_id=component_id,
+                            version=final_version,
+                            label=label,
                             stage=stage,
                             config=config,
                             notes=notes,
                             created_at=int(time.time()),
                         )
                     )
-                    final_version = new_version
-                    log_debug(f"Created config {entity_id} v{final_version}")
-
                 else:
-                    # UPDATE: Verify version exists
                     existing = sess.execute(
-                        select(configs_table).where(
-                            configs_table.c.entity_id == entity_id,
+                        select(configs_table.c.version, configs_table.c.stage).where(
+                            configs_table.c.component_id == component_id,
                             configs_table.c.version == version,
                         )
                     ).fetchone()
+
                     if existing is None:
-                        raise ValueError(f"Config {entity_id} v{version} not found")
+                        raise ValueError(f"Config {component_id} v{version} not found")
+
+                    # Published configs are immutable
+                    if existing.stage == "published":
+                        raise ValueError(f"Cannot update published config {component_id} v{version}")
+
+                    # Build update dict with only provided fields
+                    updates: Dict[str, Any] = {"updated_at": int(time.time())}
+                    if label is not None:
+                        updates["label"] = label
+                    if stage is not None:
+                        updates["stage"] = stage
+                    if config is not None:
+                        updates["config"] = config
+                    if notes is not None:
+                        updates["notes"] = notes
 
                     sess.execute(
                         configs_table.update()
                         .where(
-                            configs_table.c.entity_id == entity_id,
+                            configs_table.c.component_id == component_id,
                             configs_table.c.version == version,
                         )
-                        .values(
-                            version_label=version_label,
-                            stage=stage,
-                            config=config,
-                            notes=notes,
-                            updated_at=int(time.time()),
-                        )
+                        .values(**updates)
                     )
                     final_version = version
-                    log_debug(f"Updated config {entity_id} v{final_version}")
 
-                # Handle refs (delete old, insert new)
-                if refs is not None and refs_table is not None:
-                    # Delete existing refs for this version
+                if links is not None and links_table is not None:
                     sess.execute(
-                        refs_table.delete().where(
-                            refs_table.c.parent_entity_id == entity_id,
-                            refs_table.c.parent_version == final_version,
+                        links_table.delete().where(
+                            links_table.c.parent_component_id == component_id,
+                            links_table.c.parent_version == final_version,
                         )
                     )
-                    # Insert new refs
-                    for ref in refs:
+                    for link in links:
                         sess.execute(
-                            refs_table.insert().values(
-                                parent_entity_id=entity_id,
+                            links_table.insert().values(
+                                parent_component_id=component_id,
                                 parent_version=final_version,
-                                ref_kind=ref["ref_kind"],
-                                ref_key=ref["ref_key"],
-                                child_entity_id=ref["child_entity_id"],
-                                child_version=ref.get("child_version"),
-                                position=ref["position"],
-                                meta=ref.get("meta"),
+                                link_kind=link["link_kind"],
+                                link_key=link["link_key"],
+                                child_component_id=link["child_component_id"],
+                                child_version=link["child_version"],
+                                position=link["position"],
+                                meta=link.get("meta"),
                                 created_at=int(time.time()),
                             )
                         )
 
-                # Update current version pointer
-                if set_current:
+                # Determine final stage (could be from update or create)
+                final_stage = stage if stage is not None else (existing.stage if version is not None else "draft")
+
+                if final_stage == "published":
                     sess.execute(
-                        entities_table.update()
-                        .where(entities_table.c.entity_id == entity_id)
+                        components_table.update()
+                        .where(components_table.c.component_id == component_id)
                         .values(current_version=final_version, updated_at=int(time.time()))
                     )
 
-            result = self.get_config(entity_id, version=final_version)
-            if result is None:
-                raise ValueError(f"Failed to get config {entity_id} v{final_version} after upsert")
-            return result
+            return self.get_config(component_id, version=final_version)
 
         except Exception as e:
             log_error(f"Error upserting config: {e}")
             raise
 
-    def list_config_versions(
+    def delete_config(
         self,
-        entity_id: str,
-    ) -> List[Dict[str, Any]]:
-        """List all config versions for an entity.
+        component_id: str,
+        version: int,
+    ) -> bool:
+        """Delete a specific config version.
+
+        Only draft configs can be deleted. Published configs are immutable.
+        Cannot delete the current version.
 
         Args:
-            entity_id: The entity ID.
+            component_id: The component ID.
+            version: The version to delete.
+
+        Returns:
+            True if deleted, False if not found.
+
+        Raises:
+            ValueError: If attempting to delete a published or current config.
+        """
+        try:
+            configs_table = self._get_table(table_type="component_configs")
+            links_table = self._get_table(table_type="component_links")
+            components_table = self._get_table(table_type="components")
+
+            if configs_table is None or components_table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                # Get config stage and check if it's current
+                config_row = sess.execute(
+                    select(configs_table.c.stage).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == version,
+                    )
+                ).fetchone()
+
+                if config_row is None:
+                    return False
+
+                # Cannot delete published configs
+                if config_row.stage == "published":
+                    raise ValueError(f"Cannot delete published config {component_id} v{version}")
+
+                # Check if it's current version
+                current = sess.execute(
+                    select(components_table.c.current_version).where(components_table.c.component_id == component_id)
+                ).fetchone()
+
+                if current and current.current_version == version:
+                    raise ValueError(f"Cannot delete current config {component_id} v{version}")
+
+                # Delete associated links
+                if links_table is not None:
+                    sess.execute(
+                        links_table.delete().where(
+                            links_table.c.parent_component_id == component_id,
+                            links_table.c.parent_version == version,
+                        )
+                    )
+
+                # Delete the config
+                sess.execute(
+                    configs_table.delete().where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == version,
+                    )
+                )
+
+            return True
+
+        except Exception as e:
+            log_error(f"Error deleting config: {e}")
+            raise
+
+    def list_configs(
+        self,
+        component_id: str,
+        include_config: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """List all config versions for a component.
+
+        Args:
+            component_id: The component ID.
+            include_config: If True, include full config blob. Otherwise just metadata.
 
         Returns:
             List of config dictionaries, newest first.
+            Returns empty list if component not found or deleted.
         """
         try:
-            table = self._get_table(table_type="configs")
-            if table is None:
+            configs_table = self._get_table(table_type="component_configs")
+            components_table = self._get_table(table_type="components")
+
+            if configs_table is None or components_table is None:
                 return []
 
             with self.Session() as sess:
-                stmt = select(table).where(table.c.entity_id == entity_id).order_by(table.c.version.desc())
+                # Verify component exists and is not deleted
+                exists = sess.execute(
+                    select(components_table.c.component_id).where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                ).fetchone()
+
+                if exists is None:
+                    return []
+
+                # Select columns based on include_config flag
+                if include_config:
+                    stmt = select(configs_table)
+                else:
+                    stmt = select(
+                        configs_table.c.component_id,
+                        configs_table.c.version,
+                        configs_table.c.label,
+                        configs_table.c.stage,
+                        configs_table.c.notes,
+                        configs_table.c.created_at,
+                        configs_table.c.updated_at,
+                    )
+
+                stmt = stmt.where(configs_table.c.component_id == component_id).order_by(configs_table.c.version.desc())
+
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results]
 
         except Exception as e:
-            log_error(f"Error listing config versions: {e}")
+            log_error(f"Error listing configs: {e}")
             raise
 
     def set_current_version(
         self,
-        entity_id: str,
+        component_id: str,
         version: int,
     ) -> bool:
-        """Set a specific version as current.
+        """Set a specific published version as current.
+
+        Only published configs can be set as current. This is used for
+        rollback scenarios where you want to switch to a previous
+        published version.
 
         Args:
-            entity_id: The entity ID.
-            version: The version to set as current.
+            component_id: The component ID.
+            version: The version to set as current (must be published).
 
         Returns:
-            True if successful, False if version not found.
+            True if successful, False if component or version not found.
+
+        Raises:
+            ValueError: If attempting to set a draft config as current.
         """
         try:
-            configs_table = self._get_table(table_type="configs")
-            entities_table = self._get_table(table_type="entities")
+            configs_table = self._get_table(table_type="component_configs")
+            components_table = self._get_table(table_type="components")
 
-            if configs_table is None or entities_table is None:
+            if configs_table is None or components_table is None:
                 return False
 
             with self.Session() as sess, sess.begin():
-                # Verify version exists
-                exists = sess.execute(
-                    select(configs_table).where(
-                        configs_table.c.entity_id == entity_id,
+                # Verify component exists and is not deleted
+                component_exists = sess.execute(
+                    select(components_table.c.component_id).where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                ).fetchone()
+
+                if component_exists is None:
+                    return False
+
+                # Verify version exists and get stage
+                stage = sess.execute(
+                    select(configs_table.c.stage).where(
+                        configs_table.c.component_id == component_id,
                         configs_table.c.version == version,
                     )
                 ).fetchone()
-                if exists is None:
+
+                if stage is None:
                     return False
+
+                # Only published configs can be set as current
+                if stage.stage != "published":
+                    raise ValueError(
+                        f"Cannot set draft config {component_id} v{version} as current. "
+                        "Only published configs can be current."
+                    )
 
                 # Update pointer
                 sess.execute(
-                    entities_table.update()
-                    .where(entities_table.c.entity_id == entity_id)
+                    components_table.update()
+                    .where(components_table.c.component_id == component_id)
                     .values(current_version=version, updated_at=int(time.time()))
                 )
 
-            log_debug(f"Set {entity_id} current version to {version}")
+            log_debug(f"Set {component_id} current version to {version}")
             return True
 
         except Exception as e:
             log_error(f"Error setting current version: {e}")
             raise
 
-    def publish_config(
+    # --- Component Links ---
+    def get_links(
         self,
-        entity_id: str,
+        component_id: str,
         version: int,
-        pin_refs: bool = True,
-    ) -> bool:
-        """Publish a config version, optionally pinning all refs.
-
-        Args:
-            entity_id: The entity ID.
-            version: The version to publish.
-            pin_refs: If True, resolve and pin all NULL child_versions.
-
-        Returns:
-            True if successful, False if version not found.
-        """
-        try:
-            configs_table = self._get_table(table_type="configs")
-            refs_table = self._get_table(table_type="entity_refs")
-            entities_table = self._get_table(table_type="entities")
-
-            if configs_table is None:
-                return False
-
-            with self.Session() as sess, sess.begin():
-                # Verify version exists
-                config_row = sess.execute(
-                    select(configs_table).where(
-                        configs_table.c.entity_id == entity_id,
-                        configs_table.c.version == version,
-                    )
-                ).fetchone()
-                if config_row is None:
-                    return False
-
-                # Pin refs if requested
-                if pin_refs and refs_table is not None:
-                    refs = sess.execute(
-                        select(refs_table).where(
-                            refs_table.c.parent_entity_id == entity_id,
-                            refs_table.c.parent_version == version,
-                            refs_table.c.child_version.is_(None),
-                        )
-                    ).fetchall()
-
-                    for ref in refs:
-                        # Resolve current version
-                        child_current = sess.execute(
-                            select(entities_table.c.current_version).where(
-                                entities_table.c.entity_id == ref.child_entity_id
-                            )
-                        ).scalar()
-
-                        if child_current is None:
-                            raise ValueError(f"Cannot pin ref to {ref.child_entity_id}: no current version")
-
-                        # Update ref
-                        sess.execute(
-                            refs_table.update()
-                            .where(
-                                refs_table.c.parent_entity_id == entity_id,
-                                refs_table.c.parent_version == version,
-                                refs_table.c.ref_kind == ref.ref_kind,
-                                refs_table.c.ref_key == ref.ref_key,
-                            )
-                            .values(child_version=child_current, updated_at=int(time.time()))
-                        )
-
-                # Update stage
-                sess.execute(
-                    configs_table.update()
-                    .where(
-                        configs_table.c.entity_id == entity_id,
-                        configs_table.c.version == version,
-                    )
-                    .values(stage="published", updated_at=int(time.time()))
-                )
-
-            log_debug(f"Published {entity_id} v{version}")
-            return True
-
-        except Exception as e:
-            log_error(f"Error publishing config: {e}")
-            raise
-
-    # -- References --
-    def get_refs(
-        self,
-        entity_id: str,
-        version: int,
-        ref_kind: Optional[str] = None,
+        link_kind: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Get refs for a config version.
+        """Get links for a config version.
 
         Args:
-            entity_id: The entity ID.
+            component_id: The component ID.
             version: The config version.
-            ref_kind: Optional filter by ref kind (member|step).
+            link_kind: Optional filter by link kind (member|step).
 
         Returns:
-            List of ref dictionaries, ordered by position.
+            List of link dictionaries, ordered by position.
         """
         try:
-            table = self._get_table(table_type="entity_refs")
+            table = self._get_table(table_type="component_links")
             if table is None:
                 return []
 
@@ -3697,42 +3911,42 @@ class SqliteDb(BaseDb):
                 stmt = (
                     select(table)
                     .where(
-                        table.c.parent_entity_id == entity_id,
+                        table.c.parent_component_id == component_id,
                         table.c.parent_version == version,
                     )
                     .order_by(table.c.position)
                 )
-                if ref_kind is not None:
-                    stmt = stmt.where(table.c.ref_kind == ref_kind)
+                if link_kind is not None:
+                    stmt = stmt.where(table.c.link_kind == link_kind)
 
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results]
 
         except Exception as e:
-            log_error(f"Error getting refs: {e}")
+            log_error(f"Error getting links: {e}")
             raise
 
     def get_dependents(
         self,
-        entity_id: str,
+        component_id: str,
         version: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """Find all entities that reference this entity.
+        """Find all components that reference this component.
 
         Args:
-            entity_id: The entity ID to find dependents of.
-            version: Optional specific version. If None, finds refs to any version.
+            component_id: The component ID to find dependents of.
+            version: Optional specific version. If None, finds links to any version.
 
         Returns:
-            List of ref dictionaries showing what depends on this entity.
+            List of link dictionaries showing what depends on this component.
         """
         try:
-            table = self._get_table(table_type="entity_refs")
+            table = self._get_table(table_type="component_links")
             if table is None:
                 return []
 
             with self.Session() as sess:
-                stmt = select(table).where(table.c.child_entity_id == entity_id)
+                stmt = select(table).where(table.c.child_component_id == component_id)
                 if version is not None:
                     stmt = stmt.where(table.c.child_version == version)
 
@@ -3745,29 +3959,29 @@ class SqliteDb(BaseDb):
 
     def resolve_version(
         self,
-        entity_id: str,
+        component_id: str,
         version: Optional[int],
     ) -> Optional[int]:
         """Resolve a version number, handling NULL (current) case.
 
         Args:
-            entity_id: The entity ID.
+            component_id: The component ID.
             version: Version number or None for current.
 
         Returns:
-            Resolved version number or None if entity not found.
+            Resolved version number or None if component not found.
         """
         if version is not None:
             return version
 
         try:
-            entities_table = self._get_table(table_type="entities")
-            if entities_table is None:
+            components_table = self._get_table(table_type="components")
+            if components_table is None:
                 return None
 
             with self.Session() as sess:
                 result = sess.execute(
-                    select(entities_table.c.current_version).where(entities_table.c.entity_id == entity_id)
+                    select(components_table.c.current_version).where(components_table.c.component_id == component_id)
                 ).scalar()
                 return result
 
@@ -3775,52 +3989,52 @@ class SqliteDb(BaseDb):
             log_error(f"Error resolving version: {e}")
             raise
 
-    def load_entity_graph(
+    def load_component_graph(
         self,
-        entity_id: str,
+        component_id: str,
         version: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Load an entity with its full resolved graph.
+        """Load a component with its full resolved graph.
 
         Args:
-            entity_id: The entity ID.
+            component_id: The component ID.
             version: Specific version or None for current.
 
         Returns:
-            Dictionary with entity, config, refs, and resolved children.
+            Dictionary with component, config, links, and resolved children.
         """
         try:
-            # Get entity
-            entity = self.get_entity(entity_id)
-            if entity is None:
+            # Get component
+            component = self.get_component(component_id)
+            if component is None:
                 return None
 
             # Resolve version
-            resolved_version = self.resolve_version(entity_id, version)
+            resolved_version = self.resolve_version(component_id, version)
             if resolved_version is None:
                 return None
 
             # Get config
-            config = self.get_config(entity_id, version=resolved_version)
+            config = self.get_config(component_id, version=resolved_version)
             if config is None:
                 return None
 
-            # Get refs
-            refs = self.get_refs(entity_id, resolved_version)
+            # Get links
+            links = self.get_links(component_id, resolved_version)
 
             # Resolve children recursively
             children = []
-            resolved_versions: Dict[str, Optional[int]] = {entity_id: resolved_version}
+            resolved_versions: Dict[str, Optional[int]] = {component_id: resolved_version}
 
-            for ref in refs:
+            for link in links:
                 child_version = self.resolve_version(
-                    ref["child_entity_id"],
-                    ref["child_version"],
+                    link["child_component_id"],
+                    link["child_version"],
                 )
-                resolved_versions[ref["child_entity_id"]] = child_version
+                resolved_versions[link["child_component_id"]] = child_version
 
-                child_graph = self.load_entity_graph(
-                    ref["child_entity_id"],
+                child_graph = self.load_component_graph(
+                    link["child_component_id"],
                     version=child_version,
                 )
 
@@ -3830,18 +4044,18 @@ class SqliteDb(BaseDb):
 
                 children.append(
                     {
-                        "ref": ref,
+                        "link": link,
                         "graph": child_graph,
                     }
                 )
 
             return {
-                "entity": entity,
+                "component": component,
                 "config": config,
                 "children": children,
                 "resolved_versions": resolved_versions,
             }
 
         except Exception as e:
-            log_error(f"Error loading entity graph: {e}")
+            log_error(f"Error loading component graph: {e}")
             raise
