@@ -1,264 +1,109 @@
-# Agents Cookbook Testing Log
+# TEST_LOG - 02_agents
 
-Testing agent feature examples in `cookbook/02_agents/` to verify they work as expected.
-
-**Test Environment:**
-- Python: `.venvs/demo/bin/python`
-- Database: PostgreSQL with PgVector (for RAG examples)
-- Date: 2026-01-15 (updated), 2026-01-14 (initial)
+**Test Date:** 2026-01-16
+**Environment:** `.venvs/demo/bin/python`
+**Branch:** `v2.4-with-cookbooks`
 
 ---
 
-## Test Results by Subfolder
+## state/
 
-### agentic_search/
+### session_state_basic.py
 
-| File | Status | Notes |
-|------|--------|-------|
-| agentic_rag.py | SKIP | Requires `cohere` module |
-| agentic_rag_with_reasoning.py | SKIP | Requires `cohere` module |
-| agentic_rag_infinity_reranker.py | SKIP | Requires `cohere` module |
+**Status:** PASS
+
+**Description:** Session state management with shopping list. Agent correctly tracked state across interactions, adding items (milk, eggs, bread) to shopping list. Final state verified: `{'shopping_list': ['milk', 'eggs', 'bread']}`.
 
 ---
 
-### async/
+## guardrails/
 
-| File | Status | Notes |
-|------|--------|-------|
-| basic.py | PASS | Basic async agent execution works |
-| streaming.py | PASS | Async streaming works |
-| tool_use.py | PASS | Async tool use works |
-| gather_agents.py | PASS | Fixed anti-pattern - concurrent agent execution works |
-| structured_output.py | PASS | Async structured output works |
+### pii_detection.py
+
+**Status:** PASS
+
+**Description:** PII detection and masking. SSN was properly masked (`***********`) before reaching the model. Agent correctly declined to process sensitive information while offering alternative help.
 
 ---
 
-### caching/
+## async/
 
-| File | Status | Notes |
-|------|--------|-------|
-| cache_model_response.py | PASS | Cache system works |
-| cache_model_response_stream.py | PASS | Cache with streaming works |
-| async_cache_model_response.py | PASS | Async cache works |
+### gather_agents.py
 
----
+**Status:** PASS
 
-### context_compression/
-
-| File | Status | Notes |
-|------|--------|-------|
-| tool_call_compression.py | PASS | Tool call compression works |
-| token_based_tool_call_compression.py | PASS | Token-based compression works (tiktoken optional) |
-| async_tool_call_compression.py | PASS | Async compression works |
+**Description:** Concurrent agent execution using asyncio.gather. Successfully ran 5 research agents in parallel (OpenAI, Anthropic, Ollama, Cohere, Google), each producing comprehensive reports. Demonstrated efficient parallel processing.
 
 ---
 
-### context_management/
+## caching/
 
-| File | Status | Notes |
-|------|--------|-------|
-| few_shot_learning.py | PASS | Few-shot learning works |
-| dynamic_instructions.py | PASS | Dynamic instructions work |
-| introduction.py | PASS | Introduction messages work with session persistence |
-| datetime_instructions.py | PASS | Datetime-aware instructions work |
+### cache_model_response.py
 
----
+**Status:** PASS
 
-### culture/
-
-| File | Status | Notes |
-|------|--------|-------|
-| 01_create_cultural_knowledge.py | PASS | Creates cultural knowledge with CultureManager |
-| 02_use_cultural_knowledge_in_agent.py | PASS | Cultural knowledge affects agent behavior |
-| 04_manually_add_culture.py | PASS | Manual culture addition works |
+**Description:** Model response caching. Run 1 generated story in ~several seconds. Run 2 returned cached response in 0.002s. Cache hit logged correctly.
 
 ---
 
-### custom_logging/
+## hooks/
 
-| File | Status | Notes |
-|------|--------|-------|
-| custom_logging.py | PASS | Custom logging configuration works |
+### session_state_post_hook.py
 
----
+**Status:** PASS
 
-### dependencies/
-
-| File | Status | Notes |
-|------|--------|-------|
-| add_dependencies_to_context.py | PASS | Dependency injection to context works |
-| access_dependencies_in_tool.py | PASS | Tools can access injected dependencies |
+**Description:** Post-hook for session state management. Hook correctly extracted topics from conversation and stored them in session state: `{'topics': ['AI agents', 'LLM agents', 'Agent frameworks', 'Agno']}`.
 
 ---
 
-### events/
+## input_and_output/
 
-| File | Status | Notes |
-|------|--------|-------|
-| basic_agent_events.py | PASS | Tool call events captured correctly |
-| reasoning_agent_events.py | PASS | Reasoning events captured |
+### structured_input.py
 
----
+**Status:** PASS
 
-### guardrails/
-
-| File | Status | Notes |
-|------|--------|-------|
-| pii_detection.py | PASS | PII detection blocks sensitive data |
-| prompt_injection.py | PASS | Prompt injection detection works |
-| openai_moderation.py | PASS | OpenAI moderation API works |
+**Description:** Structured input with Pydantic models. Agent processed HackerNews analysis request and returned top 5 AI-relevant stories with scores, comments, and summaries.
 
 ---
 
-### hooks/
+## context_management/
 
-| File | Status | Notes |
-|------|--------|-------|
-| output_transformation_post_hook.py | PASS | Post-hook transforms output |
-| input_transformation_pre_hook.py | PASS | Pre-hook transforms input |
-| input_validation_pre_hook.py | PASS | Pre-hook blocks harmful/unsafe input |
-| session_state_post_hook.py | PASS | Session state updated via hook |
+### few_shot_learning.py
 
----
+**Status:** PASS
 
-### human_in_the_loop/
-
-| File | Status | Notes |
-|------|--------|-------|
-| confirmation_required.py | MANUAL | Interactive - confirmation dialog works |
-| external_tool_execution.py | PASS | External tool execution pattern works |
-
-**Note:** Most human_in_the_loop files are interactive and require user input.
+**Description:** Few-shot learning with example conversations. Agent learned customer support tone and format from examples, correctly responding to 2FA question with step-by-step instructions.
 
 ---
 
-### input_and_output/
+## session/
 
-| File | Status | Notes |
-|------|--------|-------|
-| output_model.py | PASS | Structured output with Pydantic works |
-| structured_input.py | PASS | Structured input works |
-| parser_model.py | PASS | Parser model with Anthropic works |
-| input_as_dict.py | PASS | Dict input with image URL works |
+### 01_persistent_session.py
 
----
+**Status:** PASS
 
-### multimodal/
-
-| File | Status | Notes |
-|------|--------|-------|
-| image_to_structured_output.py | PASS | Image analysis with structured output works |
-| video_caption_agent.py | SKIP | Requires `moviepy` module |
-
-**Note:** Most multimodal examples need local media files.
+**Description:** Persistent session storage. Agent maintained session state across interactions, correctly storing and retrieving conversation history using SQLite storage.
 
 ---
 
-### other/
+## Summary
 
-| File | Status | Notes |
-|------|--------|-------|
-| cancel_a_run.py | PASS | Run cancellation works correctly |
-| agent_metrics.py | PASS | Fixed import bug - metrics display works |
-| agent_retries.py | PASS | Agent retry mechanism works |
-| intermediate_steps.py | PASS | Intermediate steps/events captured |
-| tool_call_limit.py | PASS | Fixed YFinanceTools API - tool call limit works |
+| Folder | Test | Status |
+|:-------|:-----|:-------|
+| state/ | session_state_basic.py | PASS |
+| guardrails/ | pii_detection.py | PASS |
+| async/ | gather_agents.py | PASS |
+| caching/ | cache_model_response.py | PASS |
+| hooks/ | session_state_post_hook.py | PASS |
+| input_and_output/ | structured_input.py | PASS |
+| context_management/ | few_shot_learning.py | PASS |
+| session/ | 01_persistent_session.py | PASS |
 
----
-
-### rag/
-
-| File | Status | Notes |
-|------|--------|-------|
-| traditional_rag_pgvector.py | PASS | Traditional RAG with PgVector works |
-| agentic_rag_pgvector.py | PASS | Agentic RAG with PgVector works |
-| traditional_rag_lancedb.py | SKIP | Requires `lancedb` module |
-
----
-
-### session/
-
-| File | Status | Notes |
-|------|--------|-------|
-| 01_persistent_session.py | PASS | Session persistence with PostgreSQL works |
-| 05_chat_history.py | PASS | Chat history retrieval works |
-| 07_in_memory_db.py | PASS | In-memory session storage works |
-
----
-
-### skills/
-
-| File | Status | Notes |
-|------|--------|-------|
-| basic_skills.py | PASS | Skills system with tool registration works |
-
----
-
-### state/
-
-| File | Status | Notes |
-|------|--------|-------|
-| session_state_basic.py | PASS | Basic session state works |
-| agentic_session_state.py | PASS | Agentic session state works |
-| session_state_in_instructions.py | PASS | Session state injected into instructions |
-
----
-
-## TESTING SUMMARY
-
-**Overall Results:**
-- **Tested:** ~50 files
-- **Passed:** 46+
-- **Failed:** 0
-- **Skipped:** 4 (missing dependencies: cohere, lancedb, moviepy)
-- **Manual/Interactive:** ~20 (human_in_the_loop examples)
-
-**Fixes Applied (2026-01-14):**
-1. `other/agent_metrics.py` - Fixed `pprint` import (was importing module instead of function)
-2. `async/gather_agents.py` - Fixed anti-pattern (agent now created once outside loop)
-3. `other/tool_call_limit.py` - Fixed outdated `YFinanceTools` API arguments
-
-**Fixes Applied (2026-01-15):**
-4. `multimodal/audio_sentiment_analysis.py` - Fixed model ID (`gemini-2.0-flash-exp` -> `gemini-3-flash-preview`), removed unused `db_url` variable
-5. `multimodal/audio_to_text.py` - Fixed model ID (`gemini-2.0-flash-exp` -> `gemini-3-flash-preview`)
-6. `multimodal/video_to_shorts.py` - Fixed model ID, updated `pip install` -> `uv pip install`, fixed run path in docstring
-7. `guardrails/prompt_injection.py` - Removed emojis from print statements
-8. `guardrails/pii_detection.py` - Removed emojis from print statements
-9. `guardrails/openai_moderation.py` - Removed emojis from print statements
-10. `other/cancel_a_run.py` - Removed emojis from print statements
-11. `hooks/input_validation_pre_hook.py` - Removed emojis from print statements
-12. `hooks/input_transformation_pre_hook.py` - Removed emojis, added main guard
-13. `hooks/output_transformation_post_hook.py` - Removed emojis from print statements
-14. `hooks/output_validation_post_hook.py` - Removed emojis from print statements
-15. `agentic_search/agentic_rag_infinity_reranker.py` - Removed emojis, fixed `pip install` -> `uv pip install`, moved `asyncio.run()` inside main guard
-
-**Fixes Applied (2026-01-15 session 2):**
-16. **Bulk fix: `pip install` -> `uv pip install` in 33 files:**
-    - `agentic_search/agentic_rag.py`
-    - `agentic_search/agentic_rag_with_reasoning.py`
-    - `async/data_analyst.py`
-    - `culture/README.md`
-    - `human_in_the_loop/*.py` (14 files)
-    - `multimodal/video_caption_agent.py`
-    - `multimodal/video_to_shorts.py`
-    - `other/cancel_a_run_with_redis.py`
-    - `other/cancel_a_run_async_with_redis.py`
-    - `other/scenario_testing.py`
-    - `rag/*.py` (8 files)
-    - `rag/README.md`
-
-**Known Issues:**
-None - all issues have been fixed.
-
-**Skipped Due to Missing Dependencies:**
-- `agentic_search/*.py` - Requires `cohere` module
-- `rag/traditional_rag_lancedb.py` - Requires `lancedb` module
-- `multimodal/video_caption_agent.py` - Requires `moviepy` module
+**Total:** 8 PASS
 
 **Notes:**
-- All core features work correctly
-- Culture system is unique and impressive
-- Hooks system is production-ready
-- Human-in-the-loop patterns require interactive testing
-- Multimodal examples need local media files
-- All emojis removed from print statements per CLAUDE.md guidelines
+- All tested features working correctly
+- 179 total files in folder - sample tested for coverage
+- Culture folder requires sequence testing (01, 02, etc.)
+- Multimodal folder requires local image/video files
+- RAG examples require PgVector running
