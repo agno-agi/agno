@@ -362,21 +362,24 @@ class AsyncSqliteDb(AsyncBaseDb):
         table_name: str,
         table_type: str,
         create_table_if_not_found: Optional[bool] = False,
-    ) -> Table:
+    ) -> Optional[Table]:
         """
         Check if the table exists and is valid, else create it.
 
         Args:
             table_name (str): Name of the table to get or create
             table_type (str): Type of table (used to get schema definition)
+            create_table_if_not_found (Optional[bool]): Whether to create the table if not found
 
         Returns:
-            Table: SQLAlchemy Table object
+            Optional[Table]: SQLAlchemy Table object, or None if table doesn't exist and create_table_if_not_found is False
         """
         async with self.async_session_factory() as sess, sess.begin():
             table_is_available = await ais_table_available(session=sess, table_name=table_name)
 
-        if (not table_is_available) and create_table_if_not_found:
+        if not table_is_available:
+            if not create_table_if_not_found:
+                return None
             return await self._create_table(table_name=table_name, table_type=table_type)
 
         # SQLite version of table validation (no schema)
