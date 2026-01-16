@@ -125,7 +125,7 @@ def attach_routes(
                     if component_db_id is not None and component_db_id == os_db.id:
                         db_dict = os_db.to_dict()
                     else:
-                        if registry.dbs is not None and len(registry.dbs) > 0:
+                        if registry is not None and registry.dbs is not None and len(registry.dbs) > 0:
                             for db in registry.dbs:
                                 if db.id == component_db_id:
                                     db_dict = db.to_dict()

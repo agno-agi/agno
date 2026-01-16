@@ -3,7 +3,7 @@ This cookbook demonstrates how to get an agent from the database.
 """
 
 from agno.db.postgres import PostgresDb
-from agno.workflow.workflow import get_workflow_by_id, get_workflows
+from agno.workflow.workflow import get_workflow_by_id, get_workflows # type: ignore
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 

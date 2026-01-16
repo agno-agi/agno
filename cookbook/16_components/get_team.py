@@ -6,7 +6,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
-from agno.team.team import get_team_by_id, get_teams
+from agno.team.team import get_team_by_id, get_teams # type: ignore
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 

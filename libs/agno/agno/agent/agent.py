@@ -7417,7 +7417,7 @@ class Agent:
         # Serialize tools to their dictionary representations
         _tools: List[Union[Function, dict]] = self._parse_tools(
             model=self.model,
-            tools=self.tools,
+            tools=self.tools or [],
         )
         if _tools:
             serialized_tools = []

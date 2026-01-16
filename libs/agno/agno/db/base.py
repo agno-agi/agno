@@ -552,8 +552,8 @@ class BaseDb(ABC):
     def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
-    # --- Components ---
-    @abstractmethod
+    # --- Components (Optional) ---
+    # These methods are optional. Override in subclasses to enable component persistence.
     def get_component(
         self,
         component_id: str,
@@ -570,7 +570,6 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
     def upsert_component(
         self,
         component_id: str,
@@ -596,7 +595,6 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
     def delete_component(
         self,
         component_id: str,
@@ -613,7 +611,6 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
     def list_components(
         self,
         component_type: Optional[ComponentType] = None,
@@ -634,7 +631,6 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
     def create_component_with_config(
         self,
         component_id: str,
@@ -670,8 +666,7 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
-    # --- Component Configs ---
-    @abstractmethod
+    # --- Component Configs (Optional) ---
     def get_config(
         self,
         component_id: str,
@@ -690,7 +685,6 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
     def upsert_config(
         self,
         component_id: str,
@@ -726,7 +720,6 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
     def delete_config(
         self,
         component_id: str,
@@ -749,7 +742,6 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
     def list_configs(
         self,
         component_id: str,
@@ -767,7 +759,6 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
     def set_current_version(
         self,
         component_id: str,
@@ -791,8 +782,7 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
-    # --- Component Links ---
-    @abstractmethod
+    # --- Component Links (Optional) ---
     def get_links(
         self,
         component_id: str,
@@ -811,7 +801,6 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
     def get_dependents(
         self,
         component_id: str,
@@ -828,7 +817,6 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
     def load_component_graph(
         self,
         component_id: str,

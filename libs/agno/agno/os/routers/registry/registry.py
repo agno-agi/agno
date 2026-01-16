@@ -267,7 +267,8 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
             )
 
         # Schemas
-        for schema_name, schema in (getattr(registry, "schemas", {}) or {}).items():
+        for schema in getattr(registry, "schemas", []) or []:
+            schema_name = schema.__name__
             meta: Dict[str, Any] = {"class_path": _class_path(schema)}
             if include_schema:
                 try:
@@ -277,7 +278,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
 
             components.append(
                 ComponentResponse(
-                    name=str(schema_name),
+                    name=schema_name,
                     component_type="schema",
                     metadata=meta,
                 )
