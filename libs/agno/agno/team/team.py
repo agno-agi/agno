@@ -8369,7 +8369,7 @@ class Team:
             config["resolve_in_context"] = self.resolve_in_context
 
         # --- Database settings ---
-        if self.db is not None:
+        if self.db is not None and hasattr(self.db, "to_dict"):
             config["db"] = self.db.to_dict()
 
         # --- Dependencies ---
@@ -8426,7 +8426,7 @@ class Team:
             elif isinstance(self.input_schema, dict):
                 config["input_schema"] = self.input_schema
         if self.output_schema is not None:
-            if issubclass(self.output_schema, BaseModel):
+            if isinstance(self.output_schema, type) and issubclass(self.output_schema, BaseModel):
                 config["output_schema"] = self.output_schema.__name__
             elif isinstance(self.output_schema, dict):
                 config["output_schema"] = self.output_schema
@@ -8572,7 +8572,7 @@ class Team:
                 config["model"] = get_model(model_data)
 
         # --- Handle Members reconstruction ---
-        members = None
+        members: Optional[List[Union[Agent, "Team"]]] = None
         from agno.agent import get_agent_by_id
 
         if "members" in config and config["members"]:
@@ -8581,6 +8581,9 @@ class Team:
                 member_type = member_data.get("type")
                 if member_type == "agent":
                     # TODO: Make sure to pass the correct version to get_agent_by_id. Right now its returning the latest version.
+                    if db is None:
+                        log_warning(f"Cannot load member agent {member_data['agent_id']}: db is None")
+                        continue
                     agent = get_agent_by_id(id=member_data["agent_id"], db=db, registry=registry)
                     if agent:
                         members.append(agent)
@@ -8695,7 +8698,7 @@ class Team:
             # --- Model ---
             model=config.get("model"),
             # --- Members ---
-            members=members,
+            members=members or [],
             # --- Execution settings ---
             respond_directly=config.get("respond_directly", False),
             delegate_to_all_members=config.get("delegate_to_all_members", False),
@@ -8827,6 +8830,10 @@ class Team:
         db_ = db or self.db
         if not db_:
             raise ValueError("Db not initialized or provided")
+        if not isinstance(db_, BaseDb):
+            raise ValueError("Async databases not yet supported for save(). Use a sync database.")
+        if self.id is None:
+            raise ValueError("Cannot save team without an id")
 
         try:
             # Collect all links for members
@@ -8956,6 +8963,10 @@ class Team:
         db_ = db or self.db
         if not db_:
             raise ValueError("Db not initialized or provided")
+        if not isinstance(db_, BaseDb):
+            raise ValueError("Async databases not yet supported for delete(). Use a sync database.")
+        if self.id is None:
+            raise ValueError("Cannot delete team without an id")
 
         return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
 
@@ -9606,6 +9617,7 @@ class Team:
                 title=title,
                 reasoning=thought,
                 action=action,
+                result=None,
                 next_action=NextAction.CONTINUE,
                 confidence=confidence,
             )
@@ -9641,6 +9653,7 @@ class Team:
             # Create a reasoning step
             reasoning_step = ReasoningStep(
                 title=title,
+                action=None,
                 result=result,
                 reasoning=analysis,
                 next_action=next_action_enum,
@@ -9669,7 +9682,10 @@ class Team:
             thought = tool_args["thought"]
             reasoning_step = ReasoningStep(
                 title="Thinking",
+                action=None,
+                result=None,
                 reasoning=thought,
+                next_action=None,
                 confidence=None,
             )
             formatted_content = f"## Thinking\n{thought}\n\n"
