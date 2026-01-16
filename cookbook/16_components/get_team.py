@@ -37,7 +37,9 @@ content_team = Team(
 
 team = get_team_by_id(db=db, id="content-team")
 
-# team.print_response("Write about the history of the internet.", stream=True)
+team.print_response("Write about the history of the internet.", stream=True)
 
-teams = get_teams(db=db)
-print(teams)
+# You can also get all teams from the database
+# teams = get_teams(db=db)
+# for team in teams:
+#     print(team)

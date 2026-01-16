@@ -6897,21 +6897,17 @@ class Agent:
 
         return agent_session
 
-    # -*- Agent Serialization Functions
+    # -*- Serialization Functions
     def to_dict(self) -> Dict[str, Any]:
         """
         Convert the Agent to a dictionary.
-
-        This method serializes all agent attributes to a dictionary format that can be stored
-        and later reconstructed using from_dict(). Non-serializable attributes like callables
-        and complex objects are handled appropriately.
 
         Returns:
             Dict[str, Any]: Dictionary representation of the agent configuration
         """
         config: Dict[str, Any] = {}
 
-        # --- Agent settings ---
+        # --- Agent Settings ---
         if self.model is not None:
             if isinstance(self.model, Model):
                 config["model"] = self.model.to_dict()
@@ -7442,6 +7438,9 @@ class Agent:
             stage: The stage of the component. Defaults to "published".
             label: The label of the component.
             notes: The notes of the component.
+
+        Returns:
+            Optional[int]: The version number of the saved config.
         """
         db_ = db or self.db
         if not db_:

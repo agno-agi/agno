@@ -18,10 +18,13 @@ agent = Agent(
 # agent.print_response("How many people live in Canada?")
 
 # Save the agent to the database
-agent.save()
+version = agent.save()
+print(f"Saved agent as version {version}")
 
-# By default, saving an agent will create a new version of the agent
+# By default, saving a agent will create a new version of the agent
 
-# Delete the agent from the database.
-# This function will delete the Agent entity from the database.
+# Delete the agent from the database (soft delete by default)
 # agent.delete()
+
+# Hard delete (permanently removes from database)
+# agent.delete(hard_delete=True)

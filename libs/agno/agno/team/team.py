@@ -2033,652 +2033,6 @@ class Team:
             # Always clean up the run tracking
             cleanup_run(run_response.run_id)  # type: ignore
 
-    # ==================== Serialization Methods ====================
-
-    def to_dict(self) -> Dict[str, Any]:
-        """
-        Convert the Team to a dictionary.
-
-        Returns:
-            Dict[str, Any]: Dictionary representation of the team configuration
-        """
-        config: Dict[str, Any] = {}
-
-        # --- Team settings ---
-        if self.id is not None:
-            config["id"] = self.id
-        if self.name is not None:
-            config["name"] = self.name
-        if self.role is not None:
-            config["role"] = self.role
-        if self.description is not None:
-            config["description"] = self.description
-
-        # --- Model ---
-        if self.model is not None:
-            config["model"] = self.model.to_dict() if isinstance(self.model, Model) else str(self.model)
-
-        # --- Members ---
-        if self.members:
-            serialized_members = []
-            for member in self.members:
-                if isinstance(member, Agent):
-                    serialized_members.append(
-                        {
-                            "type": "agent",
-                            "agent_id": member.id,
-                        }
-                    )
-                elif isinstance(member, Team):
-                    serialized_members.append(
-                        {
-                            "type": "team",
-                            "team_id": member.id,
-                        }
-                    )
-            if serialized_members:
-                config["members"] = serialized_members
-
-        # --- Execution settings ---
-        config["respond_directly"] = self.respond_directly
-        config["delegate_to_all_members"] = self.delegate_to_all_members
-        config["determine_input_for_members"] = self.determine_input_for_members
-
-        # --- User settings ---
-        if self.user_id is not None:
-            config["user_id"] = self.user_id
-
-        # --- Session settings ---
-        if self.session_id is not None:
-            config["session_id"] = self.session_id
-        if self.session_state is not None:
-            config["session_state"] = self.session_state
-        config["add_session_state_to_context"] = self.add_session_state_to_context
-        config["enable_agentic_state"] = self.enable_agentic_state
-        config["overwrite_db_session_state"] = self.overwrite_db_session_state
-        config["cache_session"] = self.cache_session
-        config["add_team_history_to_members"] = self.add_team_history_to_members
-        config["num_team_history_runs"] = self.num_team_history_runs
-        config["share_member_interactions"] = self.share_member_interactions
-        config["search_session_history"] = self.search_session_history
-        if self.num_history_sessions is not None:
-            config["num_history_sessions"] = self.num_history_sessions
-        config["read_chat_history"] = self.read_chat_history
-
-        # --- System message settings ---
-        if self.system_message is not None and isinstance(self.system_message, str):
-            config["system_message"] = self.system_message
-        config["system_message_role"] = self.system_message_role
-        if self.introduction is not None:
-            config["introduction"] = self.introduction
-        if self.instructions is not None and not callable(self.instructions):
-            config["instructions"] = self.instructions
-        if self.expected_output is not None:
-            config["expected_output"] = self.expected_output
-        if self.additional_context is not None:
-            config["additional_context"] = self.additional_context
-        config["markdown"] = self.markdown
-        config["add_datetime_to_context"] = self.add_datetime_to_context
-        config["add_location_to_context"] = self.add_location_to_context
-        if self.timezone_identifier is not None:
-            config["timezone_identifier"] = self.timezone_identifier
-        config["add_name_to_context"] = self.add_name_to_context
-        config["add_member_tools_to_context"] = self.add_member_tools_to_context
-        config["resolve_in_context"] = self.resolve_in_context
-
-        # --- Database settings ---
-        if self.db is not None:
-            config["db"] = self.db.to_dict()
-
-        # --- Dependencies ---
-        if self.dependencies is not None:
-            config["dependencies"] = self.dependencies
-        config["add_dependencies_to_context"] = self.add_dependencies_to_context
-
-        # --- Knowledge settings ---
-        # TODO: implement knowledge serialization
-        # if self.knowledge is not None:
-        #     config["knowledge"] = self.knowledge.to_dict()
-        if self.knowledge_filters is not None:
-            config["knowledge_filters"] = self.knowledge_filters
-        config["enable_agentic_knowledge_filters"] = self.enable_agentic_knowledge_filters
-        config["add_knowledge_to_context"] = self.add_knowledge_to_context
-        config["update_knowledge"] = self.update_knowledge
-        config["search_knowledge"] = self.search_knowledge
-        config["references_format"] = self.references_format
-
-        # --- Tools ---
-        if self.tools:
-            serialized_tools = []
-            for tool in self.tools:
-                try:
-                    if isinstance(tool, Function):
-                        serialized_tools.append(tool.to_dict())
-                    elif isinstance(tool, Toolkit):
-                        for func in tool.functions.values():
-                            serialized_tools.append(func.to_dict())
-                    elif callable(tool):
-                        func = Function.from_callable(tool)
-                        serialized_tools.append(func.to_dict())
-                except Exception as e:
-                    log_warning(f"Could not serialize tool {tool}: {e}")
-            if serialized_tools:
-                config["tools"] = serialized_tools
-
-        if self.tool_call_limit is not None:
-            config["tool_call_limit"] = self.tool_call_limit
-        if self.tool_choice is not None:
-            config["tool_choice"] = self.tool_choice
-        config["get_member_information_tool"] = self.get_member_information_tool
-
-        # --- Schema settings ---
-        # TODO: implement schema serialization
-        # if self.input_schema is not None:
-        #     if isinstance(self.input_schema, type) and issubclass(self.input_schema, BaseModel):
-        #         config["input_schema"] = self.input_schema.__name__
-        #     elif isinstance(self.input_schema, dict):
-        #         config["input_schema"] = self.input_schema
-        # if self.output_schema is not None:
-        #     if isinstance(self.output_schema, type) and issubclass(self.output_schema, BaseModel):
-        #         config["output_schema"] = self.output_schema.__name__
-        #     elif isinstance(self.output_schema, dict):
-        #         config["output_schema"] = self.output_schema
-
-        # --- Parser and output settings ---
-        # TODO: implement parser model serialization
-        # if self.parser_model is not None:
-        #     config["parser_model"] = self.parser_model.to_dict() if isinstance(self.parser_model, Model) else str(self.parser_model)
-        if self.parser_model_prompt is not None:
-            config["parser_model_prompt"] = self.parser_model_prompt
-        # TODO: implement output model serialization
-        # if self.output_model is not None:
-        #     config["output_model"] = self.output_model.to_dict() if isinstance(self.output_model, Model) else str(self.output_model)
-        if self.output_model_prompt is not None:
-            config["output_model_prompt"] = self.output_model_prompt
-        config["use_json_mode"] = self.use_json_mode
-        config["parse_response"] = self.parse_response
-
-        # --- Memory settings ---
-        # TODO: implement memory manager serialization
-        # if self.memory_manager is not None:
-        #     config["memory_manager"] = self.memory_manager.to_dict()
-        config["enable_agentic_memory"] = self.enable_agentic_memory
-        config["enable_user_memories"] = self.enable_user_memories
-        if self.add_memories_to_context is not None:
-            config["add_memories_to_context"] = self.add_memories_to_context
-        config["enable_session_summaries"] = self.enable_session_summaries
-        if self.add_session_summary_to_context is not None:
-            config["add_session_summary_to_context"] = self.add_session_summary_to_context
-        # TODO: implement session summary manager serialization
-        # if self.session_summary_manager is not None:
-        #     config["session_summary_manager"] = self.session_summary_manager.to_dict()
-
-        # --- History settings ---
-        config["add_history_to_context"] = self.add_history_to_context
-        if self.num_history_runs is not None:
-            config["num_history_runs"] = self.num_history_runs
-        if self.num_history_messages is not None:
-            config["num_history_messages"] = self.num_history_messages
-        if self.max_tool_calls_from_history is not None:
-            config["max_tool_calls_from_history"] = self.max_tool_calls_from_history
-
-        # --- Compression settings ---
-        config["compress_tool_results"] = self.compress_tool_results
-        # TODO: implement compression manager serialization
-        # if self.compression_manager is not None:
-        #     config["compression_manager"] = self.compression_manager.to_dict()
-
-        # --- Reasoning settings ---
-        config["reasoning"] = self.reasoning
-        # TODO: implement reasoning model serialization
-        # if self.reasoning_model is not None:
-        #     config["reasoning_model"] = self.reasoning_model.to_dict() if isinstance(self.reasoning_model, Model) else str(self.reasoning_model)
-        config["reasoning_min_steps"] = self.reasoning_min_steps
-        config["reasoning_max_steps"] = self.reasoning_max_steps
-
-        # --- Streaming settings ---
-        if self.stream is not None:
-            config["stream"] = self.stream
-        if self.stream_events is not None:
-            config["stream_events"] = self.stream_events
-        config["stream_member_events"] = self.stream_member_events
-        config["store_events"] = self.store_events
-        config["store_member_responses"] = self.store_member_responses
-
-        # --- Media settings ---
-        config["send_media_to_model"] = self.send_media_to_model
-        config["store_media"] = self.store_media
-        config["store_tool_messages"] = self.store_tool_messages
-        config["store_history_messages"] = self.store_history_messages
-
-        # --- Retry settings ---
-        config["retries"] = self.retries
-        config["delay_between_retries"] = self.delay_between_retries
-        config["exponential_backoff"] = self.exponential_backoff
-
-        # --- Metadata ---
-        if self.metadata is not None:
-            config["metadata"] = self.metadata
-
-        # --- Debug and telemetry settings ---
-        config["debug_mode"] = self.debug_mode
-        config["debug_level"] = self.debug_level
-        config["show_members_responses"] = self.show_members_responses
-        config["telemetry"] = self.telemetry
-
-        return config
-
-    @classmethod
-    def from_dict(
-        cls,
-        data: Dict[str, Any],
-        db: Optional["BaseDb"] = None,
-        registry: Optional["Registry"] = None,
-    ) -> "Team":
-        """
-        Create a Team from a dictionary.
-
-        Args:
-            data: Dictionary containing team configuration
-            registry: Optional registry for rehydrating tools
-
-        Returns:
-            Team: Reconstructed team instance
-        """
-        config = data.copy()
-
-        # --- Handle Model reconstruction ---
-        if "model" in config:
-            model_data = config["model"]
-            if isinstance(model_data, dict) and "id" in model_data:
-                config["model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-            elif isinstance(model_data, str):
-                config["model"] = get_model(model_data)
-
-        # --- Handle Members reconstruction ---
-        members = None
-        from agno.agent import get_agent_by_id
-
-        if "members" in config and config["members"]:
-            members = []
-            for member_data in config["members"]:
-                member_type = member_data.get("type")
-                if member_type == "agent":
-                    # TODO: Make sure to pass the correct version to get_agent_by_id. Right now its returning the latest version.
-                    agent = get_agent_by_id(id=member_data["agent_id"], db=db, registry=registry)
-                    if agent:
-                        members.append(agent)
-                    else:
-                        log_warning(f"Agent not found: {member_data['agent_id']}")
-
-        # --- Handle reasoning_model reconstruction ---
-        # TODO: implement reasoning model deserialization
-        # if "reasoning_model" in config:
-        #     model_data = config["reasoning_model"]
-        #     if isinstance(model_data, dict) and "id" in model_data:
-        #         config["reasoning_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-        #     elif isinstance(model_data, str):
-        #         config["reasoning_model"] = get_model(model_data)
-
-        # --- Handle parser_model reconstruction ---
-        # TODO: implement parser model deserialization
-        # if "parser_model" in config:
-        #     model_data = config["parser_model"]
-        #     if isinstance(model_data, dict) and "id" in model_data:
-        #         config["parser_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-        #     elif isinstance(model_data, str):
-        #         config["parser_model"] = get_model(model_data)
-
-        # --- Handle output_model reconstruction ---
-        # TODO: implement output model deserialization
-        # if "output_model" in config:
-        #     model_data = config["output_model"]
-        #     if isinstance(model_data, dict) and "id" in model_data:
-        #         config["output_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-        #     elif isinstance(model_data, str):
-        #         config["output_model"] = get_model(model_data)
-
-        # --- Handle tools reconstruction ---
-        if "tools" in config and config["tools"]:
-            if registry:
-                config["tools"] = [registry.rehydrate_function(t) for t in config["tools"]]
-            else:
-                log_warning("No registry provided, tools will not be rehydrated.")
-                del config["tools"]
-
-        # --- Handle DB reconstruction ---
-        if "db" in config and isinstance(config["db"], dict):
-            db_data = config["db"]
-            db_type = db_data.get("type")
-            if db_type == "postgres":
-                try:
-                    from agno.db.postgres import PostgresDb
-
-                    config["db"] = PostgresDb.from_dict(db_data)
-                except Exception as e:
-                    log_error(f"Error reconstructing DB from dictionary: {e}")
-                    del config["db"]
-            elif db_type == "sqlite":
-                try:
-                    from agno.db.sqlite import SqliteDb
-
-                    config["db"] = SqliteDb.from_dict(db_data)
-                except Exception as e:
-                    log_error(f"Error reconstructing DB from dictionary: {e}")
-                    del config["db"]
-            else:
-                del config["db"]
-
-        # --- Handle Schema reconstruction ---
-        # TODO: implement schema deserialization
-        # if "input_schema" in config and isinstance(config["input_schema"], str):
-        #     if registry and config["input_schema"] in registry.schemas:
-        #         config["input_schema"] = registry.schemas[config["input_schema"]]
-        #     else:
-        #         del config["input_schema"]
-        # if "output_schema" in config and isinstance(config["output_schema"], str):
-        #     if registry and config["output_schema"] in registry.schemas:
-        #         config["output_schema"] = registry.schemas[config["output_schema"]]
-        #     else:
-        #         del config["output_schema"]
-
-        # --- Handle MemoryManager reconstruction ---
-        # TODO: implement memory manager deserialization
-        # if "memory_manager" in config and isinstance(config["memory_manager"], dict):
-        #     from agno.memory import MemoryManager
-        #     config["memory_manager"] = MemoryManager.from_dict(config["memory_manager"])
-
-        # --- Handle SessionSummaryManager reconstruction ---
-        # TODO: implement session summary manager deserialization
-        # if "session_summary_manager" in config and isinstance(config["session_summary_manager"], dict):
-        #     from agno.session import SessionSummaryManager
-        #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
-
-        # --- Handle Knowledge reconstruction ---
-        # TODO: implement knowledge deserialization
-        # if "knowledge" in config and isinstance(config["knowledge"], dict):
-        #     from agno.knowledge import Knowledge
-        #     config["knowledge"] = Knowledge.from_dict(config["knowledge"])
-
-        # --- Handle CompressionManager reconstruction ---
-        # TODO: implement compression manager deserialization
-        # if "compression_manager" in config and isinstance(config["compression_manager"], dict):
-        #     from agno.compression.manager import CompressionManager
-        #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
-
-        return cls(
-            # --- Team settings ---
-            id=config.get("id"),
-            name=config.get("name"),
-            role=config.get("role"),
-            description=config.get("description"),
-            # --- Model ---
-            model=config.get("model"),
-            # --- Members ---
-            members=members,
-            # --- Execution settings ---
-            respond_directly=config.get("respond_directly", False),
-            delegate_to_all_members=config.get("delegate_to_all_members", False),
-            determine_input_for_members=config.get("determine_input_for_members", True),
-            # --- User settings ---
-            user_id=config.get("user_id"),
-            # --- Session settings ---
-            session_id=config.get("session_id"),
-            session_state=config.get("session_state"),
-            add_session_state_to_context=config.get("add_session_state_to_context", False),
-            enable_agentic_state=config.get("enable_agentic_state", False),
-            overwrite_db_session_state=config.get("overwrite_db_session_state", False),
-            cache_session=config.get("cache_session", False),
-            add_team_history_to_members=config.get("add_team_history_to_members", False),
-            num_team_history_runs=config.get("num_team_history_runs", 3),
-            share_member_interactions=config.get("share_member_interactions", False),
-            search_session_history=config.get("search_session_history", False),
-            num_history_sessions=config.get("num_history_sessions"),
-            read_chat_history=config.get("read_chat_history", False),
-            # --- System message settings ---
-            system_message=config.get("system_message"),
-            system_message_role=config.get("system_message_role", "system"),
-            introduction=config.get("introduction"),
-            instructions=config.get("instructions"),
-            expected_output=config.get("expected_output"),
-            additional_context=config.get("additional_context"),
-            markdown=config.get("markdown", False),
-            add_datetime_to_context=config.get("add_datetime_to_context", False),
-            add_location_to_context=config.get("add_location_to_context", False),
-            timezone_identifier=config.get("timezone_identifier"),
-            add_name_to_context=config.get("add_name_to_context", False),
-            add_member_tools_to_context=config.get("add_member_tools_to_context", False),
-            resolve_in_context=config.get("resolve_in_context", True),
-            # --- Database settings ---
-            db=config.get("db"),
-            # --- Dependencies ---
-            dependencies=config.get("dependencies"),
-            add_dependencies_to_context=config.get("add_dependencies_to_context", False),
-            # --- Knowledge settings ---
-            # knowledge=config.get("knowledge"),  # TODO
-            knowledge_filters=config.get("knowledge_filters"),
-            enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
-            add_knowledge_to_context=config.get("add_knowledge_to_context", False),
-            update_knowledge=config.get("update_knowledge", False),
-            search_knowledge=config.get("search_knowledge", True),
-            references_format=config.get("references_format", "json"),
-            # --- Tools ---
-            tools=config.get("tools"),
-            tool_call_limit=config.get("tool_call_limit"),
-            tool_choice=config.get("tool_choice"),
-            get_member_information_tool=config.get("get_member_information_tool", False),
-            # --- Schema settings ---
-            # input_schema=config.get("input_schema"),  # TODO
-            # output_schema=config.get("output_schema"),  # TODO
-            # --- Parser and output settings ---
-            # parser_model=config.get("parser_model"),  # TODO
-            parser_model_prompt=config.get("parser_model_prompt"),
-            # output_model=config.get("output_model"),  # TODO
-            output_model_prompt=config.get("output_model_prompt"),
-            use_json_mode=config.get("use_json_mode", False),
-            parse_response=config.get("parse_response", True),
-            # --- Memory settings ---
-            # memory_manager=config.get("memory_manager"),  # TODO
-            enable_agentic_memory=config.get("enable_agentic_memory", False),
-            enable_user_memories=config.get("enable_user_memories", False),
-            add_memories_to_context=config.get("add_memories_to_context"),
-            enable_session_summaries=config.get("enable_session_summaries", False),
-            add_session_summary_to_context=config.get("add_session_summary_to_context"),
-            # session_summary_manager=config.get("session_summary_manager"),  # TODO
-            # --- History settings ---
-            add_history_to_context=config.get("add_history_to_context", False),
-            num_history_runs=config.get("num_history_runs"),
-            num_history_messages=config.get("num_history_messages"),
-            max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
-            # --- Compression settings ---
-            compress_tool_results=config.get("compress_tool_results", False),
-            # compression_manager=config.get("compression_manager"),  # TODO
-            # --- Reasoning settings ---
-            reasoning=config.get("reasoning", False),
-            # reasoning_model=config.get("reasoning_model"),  # TODO
-            reasoning_min_steps=config.get("reasoning_min_steps", 1),
-            reasoning_max_steps=config.get("reasoning_max_steps", 10),
-            # --- Streaming settings ---
-            stream=config.get("stream"),
-            stream_events=config.get("stream_events"),
-            stream_member_events=config.get("stream_member_events", True),
-            store_events=config.get("store_events", False),
-            store_member_responses=config.get("store_member_responses", False),
-            # --- Media settings ---
-            send_media_to_model=config.get("send_media_to_model", True),
-            store_media=config.get("store_media", True),
-            store_tool_messages=config.get("store_tool_messages", True),
-            store_history_messages=config.get("store_history_messages", True),
-            # --- Retry settings ---
-            retries=config.get("retries", 0),
-            delay_between_retries=config.get("delay_between_retries", 1),
-            exponential_backoff=config.get("exponential_backoff", False),
-            # --- Metadata ---
-            metadata=config.get("metadata"),
-            # --- Debug and telemetry settings ---
-            debug_mode=config.get("debug_mode", False),
-            debug_level=config.get("debug_level", 1),
-            show_members_responses=config.get("show_members_responses", False),
-            telemetry=config.get("telemetry", True),
-        )
-
-    def save(
-        self,
-        *,
-        db: Optional["BaseDb"] = None,
-        stage: str = "published",
-        label: Optional[str] = None,
-        notes: Optional[str] = None,
-    ) -> int:
-        """
-        Save the team component and config to the database, including member agents/teams.
-
-        Args:
-            db: The database to save the component and config to.
-            stage: The stage of the component. Defaults to "published".
-            label: The label of the component.
-            notes: The notes of the component.
-
-        Returns:
-            int: The version number of the saved config.
-        """
-        from agno.agent.agent import Agent
-
-        db_ = db or self.db
-        if not db_:
-            raise ValueError("Db not initialized or provided")
-
-        try:
-            # Collect all links for members
-            all_links: List[Dict[str, Any]] = []
-
-            # Save each member (Agent or nested Team) and collect links
-            for position, member in enumerate(self.members or []):
-                # Save member first - returns version
-                member_version = member.save(db=db_, stage=stage, label=label, notes=notes)
-
-                # Add link
-                all_links.append(
-                    {
-                        "link_kind": "member",
-                        "link_key": f"member_{position}",
-                        "child_component_id": member.id,
-                        "child_version": member_version,
-                        "position": position,
-                        "meta": {"type": "agent" if isinstance(member, Agent) else "team"},
-                    }
-                )
-
-            # Create or update component
-            db_.upsert_component(
-                component_id=self.id,
-                component_type=ComponentType.TEAM,
-                name=getattr(self, "name", self.id),
-                description=getattr(self, "description", None),
-                metadata=getattr(self, "metadata", None),
-            )
-
-            # Create or update config with links
-            config = db_.upsert_config(
-                component_id=self.id,
-                config=self.to_dict(),
-                links=all_links if all_links else None,
-                label=label,
-                stage=stage,
-                notes=notes,
-            )
-
-            return config["version"]
-
-        except Exception as e:
-            log_error(f"Error saving Team to database: {e}")
-            raise
-
-    @classmethod
-    def load(
-        cls,
-        id: str,
-        *,
-        db: "BaseDb",
-        registry: Optional["Registry"] = None,
-        label: Optional[str] = None,
-        version: Optional[int] = None,
-    ) -> Optional["Team"]:
-        """
-        Load a team by id, with hydrated members.
-
-        Args:
-            id: The id of the team to load.
-            db: The database to load the team from.
-            label: The label of the team to load.
-
-        Returns:
-            The team loaded from the database with hydrated members, or None if not found.
-        """
-        from agno.agent.agent import Agent
-
-        # Use graph to load team + all members
-        graph = db.load_component_graph(id, version=version)
-        if graph is None:
-            return None
-
-        config = graph["config"].get("config")
-        if config is None:
-            return None
-
-        team = cls.from_dict(config, db=db, registry=registry)
-        team.id = id
-        team.db = db
-
-        # Hydrate members from graph children
-        team.members = []
-        for child in graph.get("children", []):
-            child_graph = child.get("graph")
-            if child_graph is None:
-                continue
-
-            child_config = child_graph["config"].get("config")
-            if child_config is None:
-                continue
-
-            link_meta = child["link"].get("meta", {})
-            member_type = link_meta.get("type")
-
-            if member_type == "agent":
-                agent = Agent.from_dict(child_config)
-                agent.id = child_graph["component"]["component_id"]
-                agent.db = db
-                team.members.append(agent)
-            elif member_type == "team":
-                # Recursive load for nested teams
-                nested_team = cls.load(child_graph["component"]["component_id"], db=db)
-                if nested_team:
-                    team.members.append(nested_team)
-
-        return team
-
-    def delete(
-        self,
-        *,
-        db: Optional["BaseDb"] = None,
-        hard_delete: bool = False,
-    ) -> bool:
-        """
-        Delete the team component.
-
-        Args:
-            db: The database to delete the component from.
-            hard_delete: Whether to hard delete the component.
-
-        Returns:
-            True if the component was deleted, False otherwise.
-        """
-        db_ = db or self.db
-        if not db_:
-            raise ValueError("Db not initialized or provided")
-
-        return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
-
     @overload
     def run(
         self,
@@ -8743,6 +8097,695 @@ class Team:
                 merge_dictionaries(session.metadata, self.metadata)
             # Update the current metadata with the metadata from the database which is updated in place
             self.metadata = session.metadata
+
+    # -*- Serialization Functions
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the Team to a dictionary.
+
+        Returns:
+            Dict[str, Any]: Dictionary representation of the team configuration
+        """
+        config: Dict[str, Any] = {}
+
+        # --- Team Settings ---
+        if self.id is not None:
+            config["id"] = self.id
+        if self.name is not None:
+            config["name"] = self.name
+        if self.role is not None:
+            config["role"] = self.role
+        if self.description is not None:
+            config["description"] = self.description
+
+        # --- Model ---
+        if self.model is not None:
+            config["model"] = self.model.to_dict() if isinstance(self.model, Model) else str(self.model)
+
+        # --- Members ---
+        if self.members:
+            serialized_members = []
+            for member in self.members:
+                if isinstance(member, Agent):
+                    serialized_members.append({"type": "agent", "agent_id": member.id})
+                elif isinstance(member, Team):
+                    serialized_members.append({"type": "team", "team_id": member.id})
+            if serialized_members:
+                config["members"] = serialized_members
+
+        # --- Execution settings (only if non-default) ---
+        if self.respond_directly:
+            config["respond_directly"] = self.respond_directly
+        if self.delegate_to_all_members:
+            config["delegate_to_all_members"] = self.delegate_to_all_members
+        if not self.determine_input_for_members:  # default is True
+            config["determine_input_for_members"] = self.determine_input_for_members
+
+        # --- User settings ---
+        if self.user_id is not None:
+            config["user_id"] = self.user_id
+
+        # --- Session settings ---
+        if self.session_id is not None:
+            config["session_id"] = self.session_id
+        if self.session_state is not None:
+            config["session_state"] = self.session_state
+        if self.add_session_state_to_context:
+            config["add_session_state_to_context"] = self.add_session_state_to_context
+        if self.enable_agentic_state:
+            config["enable_agentic_state"] = self.enable_agentic_state
+        if self.overwrite_db_session_state:
+            config["overwrite_db_session_state"] = self.overwrite_db_session_state
+        if self.cache_session:
+            config["cache_session"] = self.cache_session
+
+        # --- Team history settings ---
+        if self.add_team_history_to_members:
+            config["add_team_history_to_members"] = self.add_team_history_to_members
+        if self.num_team_history_runs != 3:  # default is 3
+            config["num_team_history_runs"] = self.num_team_history_runs
+        if self.share_member_interactions:
+            config["share_member_interactions"] = self.share_member_interactions
+        if self.search_session_history:
+            config["search_session_history"] = self.search_session_history
+        if self.num_history_sessions is not None:
+            config["num_history_sessions"] = self.num_history_sessions
+        if self.read_chat_history:
+            config["read_chat_history"] = self.read_chat_history
+
+        # --- System message settings ---
+        if self.system_message is not None and isinstance(self.system_message, str):
+            config["system_message"] = self.system_message
+        if self.system_message_role != "system":  # default is "system"
+            config["system_message_role"] = self.system_message_role
+        if self.introduction is not None:
+            config["introduction"] = self.introduction
+        if self.instructions is not None and not callable(self.instructions):
+            config["instructions"] = self.instructions
+        if self.expected_output is not None:
+            config["expected_output"] = self.expected_output
+        if self.additional_context is not None:
+            config["additional_context"] = self.additional_context
+
+        # --- Context settings ---
+        if self.markdown:
+            config["markdown"] = self.markdown
+        if self.add_datetime_to_context:
+            config["add_datetime_to_context"] = self.add_datetime_to_context
+        if self.add_location_to_context:
+            config["add_location_to_context"] = self.add_location_to_context
+        if self.timezone_identifier is not None:
+            config["timezone_identifier"] = self.timezone_identifier
+        if self.add_name_to_context:
+            config["add_name_to_context"] = self.add_name_to_context
+        if self.add_member_tools_to_context:
+            config["add_member_tools_to_context"] = self.add_member_tools_to_context
+        if not self.resolve_in_context:  # default is True
+            config["resolve_in_context"] = self.resolve_in_context
+
+        # --- Database settings ---
+        if self.db is not None:
+            config["db"] = self.db.to_dict()
+
+        # --- Dependencies ---
+        if self.dependencies is not None:
+            config["dependencies"] = self.dependencies
+        if self.add_dependencies_to_context:
+            config["add_dependencies_to_context"] = self.add_dependencies_to_context
+
+        # --- Knowledge settings ---
+        # TODO: implement knowledge serialization
+        # if self.knowledge is not None:
+        #     config["knowledge"] = self.knowledge.to_dict()
+        if self.knowledge_filters is not None:
+            config["knowledge_filters"] = self.knowledge_filters
+        if self.enable_agentic_knowledge_filters:
+            config["enable_agentic_knowledge_filters"] = self.enable_agentic_knowledge_filters
+        if self.update_knowledge:
+            config["update_knowledge"] = self.update_knowledge
+        if self.add_knowledge_to_context:
+            config["add_knowledge_to_context"] = self.add_knowledge_to_context
+        if not self.search_knowledge:  # default is True
+            config["search_knowledge"] = self.search_knowledge
+        if self.references_format != "json":  # default is "json"
+            config["references_format"] = self.references_format
+
+        # --- Tools ---
+        if self.tools:
+            serialized_tools = []
+            for tool in self.tools:
+                try:
+                    if isinstance(tool, Function):
+                        serialized_tools.append(tool.to_dict())
+                    elif isinstance(tool, Toolkit):
+                        for func in tool.functions.values():
+                            serialized_tools.append(func.to_dict())
+                    elif callable(tool):
+                        func = Function.from_callable(tool)
+                        serialized_tools.append(func.to_dict())
+                except Exception as e:
+                    log_warning(f"Could not serialize tool {tool}: {e}")
+            if serialized_tools:
+                config["tools"] = serialized_tools
+        if self.tool_choice is not None:
+            config["tool_choice"] = self.tool_choice
+        if self.tool_call_limit is not None:
+            config["tool_call_limit"] = self.tool_call_limit
+        if self.get_member_information_tool:
+            config["get_member_information_tool"] = self.get_member_information_tool
+
+        # --- Schema settings ---
+        # TODO: implement schema serialization
+        # if self.input_schema is not None:
+        #     if isinstance(self.input_schema, type) and issubclass(self.input_schema, BaseModel):
+        #         config["input_schema"] = self.input_schema.__name__
+        #     elif isinstance(self.input_schema, dict):
+        #         config["input_schema"] = self.input_schema
+        # if self.output_schema is not None:
+        #     if isinstance(self.output_schema, type) and issubclass(self.output_schema, BaseModel):
+        #         config["output_schema"] = self.output_schema.__name__
+        #     elif isinstance(self.output_schema, dict):
+        #         config["output_schema"] = self.output_schema
+
+        # --- Parser and output settings ---
+        # TODO: implement parser model serialization
+        # if self.parser_model is not None:
+        #     config["parser_model"] = self.parser_model.to_dict() if isinstance(self.parser_model, Model) else str(self.parser_model)
+        if self.parser_model_prompt is not None:
+            config["parser_model_prompt"] = self.parser_model_prompt
+        # TODO: implement output model serialization
+        # if self.output_model is not None:
+        #     config["output_model"] = self.output_model.to_dict() if isinstance(self.output_model, Model) else str(self.output_model)
+        if self.output_model_prompt is not None:
+            config["output_model_prompt"] = self.output_model_prompt
+        if self.use_json_mode:
+            config["use_json_mode"] = self.use_json_mode
+        if not self.parse_response:  # default is True
+            config["parse_response"] = self.parse_response
+
+        # --- Memory settings ---
+        # TODO: implement memory manager serialization
+        # if self.memory_manager is not None:
+        #     config["memory_manager"] = self.memory_manager.to_dict()
+        if self.enable_agentic_memory:
+            config["enable_agentic_memory"] = self.enable_agentic_memory
+        if self.enable_user_memories:
+            config["enable_user_memories"] = self.enable_user_memories
+        if self.add_memories_to_context is not None:
+            config["add_memories_to_context"] = self.add_memories_to_context
+        if self.enable_session_summaries:
+            config["enable_session_summaries"] = self.enable_session_summaries
+        if self.add_session_summary_to_context is not None:
+            config["add_session_summary_to_context"] = self.add_session_summary_to_context
+        # TODO: implement session summary manager serialization
+        # if self.session_summary_manager is not None:
+        #     config["session_summary_manager"] = self.session_summary_manager.to_dict()
+
+        # --- History settings ---
+        if self.add_history_to_context:
+            config["add_history_to_context"] = self.add_history_to_context
+        if self.num_history_runs is not None:
+            config["num_history_runs"] = self.num_history_runs
+        if self.num_history_messages is not None:
+            config["num_history_messages"] = self.num_history_messages
+        if self.max_tool_calls_from_history is not None:
+            config["max_tool_calls_from_history"] = self.max_tool_calls_from_history
+
+        # --- Media/storage settings ---
+        if not self.send_media_to_model:  # default is True
+            config["send_media_to_model"] = self.send_media_to_model
+        if not self.store_media:  # default is True
+            config["store_media"] = self.store_media
+        if not self.store_tool_messages:  # default is True
+            config["store_tool_messages"] = self.store_tool_messages
+        if not self.store_history_messages:  # default is True
+            config["store_history_messages"] = self.store_history_messages
+
+        # --- Compression settings ---
+        if self.compress_tool_results:
+            config["compress_tool_results"] = self.compress_tool_results
+        # TODO: implement compression manager serialization
+        # if self.compression_manager is not None:
+        #     config["compression_manager"] = self.compression_manager.to_dict()
+
+        # --- Reasoning settings ---
+        if self.reasoning:
+            config["reasoning"] = self.reasoning
+        # TODO: implement reasoning model serialization
+        # if self.reasoning_model is not None:
+        #     config["reasoning_model"] = self.reasoning_model.to_dict() if isinstance(self.reasoning_model, Model) else str(self.reasoning_model)
+        if self.reasoning_min_steps != 1:  # default is 1
+            config["reasoning_min_steps"] = self.reasoning_min_steps
+        if self.reasoning_max_steps != 10:  # default is 10
+            config["reasoning_max_steps"] = self.reasoning_max_steps
+
+        # --- Streaming settings ---
+        if self.stream is not None:
+            config["stream"] = self.stream
+        if self.stream_events is not None:
+            config["stream_events"] = self.stream_events
+        if not self.stream_member_events:  # default is True
+            config["stream_member_events"] = self.stream_member_events
+        if self.store_events:
+            config["store_events"] = self.store_events
+        if self.store_member_responses:
+            config["store_member_responses"] = self.store_member_responses
+
+        # --- Retry settings ---
+        if self.retries > 0:
+            config["retries"] = self.retries
+        if self.delay_between_retries != 1:  # default is 1
+            config["delay_between_retries"] = self.delay_between_retries
+        if self.exponential_backoff:
+            config["exponential_backoff"] = self.exponential_backoff
+
+        # --- Metadata ---
+        if self.metadata is not None:
+            config["metadata"] = self.metadata
+
+        # --- Debug and telemetry settings ---
+        if self.debug_mode:
+            config["debug_mode"] = self.debug_mode
+        if self.debug_level != 1:  # default is 1
+            config["debug_level"] = self.debug_level
+        if self.show_members_responses:
+            config["show_members_responses"] = self.show_members_responses
+        if not self.telemetry:  # default is True
+            config["telemetry"] = self.telemetry
+
+        return config
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        db: Optional["BaseDb"] = None,
+        registry: Optional["Registry"] = None,
+    ) -> "Team":
+        """
+        Create a Team from a dictionary.
+
+        Args:
+            data: Dictionary containing team configuration
+            db: Optional database for loading agents in members
+            registry: Optional registry for rehydrating tools
+
+        Returns:
+            Team: Reconstructed team instance
+        """
+        config = data.copy()
+
+        # --- Handle Model reconstruction ---
+        if "model" in config:
+            model_data = config["model"]
+            if isinstance(model_data, dict) and "id" in model_data:
+                config["model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+            elif isinstance(model_data, str):
+                config["model"] = get_model(model_data)
+
+        # --- Handle Members reconstruction ---
+        members = None
+        from agno.agent import get_agent_by_id
+
+        if "members" in config and config["members"]:
+            members = []
+            for member_data in config["members"]:
+                member_type = member_data.get("type")
+                if member_type == "agent":
+                    # TODO: Make sure to pass the correct version to get_agent_by_id. Right now its returning the latest version.
+                    agent = get_agent_by_id(id=member_data["agent_id"], db=db, registry=registry)
+                    if agent:
+                        members.append(agent)
+                    else:
+                        log_warning(f"Agent not found: {member_data['agent_id']}")
+
+        # --- Handle reasoning_model reconstruction ---
+        # TODO: implement reasoning model deserialization
+        # if "reasoning_model" in config:
+        #     model_data = config["reasoning_model"]
+        #     if isinstance(model_data, dict) and "id" in model_data:
+        #         config["reasoning_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+        #     elif isinstance(model_data, str):
+        #         config["reasoning_model"] = get_model(model_data)
+
+        # --- Handle parser_model reconstruction ---
+        # TODO: implement parser model deserialization
+        # if "parser_model" in config:
+        #     model_data = config["parser_model"]
+        #     if isinstance(model_data, dict) and "id" in model_data:
+        #         config["parser_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+        #     elif isinstance(model_data, str):
+        #         config["parser_model"] = get_model(model_data)
+
+        # --- Handle output_model reconstruction ---
+        # TODO: implement output model deserialization
+        # if "output_model" in config:
+        #     model_data = config["output_model"]
+        #     if isinstance(model_data, dict) and "id" in model_data:
+        #         config["output_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+        #     elif isinstance(model_data, str):
+        #         config["output_model"] = get_model(model_data)
+
+        # --- Handle tools reconstruction ---
+        if "tools" in config and config["tools"]:
+            if registry:
+                config["tools"] = [registry.rehydrate_function(t) for t in config["tools"]]
+            else:
+                log_warning("No registry provided, tools will not be rehydrated.")
+                del config["tools"]
+
+        # --- Handle DB reconstruction ---
+        if "db" in config and isinstance(config["db"], dict):
+            db_data = config["db"]
+            db_type = db_data.get("type")
+            if db_type == "postgres":
+                try:
+                    from agno.db.postgres import PostgresDb
+
+                    config["db"] = PostgresDb.from_dict(db_data)
+                except Exception as e:
+                    log_error(f"Error reconstructing DB from dictionary: {e}")
+                    del config["db"]
+            elif db_type == "sqlite":
+                try:
+                    from agno.db.sqlite import SqliteDb
+
+                    config["db"] = SqliteDb.from_dict(db_data)
+                except Exception as e:
+                    log_error(f"Error reconstructing DB from dictionary: {e}")
+                    del config["db"]
+            else:
+                del config["db"]
+
+        # --- Handle Schema reconstruction ---
+        # TODO: implement schema deserialization
+        # if "input_schema" in config and isinstance(config["input_schema"], str):
+        #     if registry and config["input_schema"] in registry.schemas:
+        #         config["input_schema"] = registry.schemas[config["input_schema"]]
+        #     else:
+        #         del config["input_schema"]
+        # if "output_schema" in config and isinstance(config["output_schema"], str):
+        #     if registry and config["output_schema"] in registry.schemas:
+        #         config["output_schema"] = registry.schemas[config["output_schema"]]
+        #     else:
+        #         del config["output_schema"]
+
+        # --- Handle MemoryManager reconstruction ---
+        # TODO: implement memory manager deserialization
+        # if "memory_manager" in config and isinstance(config["memory_manager"], dict):
+        #     from agno.memory import MemoryManager
+        #     config["memory_manager"] = MemoryManager.from_dict(config["memory_manager"])
+
+        # --- Handle SessionSummaryManager reconstruction ---
+        # TODO: implement session summary manager deserialization
+        # if "session_summary_manager" in config and isinstance(config["session_summary_manager"], dict):
+        #     from agno.session import SessionSummaryManager
+        #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
+
+        # --- Handle Knowledge reconstruction ---
+        # TODO: implement knowledge deserialization
+        # if "knowledge" in config and isinstance(config["knowledge"], dict):
+        #     from agno.knowledge import Knowledge
+        #     config["knowledge"] = Knowledge.from_dict(config["knowledge"])
+
+        # --- Handle CompressionManager reconstruction ---
+        # TODO: implement compression manager deserialization
+        # if "compression_manager" in config and isinstance(config["compression_manager"], dict):
+        #     from agno.compression.manager import CompressionManager
+        #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
+
+        return cls(
+            # --- Team settings ---
+            id=config.get("id"),
+            name=config.get("name"),
+            role=config.get("role"),
+            description=config.get("description"),
+            # --- Model ---
+            model=config.get("model"),
+            # --- Members ---
+            members=members,
+            # --- Execution settings ---
+            respond_directly=config.get("respond_directly", False),
+            delegate_to_all_members=config.get("delegate_to_all_members", False),
+            determine_input_for_members=config.get("determine_input_for_members", True),
+            # --- User settings ---
+            user_id=config.get("user_id"),
+            # --- Session settings ---
+            session_id=config.get("session_id"),
+            session_state=config.get("session_state"),
+            add_session_state_to_context=config.get("add_session_state_to_context", False),
+            enable_agentic_state=config.get("enable_agentic_state", False),
+            overwrite_db_session_state=config.get("overwrite_db_session_state", False),
+            cache_session=config.get("cache_session", False),
+            add_team_history_to_members=config.get("add_team_history_to_members", False),
+            num_team_history_runs=config.get("num_team_history_runs", 3),
+            share_member_interactions=config.get("share_member_interactions", False),
+            search_session_history=config.get("search_session_history", False),
+            num_history_sessions=config.get("num_history_sessions"),
+            read_chat_history=config.get("read_chat_history", False),
+            # --- System message settings ---
+            system_message=config.get("system_message"),
+            system_message_role=config.get("system_message_role", "system"),
+            introduction=config.get("introduction"),
+            instructions=config.get("instructions"),
+            expected_output=config.get("expected_output"),
+            additional_context=config.get("additional_context"),
+            markdown=config.get("markdown", False),
+            add_datetime_to_context=config.get("add_datetime_to_context", False),
+            add_location_to_context=config.get("add_location_to_context", False),
+            timezone_identifier=config.get("timezone_identifier"),
+            add_name_to_context=config.get("add_name_to_context", False),
+            add_member_tools_to_context=config.get("add_member_tools_to_context", False),
+            resolve_in_context=config.get("resolve_in_context", True),
+            # --- Database settings ---
+            db=config.get("db"),
+            # --- Dependencies ---
+            dependencies=config.get("dependencies"),
+            add_dependencies_to_context=config.get("add_dependencies_to_context", False),
+            # --- Knowledge settings ---
+            # knowledge=config.get("knowledge"),  # TODO
+            knowledge_filters=config.get("knowledge_filters"),
+            enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
+            add_knowledge_to_context=config.get("add_knowledge_to_context", False),
+            update_knowledge=config.get("update_knowledge", False),
+            search_knowledge=config.get("search_knowledge", True),
+            references_format=config.get("references_format", "json"),
+            # --- Tools ---
+            tools=config.get("tools"),
+            tool_call_limit=config.get("tool_call_limit"),
+            tool_choice=config.get("tool_choice"),
+            get_member_information_tool=config.get("get_member_information_tool", False),
+            # --- Schema settings ---
+            # input_schema=config.get("input_schema"),  # TODO
+            # output_schema=config.get("output_schema"),  # TODO
+            # --- Parser and output settings ---
+            # parser_model=config.get("parser_model"),  # TODO
+            parser_model_prompt=config.get("parser_model_prompt"),
+            # output_model=config.get("output_model"),  # TODO
+            output_model_prompt=config.get("output_model_prompt"),
+            use_json_mode=config.get("use_json_mode", False),
+            parse_response=config.get("parse_response", True),
+            # --- Memory settings ---
+            # memory_manager=config.get("memory_manager"),  # TODO
+            enable_agentic_memory=config.get("enable_agentic_memory", False),
+            enable_user_memories=config.get("enable_user_memories", False),
+            add_memories_to_context=config.get("add_memories_to_context"),
+            enable_session_summaries=config.get("enable_session_summaries", False),
+            add_session_summary_to_context=config.get("add_session_summary_to_context"),
+            # session_summary_manager=config.get("session_summary_manager"),  # TODO
+            # --- History settings ---
+            add_history_to_context=config.get("add_history_to_context", False),
+            num_history_runs=config.get("num_history_runs"),
+            num_history_messages=config.get("num_history_messages"),
+            max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
+            # --- Compression settings ---
+            compress_tool_results=config.get("compress_tool_results", False),
+            # compression_manager=config.get("compression_manager"),  # TODO
+            # --- Reasoning settings ---
+            reasoning=config.get("reasoning", False),
+            # reasoning_model=config.get("reasoning_model"),  # TODO
+            reasoning_min_steps=config.get("reasoning_min_steps", 1),
+            reasoning_max_steps=config.get("reasoning_max_steps", 10),
+            # --- Streaming settings ---
+            stream=config.get("stream"),
+            stream_events=config.get("stream_events"),
+            stream_member_events=config.get("stream_member_events", True),
+            store_events=config.get("store_events", False),
+            store_member_responses=config.get("store_member_responses", False),
+            # --- Media settings ---
+            send_media_to_model=config.get("send_media_to_model", True),
+            store_media=config.get("store_media", True),
+            store_tool_messages=config.get("store_tool_messages", True),
+            store_history_messages=config.get("store_history_messages", True),
+            # --- Retry settings ---
+            retries=config.get("retries", 0),
+            delay_between_retries=config.get("delay_between_retries", 1),
+            exponential_backoff=config.get("exponential_backoff", False),
+            # --- Metadata ---
+            metadata=config.get("metadata"),
+            # --- Debug and telemetry settings ---
+            debug_mode=config.get("debug_mode", False),
+            debug_level=config.get("debug_level", 1),
+            show_members_responses=config.get("show_members_responses", False),
+            telemetry=config.get("telemetry", True),
+        )
+
+    def save(
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        stage: str = "published",
+        label: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Optional[int]:
+        """
+        Save the team component and config to the database, including member agents/teams.
+
+        Args:
+            db: The database to save the component and config to.
+            stage: The stage of the component. Defaults to "published".
+            label: The label of the component.
+            notes: The notes of the component.
+
+        Returns:
+            Optional[int]: The version number of the saved config.
+        """
+        from agno.agent.agent import Agent
+
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+
+        try:
+            # Collect all links for members
+            all_links: List[Dict[str, Any]] = []
+
+            # Save each member (Agent or nested Team) and collect links
+            for position, member in enumerate(self.members or []):
+                # Save member first - returns version
+                member_version = member.save(db=db_, stage=stage, label=label, notes=notes)
+
+                # Add link
+                all_links.append(
+                    {
+                        "link_kind": "member",
+                        "link_key": f"member_{position}",
+                        "child_component_id": member.id,
+                        "child_version": member_version,
+                        "position": position,
+                        "meta": {"type": "agent" if isinstance(member, Agent) else "team"},
+                    }
+                )
+
+            # Create or update component
+            db_.upsert_component(
+                component_id=self.id,
+                component_type=ComponentType.TEAM,
+                name=getattr(self, "name", self.id),
+                description=getattr(self, "description", None),
+                metadata=getattr(self, "metadata", None),
+            )
+
+            # Create or update config with links
+            config = db_.upsert_config(
+                component_id=self.id,
+                config=self.to_dict(),
+                links=all_links if all_links else None,
+                label=label,
+                stage=stage,
+                notes=notes,
+            )
+
+            return config["version"]
+
+        except Exception as e:
+            log_error(f"Error saving Team to database: {e}")
+            raise
+
+    @classmethod
+    def load(
+        cls,
+        id: str,
+        *,
+        db: "BaseDb",
+        registry: Optional["Registry"] = None,
+        label: Optional[str] = None,
+        version: Optional[int] = None,
+    ) -> Optional["Team"]:
+        """
+        Load a team by id, with hydrated members.
+
+        Args:
+            id: The id of the team to load.
+            db: The database to load the team from.
+            label: The label of the team to load.
+
+        Returns:
+            The team loaded from the database with hydrated members, or None if not found.
+        """
+        from agno.agent.agent import Agent
+
+        # Use graph to load team + all members
+        graph = db.load_component_graph(id, version=version, label=label)
+        if graph is None:
+            return None
+
+        config = graph["config"].get("config")
+        if config is None:
+            return None
+
+        team = cls.from_dict(config, db=db, registry=registry)
+        team.id = id
+        team.db = db
+
+        # Hydrate members from graph children
+        team.members = []
+        for child in graph.get("children", []):
+            child_graph = child.get("graph")
+            if child_graph is None:
+                continue
+
+            child_config = child_graph["config"].get("config")
+            if child_config is None:
+                continue
+
+            link_meta = child["link"].get("meta", {})
+            member_type = link_meta.get("type")
+
+            if member_type == "agent":
+                agent = Agent.from_dict(child_config)
+                agent.id = child_graph["component"]["component_id"]
+                agent.db = db
+                team.members.append(agent)
+            elif member_type == "team":
+                # Recursive load for nested teams
+                nested_team = cls.load(child_graph["component"]["component_id"], db=db)
+                if nested_team:
+                    team.members.append(nested_team)
+
+        return team
+
+    def delete(
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        hard_delete: bool = False,
+    ) -> bool:
+        """
+        Delete the team component.
+
+        Args:
+            db: The database to delete the component from.
+            hard_delete: Whether to hard delete the component.
+
+        Returns:
+            True if the component was deleted, False otherwise.
+        """
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+
+        return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
 
     # -*- Public convenience functions
     def get_run_output(

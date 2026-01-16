@@ -4117,6 +4117,7 @@ class PostgresDb(BaseDb):
         self,
         component_id: str,
         version: Optional[int] = None,
+        label: Optional[str] = None,
         *,
         _visited: Optional[Set[Tuple[str, int]]] = None,
         _max_depth: int = 50,
@@ -4129,6 +4130,7 @@ class PostgresDb(BaseDb):
         Args:
             component_id: The component ID.
             version: Specific version or None for current.
+            label: Optional label of the component.
             _visited: Internal cycle tracking (do not pass).
             _max_depth: Internal depth limit (do not pass).
 
@@ -4140,7 +4142,7 @@ class PostgresDb(BaseDb):
             if _max_depth <= 0:
                 return None
 
-            component = self.get_component(component_id)
+            component = self.get_component(component_id, label=label)
             if component is None:
                 return None
 

@@ -11,6 +11,7 @@ workflow = get_workflow_by_id(db=db, id="content-creation-workflow")
 
 workflow.print_response(input="AI trends in 2024", markdown=True)
 
-workflows = get_workflows(db=db)
-
-print(workflows)
+# You can also get all workflows from the database
+# workflows = get_workflows(db=db)
+# for workflow in workflows:
+#     print(workflow)

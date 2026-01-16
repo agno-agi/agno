@@ -11,6 +11,7 @@ agent = get_agent_by_id(db=db, id="agno-agent")
 
 agent.print_response("How many people live in Canada?")
 
+# You can also get all agents from the database
 # agents = get_agents(db=db)
-
-# print(agents)
+# for agent in agents:
+#     print(agent)
