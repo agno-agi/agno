@@ -7723,8 +7723,6 @@ class Agent:
         config.pop("team_id", None)
         config.pop("workflow_id", None)
 
-        print(f"config.db: {config.get('db')}")
-
         return cls(
             # --- Agent settings ---
             model=config.get("model"),
