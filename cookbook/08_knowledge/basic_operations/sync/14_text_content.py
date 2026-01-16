@@ -23,21 +23,21 @@ knowledge = Knowledge(
 )
 
 # Add a single piece of text content
-knowledge.add_content(
+knowledge.insert(
     name="Text Content",
     text_content="Cats and dogs are pets.",
     metadata={"user_tag": "Animals"},
 )
 
 # Add multiple pieces of text content
-knowledge.add_contents(
+knowledge.insert_many(
     name="Text Content",
     text_contents=["Cats and dogs are pets.", "Birds and fish are not pets."],
     metadata={"user_tag": "Animals"},
 )
 
 # OR
-knowledge.add_contents(
+knowledge.insert_many(
     [
         {
             "text_content": "Cats and dogs are pets.",

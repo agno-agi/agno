@@ -16,7 +16,7 @@ knowledge = Knowledge(
 )
 
 # As a list
-knowledge.add_contents(
+knowledge.ainsert_many(
     [
         {
             "name": "CV's",
@@ -32,7 +32,7 @@ knowledge.add_contents(
 )
 
 # Using specifc fields
-knowledge.add_contents(
+knowledge.ainsert_many(
     urls=[
         "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
         "https://docs.agno.com/introduction",
