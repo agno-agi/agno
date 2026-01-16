@@ -6884,6 +6884,8 @@ class Agent:
                 except Exception as e:
                     log_warning(f"Could not add tool {tool}: {e}")
 
+        return _functions
+
     def _determine_tools_for_model(
         self,
         model: Model,
