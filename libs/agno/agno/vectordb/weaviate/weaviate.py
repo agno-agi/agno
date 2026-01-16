@@ -947,9 +947,9 @@ class Weaviate(VectorDb):
             collection = weaviate_client.collections.get(self.collection)
 
             # Query for objects with the given content_id
-            query_result = collection.query.fetch_objects(  # type: ignore
-                where=Filter.by_property("content_id").equal(content_id),
-                limit=1000,  # Get all matching objects
+            query_result = collection.query.fetch_objects(
+                filters=Filter.by_property("content_id").equal(content_id),
+                limit=1000,
             )
 
             if not query_result.objects:
@@ -959,25 +959,23 @@ class Weaviate(VectorDb):
             # Update each matching object
             updated_count = 0
             for obj in query_result.objects:
-                # Get current properties
                 current_properties = obj.properties or {}
 
-                # Merge existing metadata with new metadata
-                updated_properties = current_properties.copy()
+                # meta_data is stored as JSON string, parse and merge
+                existing_meta = {}
+                if "meta_data" in current_properties:
+                    meta_value = current_properties["meta_data"]
+                    if isinstance(meta_value, str) and meta_value:
+                        existing_meta = json.loads(meta_value)
+                    elif isinstance(meta_value, dict):
+                        existing_meta = meta_value
 
-                # Handle nested metadata updates
-                if "meta_data" in updated_properties and isinstance(updated_properties["meta_data"], dict):
-                    updated_properties["meta_data"].update(metadata)
-                else:
-                    # If no existing meta_data or it's not a dict, set it directly
-                    updated_properties["meta_data"] = metadata
+                existing_meta.update(metadata)
 
-                if "filters" in updated_properties and isinstance(updated_properties["filters"], dict):
-                    updated_properties["filters"].update(metadata)
-                else:
-                    updated_properties["filters"] = metadata
+                # Store back as JSON string
+                updated_properties = dict(current_properties)
+                updated_properties["meta_data"] = json.dumps(existing_meta)
 
-                # Update the object
                 collection.data.update(uuid=obj.uuid, properties=updated_properties)
                 updated_count += 1
 

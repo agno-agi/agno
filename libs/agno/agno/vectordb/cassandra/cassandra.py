@@ -205,19 +205,41 @@ class Cassandra(VectorDb):
             self.delete_by_content_hash(content_hash)
         await self.async_insert(content_hash, documents, filters)
 
+    def _format_filters(self, filters: Optional[Dict[str, Any]]) -> Optional[Dict[str, str]]:
+        """Format filters for Cassandra's metadata_s parameter.
+
+        Cassandra's CassIO library expects metadata filters as a dict with string values.
+        This method converts all filter values to strings for compatibility.
+
+        Args:
+            filters: Dictionary of filter key-value pairs
+
+        Returns:
+            Dictionary with string values suitable for Cassandra's metadata_s parameter
+        """
+        if not filters:
+            return None
+        return {key: str(value) for key, value in filters.items()}
+
     def search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """Keyword-based search on document metadata."""
         log_debug(f"Cassandra VectorDB : Performing Vector Search on {self.table_name} with query {query}")
-        if filters is not None:
-            log_warning("Filters are not yet supported in Cassandra. No filters will be applied.")
-        return self.vector_search(query=query, limit=limit)
+
+        if isinstance(filters, list):
+            log_warning("FilterExpr list is not supported in Cassandra. No filters will be applied.")
+            filters = None
+
+        return self.vector_search(query=query, limit=limit, filters=filters)
 
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """Search asynchronously by running in a thread."""
+        if isinstance(filters, list):
+            log_warning("FilterExpr list is not supported in Cassandra. No filters will be applied.")
+            filters = None
         return await asyncio.to_thread(self.search, query, limit, filters)
 
     def _search_to_documents(
@@ -231,15 +253,22 @@ class Cassandra(VectorDb):
     ) -> List[Document]:
         """Vector similarity search implementation."""
         query_embedding = self.embedder.get_embedding(query)
+
+        # Build search kwargs with optional metadata filters
+        search_kwargs: Dict[str, Any] = {}
+        formatted_filters = self._format_filters(filters)  # type: ignore
+        if formatted_filters:
+            search_kwargs["metadata_s"] = formatted_filters
+
         hits = list(
             self.table.metric_ann_search(
                 vector=query_embedding,
                 n=limit,
                 metric="cos",
+                **search_kwargs,
             )
         )
-        d = self._search_to_documents(hits)
-        return d
+        return self._search_to_documents(hits)
 
     def drop(self) -> None:
         """Drop the vector table in Cassandra."""
@@ -472,7 +501,8 @@ class Cassandra(VectorDb):
                 row_metadata = getattr(row, "metadata_s", {})
                 if row_metadata.get("content_id") == content_id:
                     # Merge existing metadata with new metadata
-                    updated_metadata = row_metadata.copy()
+                    # Convert Cassandra's OrderedMapSerializedKey to dict
+                    updated_metadata = dict(row_metadata) if row_metadata else {}
                     # Convert new metadata values to strings (Cassandra requirement)
                     string_metadata = {key: str(value) for key, value in metadata.items()}
                     updated_metadata.update(string_metadata)

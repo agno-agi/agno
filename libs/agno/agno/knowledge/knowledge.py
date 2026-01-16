@@ -3182,8 +3182,9 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
 
         # Import here to avoid circular imports
         try:
-            from agno.utils.knowledge import get_agentic_or_user_search_filters
+            from agno.utils.knowledge import convert_agentic_filters_to_dict, get_agentic_or_user_search_filters
         except ImportError:
+            convert_agentic_filters_to_dict = None  # type: ignore[assignment]
             get_agentic_or_user_search_filters = None  # type: ignore[assignment]
 
         def search_knowledge_base(query: str, filters: Optional[List[Any]] = None) -> str:
@@ -3198,14 +3199,12 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             """
             # Merge agentic filters with user-provided filters
             search_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-            if filters and get_agentic_or_user_search_filters is not None:
-                # Handle both KnowledgeFilter objects and plain dictionaries
-                filters_dict: Dict[str, Any] = {}
-                for filt in filters:
-                    if isinstance(filt, dict):
-                        filters_dict.update(filt)
-                    elif hasattr(filt, "key") and hasattr(filt, "value"):
-                        filters_dict[filt.key] = filt.value
+            if (
+                filters
+                and get_agentic_or_user_search_filters is not None
+                and convert_agentic_filters_to_dict is not None
+            ):
+                filters_dict = convert_agentic_filters_to_dict(filters)
                 search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
             else:
                 search_filters = knowledge_filters
@@ -3252,14 +3251,12 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             """
             # Merge agentic filters with user-provided filters
             search_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-            if filters and get_agentic_or_user_search_filters is not None:
-                # Handle both KnowledgeFilter objects and plain dictionaries
-                filters_dict: Dict[str, Any] = {}
-                for filt in filters:
-                    if isinstance(filt, dict):
-                        filters_dict.update(filt)
-                    elif hasattr(filt, "key") and hasattr(filt, "value"):
-                        filters_dict[filt.key] = filt.value
+            if (
+                filters
+                and get_agentic_or_user_search_filters is not None
+                and convert_agentic_filters_to_dict is not None
+            ):
+                filters_dict = convert_agentic_filters_to_dict(filters)
                 search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
             else:
                 search_filters = knowledge_filters
