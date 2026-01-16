@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -19,19 +19,15 @@ from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
     AgentOSConfig,
     AuthorizationConfig,
-    DatabaseConfig,
+    BackgroundTasksConfig,
+    DatabasesConfig,
     EvalsConfig,
-    EvalsDomainConfig,
+    FastAPIConfig,
     KnowledgeConfig,
-    KnowledgeDomainConfig,
     MemoryConfig,
-    MemoryDomainConfig,
     MetricsConfig,
-    MetricsDomainConfig,
     SessionConfig,
-    SessionDomainConfig,
     TracesConfig,
-    TracesDomainConfig,
 )
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router, get_websocket_router
@@ -47,12 +43,10 @@ from agno.os.routers.session import get_session_router
 from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
 from agno.os.routers.workflows import get_workflow_router
-from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     collect_mcp_tools_from_team,
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
-    load_yaml_config,
     resolve_origins,
     setup_tracing_for_os,
     update_cors_middleware,
@@ -64,90 +58,33 @@ from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow import RemoteWorkflow, Workflow
 
 
-@asynccontextmanager
-async def mcp_lifespan(_, mcp_tools):
-    """Manage MCP connection lifecycle inside a FastAPI app"""
-    for tool in mcp_tools:
-        await tool.connect()
-
-    yield
-
-    for tool in mcp_tools:
-        await tool.close()
-
-
-@asynccontextmanager
-async def http_client_lifespan(_):
-    """Manage httpx client lifecycle for proper connection pool cleanup."""
-    from agno.utils.http import aclose_default_clients
-
-    yield
-
-    await aclose_default_clients()
-
-
-@asynccontextmanager
-async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
-    """Initializes databases in the event loop and closes them on shutdown."""
-    if agent_os.auto_provision_dbs:
-        agent_os._initialize_sync_databases()
-        await agent_os._initialize_async_databases()
-
-    yield
-
-    await agent_os._close_databases()
-
-
-def _combine_app_lifespans(lifespans: list) -> Any:
-    """Combine multiple FastAPI app lifespan context managers into one."""
-    if len(lifespans) == 1:
-        return lifespans[0]
-
-    from contextlib import asynccontextmanager
-
-    @asynccontextmanager
-    async def combined_lifespan(app):
-        async def _run_nested(index: int):
-            if index >= len(lifespans):
-                yield
-                return
-
-            async with lifespans[index](app):
-                async for _ in _run_nested(index + 1):
-                    yield
-
-        async for _ in _run_nested(0):
-            yield
-
-    return combined_lifespan
-
-
 class AgentOS:
     def __init__(
         self,
+        # Basic information
         id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
         version: Optional[str] = None,
-        db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+        # Entities
         agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
         teams: Optional[List[Union[Team, RemoteTeam]]] = None,
         workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
         knowledge: Optional[List[Knowledge]] = None,
+        # Configuration
+        config: Optional[str] = None,
+        fastapi_config: Optional[FastAPIConfig] = None,
+        databases_config: Optional[DatabasesConfig] = None,
+        background_tasks_config: Optional[BackgroundTasksConfig] = None,
+        # Interfaces
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
+        enable_mcp_server: bool = False,
+        # Authorization
         authorization: bool = False,
         authorization_config: Optional[AuthorizationConfig] = None,
-        cors_allowed_origins: Optional[List[str]] = None,
-        config: Optional[Union[str, AgentOSConfig]] = None,
-        settings: Optional[AgnoAPISettings] = None,
-        lifespan: Optional[Any] = None,
-        enable_mcp_server: bool = False,
-        base_app: Optional[FastAPI] = None,
-        on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
+        # Extra features
         tracing: bool = False,
-        auto_provision_dbs: bool = True,
-        run_hooks_in_background: bool = False,
         telemetry: bool = True,
     ):
         """Initialize AgentOS.
@@ -157,98 +94,113 @@ class AgentOS:
             name: Name of the AgentOS instance
             description: Description of the AgentOS instance
             version: Version of the AgentOS instance
-            db: Default database for the AgentOS instance. Agents, teams and workflows with no db will use this one.
             agents: List of agents to include in the OS
             teams: List of teams to include in the OS
             workflows: List of workflows to include in the OS
             knowledge: List of knowledge bases to include in the OS
+            config: Configuration file path. If present, this will override the other configurations.
+            fastapi_config: Configuration for the FastAPI app (lifespan, CORS, base_app, etc.)
+            databases_config: Configuration for databases (default db, auto provisioning, etc.)
+            background_tasks_config: Configuration for background tasks (hooks, etc.)
             interfaces: List of interfaces to include in the OS
             a2a_interface: Whether to expose the OS agents and teams in an A2A server
-            config: Configuration file path or AgentOSConfig instance
-            settings: API settings for the OS
-            lifespan: Optional lifespan context manager for the FastAPI app
             enable_mcp_server: Whether to enable MCP (Model Context Protocol)
-            base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
-            on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
-            auto_provision_dbs: Whether to automatically provision databases
             authorization: Whether to enable authorization
             authorization_config: Configuration for the authorization middleware
-            cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
-            run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
             telemetry: Whether to enable telemetry
-
         """
         if not agents and not workflows and not teams and not knowledge and not db:
             raise ValueError("Either agents, teams, workflows, knowledge bases or a database must be provided.")    
 
-        self.config = load_yaml_config(config) if isinstance(config, str) else config
-
         self.agents: Optional[List[Union[Agent, RemoteAgent]]] = agents
         self.workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = workflows
         self.teams: Optional[List[Union[Team, RemoteTeam]]] = teams
-        self.interfaces = interfaces or []
-        self.a2a_interface = a2a_interface
-        self.knowledge = knowledge
-        self.settings: AgnoAPISettings = settings or AgnoAPISettings()
-        self.auto_provision_dbs = auto_provision_dbs
-        self._app_set = False
 
-        if base_app:
-            self.base_app: Optional[FastAPI] = base_app
-            self._app_set = True
-            self.on_route_conflict = on_route_conflict
+        # Configure AgentOS from configuration file if provided
+        if config is not None:
+            self._configure_agentos(config)
+
         else:
-            self.base_app = None
+            self.interfaces = interfaces or []
+            self.a2a_interface = a2a_interface
+            self.knowledge = knowledge
+            self.auto_provision_dbs = auto_provision_dbs
             self._app_set = False
-            self.on_route_conflict = on_route_conflict
 
-        self.interfaces = interfaces or []
+            if base_app:
+                self.base_app: Optional[FastAPI] = base_app
+                self._app_set = True
+                self.on_route_conflict = on_route_conflict
+            else:
+                self.base_app = None
+                self._app_set = False
+                self.on_route_conflict = on_route_conflict
 
-        self.name = name
+            self.interfaces = interfaces or []
 
-        self.id = id
-        if not self.id:
-            self.id = generate_id(self.name) if self.name else str(uuid4())
+            self.name = name
 
-        self.version = version
-        self.description = description
-        self.db = db
+            self.id = id
+            if not self.id:
+                self.id = generate_id(self.name) if self.name else str(uuid4())
 
-        self.telemetry = telemetry
-        self.tracing = tracing
+            self.version = version
+            self.description = description
+            self.db = db
 
-        self.enable_mcp_server = enable_mcp_server
-        self.lifespan = lifespan
+            self.telemetry = telemetry
+            self.tracing = tracing
 
-        # RBAC
-        self.authorization = authorization
-        self.authorization_config = authorization_config
+            self.enable_mcp_server = enable_mcp_server
+            self.lifespan = lifespan
 
-        # CORS configuration - merge user-provided origins with defaults from settings
-        self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
+            # RBAC
+            self.authorization = authorization
+            self.authorization_config = authorization_config
 
-        # If True, run agent/team hooks as FastAPI background tasks
-        self.run_hooks_in_background = run_hooks_in_background
+            # CORS configuration - merge user-provided origins with defaults from settings
+            self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
 
-        # List of all MCP tools used inside the AgentOS
-        self.mcp_tools: List[Any] = []
-        self._mcp_app: Optional[Any] = None
+            # If True, run agent/team hooks as FastAPI background tasks
+            self.run_hooks_in_background = run_hooks_in_background
 
-        self._initialize_agents()
-        self._initialize_teams()
-        self._initialize_workflows()
+            # List of all MCP tools used inside the AgentOS
+            self.mcp_tools: List[Any] = []
+            self._mcp_app: Optional[Any] = None
 
-        # Check for duplicate IDs
-        self._raise_if_duplicate_ids()
+            self._initialize_agents()
+            self._initialize_teams()
+            self._initialize_workflows()
 
-        if self.tracing:
-            self._setup_tracing()
+            # Check for duplicate IDs
+            self._raise_if_duplicate_ids()
 
-        if self.telemetry:
-            from agno.api.os import OSLaunch, log_os_telemetry
+            if self.tracing:
+                self._setup_tracing()
 
-            log_os_telemetry(launch=OSLaunch(os_id=self.id, data=self._get_telemetry_data()))
+            if self.telemetry:
+                from agno.api.os import OSLaunch, log_os_telemetry
+
+                log_os_telemetry(launch=OSLaunch(os_id=self.id, data=self._get_telemetry_data()))
+
+    def _configure_agentos(self, config_file_path: str) -> None:
+        """Configure AgentOS given a configuration file path."""
+
+        # Load the configuration from the file
+        configuration = AgentOSConfig.from_path(config_file_path)
+
+        # TODO: handle all configuration setup
+        self.fastapi_config = configuration.fastapi_config
+        self.databases_config = configuration.databases_config
+        self.background_tasks_config = configuration.background_tasks_config
+        self.interfaces = configuration.interfaces
+        self.a2a_interface = configuration.a2a_interface
+        self.enable_mcp_server = configuration.enable_mcp_server
+        self.authorization = configuration.authorization
+        self.authorization_config = configuration.authorization_config
+        self.tracing = configuration.tracing
+        self.telemetry = configuration.telemetry
 
     def _add_agent_os_to_lifespan_function(self, lifespan):
         """

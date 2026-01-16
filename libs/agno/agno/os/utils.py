@@ -13,7 +13,6 @@ from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.models.message import Message
-from agno.os.config import AgentOSConfig
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
@@ -616,22 +615,6 @@ def find_conflicting_routes(fastapi_app: FastAPI, router: APIRouter) -> List[Dic
                 if conflicting_methods:
                     conflicts.append({"path": full_path, "methods": list(conflicting_methods), "route": route})
     return conflicts
-
-
-def load_yaml_config(config_file_path: str) -> AgentOSConfig:
-    """Load a YAML config file and return the configuration as an AgentOSConfig instance."""
-    from pathlib import Path
-
-    import yaml
-
-    # Validate that the path points to a YAML file
-    path = Path(config_file_path)
-    if path.suffix.lower() not in [".yaml", ".yml"]:
-        raise ValueError(f"Config file must have a .yaml or .yml extension, got: {config_file_path}")
-
-    # Load the YAML file
-    with open(config_file_path, "r") as f:
-        return AgentOSConfig.model_validate(yaml.safe_load(f))
 
 
 def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
