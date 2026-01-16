@@ -737,7 +737,7 @@ class Knowledge:
 
     def get_valid_filters(self) -> Set[str]:
         if self.contents_db is None:
-            log_warning("No contents db provided. This is required for filtering.")
+            log_info("Advanced filtering is not supported without a contents db. All filter keys considered valid.")
             return set()
         contents, _ = self.get_content()
         valid_filters: Set[str] = set()
@@ -749,7 +749,7 @@ class Knowledge:
 
     async def aget_valid_filters(self) -> Set[str]:
         if self.contents_db is None:
-            log_warning("No contents db provided. This is required for filtering.")
+            log_info("Advanced filtering is not supported without a contents db. All filter keys considered valid.")
             return set()
         contents, _ = await self.aget_content()
         valid_filters: Set[str] = set()
@@ -1454,14 +1454,11 @@ class Knowledge:
                 content.status_message = f"Invalid URL format: {content.url}"
                 await self._aupdate_content(content)
                 log_warning(f"Invalid URL format: {content.url}")
-                return
         except Exception as e:
             content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             await self._aupdate_content(content)
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
-            return
-
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
@@ -1554,13 +1551,11 @@ class Knowledge:
                 content.status_message = f"Invalid URL format: {content.url}"
                 self._update_content(content)
                 log_warning(f"Invalid URL format: {content.url}")
-                return
         except Exception as e:
             content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             self._update_content(content)
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
-            return
 
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)
@@ -1845,7 +1840,6 @@ class Knowledge:
                 log_info(f"Content {content.content_hash} already exists, skipping")
                 continue
 
-            await self._ainsert_contents_db(content)
             if content.reader is None:
                 log_error(f"No reader available for topic: {topic}")
                 content.status = ContentStatus.FAILED
@@ -1897,17 +1891,16 @@ class Knowledge:
             if self._should_skip(content.content_hash, skip_if_exists):
                 content.status = ContentStatus.COMPLETED
                 self._update_content(content)
-                continue  # Skip to next topic, don't exit loop
+                return
 
             if self.vector_db.__class__.__name__ == "LightRag":
                 self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
-                continue  # Skip to next topic, don't exit loop
+                return
 
             if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
                 log_info(f"Content {content.content_hash} already exists, skipping")
                 continue
 
-            self._insert_contents_db(content)
             if content.reader is None:
                 log_error(f"No reader available for topic: {topic}")
                 content.status = ContentStatus.FAILED
@@ -1994,7 +1987,7 @@ class Knowledge:
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content_entry)
-                continue  # Skip to next S3 object, don't exit loop
+                return
 
             # 4. Select reader
             reader = self._select_reader_by_uri(s3_object.uri, content.reader)
@@ -2064,7 +2057,7 @@ class Knowledge:
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content_entry)
-                continue  # Skip to next GCS object, don't exit loop
+                return
 
             # 4. Select reader
             reader = self._select_reader_by_uri(gcs_object.name, content.reader)
@@ -2153,7 +2146,7 @@ class Knowledge:
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 self._update_content(content_entry)
-                continue  # Skip to next S3 object, don't exit loop
+                return
 
             # 4. Select reader
             reader = self._select_reader_by_uri(s3_object.uri, content.reader)
@@ -2224,7 +2217,7 @@ class Knowledge:
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 self._update_content(content_entry)
-                continue  # Skip to next GCS object, don't exit loop
+                return
 
             # 4. Select reader
             reader = self._select_reader_by_uri(gcs_object.name, content.reader)
@@ -2940,6 +2933,38 @@ class Knowledge:
     # Protocol Implementation (build_context, get_tools, retrieve)
     # ========================================================================
 
+    # Shared context strings
+    _KNOWLEDGE_BASE_SEARCH_INSTRUCTION = (
+        "You have access to a knowledge base.\n"
+        "IMPORTANT: For any user question that could be answered from the knowledge base, you MUST call the "
+        "search_knowledge_base tool before responding.\n"
+        "If the user question is ambiguous (e.g., 'the candidate') do NOT ask clarifying questions first—search the "
+        "knowledge base to identify the relevant documents.\n"
+    )
+
+    _AGENTIC_FILTER_INSTRUCTION_TEMPLATE = """
+The knowledge base contains documents with these metadata filters: {valid_filters_str}.
+Always use filters when the user query indicates specific metadata.
+
+Examples:
+1. If the user asks about a specific person like "Jordan Mitchell", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like user_id>': '<valid value based on the user query>'}}.
+2. If the user asks about a specific document type like "contracts", you MUST use the search_knowledge_base tool with the filters parameter set to {{'document_type': 'contract'}}.
+3. If the user asks about a specific location like "documents from New York", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like location>': 'New York'}}.
+
+General Guidelines:
+- Always analyze the user query to identify relevant metadata.
+- Use the most specific filter(s) possible to narrow down results.
+- If multiple filters are relevant, combine them in the filters parameter (e.g., {{'name': 'Jordan Mitchell', 'document_type': 'contract'}}).
+- Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
+
+Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
+""".strip()
+
+    def _get_agentic_filter_instructions(self, valid_filters: Set[str]) -> str:
+        """Generate the agentic filter instructions for the given valid filters."""
+        valid_filters_str = ", ".join(valid_filters)
+        return self._AGENTIC_FILTER_INSTRUCTION_TEMPLATE.format(valid_filters_str=valid_filters_str)
+
     def build_context(
         self,
         enable_agentic_filters: bool = False,
@@ -2957,41 +2982,40 @@ class Knowledge:
         Returns:
             Context string to add to system prompt.
         """
-        from textwrap import dedent
-
-        context_parts: List[str] = []
-
-        # Always provide basic search instructions
-        context_parts.append(
-            "You have access to a knowledge base. Use the search_knowledge_base tool to find relevant information."
-        )
+        context_parts: List[str] = [self._KNOWLEDGE_BASE_SEARCH_INSTRUCTION]
 
         # Add filter instructions if agentic filters are enabled
         if enable_agentic_filters:
             valid_filters = self.get_valid_filters()
             if valid_filters:
-                valid_filters_str = ", ".join(valid_filters)
-                context_parts.append(
-                    dedent(
-                        f"""
-                    The knowledge base contains documents with these metadata filters: {valid_filters_str}.
-                    Always use filters when the user query indicates specific metadata.
+                context_parts.append(self._get_agentic_filter_instructions(valid_filters))
 
-                    Examples:
-                    1. If the user asks about a specific person like "Jordan Mitchell", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like user_id>': '<valid value based on the user query>'}}.
-                    2. If the user asks about a specific document type like "contracts", you MUST use the search_knowledge_base tool with the filters parameter set to {{'document_type': 'contract'}}.
-                    3. If the user asks about a specific location like "documents from New York", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like location>': 'New York'}}.
+        return "\n".join(context_parts)
 
-                    General Guidelines:
-                    - Always analyze the user query to identify relevant metadata.
-                    - Use the most specific filter(s) possible to narrow down results.
-                    - If multiple filters are relevant, combine them in the filters parameter (e.g., {{'name': 'Jordan Mitchell', 'document_type': 'contract'}}).
-                    - Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
+    async def abuild_context(
+        self,
+        enable_agentic_filters: bool = False,
+        **kwargs,
+    ) -> str:
+        """Async version of build_context.
 
-                    Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
-                """
-                    ).strip()
-                )
+        Returns instructions about how to use the search_knowledge_base tool
+        and available filters.
+
+        Args:
+            enable_agentic_filters: Whether agentic filters are enabled.
+            **kwargs: Additional context (unused).
+
+        Returns:
+            Context string to add to system prompt.
+        """
+        context_parts: List[str] = [self._KNOWLEDGE_BASE_SEARCH_INSTRUCTION]
+
+        # Add filter instructions if agentic filters are enabled
+        if enable_agentic_filters:
+            valid_filters = await self.aget_valid_filters()
+            if valid_filters:
+                context_parts.append(self._get_agentic_filter_instructions(valid_filters))
 
         return "\n".join(context_parts)
 
@@ -3175,7 +3199,13 @@ class Knowledge:
             # Merge agentic filters with user-provided filters
             search_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
             if filters and get_agentic_or_user_search_filters is not None:
-                filters_dict = {filt.key: filt.value for filt in filters} if filters else None
+                # Handle both KnowledgeFilter objects and plain dictionaries
+                filters_dict: Dict[str, Any] = {}
+                for filt in filters:
+                    if isinstance(filt, dict):
+                        filters_dict.update(filt)
+                    elif hasattr(filt, "key") and hasattr(filt, "value"):
+                        filters_dict[filt.key] = filt.value
                 search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
             else:
                 search_filters = knowledge_filters
@@ -3223,7 +3253,13 @@ class Knowledge:
             # Merge agentic filters with user-provided filters
             search_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
             if filters and get_agentic_or_user_search_filters is not None:
-                filters_dict = {filt.key: filt.value for filt in filters} if filters else None
+                # Handle both KnowledgeFilter objects and plain dictionaries
+                filters_dict: Dict[str, Any] = {}
+                for filt in filters:
+                    if isinstance(filt, dict):
+                        filters_dict.update(filt)
+                    elif hasattr(filt, "key") and hasattr(filt, "value"):
+                        filters_dict[filt.key] = filt.value
                 search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
             else:
                 search_filters = knowledge_filters
@@ -3259,9 +3295,13 @@ class Knowledge:
             return self._convert_documents_to_string(docs, agent)
 
         if async_mode:
-            return Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")
+            func = Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")
         else:
-            return Function.from_callable(search_knowledge_base, name="search_knowledge_base")
+            func = Function.from_callable(search_knowledge_base, name="search_knowledge_base")
+
+        # Opt out of strict mode since filters use dynamic types that are incompatible with strict mode
+        func.strict = False
+        return func
 
     def _convert_documents_to_string(
         self,

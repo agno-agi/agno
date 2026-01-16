@@ -38,6 +38,10 @@ class ChunkingStrategy(ABC):
             content_hash = hashlib.md5(hash_source.encode()).hexdigest()[:12]
             return f"chunk_{content_hash}_{chunk_number}"
 
+    async def achunk(self, document: Document) -> List[Document]:
+        """Async version of chunk. Override for truly async implementations."""
+        return self.chunk(document)
+
     def clean_text(self, text: str) -> str:
         """Clean the text by replacing multiple newlines with a single newline"""
         import re

@@ -69,7 +69,7 @@ knowledge.insert_many(
     ],
 )
 
-# Step 2: Query the knowledge base with different filter combinations
+# Step 2: Query the knowledge base with incorrect filter keys
 # ------------------------------------------------------------------------------
 na_sales = Agent(
     knowledge=knowledge,

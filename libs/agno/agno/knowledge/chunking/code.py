@@ -6,7 +6,7 @@ try:
 except ImportError:
     raise ImportError(
         "`chonkie` is required for code chunking. "
-        "Please install it using `pip install chonkie[code]` to use CodeChunking."
+        'Please install it using `pip install "chonkie[code]"` to use CodeChunking.'
     )
 
 from agno.knowledge.chunking.strategy import ChunkingStrategy

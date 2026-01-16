@@ -10,6 +10,7 @@ Key points:
 3. Use dependencies to customize retrieval behavior based on user context
 """
 
+import asyncio
 from typing import Optional
 
 from agno.agent import Agent
@@ -30,8 +31,10 @@ knowledge = Knowledge(
 )
 
 # Add some sample content
-knowledge.insert(
-    url="https://docs.agno.com/llms-full.txt",
+asyncio.run(
+    knowledge.ainsert(
+        url="https://docs.agno.com/llms-full.txt",
+    )
 )
 
 

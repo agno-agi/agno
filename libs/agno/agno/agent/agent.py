@@ -6832,7 +6832,9 @@ class Agent:
                         _function_names.append(name)
                         _func = _func.model_copy(deep=True)
                         _func._agent = self
-                        _func.process_entrypoint(strict=strict)
+                        # Respect the function's explicit strict setting if set
+                        effective_strict = strict if _func.strict is None else _func.strict
+                        _func.process_entrypoint(strict=effective_strict)
                         if strict and _func.strict is None:
                             _func.strict = True
                         if self.tool_hooks is not None:
@@ -6849,7 +6851,9 @@ class Agent:
                         continue
                     _function_names.append(tool.name)
 
-                    tool.process_entrypoint(strict=strict)
+                    # Respect the function's explicit strict setting if set
+                    effective_strict = strict if tool.strict is None else tool.strict
+                    tool.process_entrypoint(strict=effective_strict)
                     tool = tool.model_copy(deep=True)
 
                     tool._agent = self
@@ -8504,10 +8508,18 @@ class Agent:
         if self.name is not None and self.add_name_to_context:
             additional_information.append(f"Your name is: {self.name}.")
 
-        # 3.2.5 Add knowledge context using protocol's build_context
+        # 3.2.5 Add knowledge context using protocol's build_context (async)
         if self.knowledge is not None:
+            # Prefer async version if available for async databases
+            abuild_context_fn = getattr(self.knowledge, "abuild_context", None)
             build_context_fn = getattr(self.knowledge, "build_context", None)
-            if callable(build_context_fn):
+            if callable(abuild_context_fn):
+                knowledge_context = await abuild_context_fn(
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
+                )
+                if knowledge_context:
+                    additional_information.append(knowledge_context)
+            elif callable(build_context_fn):
                 knowledge_context = build_context_fn(
                     enable_agentic_filters=self.enable_agentic_knowledge_filters,
                 )
