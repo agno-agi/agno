@@ -1,7 +1,6 @@
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.filesystem import FileSystemKnowledge
 from agno.models.openai import OpenAIChat
 from agno.utils.media import (
     SampleDataFileExtension,
@@ -39,61 +38,55 @@ knowledge = Knowledge(
     name="CSV Knowledge Base",
     description="A knowledge base for CSV files",
     vector_db=vector_db,
-    # contents_db=PostgresDb(  # Optional - enables filter validation
-    #     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-    #     knowledge_table="knowledge_contents",
-    # ),
-)
-
-knowledge = FileSystemKnowledge(
-    base_dir="cookbook/08_knowledge/testing_resources",
-    include_patterns=["*.csv"],
-    exclude_patterns=[],
+    contents_db=PostgresDb(  # Optional - enables filter validation
+        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+        knowledge_table="knowledge_contents",
+    ),
 )
 
 # Load all documents into the vector database
-# knowledge.insert_many(
-#     [
-#         {
-#             "path": downloaded_csv_paths[0],
-#             "metadata": {
-#                 "data_type": "sales",
-#                 "quarter": "Q1",
-#                 "year": 2024,
-#                 "region": "north_america",
-#                 "currency": "USD",
-#             },
-#         },
-#         {
-#             "path": downloaded_csv_paths[1],
-#             "metadata": {
-#                 "data_type": "sales",
-#                 "year": 2024,
-#                 "region": "europe",
-#                 "currency": "EUR",
-#             },
-#         },
-#         {
-#             "path": downloaded_csv_paths[2],
-#             "metadata": {
-#                 "data_type": "survey",
-#                 "survey_type": "customer_satisfaction",
-#                 "year": 2024,
-#                 "target_demographic": "mixed",
-#             },
-#         },
-#         {
-#             "path": downloaded_csv_paths[3],
-#             "metadata": {
-#                 "data_type": "financial",
-#                 "sector": "technology",
-#                 "year": 2024,
-#                 "report_type": "quarterly_earnings",
-#             },
-#         },
-#     ],
-#     skip_if_exists=True,
-# )
+knowledge.insert_many(
+    [
+        {
+            "path": downloaded_csv_paths[0],
+            "metadata": {
+                "data_type": "sales",
+                "quarter": "Q1",
+                "year": 2024,
+                "region": "north_america",
+                "currency": "USD",
+            },
+        },
+        {
+            "path": downloaded_csv_paths[1],
+            "metadata": {
+                "data_type": "sales",
+                "year": 2024,
+                "region": "europe",
+                "currency": "EUR",
+            },
+        },
+        {
+            "path": downloaded_csv_paths[2],
+            "metadata": {
+                "data_type": "survey",
+                "survey_type": "customer_satisfaction",
+                "year": 2024,
+                "target_demographic": "mixed",
+            },
+        },
+        {
+            "path": downloaded_csv_paths[3],
+            "metadata": {
+                "data_type": "financial",
+                "sector": "technology",
+                "year": 2024,
+                "report_type": "quarterly_earnings",
+            },
+        },
+    ],
+    skip_if_exists=True,
+)
 # Step 2: Query the knowledge base with Agent using filters from query automatically
 # -----------------------------------------------------------------------------------
 
