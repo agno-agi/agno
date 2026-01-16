@@ -6832,7 +6832,9 @@ class Agent:
                         _function_names.append(name)
                         _func = _func.model_copy(deep=True)
                         _func._agent = self
-                        _func.process_entrypoint(strict=strict)
+                        # Respect the function's explicit strict setting if set
+                        effective_strict = strict if _func.strict is None else _func.strict
+                        _func.process_entrypoint(strict=effective_strict)
                         if strict and _func.strict is None:
                             _func.strict = True
                         if self.tool_hooks is not None:
@@ -6849,7 +6851,9 @@ class Agent:
                         continue
                     _function_names.append(tool.name)
 
-                    tool.process_entrypoint(strict=strict)
+                    # Respect the function's explicit strict setting if set
+                    effective_strict = strict if tool.strict is None else tool.strict
+                    tool.process_entrypoint(strict=effective_strict)
                     tool = tool.model_copy(deep=True)
 
                     tool._agent = self

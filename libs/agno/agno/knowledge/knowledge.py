@@ -3295,9 +3295,13 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             return self._convert_documents_to_string(docs, agent)
 
         if async_mode:
-            return Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")
+            func = Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")
         else:
-            return Function.from_callable(search_knowledge_base, name="search_knowledge_base")
+            func = Function.from_callable(search_knowledge_base, name="search_knowledge_base")
+
+        # Opt out of strict mode since filters use dynamic types that are incompatible with strict mode
+        func.strict = False
+        return func
 
     def _convert_documents_to_string(
         self,
