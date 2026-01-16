@@ -2,56 +2,28 @@
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.team import Team
-from agno.workflow.step import Step
-from agno.workflow.workflow import Workflow
 
 # Setup the database
 db = PostgresDb(id="basic-db", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 # Setup basic agents, teams and workflows
-basic_agent = Agent(
+agent = Agent(
     name="Basic Agent",
-    db=db,
-    enable_session_summaries=True,
-    enable_user_memories=True,
-    add_history_to_context=True,
-    num_history_runs=3,
-    add_datetime_to_context=True,
+    instructions=["You are a basic agent that can answer questions and perform tasks."],
     markdown=True,
-)
-basic_team = Team(
-    id="basic-team",
-    name="Basic Team",
-    model=OpenAIChat(id="gpt-4o"),
-    db=db,
-    members=[basic_agent],
-    enable_user_memories=True,
-)
-basic_workflow = Workflow(
-    id="basic-workflow",
-    name="Basic Workflow",
-    description="Just a simple workflow",
-    db=db,
-    steps=[
-        Step(
-            name="step1",
-            description="Just a simple step",
-            agent=basic_agent,
-        )
-    ],
-    add_workflow_history_to_steps=True,
+    db=db,  # Pass the db instance here
+    add_history_to_context=True,
+    add_session_state_to_context=True,
+    add_datetime_to_context=True,
+    tools=[],
+    reasoning=True,
+    reasoning_max_steps=4,
+    debug_mode=True,
 )
 
 # Setup our AgentOS app
-agent_os = AgentOS(
-    description="Example app for basic agent, team and workflow",
-    agents=[basic_agent],
-    teams=[basic_team],
-    workflows=[basic_workflow],
-)
+agent_os = AgentOS(description="Example app for basic agent", agents=[agent])
 app = agent_os.get_app()
 
 
