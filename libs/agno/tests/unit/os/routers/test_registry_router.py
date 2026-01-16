@@ -5,7 +5,6 @@ Tests cover:
 - GET /registry - List registry components (tools, toolkits, models, dbs, vector_dbs, schemas)
 """
 
-from typing import Any, Dict
 from unittest.mock import MagicMock
 
 import pytest

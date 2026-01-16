@@ -16,7 +16,6 @@ Tests cover:
 - POST /components/{component_id}/configs/{version}/set-current - Set current version
 """
 
-from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock
 
 import pytest
@@ -26,7 +25,6 @@ from fastapi.testclient import TestClient
 from agno.db.base import BaseDb, ComponentType
 from agno.os.routers.components import get_components_router
 from agno.os.settings import AgnoAPISettings
-from agno.registry import Registry
 
 # =============================================================================
 # Fixtures
