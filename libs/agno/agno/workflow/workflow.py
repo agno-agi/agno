@@ -4935,6 +4935,7 @@ class Workflow:
             except Exception:
                 return step
 
+
 def get_workflow_by_id(
     db: "BaseDb",
     id: str,
@@ -5015,4 +5016,3 @@ def get_workflows(
     except Exception as e:
         log_error(f"Error loading Workflows from database: {e}")
         return []
-    

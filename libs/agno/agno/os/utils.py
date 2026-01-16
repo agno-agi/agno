@@ -507,6 +507,7 @@ def get_team_by_id(
 
     if db:
         from agno.team.team import get_team_by_id as get_team_by_id_db
+
         try:
             team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
             return team
@@ -552,6 +553,7 @@ def get_workflow_by_id(
 
     if db:
         from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
+
         try:
             workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
             return workflow

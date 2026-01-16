@@ -10267,7 +10267,6 @@ class Team:
             return field_value
 
 
-
 def get_team_by_id(
     db: "BaseDb",
     id: str,

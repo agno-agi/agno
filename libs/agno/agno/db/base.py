@@ -554,7 +554,7 @@ class BaseDb(ABC):
 
     # --- Config ---
     # TODO: Add config methods
-    
+
     # --- Learnings ---
     @abstractmethod
     def get_learning(

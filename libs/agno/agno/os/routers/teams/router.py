@@ -197,7 +197,9 @@ def get_team_router(
 
         logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
 
-        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, version=version, registry=registry, create_fresh=True)
+        team = get_team_by_id(
+            team_id=team_id, teams=os.teams, db=os.db, version=version, registry=registry, create_fresh=True
+        )
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
