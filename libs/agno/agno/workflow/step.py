@@ -8,9 +8,11 @@ from pydantic import BaseModel
 from typing_extensions import TypeGuard
 
 from agno.agent import Agent
+from agno.db.base import BaseDb
 from agno.media import Audio, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
+from agno.registry import Registry
 from agno.run import RunContext
 from agno.run.agent import RunContentEvent, RunOutput
 from agno.run.base import BaseRunOutputEvent
@@ -112,6 +114,121 @@ class Step:
 
         # Set the active executor
         self._set_active_executor()
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert step to a dictionary representation."""
+        result = {
+            "name": self.name,
+            "step_id": self.step_id,
+            "description": self.description,
+            "max_retries": self.max_retries,
+            "skip_on_failure": self.skip_on_failure,
+            "strict_input_validation": self.strict_input_validation,
+            "add_workflow_history": self.add_workflow_history,
+            "num_history_runs": self.num_history_runs,
+        }
+
+        if self.agent is not None:
+            result["agent_id"] = self.agent.id
+        if self.team is not None:
+            result["team_id"] = self.team.id
+        # TODO: Add support for custom executors
+
+        return result
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional[Registry] = None,
+        db: Optional["BaseDb"] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> "Step":
+        """
+        Create a Step from a dictionary.
+
+        Args:
+            data: Dictionary containing step configuration
+            registry: Optional registry for rehydrating non-serializable objects
+            db: Optional database for loading agents/teams in steps
+            links: Optional links for this step version
+
+        Returns:
+            Step: Reconstructed step instance
+        """
+        config = data.copy()
+
+        agent = None
+        team = None
+        executor = None
+
+        # --- Handle Agent reconstruction ---
+        if "agent_id" in config and config["agent_id"]:
+            from agno.agent.agent import get_agent_by_id
+
+            agent_id = config.get("agent_id")
+            if db is not None and agent_id is not None:
+                agent = get_agent_by_id(db=db, id=agent_id, registry=registry)
+
+        # --- Handle Team reconstruction ---
+        # if "team_id" in config and config["team_id"] and registry:
+        #     from agno.team.team import get_team_by_id
+        #     team = get_team_by_id(db=db, id=config["team_id"])
+
+        # --- Handle Executor reconstruction ---
+        # TODO: Implement executor reconstruction
+        # if "executor_ref" in config and config["executor_ref"] and registry:
+        #     executor = registry.rehydrate_function(config["executor_ref"])
+
+        return cls(
+            name=config.get("name"),
+            step_id=config.get("step_id"),
+            description=config.get("description"),
+            max_retries=config.get("max_retries", 3),
+            skip_on_failure=config.get("skip_on_failure", False),
+            strict_input_validation=config.get("strict_input_validation", False),
+            add_workflow_history=config.get("add_workflow_history"),
+            num_history_runs=config.get("num_history_runs", 3),
+            agent=agent,
+            team=team,
+            executor=executor,
+        )
+
+    def get_links(self, position: int = 0) -> List[Dict[str, Any]]:
+        """Get links for this step's agent/team.
+
+        Args:
+            position: Position of this step in the workflow.
+
+        Returns:
+            List of link dictionaries for the links table.
+        """
+        links = []
+        link_key = self.step_id or self.name
+
+        if self.agent is not None:
+            links.append(
+                {
+                    "link_kind": "step_agent",
+                    "link_key": link_key,
+                    "child_component_id": self.agent.id,
+                    "child_version": None,
+                    "position": position,
+                }
+            )
+
+        if self.team is not None:
+            links.append(
+                {
+                    "link_kind": "step_team",
+                    "link_key": link_key,
+                    "child_component_id": self.team.id,
+                    "child_version": None,
+                    "position": position,
+                }
+            )
+
+        return links
 
     @property
     def executor_name(self) -> str:

@@ -28,11 +28,13 @@ if TYPE_CHECKING:
     from agno.os.managers import WebSocketHandler
 
 from agno.agent.agent import Agent
-from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
+from agno.db.utils import db_from_dict
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
+from agno.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunContentEvent, RunEvent, RunOutput
 from agno.run.cancel import (
@@ -78,6 +80,7 @@ from agno.utils.print_response.workflow import (
     print_response,
     print_response_stream,
 )
+from agno.utils.string import generate_id_from_name
 from agno.workflow.agent import WorkflowAgent
 from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
@@ -256,10 +259,7 @@ class Workflow:
 
     def set_id(self) -> None:
         if self.id is None:
-            if self.name is not None:
-                self.id = self.name.lower().replace(" ", "-")
-            else:
-                self.id = str(uuid4())
+            self.id = generate_id_from_name(self.name)
 
     def _has_async_db(self) -> bool:
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
@@ -343,6 +343,7 @@ class Workflow:
         session_state["workflow_id"] = self.id
         if self.name:
             session_state["workflow_name"] = self.name
+
         return session_state
 
     def _generate_workflow_session_name(self) -> str:
@@ -522,6 +523,313 @@ class Workflow:
             return
         # -*- Delete session
         self.db.delete_session(session_id=session_id)
+
+    # -*- Serialization Functions
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the Workflow to a dictionary.
+
+        Returns:
+            Dict[str, Any]: Dictionary representation of the workflow configuration
+        """
+        config: Dict[str, Any] = {}
+
+        # --- Workflow settings ---
+        if self.name is not None:
+            config["name"] = self.name
+        if self.id is not None:
+            config["id"] = self.id
+        if self.description is not None:
+            config["description"] = self.description
+
+        # --- User settings ---
+        if self.user_id is not None:
+            config["user_id"] = self.user_id
+
+        # --- Session settings ---
+        if self.session_id is not None:
+            config["session_id"] = self.session_id
+        if self.session_state is not None:
+            config["session_state"] = self.session_state
+        config["overwrite_db_session_state"] = self.overwrite_db_session_state
+
+        # --- Database settings ---
+        if self.db is not None and hasattr(self.db, "to_dict"):
+            config["db"] = self.db.to_dict()
+
+        # --- History settings ---
+        config["add_workflow_history_to_steps"] = self.add_workflow_history_to_steps
+        config["num_history_runs"] = self.num_history_runs
+
+        # --- Streaming settings ---
+        if self.stream is not None:
+            config["stream"] = self.stream
+        config["stream_events"] = self.stream_events
+        config["stream_executor_events"] = self.stream_executor_events
+        config["store_events"] = self.store_events
+        config["store_executor_outputs"] = self.store_executor_outputs
+
+        # --- Schema settings ---
+        if self.input_schema is not None:
+            if isinstance(self.input_schema, type) and issubclass(self.input_schema, BaseModel):
+                config["input_schema"] = self.input_schema.__name__
+            elif isinstance(self.input_schema, dict):
+                config["input_schema"] = self.input_schema
+
+        # --- Metadata ---
+        if self.metadata is not None:
+            config["metadata"] = self.metadata
+
+        # --- Debug and telemetry settings ---
+        config["debug_mode"] = self.debug_mode
+        config["telemetry"] = self.telemetry
+
+        # --- Steps ---
+        # TODO: Implement steps serialization for step types other than Step
+        if self.steps and isinstance(self.steps, list):
+            config["steps"] = [step.to_dict() for step in self.steps if hasattr(step, "to_dict")]
+
+        return config
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        db: Optional["BaseDb"] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+        registry: Optional[Registry] = None,
+    ) -> "Workflow":
+        """
+        Create a Workflow from a dictionary.
+
+        Args:
+            data: Dictionary containing workflow configuration
+            db: Optional database for loading agents/teams in steps
+            links: Optional links for this workflow version
+            registry: Optional registry for rehydrating executors
+
+        Returns:
+            Workflow: Reconstructed workflow instance
+        """
+        config = data.copy()
+
+        # --- Handle DB reconstruction ---
+        if "db" in config and isinstance(config["db"], dict):
+            db_data = config["db"]
+            db_id = db_data.get("id")
+
+            # First try to get the db from the registry (preferred - reuses existing connection)
+            if registry and db_id:
+                registry_db = registry.get_db(db_id)
+                if registry_db is not None:
+                    config["db"] = registry_db
+                else:
+                    del config["db"]
+            else:
+                # No registry or no db_id, fall back to creating from dict
+                config["db"] = db_from_dict(db_data)
+                if config["db"] is None:
+                    del config["db"]
+
+        # --- Handle Schema reconstruction ---
+        if "input_schema" in config and isinstance(config["input_schema"], str):
+            schema_cls = registry.get_schema(config["input_schema"]) if registry else None
+            if schema_cls:
+                config["input_schema"] = schema_cls
+            else:
+                log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
+                del config["input_schema"]
+
+        # --- Handle steps reconstruction ---
+        steps: Optional[WorkflowSteps] = None
+        if "steps" in config and config["steps"]:
+            steps = [Step.from_dict(step_data, db=db, links=links, registry=registry) for step_data in config["steps"]]
+            del config["steps"]
+
+        return cls(
+            # --- Workflow settings ---
+            name=config.get("name"),
+            id=config.get("id"),
+            description=config.get("description"),
+            # --- User settings ---
+            user_id=config.get("user_id"),
+            # --- Session settings ---
+            session_id=config.get("session_id"),
+            session_state=config.get("session_state"),
+            overwrite_db_session_state=config.get("overwrite_db_session_state", False),
+            # --- Database settings ---
+            db=config.get("db"),
+            # --- History settings ---
+            add_workflow_history_to_steps=config.get("add_workflow_history_to_steps", False),
+            num_history_runs=config.get("num_history_runs", 3),
+            # --- Streaming settings ---
+            stream=config.get("stream"),
+            stream_events=config.get("stream_events", False),
+            stream_executor_events=config.get("stream_executor_events", True),
+            store_events=config.get("store_events", False),
+            store_executor_outputs=config.get("store_executor_outputs", True),
+            # --- Schema settings ---
+            # input_schema=config.get("input_schema"),  # TODO
+            # --- Metadata ---
+            metadata=config.get("metadata"),
+            # --- Debug and telemetry settings ---
+            debug_mode=config.get("debug_mode", False),
+            telemetry=config.get("telemetry", True),
+            # --- Steps ---
+            steps=steps,
+        )
+
+    def save(
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        stage: str = "published",
+        label: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Optional[int]:
+        """
+        Save the workflow component and config.
+
+        Args:
+            db: The database to save the component and config to.
+            stage: The stage of the component. Defaults to "published".
+            label: The label of the component.
+            notes: The notes of the component.
+
+        Returns:
+            Optional[int]: The version number of the saved config.
+        """
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+        if not isinstance(db_, BaseDb):
+            raise ValueError("Async databases not yet supported for save(). Use a sync database.")
+        if self.id is None:
+            self.id = generate_id_from_name(self.name)
+
+        # Track saved entity versions for pinning links
+        saved_versions: Dict[str, int] = {}
+
+        # Collect all links
+        all_links = []
+        steps_config = []
+
+        try:
+            steps_to_save = self.steps if isinstance(self.steps, list) else []
+            for position, step in enumerate(steps_to_save):
+                # TODO: Support other Step types
+                if isinstance(step, Step):
+                    # TODO: Allow not saving a new config if the agent/team already has a published config and no changes have been made
+                    # Save agent/team if present and capture version
+                    if step.agent and isinstance(step.agent, Agent):
+                        agent_version = step.agent.save(
+                            db=db_,
+                            stage=stage,
+                            label=label,
+                            notes=notes,
+                        )
+                        if step.agent.id is not None and agent_version is not None:
+                            saved_versions[step.agent.id] = agent_version
+
+                    if step.team and isinstance(step.team, Team):
+                        team_version = step.team.save(db=db_, stage=stage, label=label, notes=notes)
+                        if step.team.id is not None and team_version is not None:
+                            saved_versions[step.team.id] = team_version
+
+                    # Add step config
+                    steps_config.append(step.to_dict())
+
+                    # Add links with position and pinned version
+                    for link in step.get_links(position=position):
+                        # Pin the version if we just saved it
+                        if link["child_component_id"] in saved_versions:
+                            link["child_version"] = saved_versions[link["child_component_id"]]
+                        all_links.append(link)
+
+            db_.upsert_component(
+                component_id=self.id,
+                component_type=ComponentType.WORKFLOW,
+                name=self.name,
+                description=self.description,
+                metadata=self.metadata,
+            )
+            config = db_.upsert_config(
+                component_id=self.id,
+                config=self.to_dict(),
+                links=all_links,
+                label=label,
+                stage=stage,
+                notes=notes,
+            )
+
+            return config.get("version")
+
+        except Exception as e:
+            log_error(f"Error saving workflow: {e}")
+            return None
+
+    @classmethod
+    def load(
+        cls,
+        id: str,
+        *,
+        db: "BaseDb",
+        registry: Optional["Registry"] = None,
+        label: Optional[str] = None,
+        version: Optional[int] = None,
+    ) -> Optional["Workflow"]:
+        """
+        Load a workflow by id.
+
+        Args:
+            id: The id of the workflow to load.
+            db: The database to load the workflow from.
+            label: The label of the workflow to load.
+
+        Returns:
+            The workflow loaded from the database or None if not found.
+        """
+        # TODO: Use db.load_component_graph instead of get_config
+        data: Optional[Dict[str, Any]] = db.get_config(component_id=id, label=label, version=version)
+        if data is None:
+            return None
+
+        config = data.get("config")
+        if config is None:
+            return None
+
+        workflow = cls.from_dict(config, db=db, registry=registry)
+
+        workflow.id = id
+        workflow.db = db
+
+        return workflow
+
+    def delete(
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        hard_delete: bool = False,
+    ) -> bool:
+        """
+        Delete the workflow component.
+
+        Args:
+            db: The database to delete the workflow from.
+            hard_delete: Whether to hard delete the workflow.
+
+        Returns:
+            True if the workflow was deleted, False otherwise.
+        """
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+        if not isinstance(db_, BaseDb):
+            raise ValueError("Async databases not yet supported for delete(). Use a sync database.")
+        if self.id is None:
+            raise ValueError("Cannot delete workflow without an id")
+
+        return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
 
     async def aget_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
         """Get a RunOutput from the database."""
@@ -4047,7 +4355,8 @@ class Workflow:
                 **kwargs,
             )
 
-    def to_dict(self) -> Dict[str, Any]:
+    # TODO: This is a temporary method to convert the workflow to a dictionary for steps. We need to find a better way to do this.
+    def to_dict_for_steps(self) -> Dict[str, Any]:
         """Convert workflow to dictionary representation"""
 
         def serialize_step(step):
@@ -4631,3 +4940,81 @@ class Workflow:
                 return copy(step)
             except Exception:
                 return step
+
+
+def get_workflow_by_id(
+    db: "BaseDb",
+    id: str,
+    version: Optional[int] = None,
+    label: Optional[str] = None,
+    registry: Optional["Registry"] = None,
+) -> Optional["Workflow"]:
+    """
+    Get a Workflow by id from the database (new entities/configs schema).
+
+    Resolution order:
+    - if version is provided: load that version
+    - elif label is provided: load that labeled version
+    - else: load entity.current_version
+
+    Args:
+        db: Database handle.
+        id: Workflow entity_id.
+        version: Optional integer config version.
+        label: Optional version_label.
+        registry: Optional Registry for reconstructing unserializable components.
+
+    Returns:
+        Workflow instance or None.
+    """
+    try:
+        row = db.get_config(component_id=id, version=version, label=label)
+        if row is None:
+            return None
+
+        cfg = row.get("config") if isinstance(row, dict) else None
+        if cfg is None:
+            raise ValueError(f"Invalid config found for workflow {id}")
+
+        resolved_version = row.get("version")
+
+        # Get links for this workflow version
+        links = db.get_links(component_id=id, version=resolved_version) if resolved_version else []
+
+        workflow = Workflow.from_dict(cfg, db=db, links=links, registry=registry)
+
+        # Ensure workflow.id is set to the component_id
+        workflow.id = id
+
+        return workflow
+
+    except Exception as e:
+        log_error(f"Error loading Workflow {id} from database: {e}")
+        return None
+
+
+def get_workflows(
+    db: "BaseDb",
+    registry: Optional["Registry"] = None,
+) -> List["Workflow"]:
+    """Get all workflows from the database"""
+    workflows: List[Workflow] = []
+    try:
+        components, _ = db.list_components(component_type=ComponentType.WORKFLOW)
+        for component in components:
+            config = db.get_config(component_id=component["component_id"])
+            if config is not None:
+                workflow_config = config.get("config")
+                if workflow_config is not None:
+                    component_id = component["component_id"]
+                    if "id" not in workflow_config:
+                        workflow_config["id"] = component_id
+                    workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
+                    # Ensure workflow.id is set to the component_id
+                    workflow.id = component_id
+                    workflows.append(workflow)
+        return workflows
+
+    except Exception as e:
+        log_error(f"Error loading Workflows from database: {e}")
+        return []

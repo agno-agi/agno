@@ -146,6 +146,19 @@ class Function(BaseModel):
             include={"name", "description", "parameters", "strict", "requires_confirmation", "external_execution"},
         )
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Function":
+        """Reconstruct a Function from a dictionary."""
+
+        return cls(
+            name=data.get("name"),
+            description=data.get("description"),
+            parameters=data.get("parameters"),
+            strict=data.get("strict"),
+            requires_confirmation=data.get("requires_confirmation", False),
+            external_execution=data.get("external_execution", False),
+        )
+
     def model_copy(self, *, deep: bool = False) -> "Function":
         """
         Override model_copy to handle callable fields that can't be deep copied (pickled).
