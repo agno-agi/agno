@@ -2,6 +2,7 @@ import asyncio
 import os
 
 from agno.agent import Agent
+from agno.db.postgres import AsyncPostgresDb
 from agno.db.sqlite import AsyncSqliteDb
 from agno.filters import IN
 from agno.knowledge.knowledge import Knowledge
@@ -21,6 +22,11 @@ if os.path.exists("tmp/knowledge_contents.db"):
     os.remove("tmp/knowledge_contents.db")
 db = AsyncSqliteDb(
     db_file="tmp/knowledge_contents.db",
+)
+
+db = AsyncPostgresDb(
+    db_url="postgresql+psycopg_async://ai:ai@localhost:5532/ai",
+    knowledge_table="knowledge_contents",
 )
 
 # Initialize Vector Database
