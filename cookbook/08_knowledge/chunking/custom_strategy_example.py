@@ -59,7 +59,7 @@ class CustomSeparatorChunking(ChunkingStrategy):
 
                 result.append(
                     Document(
-                        id=f"{document.id}_{i + 1}" if document.id else None,
+                        id=self._generate_chunk_id(document, i + 1, chunk_content),
                         name=document.name,
                         meta_data=meta_data,
                         content=chunk_content,
