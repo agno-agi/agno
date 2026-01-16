@@ -548,6 +548,8 @@ module = [
   "redshift_connector.*",
   "reportlab.*",
   "surrealdb.*",
-  "trafilatura.*"
+  "trafilatura.*",
+  "opentelemetry.*",
+  "openinference.*"
 ]
 ignore_missing_imports = true
