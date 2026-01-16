@@ -90,6 +90,6 @@ agno_knowledge_agent = Agent(
 )
 
 if __name__ == "__main__":
-    knowledge.add_content(
+    knowledge.insert(
         name="Agno Documentation", url="https://docs.agno.com/llms-full.txt"
     )
