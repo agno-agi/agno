@@ -552,8 +552,303 @@ class BaseDb(ABC):
     def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError
 
-    # --- Config ---
-    # TODO: Add config methods
+    # --- Components ---
+    @abstractmethod
+    def get_component(
+        self,
+        component_id: str,
+        component_type: Optional[ComponentType] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Get a component by ID.
+
+        Args:
+            component_id: The component ID.
+            component_type: Optional filter by type (agent|team|workflow).
+
+        Returns:
+            Component dictionary or None if not found.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_component(
+        self,
+        component_id: str,
+        component_type: Optional[ComponentType] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Create or update a component.
+
+        Args:
+            component_id: Unique identifier.
+            component_type: Type (agent|team|workflow). Required for create, optional for update.
+            name: Display name.
+            description: Optional description.
+            metadata: Optional metadata dict.
+
+        Returns:
+            Created/updated component dictionary.
+
+        Raises:
+            ValueError: If creating and component_type is not provided.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_component(
+        self,
+        component_id: str,
+        hard_delete: bool = False,
+    ) -> bool:
+        """Delete a component and all its configs/links.
+
+        Args:
+            component_id: The component ID.
+            hard_delete: If True, permanently delete. Otherwise soft-delete.
+
+        Returns:
+            True if deleted, False if not found or already deleted.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_components(
+        self,
+        component_type: Optional[ComponentType] = None,
+        include_deleted: bool = False,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List components with pagination.
+
+        Args:
+            component_type: Filter by type (agent|team|workflow).
+            include_deleted: Include soft-deleted components.
+            limit: Maximum number of items to return.
+            offset: Number of items to skip.
+
+        Returns:
+            Tuple of (list of component dicts, total count).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_component_with_config(
+        self,
+        component_id: str,
+        component_type: ComponentType,
+        name: Optional[str],
+        config: Dict[str, Any],
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        label: Optional[str] = None,
+        stage: str = "draft",
+        notes: Optional[str] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Create a component with its initial config atomically.
+
+        Args:
+            component_id: Unique identifier.
+            component_type: Type (agent|team|workflow).
+            name: Display name.
+            config: The config data.
+            description: Optional description.
+            metadata: Optional metadata dict.
+            label: Optional config label.
+            stage: "draft" or "published".
+            notes: Optional notes.
+            links: Optional list of links. Each must have child_version set.
+
+        Returns:
+            Tuple of (component dict, config dict).
+
+        Raises:
+            ValueError: If component already exists, invalid stage, or link missing child_version.
+        """
+        raise NotImplementedError
+
+    # --- Component Configs ---
+    @abstractmethod
+    def get_config(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Get a config by component ID and version or label.
+
+        Args:
+            component_id: The component ID.
+            version: Specific version number. If None, uses current.
+            label: Config label to lookup. Ignored if version is provided.
+
+        Returns:
+            Config dictionary or None if not found.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_config(
+        self,
+        component_id: str,
+        config: Optional[Dict[str, Any]] = None,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+        stage: Optional[str] = None,
+        notes: Optional[str] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Create or update a config version for a component.
+
+        Rules:
+            - Draft configs can be edited freely
+            - Published configs are immutable
+            - Publishing a config automatically sets it as current_version
+
+        Args:
+            component_id: The component ID.
+            config: The config data. Required for create, optional for update.
+            version: If None, creates new version. If provided, updates that version.
+            label: Optional human-readable label.
+            stage: "draft" or "published". Defaults to "draft" for new configs.
+            notes: Optional notes.
+            links: Optional list of links. Each link must have child_version set.
+
+        Returns:
+            Created/updated config dictionary.
+
+        Raises:
+            ValueError: If component doesn't exist, version not found, label conflict,
+                        or attempting to update a published config.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_config(
+        self,
+        component_id: str,
+        version: int,
+    ) -> bool:
+        """Delete a specific config version.
+
+        Only draft configs can be deleted. Published configs are immutable.
+        Cannot delete the current version.
+
+        Args:
+            component_id: The component ID.
+            version: The version to delete.
+
+        Returns:
+            True if deleted, False if not found.
+
+        Raises:
+            ValueError: If attempting to delete a published or current config.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_configs(
+        self,
+        component_id: str,
+        include_config: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """List all config versions for a component.
+
+        Args:
+            component_id: The component ID.
+            include_config: If True, include full config blob. Otherwise just metadata.
+
+        Returns:
+            List of config dictionaries, newest first.
+            Returns empty list if component not found or deleted.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def set_current_version(
+        self,
+        component_id: str,
+        version: int,
+    ) -> bool:
+        """Set a specific published version as current.
+
+        Only published configs can be set as current. This is used for
+        rollback scenarios where you want to switch to a previous
+        published version.
+
+        Args:
+            component_id: The component ID.
+            version: The version to set as current (must be published).
+
+        Returns:
+            True if successful, False if component or version not found.
+
+        Raises:
+            ValueError: If attempting to set a draft config as current.
+        """
+        raise NotImplementedError
+
+    # --- Component Links ---
+    @abstractmethod
+    def get_links(
+        self,
+        component_id: str,
+        version: int,
+        link_kind: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get links for a config version.
+
+        Args:
+            component_id: The component ID.
+            version: The config version.
+            link_kind: Optional filter by link kind (member|step).
+
+        Returns:
+            List of link dictionaries, ordered by position.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_dependents(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Find all components that reference this component.
+
+        Args:
+            component_id: The component ID to find dependents of.
+            version: Optional specific version. If None, finds links to any version.
+
+        Returns:
+            List of link dictionaries showing what depends on this component.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def load_component_graph(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Load a component with its full resolved graph.
+
+        Handles cycles by returning a stub with cycle_detected=True.
+
+        Args:
+            component_id: The component ID.
+            version: Specific version or None for current.
+            label: Optional label of the component.
+
+        Returns:
+            Dictionary with component, config, children, and resolved_versions.
+            Returns None if component not found.
+        """
+        raise NotImplementedError
 
     # --- Learnings ---
     @abstractmethod
