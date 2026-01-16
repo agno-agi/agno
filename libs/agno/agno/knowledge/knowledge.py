@@ -1840,7 +1840,6 @@ class Knowledge:
                 log_info(f"Content {content.content_hash} already exists, skipping")
                 continue
 
-            await self._ainsert_contents_db(content)
             if content.reader is None:
                 log_error(f"No reader available for topic: {topic}")
                 content.status = ContentStatus.FAILED
@@ -1902,7 +1901,6 @@ class Knowledge:
                 log_info(f"Content {content.content_hash} already exists, skipping")
                 continue
 
-            self._insert_contents_db(content)
             if content.reader is None:
                 log_error(f"No reader available for topic: {topic}")
                 content.status = ContentStatus.FAILED
