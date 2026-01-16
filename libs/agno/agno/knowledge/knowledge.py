@@ -1892,11 +1892,11 @@ class Knowledge:
             if self._should_skip(content.content_hash, skip_if_exists):
                 content.status = ContentStatus.COMPLETED
                 self._update_content(content)
-                return
+                continue  # Skip to next topic, don't exit loop
 
             if self.vector_db.__class__.__name__ == "LightRag":
                 self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
-                return
+                continue  # Skip to next topic, don't exit loop
 
             if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
                 log_info(f"Content {content.content_hash} already exists, skipping")
@@ -1989,7 +1989,7 @@ class Knowledge:
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content_entry)
-                return
+                continue  # Skip to next S3 object, don't exit loop
 
             # 4. Select reader
             reader = self._select_reader_by_uri(s3_object.uri, content.reader)
@@ -2059,7 +2059,7 @@ class Knowledge:
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content_entry)
-                return
+                continue  # Skip to next GCS object, don't exit loop
 
             # 4. Select reader
             reader = self._select_reader_by_uri(gcs_object.name, content.reader)
@@ -2148,7 +2148,7 @@ class Knowledge:
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 self._update_content(content_entry)
-                return
+                continue  # Skip to next S3 object, don't exit loop
 
             # 4. Select reader
             reader = self._select_reader_by_uri(s3_object.uri, content.reader)
@@ -2219,7 +2219,7 @@ class Knowledge:
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 self._update_content(content_entry)
-                return
+                continue  # Skip to next GCS object, don't exit loop
 
             # 4. Select reader
             reader = self._select_reader_by_uri(gcs_object.name, content.reader)
