@@ -8504,10 +8504,18 @@ class Agent:
         if self.name is not None and self.add_name_to_context:
             additional_information.append(f"Your name is: {self.name}.")
 
-        # 3.2.5 Add knowledge context using protocol's build_context
+        # 3.2.5 Add knowledge context using protocol's build_context (async)
         if self.knowledge is not None:
+            # Prefer async version if available for async databases
+            abuild_context_fn = getattr(self.knowledge, "abuild_context", None)
             build_context_fn = getattr(self.knowledge, "build_context", None)
-            if callable(build_context_fn):
+            if callable(abuild_context_fn):
+                knowledge_context = await abuild_context_fn(
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
+                )
+                if knowledge_context:
+                    additional_information.append(knowledge_context)
+            elif callable(build_context_fn):
                 knowledge_context = build_context_fn(
                     enable_agentic_filters=self.enable_agentic_knowledge_filters,
                 )

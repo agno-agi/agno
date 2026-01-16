@@ -47,7 +47,7 @@ knowledge = Knowledge(
 )
 
 # Load all documents into the vector database
-knowledge.insert_many(
+asyncio.run(knowledge.ainsert_many(
     [
         {
             "path": downloaded_csv_paths[0],
@@ -88,7 +88,8 @@ knowledge.insert_many(
         },
     ],
     skip_if_exists=True,
-)
+))
+
 # Step 2: Query the knowledge base with Agent using filters from query automatically
 # -----------------------------------------------------------------------------------
 
