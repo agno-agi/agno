@@ -18,6 +18,7 @@ import pytest
 
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb, ComponentType
+from agno.registry import Registry
 from agno.team.team import Team, get_team_by_id, get_teams
 
 # =============================================================================
@@ -724,10 +725,21 @@ class TestGetTeamById:
         assert team is None
 
     def test_get_team_by_id_sets_db(self, mock_db):
-        """Test get_team_by_id sets db on returned team."""
-        mock_db.get_config.return_value = {"config": {"id": "db-team", "name": "DB Team"}}
+        """Test get_team_by_id sets db on returned team via registry."""
+        # The db is set via registry lookup when config contains a serialized db reference
+        mock_db.id = "test-db"
+        mock_db.get_config.return_value = {
+            "config": {
+                "id": "db-team",
+                "name": "DB Team",
+                "db": {"type": "postgres", "id": "test-db"},
+            }
+        }
 
-        team = get_team_by_id(db=mock_db, id="db-team")
+        # Create registry with the mock db registered
+        registry = Registry(dbs=[mock_db])
+
+        team = get_team_by_id(db=mock_db, id="db-team", registry=registry)
 
         assert team is not None
         assert team.db == mock_db
@@ -820,14 +832,25 @@ class TestGetTeams:
         assert teams[0].id == "valid-team"
 
     def test_get_teams_sets_db_on_all_teams(self, mock_db):
-        """Test get_teams sets db on all returned teams."""
+        """Test get_teams sets db on all returned teams via registry."""
+        # The db is set via registry lookup when config contains a serialized db reference
+        mock_db.id = "test-db"
         mock_db.list_components.return_value = (
             [{"component_id": "team-1"}],
             None,
         )
-        mock_db.get_config.return_value = {"config": {"id": "team-1", "name": "Team 1"}}
+        mock_db.get_config.return_value = {
+            "config": {
+                "id": "team-1",
+                "name": "Team 1",
+                "db": {"type": "postgres", "id": "test-db"},
+            }
+        }
 
-        teams = get_teams(db=mock_db)
+        # Create registry with the mock db registered
+        registry = Registry(dbs=[mock_db])
+
+        teams = get_teams(db=mock_db, registry=registry)
 
         assert len(teams) == 1
         assert teams[0].db == mock_db

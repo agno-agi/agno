@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agno.db.base import BaseDb, ComponentType
+from agno.registry import Registry
 from agno.workflow.workflow import Workflow, get_workflow_by_id, get_workflows
 
 # =============================================================================
@@ -574,14 +575,23 @@ class TestGetWorkflowById:
         assert workflow is None
 
     def test_get_workflow_by_id_sets_db(self, mock_db):
-        """Test get_workflow_by_id sets db on returned workflow."""
+        """Test get_workflow_by_id sets db on returned workflow via registry."""
+        # The db is set via registry lookup when config contains a serialized db reference
+        mock_db.id = "test-db"
         mock_db.get_config.return_value = {
-            "config": {"id": "db-workflow", "name": "DB Workflow"},
+            "config": {
+                "id": "db-workflow",
+                "name": "DB Workflow",
+                "db": {"type": "postgres", "id": "test-db"},
+            },
             "version": 1,
         }
         mock_db.get_links.return_value = []
 
-        workflow = get_workflow_by_id(db=mock_db, id="db-workflow")
+        # Create registry with the mock db registered
+        registry = Registry(dbs=[mock_db])
+
+        workflow = get_workflow_by_id(db=mock_db, id="db-workflow", registry=registry)
 
         assert workflow is not None
         assert workflow.db == mock_db
@@ -659,14 +669,25 @@ class TestGetWorkflows:
         assert workflows[0].id == "valid-workflow"
 
     def test_get_workflows_sets_db_on_all_workflows(self, mock_db):
-        """Test get_workflows sets db on all returned workflows."""
+        """Test get_workflows sets db on all returned workflows via registry."""
+        # The db is set via registry lookup when config contains a serialized db reference
+        mock_db.id = "test-db"
         mock_db.list_components.return_value = (
             [{"component_id": "workflow-1"}],
             None,
         )
-        mock_db.get_config.return_value = {"config": {"id": "workflow-1", "name": "Workflow 1"}}
+        mock_db.get_config.return_value = {
+            "config": {
+                "id": "workflow-1",
+                "name": "Workflow 1",
+                "db": {"type": "postgres", "id": "test-db"},
+            }
+        }
 
-        workflows = get_workflows(db=mock_db)
+        # Create registry with the mock db registered
+        registry = Registry(dbs=[mock_db])
+
+        workflows = get_workflows(db=mock_db, registry=registry)
 
         assert len(workflows) == 1
         assert workflows[0].db == mock_db
