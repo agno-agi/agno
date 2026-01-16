@@ -143,7 +143,8 @@ class ConfigResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the OS instance")
     description: Optional[str] = Field(None, description="Description of the OS instance")
     available_models: Optional[List[str]] = Field(None, description="List of available models")
-    databases: List[str] = Field(..., description="List of database IDs")
+    os_database: Optional[str] = Field(None, description="ID of the database used for the OS instance")
+    databases: List[str] = Field(..., description="List of database IDs used by the components of the OS instance")
     chat: Optional[ChatConfig] = Field(None, description="Chat configuration")
 
     session: Optional[SessionConfig] = Field(None, description="Session configuration")
@@ -556,3 +557,72 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
     data: List[T] = Field(..., description="List of items for the current page")
     meta: PaginationInfo = Field(..., description="Pagination metadata")
+
+
+class ComponentType(str, Enum):
+    AGENT = "agent"
+    TEAM = "team"
+    WORKFLOW = "workflow"
+
+
+class ComponentCreate(BaseModel):
+    name: str = Field(..., description="Display name")
+    component_id: Optional[str] = Field(
+        None, description="Unique identifier for the entity. Auto-generated from name if not provided."
+    )
+    component_type: ComponentType = Field(..., description="Type of entity: agent, team, or workflow")
+    description: Optional[str] = Field(None, description="Optional description")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Optional metadata")
+    # Config parameters are optional, but if provided, they will be used to create the initial config
+    config: Optional[Dict[str, Any]] = Field(None, description="Optional configuration")
+    label: Optional[str] = Field(None, description="Optional label (e.g., 'stable')")
+    stage: str = Field("draft", description="Stage: 'draft' or 'published'")
+    notes: Optional[str] = Field(None, description="Optional notes")
+    set_current: bool = Field(True, description="Set as current version")
+
+
+class ComponentResponse(BaseModel):
+    component_id: str
+    component_type: ComponentType
+    name: Optional[str] = None
+    description: Optional[str] = None
+    current_version: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = None
+    created_at: int
+    updated_at: Optional[int] = None
+
+
+class ConfigCreate(BaseModel):
+    config: Dict[str, Any] = Field(..., description="The configuration data")
+    version: Optional[int] = Field(None, description="Optional version number")
+    label: Optional[str] = Field(None, description="Optional label (e.g., 'stable')")
+    stage: str = Field("draft", description="Stage: 'draft' or 'published'")
+    notes: Optional[str] = Field(None, description="Optional notes")
+    links: Optional[List[Dict[str, Any]]] = Field(None, description="Optional links to child components")
+    set_current: bool = Field(True, description="Set as current version")
+
+
+class ComponentConfigResponse(BaseModel):
+    component_id: str
+    version: int
+    label: Optional[str] = None
+    stage: str
+    config: Dict[str, Any]
+    notes: Optional[str] = None
+    created_at: int
+    updated_at: Optional[int] = None
+
+
+class ComponentUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    component_type: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class ConfigUpdate(BaseModel):
+    config: Optional[Dict[str, Any]] = None
+    label: Optional[str] = None
+    stage: Optional[str] = None
+    notes: Optional[str] = None
+    links: Optional[List[Dict[str, Any]]] = None
