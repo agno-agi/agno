@@ -1,0 +1,127 @@
+chat:
+  quick_prompts:
+    # ============================================================================
+    # FLAGSHIP AGENTS - THE STARS
+    # ============================================================================
+    planning-agent:
+      - "Build a complete market analysis of the electric vehicle industry"
+      - "Create a competitor analysis for OpenAI vs Anthropic vs Google"
+      - "Research AI agents and create an investment thesis"
+
+    devil-advocate-agent:
+      - "Challenge this thesis: NVIDIA will dominate AI infrastructure for a decade"
+      - "What could go wrong with betting heavily on AI stocks?"
+      - "Find the flaws in the assumption that AI will replace most jobs"
+
+    image-analyst-agent:
+      - "Analyze this chart and extract the key data points"
+      - "What does this screenshot show? Summarize the content."
+      - "Compare these two product images and identify differences"
+
+    web-intelligence-agent:
+      - "Analyze openai.com and summarize their product offerings"
+      - "Extract pricing information from anthropic.com"
+      - "Compare the websites of Stripe and Square"
+
+    # ============================================================================
+    # RESEARCH & KNOWLEDGE AGENTS
+    # ============================================================================
+    research-agent:
+      - "Research: Is AI in a bubble? Present both sides with sources."
+      - "What are the latest breakthroughs in small language models?"
+      - "Research the competitive landscape for vector databases"
+
+    deep-knowledge-agent:
+      - "What is Agno and how does it work?"
+      - "What are Agno's key features for building AI agents?"
+      - "How does Agno handle knowledge base management?"
+
+    agno-mcp-agent:
+      - "What is Agno?"
+      - "What is AgentOS?"
+      - "How do I build a team of agents with Agno?"
+
+    agno-knowledge-agent:
+      - "What is Agno?"
+      - "What is AgentOS?"
+      - "How do I create an agent with tools?"
+
+    self-learning-research-agent:
+      - "What is the consensus on AI agents in enterprise production systems?"
+      - "Has the consensus on AI agents in production changed recently?"
+      - "How are companies deploying AI models in production?"
+
+    self-learning-agent:
+      - "Analyze NVIDIA and Tesla performance and suggest investment rules"
+      - "What's a reliable way to evaluate AI stocks today?"
+      - "What prior learnings can I use?"
+
+    # ============================================================================
+    # DATA & CODE AGENTS
+    # ============================================================================
+    code-executor-agent:
+      - "Calculate the first 20 Fibonacci numbers"
+      - "Generate 10 random user profiles with name, email, and age as JSON"
+      - "What's the sum of all prime numbers under 1000?"
+
+    data-analyst-agent:
+      - "Analyze this data: Jan: 5000, Feb: 6200, Mar: 5800, Apr: 7100, May: 8200"
+      - "Calculate statistics for: 23, 45, 67, 89, 12, 34, 56, 78, 90, 43"
+      - "Create a bar chart of quarterly sales: Q1: 25000, Q2: 31000, Q3: 28000, Q4: 35000"
+
+    # ============================================================================
+    # FINANCE AGENTS
+    # ============================================================================
+    finance-agent:
+      - "How are my fav stocks performing?"
+      - "Prepare an investment brief on Apple (AAPL)"
+      - "Summarize key financial metrics for TSLA"
+
+    report-writer-agent:
+      - "Write an executive summary on the current state of AI agents in 2025"
+      - "Create a brief market analysis of the electric vehicle industry"
+      - "Generate a competitive analysis of cloud computing providers"
+
+    # ============================================================================
+    # TEAMS - MULTI-AGENT COORDINATION
+    # ============================================================================
+    due-diligence-team:
+      - "Due diligence on Anthropic - should we invest?"
+      - "Evaluate OpenAI as a strategic partner - what are the risks?"
+      - "Analyze NVIDIA as an investment - challenge the bull case"
+
+    investment-team:
+      - "Complete investment analysis of NVIDIA"
+      - "Should I invest in Microsoft, Google, or Amazon? Full analysis."
+      - "Compare semiconductor stocks: NVDA, AMD, INTC, TSM"
+
+    research-report-team:
+      - "Research the AI agent market and write a comprehensive report"
+      - "Create a detailed analysis of the semiconductor industry"
+      - "Write a whitepaper on enterprise AI adoption"
+
+    finance-team:
+      - "Analyze current sentiment around AI stocks"
+      - "Analyze the semiconductor market: NVIDIA, AMD, Intel, Taiwan Semiconductor"
+      - "Analyze the automotive industry: Tesla, Ford, General Motors, Toyota"
+
+    # ============================================================================
+    # WORKFLOWS - SOPHISTICATED PIPELINES
+    # ============================================================================
+    startup-analyst-workflow:
+      - "Due diligence on: Anthropic"
+      - "Evaluate this company: OpenAI"
+      - "Should we invest in or partner with: Perplexity AI?"
+
+    deep-research-workflow:
+      - "Deep research: What's the future of AI agents in enterprise?"
+      - "Comprehensive research on climate tech investment opportunities"
+      - "In-depth analysis: Is AI in a bubble?"
+
+    data-analysis-workflow:
+      - "Analyze this sales data: Q1: 25000, Q2: 31000, Q3: 28000, Q4: 35000"
+      - "Analyze monthly revenue: Jan 5000, Feb 6200, Mar 5800, Apr 7100, May 8200"
+
+    research-workflow:
+      - "Research the state of AI agents in 2025"
+      - "What are the latest trends in machine learning?"

@@ -3090,7 +3090,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.learning_id == id)
                 result = await sess.execute(stmt)
-                return result.rowcount > 0
+                return result.rowcount > 0  # type: ignore[attr-defined]
 
         except Exception as e:
             log_debug(f"Error deleting learning: {e}")
