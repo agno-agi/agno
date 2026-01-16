@@ -1,5 +1,6 @@
 """This cookbook shows how to add content from multiple paths and URLs to the knowledge base.
-1. Run: `python cookbook/agent_concepts/knowledge/04_from_multiple.py` to run the cookbook
+
+1. Run: `python cookbook/08_knowledge/basic_operations/sync/04_from_multiple.py`
 """
 
 from agno.agent import Agent
@@ -16,7 +17,7 @@ knowledge = Knowledge(
 )
 
 # As a list
-knowledge.ainsert_many(
+knowledge.insert_many(
     [
         {
             "name": "CV's",
@@ -31,8 +32,8 @@ knowledge.ainsert_many(
     ]
 )
 
-# Using specifc fields
-knowledge.ainsert_many(
+# Using specific fields
+knowledge.insert_many(
     urls=[
         "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
         "https://docs.agno.com/introduction",

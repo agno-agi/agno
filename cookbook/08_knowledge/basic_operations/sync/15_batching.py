@@ -1,52 +1,55 @@
-"""This cookbook shows how to use batch embeddings with Cohere.
-1. Run: `python cookbook/agent_concepts/knowledge/01_from_path.py` to run the cookbook
+"""This cookbook shows how to use batch embeddings with OpenAI.
+
+Batch embeddings improve performance by sending multiple texts to the embedding
+API in a single request, reducing round-trips and overall latency.
+
+1. Run: `python cookbook/08_knowledge/basic_operations/sync/15_batching.py`
 """
 
-from agno.agent import Agent  # noqa
-from agno.db.postgres.postgres import PostgresDb
+from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.lancedb import LanceDb
+from agno.vectordb.pgvector import PgVector
 
-vector_db = LanceDb(
-    uri="tmp/lancedb",  # You can change this path to store data elsewhere
-    table_name="vectors",
-    embedder=OpenAIEmbedder(
-        batch_size=1000,
-        dimensions=1536,
-        enable_batch=True,
-    ),
+# Configure embedder with batch processing enabled
+embedder = OpenAIEmbedder(
+    batch_size=100,  # Process embeddings in batches of 100
+    dimensions=1536,
 )
-contents_db = PostgresDb(
+
+vector_db = PgVector(
+    table_name="batching_demo",
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-    knowledge_table="knowledge_contents",
+    embedder=embedder,
 )
-
 
 # Create Knowledge Instance
 knowledge = Knowledge(
-    name="Basic SDK Knowledge Base",
-    description="Agno 2.0 Knowledge Implementation",
+    name="Batching Demo Knowledge Base",
     vector_db=vector_db,
-    contents_db=contents_db,
 )
 
-
-knowledge.insert(
-    name="CV",
-    path="cookbook/08_knowledge/testing_resources/cv_1.pdf",
-    metadata={"user_tag": "Engineering Candidates"},
+# Insert multiple documents to demonstrate batching
+# The embedder will batch these together for efficient API calls
+knowledge.insert_many(
+    [
+        {
+            "path": "cookbook/08_knowledge/testing_resources/cv_1.pdf",
+            "metadata": {
+                "user_tag": "Engineering Candidates",
+                "candidate": "Jordan Mitchell",
+            },
+        },
+        {
+            "url": "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+            "metadata": {"user_tag": "Recipes"},
+        },
+    ]
 )
 
 agent = Agent(
-    name="My Agent",
-    description="Agno 2.0 Agent Implementation",
     knowledge=knowledge,
     search_knowledge=True,
-    debug_mode=True,
 )
 
-agent.print_response(
-    "What skills does Jordan Mitchell have?",
-    markdown=True,
-)
+agent.print_response("What skills does Jordan Mitchell have?", markdown=True)
