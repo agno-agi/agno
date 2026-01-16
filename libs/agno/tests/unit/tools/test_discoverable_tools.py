@@ -391,3 +391,222 @@ def test_use_tool_registers_in_toolkit():
     assert "use_tool" in tool_search.functions
     assert "search_tools" in tool_search.functions
     assert "list_all_tools" in tool_search.functions
+
+
+# Integration tests for agent filtering discoverable tools
+
+
+def test_agent_skips_discoverable_functions():
+    """Test that agent correctly filters out discoverable tools when determining tools for model."""
+    from unittest.mock import MagicMock
+
+    from agno.agent.agent import Agent
+    from agno.models.base import Model
+
+    # Create a function marked as discoverable
+    discoverable_func = Function.from_callable(sample_add)
+    discoverable_func.discoverable = True
+
+    # Create a regular function
+    regular_func = Function.from_callable(sample_multiply)
+    regular_func.discoverable = False
+
+    # Create agent with both functions
+    agent = Agent(tools=[discoverable_func, regular_func])
+    agent._processed_tools = [discoverable_func, regular_func]
+
+    # Mock the model
+    mock_model = MagicMock(spec=Model)
+    mock_model.supports_native_structured_outputs = False
+
+    # Mock run_response and run_context
+    from agno.run import RunContext
+    from agno.run.agent import RunOutput
+
+    mock_run_response = MagicMock(spec=RunOutput)
+    mock_run_response.input = None
+    mock_run_context = MagicMock(spec=RunContext)
+    mock_run_context.output_schema = None
+    mock_run_context.session_state = {}
+    mock_run_context.dependencies = {}
+    mock_session = MagicMock()
+
+    # Call _determine_tools_for_model
+    tools = agent._determine_tools_for_model(
+        model=mock_model,
+        processed_tools=agent._processed_tools,
+        run_response=mock_run_response,
+        run_context=mock_run_context,
+        session=mock_session,
+        async_mode=False,
+    )
+
+    # Only the regular function should be included
+    tool_names = [t.name for t in tools if isinstance(t, Function)]
+    assert "sample_multiply" in tool_names
+    assert "sample_add" not in tool_names
+
+
+def test_agent_skips_discoverable_toolkit_functions():
+    """Test that agent correctly filters out discoverable tools from toolkits."""
+    from unittest.mock import MagicMock
+
+    from agno.agent.agent import Agent
+    from agno.models.base import Model
+
+    # Create a toolkit with discoverable_tools parameter
+    toolkit = Toolkit(
+        name="test_toolkit",
+        tools=[sample_add, sample_multiply],
+        discoverable_tools=["sample_add"],  # Mark sample_add as discoverable
+    )
+
+    # Create agent with the toolkit
+    agent = Agent(tools=[toolkit])
+    agent._processed_tools = [toolkit]
+
+    # Mock the model
+    mock_model = MagicMock(spec=Model)
+    mock_model.supports_native_structured_outputs = False
+
+    # Mock run_response and run_context
+    from agno.run import RunContext
+    from agno.run.agent import RunOutput
+
+    mock_run_response = MagicMock(spec=RunOutput)
+    mock_run_response.input = None
+    mock_run_context = MagicMock(spec=RunContext)
+    mock_run_context.output_schema = None
+    mock_run_context.session_state = {}
+    mock_run_context.dependencies = {}
+    mock_session = MagicMock()
+
+    # Call _determine_tools_for_model
+    tools = agent._determine_tools_for_model(
+        model=mock_model,
+        processed_tools=agent._processed_tools,
+        run_response=mock_run_response,
+        run_context=mock_run_context,
+        session=mock_session,
+        async_mode=False,
+    )
+
+    # Only sample_multiply should be included (sample_add is discoverable)
+    tool_names = [t.name for t in tools if isinstance(t, Function)]
+    assert "sample_multiply" in tool_names
+    assert "sample_add" not in tool_names
+
+
+def test_agent_auto_creates_discoverable_tools_toolkit():
+    """Test that agent automatically creates DiscoverableTools when discoverable tools exist."""
+    from unittest.mock import MagicMock
+
+    from agno.agent.agent import Agent
+    from agno.models.base import Model
+
+    # Create a function marked as discoverable
+    discoverable_func = Function.from_callable(sample_add)
+    discoverable_func.discoverable = True
+
+    # Create a regular function
+    regular_func = Function.from_callable(sample_multiply)
+    regular_func.discoverable = False
+
+    # Create agent with both functions
+    agent = Agent(tools=[discoverable_func, regular_func])
+    agent._processed_tools = [discoverable_func, regular_func]
+
+    # Mock the model
+    mock_model = MagicMock(spec=Model)
+    mock_model.supports_native_structured_outputs = False
+
+    # Mock run_response and run_context
+    from agno.run import RunContext
+    from agno.run.agent import RunOutput
+
+    mock_run_response = MagicMock(spec=RunOutput)
+    mock_run_response.input = None
+    mock_run_context = MagicMock(spec=RunContext)
+    mock_run_context.output_schema = None
+    mock_run_context.session_state = {}
+    mock_run_context.dependencies = {}
+    mock_session = MagicMock()
+
+    # Call _determine_tools_for_model
+    tools = agent._determine_tools_for_model(
+        model=mock_model,
+        processed_tools=agent._processed_tools,
+        run_response=mock_run_response,
+        run_context=mock_run_context,
+        session=mock_session,
+        async_mode=False,
+    )
+
+    tool_names = [t.name for t in tools if isinstance(t, Function)]
+
+    # Regular function should be included
+    assert "sample_multiply" in tool_names
+
+    # Discoverable function should NOT be directly included
+    assert "sample_add" not in tool_names
+
+    # DiscoverableTools methods should be included
+    assert "search_tools" in tool_names
+    assert "list_all_tools" in tool_names
+    assert "use_tool" in tool_names
+
+
+def test_agent_no_discoverable_tools_toolkit_when_none():
+    """Test that agent does not create DiscoverableTools when no discoverable tools exist."""
+    from unittest.mock import MagicMock
+
+    from agno.agent.agent import Agent
+    from agno.models.base import Model
+
+    # Create only regular functions (none discoverable)
+    regular_func1 = Function.from_callable(sample_add)
+    regular_func1.discoverable = False
+
+    regular_func2 = Function.from_callable(sample_multiply)
+    regular_func2.discoverable = False
+
+    # Create agent with only regular functions
+    agent = Agent(tools=[regular_func1, regular_func2])
+    agent._processed_tools = [regular_func1, regular_func2]
+
+    # Mock the model
+    mock_model = MagicMock(spec=Model)
+    mock_model.supports_native_structured_outputs = False
+
+    # Mock run_response and run_context
+    from agno.run import RunContext
+    from agno.run.agent import RunOutput
+
+    mock_run_response = MagicMock(spec=RunOutput)
+    mock_run_response.input = None
+    mock_run_context = MagicMock(spec=RunContext)
+    mock_run_context.output_schema = None
+    mock_run_context.session_state = {}
+    mock_run_context.dependencies = {}
+    mock_session = MagicMock()
+
+    # Call _determine_tools_for_model
+    tools = agent._determine_tools_for_model(
+        model=mock_model,
+        processed_tools=agent._processed_tools,
+        run_response=mock_run_response,
+        run_context=mock_run_context,
+        session=mock_session,
+        async_mode=False,
+    )
+
+    tool_names = [t.name for t in tools if isinstance(t, Function)]
+
+    # Both regular functions should be included
+    assert "sample_add" in tool_names
+    assert "sample_multiply" in tool_names
+
+    # DiscoverableTools methods should NOT be included
+    assert "search_tools" not in tool_names
+    assert "list_all_tools" not in tool_names
+    assert "use_tool" not in tool_names

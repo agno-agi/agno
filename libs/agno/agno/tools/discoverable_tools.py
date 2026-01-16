@@ -57,6 +57,7 @@ class DiscoverableTools(Toolkit):
             elif callable(tool):
                 # Convert callable to Function
                 func = Function.from_callable(tool)
+                func.process_entrypoint()
                 self._discoverable_functions[func.name] = func
 
     def search_tools(self, query: str) -> str:
