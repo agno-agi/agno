@@ -15,25 +15,25 @@ chat:
       - "Latest breakthroughs in small language models."
       - "What has changed recently in the Japanese yen carry trade and why is it becoming more volatile?"
 
-    reasoning-research-agent:
-      - "Competitive landscape for vector databases."
-      - "Latest breakthroughs in small language models."
-      - "What has changed recently in the Japanese yen carry trade and why is it becoming more volatile?"
+    code-executor-agent:
+      - "Calculate the first 20 Fibonacci numbers"
+      - "Generate 10 random user profiles with name, email, and age as JSON"
+      - "What's the sum of all prime numbers under 1000?"
 
-    memory-manager:
-      - "What do you know about me?"
-      - "I live in New York City"
-      - "I like to hike and swim on the weekends"
+    data-analyst-agent:
+      - "Analyze this data: Jan: 5000, Feb: 6200, Mar: 5800, Apr: 7100, May: 8200"
+      - "Calculate statistics for: 23, 45, 67, 89, 12, 34, 56, 78, 90, 43"
+      - "Create a bar chart of quarterly sales: Q1: 25000, Q2: 31000, Q3: 28000, Q4: 35000"
+
+    report-writer-agent:
+      - "Write an executive summary on the current state of AI agents in 2025"
+      - "Create a brief market analysis of the electric vehicle industry"
+      - "Generate a competitive analysis of cloud computing providers"
 
     deep-knowledge-agent:
       - "What is Agno?"
       - "What are Agno's key features?"
       - "How does Agno handle knowledge base management?"
-
-    youtube-agent:
-      - "Summarize this video: https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-      - "Explain this video in simple terms: https://www.youtube.com/watch?v=nLkBNnnA8Ac&t=1s"
-      - "What can you do?"
 
     finance-team:
       - "Analyze current sentiment around AI stocks."

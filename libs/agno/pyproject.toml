@@ -344,11 +344,13 @@ integration-tests = [
 
 # Dependencies for demo application
 demo = [
+    "agno[dev]",
     "anthropic",
     "chromadb",
     "ddgs",
     "fastapi[standard]",
     "google-genai",
+    "matplotlib",
     "mcp",
     "nest_asyncio",
     "openai",
