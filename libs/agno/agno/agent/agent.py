@@ -7662,6 +7662,8 @@ class Agent:
                 registry_db = registry.get_db(db_id)
                 if registry_db is not None:
                     config["db"] = registry_db
+                else:
+                    del config["db"]
             else:
                 # No registry or no db_id, fall back to creating from dict
                 config["db"] = db_from_dict(db_data)
@@ -7718,6 +7720,8 @@ class Agent:
         # Remove keys that aren't constructor parameters
         config.pop("team_id", None)
         config.pop("workflow_id", None)
+
+        print(f"config.db: {config.get('db')}")
 
         return cls(
             # --- Agent settings ---

@@ -623,6 +623,8 @@ class Workflow:
                 registry_db = registry.get_db(db_id)
                 if registry_db is not None:
                     config["db"] = registry_db
+                else:
+                    del config["db"]
             else:
                 # No registry or no db_id, fall back to creating from dict
                 config["db"] = db_from_dict(db_data)
