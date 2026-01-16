@@ -2935,7 +2935,11 @@ class Knowledge:
 
     # Shared context strings
     _KNOWLEDGE_BASE_SEARCH_INSTRUCTION = (
-        "You have access to a knowledge base. Use the search_knowledge_base tool to find relevant information."
+        "You have access to a knowledge base.\n"
+        "IMPORTANT: For any user question that could be answered from the knowledge base, you MUST call the "
+        "search_knowledge_base tool before responding.\n"
+        "If the user question is ambiguous (e.g., 'the candidate') do NOT ask clarifying questions first—search the "
+        "knowledge base to identify the relevant documents.\n"
     )
 
     _AGENTIC_FILTER_INSTRUCTION_TEMPLATE = """
