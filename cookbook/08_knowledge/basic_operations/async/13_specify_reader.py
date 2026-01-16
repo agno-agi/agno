@@ -1,6 +1,6 @@
 """This cookbook shows how to specify a reader for reading content.
 Readers are assigned by default to the content based on the file extension.
-You can specify a reader for a specific content by passing the reader to the insert method
+You can specify a reader for a specific content by passing the reader to the add_content method
 if you want to use a different reader for a specific content.
 
 1. Run: `python cookbook/agent_concepts/knowledge/13_specify_reader.py` to run the cookbook
@@ -24,7 +24,7 @@ knowledge = Knowledge(
 
 # Use a specific reader
 asyncio.run(
-    knowledge.ainsert(
+    knowledge.add_content_async(
         name="CV",
         path="cookbook/08_knowledge/testing_resources/cv_1.pdf",
         metadata={"user_tag": "Engineering Candidates"},
@@ -32,6 +32,9 @@ asyncio.run(
     )
 )
 
-agent = Agent(knowledge=knowledge)
+agent = Agent(
+    knowledge=knowledge,
+    instructions="You are a helpful assistant that can answer questions about the documents in the knowledge base.",
+)
 
-agent.print_response("What can you tell me about my documents?", markdown=True)
+agent.print_response("What documents are in the knowledge base?", markdown=True)
