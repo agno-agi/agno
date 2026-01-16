@@ -52,7 +52,7 @@ knowledge = Knowledge(
     vector_db=PgVector(table_name="code_custom_tokenizer", db_url=db_url),
 )
 
-knowledge.add_content(
+knowledge.insert(
     url="https://raw.githubusercontent.com/agno-agi/agno/main/libs/agno/agno/session/workflow.py",
     reader=TextReader(
         chunking_strategy=CodeChunking(
