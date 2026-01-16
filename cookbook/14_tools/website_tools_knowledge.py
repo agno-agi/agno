@@ -13,7 +13,7 @@ kb = Knowledge(
     ),
 )
 
-kb.add_contents(
+kb.insert_many(
     urls=[
         "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
         "https://docs.agno.com/introduction",

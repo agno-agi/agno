@@ -11,9 +11,7 @@ knowledge = Knowledge(
     vector_db=PgVector(table_name="recipes", db_url=db_url),
 )
 # Add content to the knowledge
-knowledge.add_content(
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-)
+knowledge.insert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
 
 agent = Agent(
     model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"), knowledge=knowledge

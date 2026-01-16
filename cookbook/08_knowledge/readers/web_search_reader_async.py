@@ -31,7 +31,7 @@ agent = Agent(
 if __name__ == "__main__":
     # Comment out after first run
     asyncio.run(
-        knowledge.add_content_async(
+        knowledge.ainsert(
             topics=["web3 latest trends 2025"],
             reader=WebSearchReader(
                 max_results=3,

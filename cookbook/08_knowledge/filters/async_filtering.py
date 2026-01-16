@@ -2,6 +2,7 @@ import asyncio
 import os
 
 from agno.agent import Agent
+from agno.db.postgres import AsyncPostgresDb
 from agno.db.sqlite import AsyncSqliteDb
 from agno.filters import IN
 from agno.knowledge.knowledge import Knowledge
@@ -23,6 +24,11 @@ db = AsyncSqliteDb(
     db_file="tmp/knowledge_contents.db",
 )
 
+db = AsyncPostgresDb(
+    db_url="postgresql+psycopg_async://ai:ai@localhost:5532/ai",
+    knowledge_table="knowledge_contents",
+)
+
 # Initialize Vector Database
 vector_db = PgVector(
     table_name="CVs",
@@ -41,7 +47,7 @@ knowledge = Knowledge(
 )
 
 asyncio.run(
-    knowledge.add_contents_async(
+    knowledge.ainsert_many(
         [
             {
                 "path": downloaded_cv_paths[0],
