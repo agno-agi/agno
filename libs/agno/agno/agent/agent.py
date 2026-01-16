@@ -6897,7 +6897,9 @@ class Agent:
         # Get Agent tools
         if processed_tools is not None and len(processed_tools) > 0:
             log_debug("Processing tools for model")
-            _functions = self._parse_tools(tools=processed_tools, model=model, run_context=run_context, async_mode=async_mode)
+            _functions = self._parse_tools(
+                tools=processed_tools, model=model, run_context=run_context, async_mode=async_mode
+            )
 
         # Update the session state for the functions
         if _functions:
