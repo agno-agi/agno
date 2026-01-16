@@ -450,15 +450,16 @@ def get_agent_by_id(
     Returns:
         The agent instance (shared or fresh copy based on create_fresh)
     """
-    if agent_id is None or agents is None:
+    if agent_id is None:
         return None
 
     # Try to get the agent from the list of agents
-    for agent in agents:
-        if agent.id == agent_id:
-            if create_fresh and isinstance(agent, Agent):
-                return agent.deep_copy()
-            return agent
+    if agents:
+        for agent in agents:
+            if agent.id == agent_id:
+                if create_fresh and isinstance(agent, Agent):
+                    return agent.deep_copy()
+                return agent
 
     # Try to get the agent from the database
     if db and isinstance(db, BaseDb):
@@ -495,14 +496,15 @@ def get_team_by_id(
     Returns:
         The team instance (shared or fresh copy based on create_fresh)
     """
-    if team_id is None or teams is None:
+    if team_id is None:
         return None
 
-    for team in teams:
-        if team.id == team_id:
-            if create_fresh and isinstance(team, Team):
-                return team.deep_copy()
-            return team
+    if teams:
+        for team in teams:
+            if team.id == team_id:
+                if create_fresh and isinstance(team, Team):
+                    return team.deep_copy()
+                return team
 
     if db and isinstance(db, BaseDb):
         from agno.team.team import get_team_by_id as get_team_by_id_db
@@ -541,14 +543,15 @@ def get_workflow_by_id(
     Returns:
         The workflow instance (shared or fresh copy based on create_fresh)
     """
-    if workflow_id is None or workflows is None:
+    if workflow_id is None:
         return None
 
-    for workflow in workflows:
-        if workflow.id == workflow_id:
-            if create_fresh and isinstance(workflow, Workflow):
-                return workflow.deep_copy()
-            return workflow
+    if workflows:
+        for workflow in workflows:
+            if workflow.id == workflow_id:
+                if create_fresh and isinstance(workflow, Workflow):
+                    return workflow.deep_copy()
+                return workflow
 
     if db and isinstance(db, BaseDb):
         from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db

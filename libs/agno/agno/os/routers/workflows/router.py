@@ -544,13 +544,10 @@ def get_workflow_router(
         else:
             accessible_workflows = os.workflows or []
 
-        workflows: List[Union[WorkflowResponse, WorkflowSummaryResponse]] = []
+        workflows: List[WorkflowSummaryResponse] = []
         if accessible_workflows:
             for workflow in accessible_workflows:
-                if isinstance(workflow, RemoteWorkflow):
-                    workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow))
-                else:
-                    workflows.append(await WorkflowResponse.from_workflow(workflow=workflow))
+                workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow))
 
         if os.db and isinstance(os.db, BaseDb):
             from agno.workflow.workflow import get_workflows
