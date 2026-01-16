@@ -25,7 +25,7 @@ class Registry:
     models: List[Model] = field(default_factory=list)
     dbs: List[BaseDb] = field(default_factory=list)
     vector_dbs: List[VectorDb] = field(default_factory=list)
-    schemas: List[BaseModel] = field(default_factory=list)
+    schemas: List[Type[BaseModel]] = field(default_factory=list)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[str, Callable]:
@@ -33,9 +33,11 @@ class Registry:
         for tool in self.tools:
             if isinstance(tool, Toolkit):
                 for func in tool.functions.values():
-                    lookup[func.name] = func.entrypoint
+                    if func.entrypoint is not None:
+                        lookup[func.name] = func.entrypoint
             elif isinstance(tool, Function):
-                lookup[tool.name] = tool.entrypoint
+                if tool.entrypoint is not None:
+                    lookup[tool.name] = tool.entrypoint
             elif callable(tool):
                 lookup[tool.__name__] = tool
         return lookup
