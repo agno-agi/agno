@@ -376,7 +376,9 @@ class AsyncSqliteDb(AsyncBaseDb):
         async with self.async_session_factory() as sess, sess.begin():
             table_is_available = await ais_table_available(session=sess, table_name=table_name)
 
-        if (not table_is_available) and create_table_if_not_found:
+        if not table_is_available:
+            if not create_table_if_not_found:
+                return None
             return await self._create_table(table_name=table_name, table_type=table_type)
 
         # SQLite version of table validation (no schema)
