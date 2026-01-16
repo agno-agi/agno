@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agno.agent.agent import Agent
-from agno.db.base import ComponentType
+from agno.db.base import BaseDb, ComponentType
 from agno.team.team import Team, get_team_by_id, get_teams
 
 # =============================================================================
@@ -25,11 +25,32 @@ from agno.team.team import Team, get_team_by_id, get_teams
 # =============================================================================
 
 
+def _create_mock_db_class():
+    """Create a concrete BaseDb subclass with all abstract methods stubbed."""
+    abstract_methods = {}
+    for name in dir(BaseDb):
+        attr = getattr(BaseDb, name, None)
+        if getattr(attr, "__isabstractmethod__", False):
+            abstract_methods[name] = MagicMock()
+    return type("MockDb", (BaseDb,), abstract_methods)
+
+
 @pytest.fixture
 def mock_db():
-    """Create a mock database instance."""
-    db = MagicMock()
-    db.to_dict.return_value = {"type": "postgres", "id": "test-db"}
+    """Create a mock database instance that passes isinstance(db, BaseDb)."""
+    MockDbClass = _create_mock_db_class()
+    db = MockDbClass()
+
+    # Configure common mock methods
+    db.upsert_component = MagicMock()
+    db.upsert_config = MagicMock(return_value={"version": 1})
+    db.delete_component = MagicMock(return_value=True)
+    db.get_config = MagicMock()
+    db.list_components = MagicMock()
+    db.upsert_component_link = MagicMock()
+    db.load_component_graph = MagicMock()
+    db.to_dict = MagicMock(return_value={"type": "postgres", "id": "test-db"})
+
     return db
 
 

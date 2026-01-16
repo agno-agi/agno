@@ -39,8 +39,6 @@ from agno.run.agent import RunContentEvent, RunEvent, RunOutput
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
 )
-from agno.utils.string import generate_id_from_name
-
 from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
@@ -81,6 +79,7 @@ from agno.utils.print_response.workflow import (
     print_response,
     print_response_stream,
 )
+from agno.utils.string import generate_id_from_name
 from agno.workflow.agent import WorkflowAgent
 from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
