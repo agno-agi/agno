@@ -14,6 +14,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.os.auth import (
     get_auth_token_from_request,
@@ -539,19 +540,19 @@ def get_workflow_router(
             if not accessible_ids:
                 raise HTTPException(status_code=403, detail="Insufficient permissions")
 
-            accessible_workflows = filter_resources_by_access(request, os.workflows, "workflows")
+            accessible_workflows = filter_resources_by_access(request, os.workflows or [], "workflows")
         else:
-            accessible_workflows = os.workflows
+            accessible_workflows = os.workflows or []
 
-        workflows = []
+        workflows: List[Union[WorkflowResponse, WorkflowSummaryResponse]] = []
         if accessible_workflows:
             for workflow in accessible_workflows:
                 if isinstance(workflow, RemoteWorkflow):
-                    workflows.append(await WorkflowSummaryResponse.from_workflow(workflow=workflow))
+                    workflows.append(WorkflowSummaryResponse.from_workflow(workflow=workflow))
                 else:
                     workflows.append(await WorkflowResponse.from_workflow(workflow=workflow))
 
-        if os.db:
+        if os.db and isinstance(os.db, BaseDb):
             from agno.workflow.workflow import get_workflows
 
             db_workflows = get_workflows(db=os.db, registry=os.registry)

@@ -313,10 +313,13 @@ class AgentOS:
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
-            get_components_router(os_db=self.db, registry=self.registry),
-            get_registry_router(registry=self.registry),
             get_database_router(self, settings=self.settings),
         ]
+        # Add component and registry routers only if db and registry are available
+        if self.db is not None:
+            updated_routers.append(get_components_router(os_db=self.db, registry=self.registry))
+        if self.registry is not None:
+            updated_routers.append(get_registry_router(registry=self.registry))
 
         # Clear all previously existing routes
         app.router.routes = [
@@ -622,10 +625,13 @@ class AgentOS:
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
-            get_components_router(os_db=self.db, registry=self.registry),
-            get_registry_router(registry=self.registry),
             get_database_router(self, settings=self.settings),
         ]
+        # Add component and registry routers only if db and registry are available
+        if self.db is not None:
+            routers.append(get_components_router(os_db=self.db, registry=self.registry))
+        if self.registry is not None:
+            routers.append(get_registry_router(registry=self.registry))
 
         for router in routers:
             self._add_router(fastapi_app, router)

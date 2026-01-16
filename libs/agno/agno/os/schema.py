@@ -598,6 +598,7 @@ class ConfigCreate(BaseModel):
     label: Optional[str] = Field(None, description="Optional label (e.g., 'stable')")
     stage: str = Field("draft", description="Stage: 'draft' or 'published'")
     notes: Optional[str] = Field(None, description="Optional notes")
+    links: Optional[List[Dict[str, Any]]] = Field(None, description="Optional links to child components")
     set_current: bool = Field(True, description="Set as current version")
 
 

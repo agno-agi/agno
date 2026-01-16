@@ -13,6 +13,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
@@ -441,7 +442,7 @@ def get_team_router(
                 teams.append(team_response)
 
         # Also load teams from database
-        if os.db:
+        if os.db and isinstance(os.db, BaseDb):
             from agno.team.team import get_teams
 
             db_teams = get_teams(db=os.db, registry=registry)

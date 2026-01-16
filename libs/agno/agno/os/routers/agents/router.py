@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent
 from agno.agent.remote import RemoteAgent
+from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
@@ -246,7 +247,9 @@ def get_agent_router(
                 log_warning("Metadata parameter passed in both request state and kwargs, using request state")
             kwargs["metadata"] = metadata
 
-        agent = get_agent_by_id(agent_id, os.agents, os.db, registry, version=version, create_fresh=True)
+        agent = get_agent_by_id(
+            agent_id, os.agents, os.db, registry, version=int(version) if version else None, create_fresh=True
+        )
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -576,11 +579,11 @@ def get_agent_router(
                 raise HTTPException(status_code=403, detail="Insufficient permissions")
 
             # Limit results based on the user's access/scopes
-            accessible_agents = filter_resources_by_access(request, os.agents, "agents")
+            accessible_agents = filter_resources_by_access(request, os.agents or [], "agents")
         else:
-            accessible_agents = os.agents
+            accessible_agents = os.agents or []
 
-        agents = []
+        agents: List[AgentResponse] = []
         if accessible_agents:
             for agent in accessible_agents:
                 if isinstance(agent, RemoteAgent):
@@ -589,7 +592,7 @@ def get_agent_router(
                     agent_response = await AgentResponse.from_agent(agent=agent)
                     agents.append(agent_response)
 
-        if os.db:
+        if os.db and isinstance(os.db, BaseDb):
             from agno.agent.agent import get_agents
 
             db_agents = get_agents(db=os.db, registry=registry)

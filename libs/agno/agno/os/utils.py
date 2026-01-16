@@ -461,12 +461,12 @@ def get_agent_by_id(
             return agent
 
     # Try to get the agent from the database
-    if db:
+    if db and isinstance(db, BaseDb):
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
-            return agent
+            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
+            return db_agent
         except Exception as e:
             logger.error(f"Error getting agent {agent_id} from database: {e}")
             return None
@@ -504,12 +504,12 @@ def get_team_by_id(
                 return team.deep_copy()
             return team
 
-    if db:
+    if db and isinstance(db, BaseDb):
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
-            return team
+            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
+            return db_team
         except Exception as e:
             logger.error(f"Error getting team {team_id} from database: {e}")
             return None
@@ -550,12 +550,12 @@ def get_workflow_by_id(
                 return workflow.deep_copy()
             return workflow
 
-    if db:
+    if db and isinstance(db, BaseDb):
         from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
 
         try:
-            workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
-            return workflow
+            db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
+            return db_workflow
         except Exception as e:
             logger.error(f"Error getting workflow {workflow_id} from database: {e}")
             return None

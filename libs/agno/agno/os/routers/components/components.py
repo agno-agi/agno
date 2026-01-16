@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.db.base import ComponentType as DbComponentType
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     BadRequestResponse,
@@ -53,6 +54,11 @@ def get_components_router(
 def attach_routes(
     router: APIRouter, os_db: Union[BaseDb, AsyncBaseDb], registry: Optional[Registry] = None
 ) -> APIRouter:
+    # Component routes require sync database
+    if not isinstance(os_db, BaseDb):
+        raise ValueError("Component routes require a sync database (BaseDb), not an async database.")
+    db: BaseDb = os_db  # Type narrowed after isinstance check
+
     @router.get(
         "/components",
         response_model=PaginatedResponse[ComponentResponse],
@@ -71,8 +77,8 @@ def attach_routes(
             start_time_ms = time.time() * 1000
             offset = (page - 1) * limit
 
-            components, total_count = os_db.list_components(
-                component_type=component_type,
+            components, total_count = db.list_components(
+                component_type=DbComponentType(component_type.value) if component_type else None,
                 limit=limit,
                 offset=offset,
             )
@@ -121,13 +127,13 @@ def attach_routes(
                 component_db = config.get("db")
                 if component_db is not None:
                     component_db_id = component_db.get("id")
-                    if component_db_id is not None and component_db_id == os_db.id:
-                        db_dict = os_db.to_dict()
+                    if component_db_id is not None and component_db_id == db.id:
+                        db_dict = db.to_dict()
                     else:
                         if registry is not None and registry.dbs is not None and len(registry.dbs) > 0:
-                            for db in registry.dbs:
-                                if db.id == component_db_id:
-                                    db_dict = db.to_dict()
+                            for registry_db in registry.dbs:
+                                if registry_db.id == component_db_id:
+                                    db_dict = registry_db.to_dict()
                                     break
             except Exception as e:
                 log_error(f"Error getting OS Database: {e}")
@@ -135,9 +141,9 @@ def attach_routes(
 
             config["db"] = db_dict
 
-            component, _config = os_db.create_component_with_config(
+            component, _config = db.create_component_with_config(
                 component_id=component_id,
-                component_type=body.component_type,
+                component_type=DbComponentType(body.component_type.value),
                 name=body.name,
                 description=body.description,
                 metadata=body.metadata,
@@ -167,7 +173,7 @@ def attach_routes(
         component_id: str = Path(description="Component ID"),
     ) -> ComponentResponse:
         try:
-            component = os_db.get_component(component_id)
+            component = db.get_component(component_id)
             if component is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
             return ComponentResponse(**component)
@@ -191,7 +197,7 @@ def attach_routes(
         body: ComponentUpdate = Body(description="Component fields to update"),
     ) -> ComponentResponse:
         try:
-            existing = os_db.get_component(component_id)
+            existing = db.get_component(component_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
 
@@ -203,9 +209,9 @@ def attach_routes(
             if body.metadata is not None:
                 update_kwargs["metadata"] = body.metadata
             if body.component_type is not None:
-                update_kwargs["component_type"] = body.component_type
+                update_kwargs["component_type"] = DbComponentType(body.component_type)
 
-            component = os_db.upsert_component(**update_kwargs)
+            component = db.upsert_component(**update_kwargs)
             return ComponentResponse(**component)
         except HTTPException:
             raise
@@ -226,7 +232,7 @@ def attach_routes(
         component_id: str = Path(description="Component ID"),
     ) -> None:
         try:
-            deleted = os_db.delete_component(component_id)
+            deleted = db.delete_component(component_id)
             if not deleted:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
         except HTTPException:
@@ -249,7 +255,7 @@ def attach_routes(
         include_config: bool = Query(True, description="Include full config blob"),
     ) -> List[ComponentConfigResponse]:
         try:
-            configs = os_db.list_configs(component_id, include_config=include_config)
+            configs = db.list_configs(component_id, include_config=include_config)
             return [ComponentConfigResponse(**c) for c in configs]
         except Exception as e:
             log_error(f"Error listing configs: {e}")
@@ -269,7 +275,7 @@ def attach_routes(
         body: ConfigCreate = Body(description="Config data"),
     ) -> ComponentConfigResponse:
         try:
-            config = os_db.upsert_config(
+            config = db.upsert_config(
                 component_id=component_id,
                 version=None,  # Always create new
                 config=body.config,
@@ -300,7 +306,7 @@ def attach_routes(
         body: ConfigUpdate = Body(description="Config fields to update"),
     ) -> ComponentConfigResponse:
         try:
-            config = os_db.upsert_config(
+            config = db.upsert_config(
                 component_id=component_id,
                 version=version,  # Always update existing
                 config=body.config,
@@ -329,7 +335,7 @@ def attach_routes(
         component_id: str = Path(description="Component ID"),
     ) -> ComponentConfigResponse:
         try:
-            config = os_db.get_config(component_id)
+            config = db.get_config(component_id)
             if config is None:
                 raise HTTPException(status_code=404, detail=f"No current config for {component_id}")
             return ComponentConfigResponse(**config)
@@ -353,7 +359,7 @@ def attach_routes(
         version: int = Path(description="Version number"),
     ) -> ComponentConfigResponse:
         try:
-            config = os_db.get_config(component_id, version=version)
+            config = db.get_config(component_id, version=version)
 
             if config is None:
                 raise HTTPException(status_code=404, detail=f"Config {component_id} v{version} not found")
@@ -377,7 +383,7 @@ def attach_routes(
     ) -> None:
         try:
             # Resolve version number
-            deleted = os_db.delete_config(component_id, version=version)
+            deleted = db.delete_config(component_id, version=version)
             if not deleted:
                 raise HTTPException(status_code=404, detail=f"Config {component_id} v{version} not found")
         except HTTPException:
@@ -402,14 +408,14 @@ def attach_routes(
         version: int = Path(description="Version number"),
     ) -> ComponentResponse:
         try:
-            success = os_db.set_current_version(component_id, version=version)
+            success = db.set_current_version(component_id, version=version)
             if not success:
                 raise HTTPException(
                     status_code=404, detail=f"Component {component_id} or config version {version} not found"
                 )
 
             # Fetch and return updated component
-            component = os_db.get_component(component_id)
+            component = db.get_component(component_id)
             if component is None:
                 raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
 

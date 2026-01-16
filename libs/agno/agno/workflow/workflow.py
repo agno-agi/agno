@@ -39,6 +39,8 @@ from agno.run.agent import RunContentEvent, RunEvent, RunOutput
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
 )
+from agno.utils.string import generate_id_from_name
+
 from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
@@ -257,10 +259,7 @@ class Workflow:
 
     def set_id(self) -> None:
         if self.id is None:
-            if self.name is not None:
-                self.id = self.name.lower().replace(" ", "-")
-            else:
-                self.id = str(uuid4())
+            self.id = generate_id_from_name(self.name)
 
     def _has_async_db(self) -> bool:
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
@@ -710,7 +709,7 @@ class Workflow:
         if not isinstance(db_, BaseDb):
             raise ValueError("Async databases not yet supported for save(). Use a sync database.")
         if self.id is None:
-            raise ValueError("Cannot save workflow without an id")
+            self.id = generate_id_from_name(self.name)
 
         # Track saved entity versions for pinning links
         saved_versions: Dict[str, int] = {}

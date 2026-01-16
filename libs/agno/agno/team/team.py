@@ -8833,7 +8833,7 @@ class Team:
         if not isinstance(db_, BaseDb):
             raise ValueError("Async databases not yet supported for save(). Use a sync database.")
         if self.id is None:
-            raise ValueError("Cannot save team without an id")
+            self.id = generate_id_from_name(self.name)
 
         try:
             # Collect all links for members

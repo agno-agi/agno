@@ -7386,7 +7386,7 @@ class Agent:
             config["add_memories_to_context"] = self.add_memories_to_context
 
         # --- Database settings ---
-        if self.db is not None:
+        if self.db is not None and hasattr(self.db, "to_dict"):
             config["db"] = self.db.to_dict()
 
         # --- History settings ---
@@ -7415,10 +7415,12 @@ class Agent:
 
         # --- Tools ---
         # Serialize tools to their dictionary representations
-        _tools: List[Union[Function, dict]] = self._parse_tools(
-            model=self.model,
-            tools=self.tools or [],
-        )
+        _tools: List[Union[Function, dict]] = []
+        if self.model is not None:
+            _tools = self._parse_tools(
+                model=self.model,
+                tools=self.tools or [],
+            )
         if _tools:
             serialized_tools = []
             for tool in _tools:
@@ -7529,12 +7531,12 @@ class Agent:
 
         # --- Schema settings ---
         if self.input_schema is not None:
-            if issubclass(self.input_schema, BaseModel):
+            if isinstance(self.input_schema, type) and issubclass(self.input_schema, BaseModel):
                 config["input_schema"] = self.input_schema.__name__
             elif isinstance(self.input_schema, dict):
                 config["input_schema"] = self.input_schema
         if self.output_schema is not None:
-            if issubclass(self.output_schema, BaseModel):
+            if isinstance(self.output_schema, type) and issubclass(self.output_schema, BaseModel):
                 config["output_schema"] = self.output_schema.__name__
             elif isinstance(self.output_schema, dict):
                 config["output_schema"] = self.output_schema
@@ -7868,6 +7870,8 @@ class Agent:
         db_ = db or self.db
         if not db_:
             raise ValueError("Db not initialized or provided")
+        if not isinstance(db_, BaseDb):
+            raise ValueError("Async databases not yet supported for save(). Use a sync database.")
 
         if self.id is None:
             self.id = generate_id_from_name(self.name)
@@ -7952,6 +7956,10 @@ class Agent:
         db_ = db or self.db
         if not db_:
             raise ValueError("Db not initialized or provided")
+        if not isinstance(db_, BaseDb):
+            raise ValueError("Async databases not yet supported for delete(). Use a sync database.")
+        if self.id is None:
+            raise ValueError("Cannot delete agent without an id")
 
         return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
 
