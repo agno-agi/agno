@@ -19,7 +19,7 @@ or use our script:
 
 from agno.agent import Agent
 from agno.db.mongo import MongoDb
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 # MongoDB connection settings
 db_url = "mongodb://mongoadmin:secret@localhost:27017"
@@ -28,7 +28,7 @@ db = MongoDb(db_url=db_url)
 
 agent = Agent(
     db=db,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
 )
 agent.print_response("How many people live in Canada?")

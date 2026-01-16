@@ -31,7 +31,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     db=db,
     memory_manager=memory_manager,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     user_id=john_doe_id,
 )
 

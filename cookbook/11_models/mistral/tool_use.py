@@ -2,13 +2,13 @@
 
 from agno.agent import Agent
 from agno.models.mistral import MistralChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=MistralChat(
         id="mistral-large-latest",
     ),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

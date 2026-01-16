@@ -124,7 +124,7 @@ def test_empty_string_with_image_and_user_memories(image_path):
         model=OpenAIChat(id="gpt-4o-mini"),
         instructions="Describe the image provided",
         db=db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
         session_summary_manager=session_summary_manager,
         markdown=True,
     )
@@ -146,7 +146,7 @@ def test_none_input_with_image_and_user_memories(image_path):
         model=OpenAIChat(id="gpt-4o-mini"),
         instructions="Describe the image provided",
         db=db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
         session_summary_manager=session_summary_manager,
         markdown=True,
     )

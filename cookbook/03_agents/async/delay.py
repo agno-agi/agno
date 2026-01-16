@@ -2,7 +2,7 @@ import asyncio
 
 from agno.agent import Agent, RunOutput
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from rich.pretty import pprint
 
 providers = ["openai", "anthropic", "ollama", "cohere", "google"]
@@ -16,7 +16,7 @@ async def get_agent(delay, provider):
     agent = Agent(
         model=OpenAIChat(id="gpt-4"),
         instructions=instructions,
-        tools=[DuckDuckGoTools()],
+        tools=[WebSearchTools()],
     )
     await asyncio.sleep(delay)
     response: RunOutput = await agent.arun(

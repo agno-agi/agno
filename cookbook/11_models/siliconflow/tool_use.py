@@ -2,7 +2,7 @@
 
 from agno.agent import Agent
 from agno.models.siliconflow import Siliconflow
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 """
 The current version of the siliconflow-chat model's Function Calling capability is stable and supports tool integration effectively.
@@ -10,7 +10,7 @@ The current version of the siliconflow-chat model's Function Calling capability 
 
 agent = Agent(
     model=Siliconflow(id="openai/gpt-oss-120b"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     show_tool_calls=True,
     markdown=True,
     debug_mode=True,

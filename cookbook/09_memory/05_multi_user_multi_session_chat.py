@@ -30,7 +30,7 @@ user_3_session_1_id = "user_3_session_1"
 chat_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
 )
 
 

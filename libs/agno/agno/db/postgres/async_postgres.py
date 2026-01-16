@@ -1,5 +1,4 @@
 import time
-import warnings
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
@@ -60,7 +59,6 @@ class AsyncPostgresDb(AsyncBaseDb):
         versions_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
         create_schema: bool = True,
-        db_id: Optional[str] = None,  # Deprecated, use id instead.
     ):
         """
         Async interface for interacting with a PostgreSQL database.
@@ -96,21 +94,14 @@ class AsyncPostgresDb(AsyncBaseDb):
             learnings_table (Optional[str]): Name of the table to store learnings.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
-            db_id: Deprecated, use id instead.
 
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
             ValueError: If none of the tables are provided.
         """
-        if db_id is not None:
-            warnings.warn(
-                "The 'db_id' parameter is deprecated and will be removed in future versions. Use 'id' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
         super().__init__(
-            id=id or db_id,
+            id=id,
             session_table=session_table,
             memory_table=memory_table,
             metrics_table=metrics_table,

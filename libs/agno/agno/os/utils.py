@@ -24,6 +24,20 @@ from agno.utils.log import log_warning, logger
 from agno.workflow import RemoteWorkflow, Workflow
 
 
+def to_utc_datetime(value: Optional[Union[int, float, datetime]]) -> Optional[datetime]:
+    """Convert a timestamp to a UTC datetime."""
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        # If already a datetime, make sure the timezone is UTC
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+
+    return datetime.fromtimestamp(value, tz=timezone.utc)
+
+
 async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
     """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
 
@@ -871,7 +885,7 @@ def format_duration_ms(duration_ms: Optional[int]) -> str:
     return f"{duration_ms / 1000:.2f}s"
 
 
-def parse_datetime_to_utc(datetime_str: str, param_name: str = "datetime") -> "datetime":
+def timestamp_to_datetime(datetime_str: str, param_name: str = "datetime") -> "datetime":
     """Parse an ISO 8601 datetime string and convert to UTC.
 
     Args:

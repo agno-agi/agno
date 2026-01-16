@@ -5,7 +5,7 @@ from typing import Optional
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.utils.audio import write_audio_to_file
 from agno.utils.streamlit import get_model_with_provider
 
@@ -45,7 +45,7 @@ def generate_podcast_agent(
         id="podcast-generator",
         user_id=user_id,
         session_id=session_id,
-        tools=[DuckDuckGoTools()],
+        tools=[WebSearchTools()],
         instructions=dedent("""
             You are a podcast scriptwriter specializing in concise and engaging narratives.
             Your task is to research a given topic and compose a compelling podcast script.

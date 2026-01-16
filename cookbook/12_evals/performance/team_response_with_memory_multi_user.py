@@ -65,7 +65,7 @@ weather_agent = Agent(
     instructions="Be concise, reply with one sentence.",
     tools=[get_weather],
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     add_history_to_context=True,
 )
 
@@ -76,7 +76,7 @@ activities_agent = Agent(
     instructions="Be concise, reply with one sentence.",
     tools=[get_activities],
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     add_history_to_context=True,
 )
 
@@ -85,7 +85,7 @@ team = Team(
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions="Be concise, reply with one sentence.",
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     markdown=True,
     add_history_to_context=True,
 )

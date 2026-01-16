@@ -1,10 +1,11 @@
 import json
 from textwrap import dedent
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 from uuid import uuid4
 
 from agno.db.base import BaseDb
 from agno.db.schemas import UserMemory
+from agno.run import RunContext
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
 
@@ -62,7 +63,7 @@ class MemoryTools(Toolkit):
             **kwargs,
         )
 
-    def think(self, session_state: Dict[str, Any], thought: str) -> str:
+    def think(self, run_context: RunContext, thought: str) -> str:
         """Use this tool as a scratchpad to reason about memory operations, refine your approach, brainstorm memory content, or revise your plan.
 
         Call `Think` whenever you need to figure out what to do next, analyze the user's requirements, plan memory operations, or decide on execution strategy.
@@ -75,14 +76,14 @@ class MemoryTools(Toolkit):
             log_debug(f"Memory Thought: {thought}")
 
             # Add the thought to the session state
-            if session_state is None:
-                session_state = {}
-            if "memory_thoughts" not in session_state:
-                session_state["memory_thoughts"] = []
-            session_state["memory_thoughts"].append(thought)
+            if run_context.session_state is None:
+                run_context.session_state = {}
+            if "memory_thoughts" not in run_context.session_state:
+                run_context.session_state["memory_thoughts"] = []
+            run_context.session_state["memory_thoughts"].append(thought)
 
             # Return the full log of thoughts and the new thought
-            thoughts = "\n".join([f"- {t}" for t in session_state["memory_thoughts"]])
+            thoughts = "\n".join([f"- {t}" for t in run_context.session_state["memory_thoughts"]])
             formatted_thoughts = dedent(
                 f"""Memory Thoughts:
                 {thoughts}
@@ -93,21 +94,21 @@ class MemoryTools(Toolkit):
             log_error(f"Error recording memory thought: {e}")
             return f"Error recording memory thought: {e}"
 
-    def get_memories(self, session_state: Dict[str, Any]) -> str:
+    def get_memories(self, run_context: RunContext) -> str:
         """
         Use this tool to get a list of memories for the current user from the database.
         """
         try:
-            # Get user info from session state
-            user_id = session_state.get("current_user_id") if session_state else None
+            # Get user info from run context
+            user_id = run_context.user_id
 
             memories = self.db.get_user_memories(user_id=user_id)
 
             # Store the result in session state for analysis
-            if session_state is None:
-                session_state = {}
-            if "memory_operations" not in session_state:
-                session_state["memory_operations"] = []
+            if run_context.session_state is None:
+                run_context.session_state = {}
+            if "memory_operations" not in run_context.session_state:
+                run_context.session_state["memory_operations"] = []
 
             operation_result = {
                 "operation": "get_memories",
@@ -115,7 +116,7 @@ class MemoryTools(Toolkit):
                 "memories": [memory.to_dict() for memory in memories],  # type: ignore
                 "error": None,
             }
-            session_state["memory_operations"].append(operation_result)
+            run_context.session_state["memory_operations"].append(operation_result)
 
             return json.dumps([memory.to_dict() for memory in memories], indent=2)  # type: ignore
         except Exception as e:
@@ -124,7 +125,7 @@ class MemoryTools(Toolkit):
 
     def add_memory(
         self,
-        session_state: Dict[str, Any],
+        run_context: RunContext,
         memory: str,
         topics: Optional[List[str]] = None,
     ) -> str:
@@ -140,8 +141,8 @@ class MemoryTools(Toolkit):
         try:
             log_debug(f"Adding memory: {memory}")
 
-            # Get user and agent info from session state
-            user_id = session_state.get("current_user_id") if session_state else None
+            # Get user info from run context
+            user_id = run_context.user_id
 
             # Create UserMemory object
             user_memory = UserMemory(
@@ -155,10 +156,10 @@ class MemoryTools(Toolkit):
             created_memory = self.db.upsert_user_memory(user_memory)
 
             # Store the result in session state for analysis
-            if session_state is None:
-                session_state = {}
-            if "memory_operations" not in session_state:
-                session_state["memory_operations"] = []
+            if run_context.session_state is None:
+                run_context.session_state = {}
+            if "memory_operations" not in run_context.session_state:
+                run_context.session_state["memory_operations"] = []
 
             memory_dict = created_memory.to_dict() if created_memory else None  # type: ignore
 
@@ -168,7 +169,7 @@ class MemoryTools(Toolkit):
                 "memory": memory_dict,
                 "error": None,
             }
-            session_state["memory_operations"].append(operation_result)
+            run_context.session_state["memory_operations"].append(operation_result)
 
             if created_memory:
                 return json.dumps({"success": True, "operation": "add_memory", "memory": memory_dict}, indent=2)
@@ -183,7 +184,7 @@ class MemoryTools(Toolkit):
 
     def update_memory(
         self,
-        session_state: Dict[str, Any],
+        run_context: RunContext,
         memory_id: str,
         memory: Optional[str] = None,
         topics: Optional[List[str]] = None,
@@ -221,10 +222,10 @@ class MemoryTools(Toolkit):
             updated_result = self.db.upsert_user_memory(updated_memory)
 
             # Store the result in session state for analysis
-            if session_state is None:
-                session_state = {}
-            if "memory_operations" not in session_state:
-                session_state["memory_operations"] = []
+            if run_context.session_state is None:
+                run_context.session_state = {}
+            if "memory_operations" not in run_context.session_state:
+                run_context.session_state["memory_operations"] = []
 
             memory_dict = updated_result.to_dict() if updated_result else None  # type: ignore
 
@@ -234,7 +235,7 @@ class MemoryTools(Toolkit):
                 "memory": memory_dict,
                 "error": None,
             }
-            session_state["memory_operations"].append(operation_result)
+            run_context.session_state["memory_operations"].append(operation_result)
 
             if updated_result:
                 return json.dumps({"success": True, "operation": "update_memory", "memory": memory_dict}, indent=2)
@@ -249,7 +250,7 @@ class MemoryTools(Toolkit):
 
     def delete_memory(
         self,
-        session_state: Dict[str, Any],
+        run_context: RunContext,
         memory_id: str,
     ) -> str:
         """Use this tool to delete a memory from the database.
@@ -275,10 +276,10 @@ class MemoryTools(Toolkit):
             self.db.delete_user_memory(memory_id)
 
             # Store the result in session state for analysis
-            if session_state is None:
-                session_state = {}
-            if "memory_operations" not in session_state:
-                session_state["memory_operations"] = []
+            if run_context.session_state is None:
+                run_context.session_state = {}
+            if "memory_operations" not in run_context.session_state:
+                run_context.session_state["memory_operations"] = []
 
             memory_dict = existing_memory.to_dict() if existing_memory else None  # type: ignore
 
@@ -289,7 +290,7 @@ class MemoryTools(Toolkit):
                 "deleted_memory": memory_dict,
                 "error": None,
             }
-            session_state["memory_operations"].append(operation_result)
+            run_context.session_state["memory_operations"].append(operation_result)
 
             return json.dumps(
                 {
@@ -305,7 +306,7 @@ class MemoryTools(Toolkit):
             log_error(f"Error deleting memory: {e}")
             return json.dumps({"success": False, "operation": "delete_memory", "error": str(e)}, indent=2)
 
-    def analyze(self, session_state: Dict[str, Any], analysis: str) -> str:
+    def analyze(self, run_context: RunContext, analysis: str) -> str:
         """Use this tool to evaluate whether the memory operations results are correct and sufficient.
         If not, go back to "Think" or use memory operations with refined parameters.
 
@@ -316,14 +317,14 @@ class MemoryTools(Toolkit):
             log_debug(f"Memory Analysis: {analysis}")
 
             # Add the analysis to the session state
-            if session_state is None:
-                session_state = {}
-            if "memory_analysis" not in session_state:
-                session_state["memory_analysis"] = []
-            session_state["memory_analysis"].append(analysis)
+            if run_context.session_state is None:
+                run_context.session_state = {}
+            if "memory_analysis" not in run_context.session_state:
+                run_context.session_state["memory_analysis"] = []
+            run_context.session_state["memory_analysis"].append(analysis)
 
             # Return the full log of analysis and the new analysis
-            analysis_log = "\n".join([f"- {a}" for a in session_state["memory_analysis"]])
+            analysis_log = "\n".join([f"- {a}" for a in run_context.session_state["memory_analysis"]])
             formatted_analysis = dedent(
                 f"""Memory Analysis:
                 {analysis_log}
@@ -338,7 +339,7 @@ class MemoryTools(Toolkit):
         You have access to the Think, Add Memory, Update Memory, Delete Memory, and Analyze tools that will help you manage user memories and analyze their operations. Use these tools as frequently as needed to successfully complete memory management tasks.
 
         ## How to use the Think, Memory Operations, and Analyze tools:
-        
+
         1. **Think**
         - Purpose: A scratchpad for planning memory operations, brainstorming memory content, and refining your approach. You never reveal your "Think" content to the user.
         - Usage: Call `think` whenever you need to figure out what memory operations to perform, analyze requirements, or decide on strategy.
@@ -407,12 +408,12 @@ class MemoryTools(Toolkit):
         Analyze: Successfully deleted the outdated work schedule memory. The old information won't interfere with future scheduling requests.
 
         Final Answer: I've removed your old work schedule information. Feel free to share your new schedule when you're ready, and I'll store the updated information.
-        
+
         #### Example 4: Retrieving Memories
 
         User: What have you remembered about me?
         Think: The user wants to retrieve memories about themselves. I should use the get_memories tool to retrieve the memories.
-        Get Memories: 
+        Get Memories:
         Analyze: Successfully retrieved the memories about the user. The memories are relevant to the user's preferences and activities.
 
         Final Answer: I've retrieved the memories about you. You like to hike in the mountains on weekends and travel to new places and experience different cultures. You are planning to travel to Africa in December.\

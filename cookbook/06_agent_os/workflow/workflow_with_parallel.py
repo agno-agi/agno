@@ -3,14 +3,14 @@ from agno.db.sqlite import SqliteDb
 
 # Import the workflows
 from agno.os import AgentOS
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
 # Create agents
-researcher = Agent(name="Researcher", tools=[HackerNewsTools(), DuckDuckGoTools()])
+researcher = Agent(name="Researcher", tools=[HackerNewsTools(), WebSearchTools()])
 writer = Agent(name="Writer")
 reviewer = Agent(name="Reviewer")
 

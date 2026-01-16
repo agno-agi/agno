@@ -11,7 +11,7 @@ from os import getenv
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from atla_insights import configure, instrument_agno
 
 configure(token=getenv("ATLA_API_KEY"))
@@ -19,7 +19,7 @@ configure(token=getenv("ATLA_API_KEY"))
 agent = Agent(
     name="Stock Price Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="You are a stock price agent. Answer questions in the style of a stock analyst.",
     debug_mode=True,
 )
