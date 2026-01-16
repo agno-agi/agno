@@ -1,4 +1,4 @@
-from typing import Any, Dict, Final, List, Optional, Union
+from typing import Any, Dict, Final, List, Optional, Union, cast
 
 try:
     from surrealdb import (
@@ -66,7 +66,7 @@ class SurrealDb(VectorDb):
 
     DELETE_BY_CONTENT_ID_QUERY: Final[str] = """
         DELETE FROM {collection}
-        WHERE content_id = $content_id
+        WHERE meta_data.content_id = $content_id
     """
 
     UPSERT_QUERY: Final[str] = """
@@ -272,6 +272,10 @@ class SurrealDb(VectorDb):
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
+            if doc.content_id:
+                meta_data["content_id"] = doc.content_id
+            if doc.name:
+                meta_data["name"] = doc.name
             data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
             if filters:
                 data["meta_data"].update(filters)
@@ -290,10 +294,14 @@ class SurrealDb(VectorDb):
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
+            if doc.content_id:
+                meta_data["content_id"] = doc.content_id
+            if doc.name:
+                meta_data["name"] = doc.name
             data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
             if filters:
                 data["meta_data"].update(filters)
-            thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
+            thing = f"{self.collection}:`{doc.id}`" if doc.id else self.collection
             self.client.query(self.UPSERT_QUERY.format(thing=thing), data)
 
     def search(
@@ -310,7 +318,7 @@ class SurrealDb(VectorDb):
             A list of documents that are similar to the query.
 
         """
-        if isinstance(filters, List):
+        if isinstance(filters, list):
             log_warning("Filters Expressions are not supported in SurrealDB. No filters will be applied.")
             filters = None
         query_embedding = self.embedder.get_embedding(query)
@@ -328,19 +336,21 @@ class SurrealDb(VectorDb):
             distance=self.distance,
         )
         log_debug(f"Search query: {search_query}")
-        response = self.client.query(
-            search_query,
-            {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding},
-        )
+        params: Dict[str, Any] = {"query_embedding": query_embedding}
+        if filters:
+            params.update(filters)
+        response = cast(List[Dict[str, Any]], self.client.query(search_query, params))
         log_debug(f"Search response: {response}")
 
-        documents = []
+        documents: List[Document] = []
         for item in response:
             if isinstance(item, dict):
+                item_meta_data: Dict[str, Any] = item.get("meta_data", {})
                 doc = Document(
-                    content=item.get("content", ""),
-                    embedding=item.get("embedding", []),
-                    meta_data=item.get("meta_data", {}),
+                    name=str(item_meta_data.get("name")) if item_meta_data.get("name") else None,
+                    content=str(item.get("content", "")),
+                    embedding=cast(List[float], item.get("embedding", [])),
+                    meta_data=item_meta_data,
                     embedder=self.embedder,
                 )
                 documents.append(doc)
@@ -438,7 +448,7 @@ class SurrealDb(VectorDb):
         return bool(result)
 
     @staticmethod
-    def _extract_result(query_result: Union[List[Dict[str, Any]], Dict[str, Any]]) -> Union[List[Any], Dict[str, Any]]:
+    def _extract_result(query_result: Any) -> Union[List[Any], Dict[str, Any]]:
         """Extract the actual result from SurrealDB query response.
 
         Args:
@@ -452,9 +462,7 @@ class SurrealDb(VectorDb):
         if isinstance(query_result, dict):
             return query_result
         if isinstance(query_result, list):
-            if len(query_result) > 0:
-                return query_result[0].get("result", {})
-            return []
+            return cast(List[Any], query_result)
         return []
 
     async def async_create(self) -> None:
@@ -498,6 +506,10 @@ class SurrealDb(VectorDb):
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
+            if doc.content_id:
+                meta_data["content_id"] = doc.content_id
+            if doc.name:
+                meta_data["name"] = doc.name
             data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
             if filters:
                 data["meta_data"].update(filters)
@@ -519,11 +531,15 @@ class SurrealDb(VectorDb):
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
+            if doc.content_id:
+                meta_data["content_id"] = doc.content_id
+            if doc.name:
+                meta_data["name"] = doc.name
             data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
             if filters:
                 data["meta_data"].update(filters)
             log_debug(f"Upserting document asynchronously: {doc.name} ({doc.meta_data})")
-            thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
+            thing = f"{self.collection}:`{doc.id}`" if doc.id else self.collection
             await self.async_client.query(self.UPSERT_QUERY.format(thing=thing), data)
 
     async def async_search(
@@ -543,7 +559,7 @@ class SurrealDb(VectorDb):
             A list of documents that are similar to the query.
 
         """
-        if isinstance(filters, List):
+        if isinstance(filters, list):
             log_warning("Filters Expressions are not supported in SurrealDB. No filters will be applied.")
             filters = None
 
@@ -560,18 +576,20 @@ class SurrealDb(VectorDb):
             filter_condition=filter_condition,
             distance=self.distance,
         )
-        response = await self.async_client.query(
-            search_query,
-            {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding},
-        )
+        params: Dict[str, Any] = {"query_embedding": query_embedding}
+        if filters:
+            params.update(filters)
+        response = cast(List[Dict[str, Any]], await self.async_client.query(search_query, params))
         log_debug(f"Search response: {response}")
-        documents = []
+        documents: List[Document] = []
         for item in response:
             if isinstance(item, dict):
+                item_meta_data: Dict[str, Any] = item.get("meta_data", {})
                 doc = Document(
-                    content=item.get("content", ""),
-                    embedding=item.get("embedding", []),
-                    meta_data=item.get("meta_data", {}),
+                    name=str(item_meta_data.get("name")) if item_meta_data.get("name") else None,
+                    content=str(item.get("content", "")),
+                    embedding=cast(List[float], item.get("embedding", [])),
+                    meta_data=item_meta_data,
                     embedder=self.embedder,
                 )
                 documents.append(doc)
@@ -616,22 +634,29 @@ class SurrealDb(VectorDb):
             metadata (Dict[str, Any]): The metadata to update
         """
         try:
-            # Query for documents with the given content_id
-            query = f"SELECT * FROM {self.collection} WHERE content_id = $content_id"
-            result = self.client.query(query, {"content_id": content_id})
+            # Query for documents with the given content_id (stored in meta_data)
+            select_query = f"SELECT * FROM {self.collection} WHERE meta_data.content_id = $content_id"
+            result = self.client.query(select_query, {"content_id": content_id})
+            log_debug(f"update_metadata query result: {result!r}")
 
-            if not result or not result[0].get("result"):
+            # Extract documents from response (newer surrealdb lib returns list directly)
+            extracted = self._extract_result(result)
+            doc_list: List[Dict[str, Any]] = []
+            if isinstance(extracted, dict):
+                doc_list = [extracted] if extracted else []
+            elif isinstance(extracted, list):
+                doc_list = cast(List[Dict[str, Any]], extracted)
+
+            if not doc_list:
                 log_debug(f"No documents found with content_id: {content_id}")
                 return
 
-            documents = result[0]["result"]
             updated_count = 0
 
             # Update each matching document
-            for doc in documents:
-                doc_id = doc["id"]
+            for doc in doc_list:
+                record_id = doc["id"]
                 current_metadata = doc.get("meta_data", {})
-                current_filters = doc.get("filters", {})
 
                 # Merge existing metadata with new metadata
                 if isinstance(current_metadata, dict):
@@ -640,16 +665,18 @@ class SurrealDb(VectorDb):
                 else:
                     updated_metadata = metadata
 
-                # Merge existing filters with new metadata
-                if isinstance(current_filters, dict):
-                    updated_filters = current_filters.copy()
-                    updated_filters.update(metadata)
+                # Convert RecordID to proper string format for SurrealQL
+                # SurrealQL requires backticks for record IDs with special characters
+                if hasattr(record_id, "table_name") and hasattr(record_id, "record_id"):
+                    doc_id_str = f"{record_id.table_name}:`{record_id.record_id}`"
+                elif hasattr(record_id, "id"):
+                    doc_id_str = f"{self.collection}:`{record_id.id}`"
                 else:
-                    updated_filters = metadata
+                    doc_id_str = f"{self.collection}:`{record_id}`"
 
-                # Update the document
-                update_query = f"UPDATE {doc_id} SET meta_data = $metadata, filters = $filters"
-                self.client.query(update_query, {"metadata": updated_metadata, "filters": updated_filters})
+                # Update the document (schema only has meta_data, no filters field)
+                update_query = f"UPDATE {doc_id_str} SET meta_data = $metadata"
+                self.client.query(update_query, {"metadata": updated_metadata})
                 updated_count += 1
 
             log_debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")

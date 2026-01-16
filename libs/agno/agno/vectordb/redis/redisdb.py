@@ -380,21 +380,91 @@ class RedisDB(VectorDb):
             log_error(f"Error upserting documents: {e}")
             raise
 
+    def _format_filters(self, filters: Optional[Dict[str, Any]]):
+        """
+        Convert dict filters to RedisVL FilterExpression.
+
+        Args:
+            filters: Dict of field-value pairs to filter on.
+
+        Returns:
+            RedisVL FilterExpression or None if no filters.
+        """
+        if not filters:
+            return None
+
+        filter_conditions = []
+        for key, value in filters.items():
+            filter_conditions.append(Tag(key) == str(value))
+
+        if len(filter_conditions) == 1:
+            return filter_conditions[0]
+
+        # Combine with AND logic
+        combined = filter_conditions[0]
+        for f in filter_conditions[1:]:
+            combined = combined & f
+        return combined
+
+    def _get_return_fields(self) -> List[str]:
+        """
+        Get list of fields to return from search.
+
+        Returns base document fields, schema-defined metadata fields,
+        and any additional metadata fields tracked during insertions.
+        """
+        # Base document fields
+        base_fields = ["id", "name", "content", "content_hash", "content_id"]
+        # Schema-defined metadata fields
+        schema_meta_fields = ["status", "category", "tag", "source", "mode"]
+        # Combine with dynamically tracked metadata fields
+        all_fields = set(base_fields + schema_meta_fields)
+        all_fields.update(self.meta_data_fields)
+        return list(all_fields)
+
+    def _parse_search_result(self, result: Dict[str, Any]) -> Document:
+        """
+        Convert a Redis search result to a Document with proper metadata.
+
+        Separates base document fields from metadata fields.
+        """
+        # Fields that belong to the Document dataclass
+        doc_fields = {"id", "name", "content", "content_id", "embedding"}
+        # Fields to exclude from metadata
+        exclude_fields = {"vector_distance"}
+
+        doc_data: Dict[str, Any] = {}
+        meta_data: Dict[str, Any] = {}
+
+        for key, value in result.items():
+            if key in exclude_fields:
+                continue
+            elif key in doc_fields:
+                doc_data[key] = value
+            else:
+                # Everything else goes into metadata (including content_hash)
+                meta_data[key] = value
+
+        doc_data["meta_data"] = meta_data
+        return Document.from_dict(doc_data)
+
     def search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """Search for documents using the specified search type."""
 
-        if filters and isinstance(filters, List):
-            log_warning("Filters Expressions are not supported in Redis. No filters will be applied.")
+        if isinstance(filters, List):
+            log_warning("Filter Expressions are not supported in Redis. No filters will be applied.")
             filters = None
+
+        formatted_filters = self._format_filters(filters)  # type: ignore
         try:
             if self.search_type == SearchType.vector:
-                return self.vector_search(query, limit)
+                return self.vector_search(query, limit, formatted_filters)
             elif self.search_type == SearchType.keyword:
-                return self.keyword_search(query, limit)
+                return self.keyword_search(query, limit, formatted_filters)
             elif self.search_type == SearchType.hybrid:
-                return self.hybrid_search(query, limit)
+                return self.hybrid_search(query, limit, formatted_filters)
             else:
                 raise ValueError(f"Unsupported search type: {self.search_type}")
         except Exception as e:
@@ -407,29 +477,29 @@ class RedisDB(VectorDb):
         """Async version of search method."""
         return await asyncio.to_thread(self.search, query, limit, filters)
 
-    def vector_search(self, query: str, limit: int = 5) -> List[Document]:
+    def vector_search(self, query: str, limit: int = 5, formatted_filters=None) -> List[Document]:
         """Perform vector similarity search."""
         try:
-            # Get query embedding
             query_embedding = array_to_buffer(self.embedder.get_embedding(query), "float32")
 
-            # TODO: do we want to pass back the embedding?
-            # Create vector query
             vector_query = VectorQuery(
                 vector=query_embedding,
                 vector_field_name="embedding",
-                return_fields=["id", "name", "content"],
+                return_fields=self._get_return_fields(),
+                filter_expression=formatted_filters,
                 return_score=False,
                 num_results=limit,
             )
 
-            # Execute search
             results = self.index.query(vector_query)
+            parsed = convert_bytes(results)
 
-            # Convert results to documents
-            documents = [Document.from_dict(r) for r in results]
+            # Convert results to documents with metadata
+            documents = []
+            for r in parsed:
+                doc = self._parse_search_result(r)
+                documents.append(doc)
 
-            # Apply reranking if reranker is available
             if self.reranker:
                 documents = self.reranker.rerank(query=query, documents=documents)
 
@@ -438,25 +508,25 @@ class RedisDB(VectorDb):
             log_error(f"Error in vector search: {e}")
             return []
 
-    def keyword_search(self, query: str, limit: int = 5) -> List[Document]:
+    def keyword_search(self, query: str, limit: int = 5, formatted_filters=None) -> List[Document]:
         """Perform keyword search using Redis text search."""
         try:
-            # Create text query
             text_query = TextQuery(
                 text=query,
                 text_field_name="content",
+                return_fields=self._get_return_fields(),
+                filter_expression=formatted_filters,
+                num_results=limit,
             )
 
-            # Execute search
             results = self.index.query(text_query)
-
-            # Convert results to documents
             parsed = convert_bytes(results)
 
-            # Convert results to documents
-            documents = [Document.from_dict(p) for p in parsed]
+            documents = []
+            for r in parsed:
+                doc = self._parse_search_result(r)
+                documents.append(doc)
 
-            # Apply reranking if reranker is available
             if self.reranker:
                 documents = self.reranker.rerank(query=query, documents=documents)
 
@@ -465,31 +535,30 @@ class RedisDB(VectorDb):
             log_error(f"Error in keyword search: {e}")
             return []
 
-    def hybrid_search(self, query: str, limit: int = 5) -> List[Document]:
+    def hybrid_search(self, query: str, limit: int = 5, formatted_filters=None) -> List[Document]:
         """Perform hybrid search combining vector and keyword search."""
         try:
-            # Get query embedding
             query_embedding = array_to_buffer(self.embedder.get_embedding(query), "float32")
 
-            # Create vector query
-            vector_query = HybridQuery(
+            hybrid_query = HybridQuery(
                 vector=query_embedding,
                 vector_field_name="embedding",
                 text=query,
                 text_field_name="content",
                 linear_alpha=self.vector_score_weight,
-                return_fields=["id", "name", "content"],
+                return_fields=self._get_return_fields(),
+                filter_expression=formatted_filters,
                 num_results=limit,
             )
 
-            # Execute search
-            results = self.index.query(vector_query)
+            results = self.index.query(hybrid_query)
             parsed = convert_bytes(results)
 
-            # Convert results to documents
-            documents = [Document.from_dict(p) for p in parsed]
+            documents = []
+            for r in parsed:
+                doc = self._parse_search_result(r)
+                documents.append(doc)
 
-            # Apply reranking if reranker is available
             if self.reranker:
                 documents = self.reranker.rerank(query=query, documents=documents)
 
