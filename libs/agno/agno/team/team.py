@@ -35,6 +35,7 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType, UserMemory
+from agno.db.utils import db_from_dict
 from agno.eval.base import BaseEval
 from agno.exceptions import (
     InputCheckError,
@@ -8637,12 +8638,12 @@ class Team:
                     config["db"] = registry_db
                 else:
                     # Fall back to creating a new db instance from the dict
-                    config["db"] = _db_from_dict(db_data)
+                    config["db"] = db_from_dict(db_data)
                     if config["db"] is None:
                         del config["db"]
             else:
                 # No registry or no db_id, fall back to creating from dict
-                config["db"] = _db_from_dict(db_data)
+                config["db"] = db_from_dict(db_data)
                 if config["db"] is None:
                     del config["db"]
 
@@ -10279,38 +10280,6 @@ class Team:
         except Exception:
             # If copy fails, return as is
             return field_value
-
-
-def _db_from_dict(db_data: Dict[str, Any]) -> Optional["BaseDb"]:
-    """
-    Create a database instance from a dictionary.
-
-    Args:
-        db_data: Dictionary containing database configuration
-
-    Returns:
-        Database instance or None if creation fails
-    """
-    db_type = db_data.get("type")
-    if db_type == "postgres":
-        try:
-            from agno.db.postgres import PostgresDb
-
-            return PostgresDb.from_dict(db_data)
-        except Exception as e:
-            log_error(f"Error reconstructing PostgresDb from dictionary: {e}")
-            return None
-    elif db_type == "sqlite":
-        try:
-            from agno.db.sqlite import SqliteDb
-
-            return SqliteDb.from_dict(db_data)
-        except Exception as e:
-            log_error(f"Error reconstructing SqliteDb from dictionary: {e}")
-            return None
-    else:
-        log_warning(f"Unknown database type: {db_type}")
-        return None
 
 
 def get_team_by_id(

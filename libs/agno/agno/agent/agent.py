@@ -36,6 +36,7 @@ from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
+from agno.db.utils import db_from_dict
 from agno.eval.base import BaseEval
 from agno.exceptions import (
     InputCheckError,
@@ -7675,10 +7676,10 @@ class Agent:
                     config["db"] = registry_db
                 else:
                     # Fall back to creating a new db instance from the dict
-                    config["db"] = _db_from_dict(db_data)
+                    config["db"] = db_from_dict(db_data)
             else:
                 # No registry or no db_id, fall back to creating from dict
-                config["db"] = _db_from_dict(db_data)
+                config["db"] = db_from_dict(db_data)
 
         # --- Handle Schema reconstruction ---
         if "input_schema" in config and isinstance(config["input_schema"], str):
@@ -12312,38 +12313,6 @@ class Agent:
 
         except Exception as e:
             log_debug(f"Could not create Agent run telemetry event: {e}")
-
-
-def _db_from_dict(db_data: Dict[str, Any]) -> Optional["BaseDb"]:
-    """
-    Create a database instance from a dictionary.
-
-    Args:
-        db_data: Dictionary containing database configuration
-
-    Returns:
-        Database instance or None if creation fails
-    """
-    db_type = db_data.get("type")
-    if db_type == "postgres":
-        try:
-            from agno.db.postgres import PostgresDb
-
-            return PostgresDb.from_dict(db_data)
-        except Exception as e:
-            log_error(f"Error reconstructing PostgresDb from dictionary: {e}")
-            return None
-    elif db_type == "sqlite":
-        try:
-            from agno.db.sqlite import SqliteDb
-
-            return SqliteDb.from_dict(db_data)
-        except Exception as e:
-            log_error(f"Error reconstructing SqliteDb from dictionary: {e}")
-            return None
-    else:
-        log_warning(f"Unknown database type: {db_type}")
-        return None
 
 
 def get_agent_by_id(
