@@ -33,8 +33,9 @@ from pydantic import BaseModel
 
 from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
-from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
+from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
+from agno.db.utils import db_from_dict
 from agno.eval.base import BaseEval
 from agno.exceptions import (
     InputCheckError,
@@ -54,6 +55,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
+from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
     RunEvent,
@@ -6787,6 +6789,103 @@ class Agent:
 
         return agent_tools
 
+    def _parse_tools(
+        self,
+        tools: List[Union[Toolkit, Callable, Function, Dict]],
+        model: Model,
+        run_context: Optional[RunContext] = None,
+        async_mode: bool = False,
+    ) -> List[Union[Function, dict]]:
+        _function_names = []
+        _functions: List[Union[Function, dict]] = []
+        self._tool_instructions = []
+
+        # Get output_schema from run_context
+        output_schema = run_context.output_schema if run_context else None
+
+        # Check if we need strict mode for the functions for the model
+        strict = False
+        if (
+            output_schema is not None
+            and (self.structured_outputs or (not self.use_json_mode))
+            and model.supports_native_structured_outputs
+        ):
+            strict = True
+
+        for tool in tools:
+            if isinstance(tool, Dict):
+                # If a dict is passed, it is a builtin tool
+                # that is run by the model provider and not the Agent
+                _functions.append(tool)
+                log_debug(f"Included builtin tool {tool}")
+
+            elif isinstance(tool, Toolkit):
+                # For each function in the toolkit and process entrypoint
+                toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
+                for name, _func in toolkit_functions.items():
+                    if name in _function_names:
+                        continue
+                    _function_names.append(name)
+                    _func = _func.model_copy(deep=True)
+                    _func._agent = self
+                    # Respect the function's explicit strict setting if set
+                    effective_strict = strict if _func.strict is None else _func.strict
+                    _func.process_entrypoint(strict=effective_strict)
+                    if strict and _func.strict is None:
+                        _func.strict = True
+                    if self.tool_hooks is not None:
+                        _func.tool_hooks = self.tool_hooks
+                    _functions.append(_func)
+                    log_debug(f"Added tool {name} from {tool.name}")
+
+                # Add instructions from the toolkit
+                if tool.add_instructions and tool.instructions is not None:
+                    self._tool_instructions.append(tool.instructions)
+
+            elif isinstance(tool, Function):
+                if tool.name in _function_names:
+                    continue
+                _function_names.append(tool.name)
+
+                # Respect the function's explicit strict setting if set
+                effective_strict = strict if tool.strict is None else tool.strict
+                tool.process_entrypoint(strict=effective_strict)
+                tool = tool.model_copy(deep=True)
+
+                tool._agent = self
+                if strict and tool.strict is None:
+                    tool.strict = True
+                if self.tool_hooks is not None:
+                    tool.tool_hooks = self.tool_hooks
+                _functions.append(tool)
+                log_debug(f"Added tool {tool.name}")
+
+                # Add instructions from the Function
+                if tool.add_instructions and tool.instructions is not None:
+                    self._tool_instructions.append(tool.instructions)
+
+            elif callable(tool):
+                try:
+                    function_name = tool.__name__
+
+                    if function_name in _function_names:
+                        continue
+                    _function_names.append(function_name)
+
+                    _func = Function.from_callable(tool, strict=strict)
+                    _func = _func.model_copy(deep=True)
+                    _func._agent = self
+                    if strict:
+                        _func.strict = True
+                    if self.tool_hooks is not None:
+                        _func.tool_hooks = self.tool_hooks
+                    _functions.append(_func)
+                    log_debug(f"Added tool {_func.name}")
+                except Exception as e:
+                    log_warning(f"Could not add tool {tool}: {e}")
+
+        return _functions
+
     def _determine_tools_for_model(
         self,
         model: Model,
@@ -6796,97 +6895,14 @@ class Agent:
         session: AgentSession,
         async_mode: bool = False,
     ) -> List[Union[Function, dict]]:
-        _function_names = []
         _functions: List[Union[Function, dict]] = []
-        self._tool_instructions = []
 
         # Get Agent tools
         if processed_tools is not None and len(processed_tools) > 0:
             log_debug("Processing tools for model")
-
-            # Get output_schema from run_context
-            output_schema = run_context.output_schema if run_context else None
-
-            # Check if we need strict mode for the functions for the model
-            strict = False
-            if (
-                output_schema is not None
-                and (self.structured_outputs or (not self.use_json_mode))
-                and model.supports_native_structured_outputs
-            ):
-                strict = True
-
-            for tool in processed_tools:
-                if isinstance(tool, Dict):
-                    # If a dict is passed, it is a builtin tool
-                    # that is run by the model provider and not the Agent
-                    _functions.append(tool)
-                    log_debug(f"Included builtin tool {tool}")
-
-                elif isinstance(tool, Toolkit):
-                    # For each function in the toolkit and process entrypoint
-                    toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
-                    for name, _func in toolkit_functions.items():
-                        if name in _function_names:
-                            continue
-                        _function_names.append(name)
-                        _func = _func.model_copy(deep=True)
-                        _func._agent = self
-                        # Respect the function's explicit strict setting if set
-                        effective_strict = strict if _func.strict is None else _func.strict
-                        _func.process_entrypoint(strict=effective_strict)
-                        if strict and _func.strict is None:
-                            _func.strict = True
-                        if self.tool_hooks is not None:
-                            _func.tool_hooks = self.tool_hooks
-                        _functions.append(_func)
-                        log_debug(f"Added tool {name} from {tool.name}")
-
-                    # Add instructions from the toolkit
-                    if tool.add_instructions and tool.instructions is not None:
-                        self._tool_instructions.append(tool.instructions)
-
-                elif isinstance(tool, Function):
-                    if tool.name in _function_names:
-                        continue
-                    _function_names.append(tool.name)
-
-                    # Respect the function's explicit strict setting if set
-                    effective_strict = strict if tool.strict is None else tool.strict
-                    tool.process_entrypoint(strict=effective_strict)
-                    tool = tool.model_copy(deep=True)
-
-                    tool._agent = self
-                    if strict and tool.strict is None:
-                        tool.strict = True
-                    if self.tool_hooks is not None:
-                        tool.tool_hooks = self.tool_hooks
-                    _functions.append(tool)
-                    log_debug(f"Added tool {tool.name}")
-
-                    # Add instructions from the Function
-                    if tool.add_instructions and tool.instructions is not None:
-                        self._tool_instructions.append(tool.instructions)
-
-                elif callable(tool):
-                    try:
-                        function_name = tool.__name__
-
-                        if function_name in _function_names:
-                            continue
-                        _function_names.append(function_name)
-
-                        _func = Function.from_callable(tool, strict=strict)
-                        _func = _func.model_copy(deep=True)
-                        _func._agent = self
-                        if strict:
-                            _func.strict = True
-                        if self.tool_hooks is not None:
-                            _func.tool_hooks = self.tool_hooks
-                        _functions.append(_func)
-                        log_debug(f"Added tool {_func.name}")
-                    except Exception as e:
-                        log_warning(f"Could not add tool {tool}: {e}")
+            _functions = self._parse_tools(
+                tools=processed_tools, model=model, run_context=run_context, async_mode=async_mode
+            )
 
         # Update the session state for the functions
         if _functions:
@@ -7292,6 +7308,647 @@ class Agent:
             self._cached_session = agent_session
 
         return agent_session
+
+    # -*- Serialization Functions
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the Agent to a dictionary.
+
+        Returns:
+            Dict[str, Any]: Dictionary representation of the agent configuration
+        """
+        config: Dict[str, Any] = {}
+
+        # --- Agent Settings ---
+        if self.model is not None:
+            if isinstance(self.model, Model):
+                config["model"] = self.model.to_dict()
+            else:
+                config["model"] = str(self.model)
+        if self.name is not None:
+            config["name"] = self.name
+        if self.id is not None:
+            config["id"] = self.id
+
+        # --- User settings ---
+        if self.user_id is not None:
+            config["user_id"] = self.user_id
+
+        # --- Session settings ---
+        if self.session_id is not None:
+            config["session_id"] = self.session_id
+        if self.session_state is not None:
+            config["session_state"] = self.session_state
+        if self.add_session_state_to_context:
+            config["add_session_state_to_context"] = self.add_session_state_to_context
+        if self.enable_agentic_state:
+            config["enable_agentic_state"] = self.enable_agentic_state
+        if self.overwrite_db_session_state:
+            config["overwrite_db_session_state"] = self.overwrite_db_session_state
+        if self.cache_session:
+            config["cache_session"] = self.cache_session
+        if self.search_session_history:
+            config["search_session_history"] = self.search_session_history
+        if self.num_history_sessions is not None:
+            config["num_history_sessions"] = self.num_history_sessions
+        if self.enable_session_summaries:
+            config["enable_session_summaries"] = self.enable_session_summaries
+        if self.add_session_summary_to_context is not None:
+            config["add_session_summary_to_context"] = self.add_session_summary_to_context
+        # TODO: implement session summary manager serialization
+        # if self.session_summary_manager is not None:
+        #     config["session_summary_manager"] = self.session_summary_manager.to_dict()
+
+        # --- Dependencies ---
+        if self.dependencies is not None:
+            config["dependencies"] = self.dependencies
+        if self.add_dependencies_to_context:
+            config["add_dependencies_to_context"] = self.add_dependencies_to_context
+
+        # --- Agentic Memory settings ---
+        # TODO: implement agentic memory serialization
+        # if self.memory_manager is not None:
+        # config["memory_manager"] = self.memory_manager.to_dict()
+        if self.enable_agentic_memory:
+            config["enable_agentic_memory"] = self.enable_agentic_memory
+        if self.enable_user_memories:
+            config["enable_user_memories"] = self.enable_user_memories
+        if self.add_memories_to_context is not None:
+            config["add_memories_to_context"] = self.add_memories_to_context
+
+        # --- Database settings ---
+        if self.db is not None and hasattr(self.db, "to_dict"):
+            config["db"] = self.db.to_dict()
+
+        # --- History settings ---
+        if self.add_history_to_context:
+            config["add_history_to_context"] = self.add_history_to_context
+        if self.num_history_runs is not None:
+            config["num_history_runs"] = self.num_history_runs
+        if self.num_history_messages is not None:
+            config["num_history_messages"] = self.num_history_messages
+        if self.max_tool_calls_from_history is not None:
+            config["max_tool_calls_from_history"] = self.max_tool_calls_from_history
+
+        # --- Knowledge settings ---
+        # TODO: implement knowledge serialization
+        # if self.knowledge is not None:
+        # config["knowledge"] = self.knowledge.to_dict()
+        if self.knowledge_filters is not None:
+            config["knowledge_filters"] = self.knowledge_filters
+        if self.enable_agentic_knowledge_filters:
+            config["enable_agentic_knowledge_filters"] = self.enable_agentic_knowledge_filters
+        if self.add_knowledge_to_context:
+            config["add_knowledge_to_context"] = self.add_knowledge_to_context
+        # Skip knowledge_retriever as it's a callable
+        if self.references_format != "json":
+            config["references_format"] = self.references_format
+
+        # --- Tools ---
+        # Serialize tools to their dictionary representations
+        _tools: List[Union[Function, dict]] = []
+        if self.model is not None:
+            _tools = self._parse_tools(
+                model=self.model,
+                tools=self.tools or [],
+            )
+        if _tools:
+            serialized_tools = []
+            for tool in _tools:
+                try:
+                    if isinstance(tool, Function):
+                        serialized_tools.append(tool.to_dict())
+                    else:
+                        serialized_tools.append(tool)
+                except Exception as e:
+                    # Skip tools that can't be serialized
+                    from agno.utils.log import log_warning
+
+                    log_warning(f"Could not serialize tool {tool}: {e}")
+            if serialized_tools:
+                config["tools"] = serialized_tools
+
+        if self.tool_call_limit is not None:
+            config["tool_call_limit"] = self.tool_call_limit
+        if self.tool_choice is not None:
+            config["tool_choice"] = self.tool_choice
+
+        # --- Reasoning settings ---
+        if self.reasoning:
+            config["reasoning"] = self.reasoning
+        if self.reasoning_model is not None:
+            if isinstance(self.reasoning_model, Model):
+                config["reasoning_model"] = self.reasoning_model.to_dict()
+            else:
+                config["reasoning_model"] = str(self.reasoning_model)
+        # Skip reasoning_agent to avoid circular serialization
+        if self.reasoning_min_steps != 1:
+            config["reasoning_min_steps"] = self.reasoning_min_steps
+        if self.reasoning_max_steps != 10:
+            config["reasoning_max_steps"] = self.reasoning_max_steps
+
+        # --- Default tools settings ---
+        if self.read_chat_history:
+            config["read_chat_history"] = self.read_chat_history
+        if not self.search_knowledge:
+            config["search_knowledge"] = self.search_knowledge
+        if self.update_knowledge:
+            config["update_knowledge"] = self.update_knowledge
+        if self.read_tool_call_history:
+            config["read_tool_call_history"] = self.read_tool_call_history
+        if not self.send_media_to_model:
+            config["send_media_to_model"] = self.send_media_to_model
+        if not self.store_media:
+            config["store_media"] = self.store_media
+        if not self.store_tool_messages:
+            config["store_tool_messages"] = self.store_tool_messages
+        if not self.store_history_messages:
+            config["store_history_messages"] = self.store_history_messages
+
+        # --- System message settings ---
+        # Skip system_message if it's a callable or Message object
+        # TODO: Support Message objects
+        if self.system_message is not None and isinstance(self.system_message, str):
+            config["system_message"] = self.system_message
+        if self.system_message_role != "system":
+            config["system_message_role"] = self.system_message_role
+        if not self.build_context:
+            config["build_context"] = self.build_context
+
+        # --- Context building settings ---
+        if self.description is not None:
+            config["description"] = self.description
+        # Handle instructions (can be str, list, or callable)
+        if self.instructions is not None:
+            if isinstance(self.instructions, str):
+                config["instructions"] = self.instructions
+            elif isinstance(self.instructions, list):
+                config["instructions"] = self.instructions
+            # Skip if callable
+        if self.expected_output is not None:
+            config["expected_output"] = self.expected_output
+        if self.additional_context is not None:
+            config["additional_context"] = self.additional_context
+        if self.markdown:
+            config["markdown"] = self.markdown
+        if self.add_name_to_context:
+            config["add_name_to_context"] = self.add_name_to_context
+        if self.add_datetime_to_context:
+            config["add_datetime_to_context"] = self.add_datetime_to_context
+        if self.add_location_to_context:
+            config["add_location_to_context"] = self.add_location_to_context
+        if self.timezone_identifier is not None:
+            config["timezone_identifier"] = self.timezone_identifier
+        if not self.resolve_in_context:
+            config["resolve_in_context"] = self.resolve_in_context
+
+        # --- Additional input ---
+        # Skip additional_input as it may contain complex Message objects
+        # TODO: Support Message objects
+
+        # --- User message settings ---
+        if self.user_message_role != "user":
+            config["user_message_role"] = self.user_message_role
+        if not self.build_user_context:
+            config["build_user_context"] = self.build_user_context
+
+        # --- Response settings ---
+        if self.retries > 0:
+            config["retries"] = self.retries
+        if self.delay_between_retries != 1:
+            config["delay_between_retries"] = self.delay_between_retries
+        if self.exponential_backoff:
+            config["exponential_backoff"] = self.exponential_backoff
+
+        # --- Schema settings ---
+        if self.input_schema is not None:
+            if isinstance(self.input_schema, type) and issubclass(self.input_schema, BaseModel):
+                config["input_schema"] = self.input_schema.__name__
+            elif isinstance(self.input_schema, dict):
+                config["input_schema"] = self.input_schema
+        if self.output_schema is not None:
+            if isinstance(self.output_schema, type) and issubclass(self.output_schema, BaseModel):
+                config["output_schema"] = self.output_schema.__name__
+            elif isinstance(self.output_schema, dict):
+                config["output_schema"] = self.output_schema
+
+        # --- Parser and output settings ---
+        if self.parser_model is not None:
+            if isinstance(self.parser_model, Model):
+                config["parser_model"] = self.parser_model.to_dict()
+            else:
+                config["parser_model"] = str(self.parser_model)
+        if self.parser_model_prompt is not None:
+            config["parser_model_prompt"] = self.parser_model_prompt
+        if self.output_model is not None:
+            if isinstance(self.output_model, Model):
+                config["output_model"] = self.output_model.to_dict()
+            else:
+                config["output_model"] = str(self.output_model)
+        if self.output_model_prompt is not None:
+            config["output_model_prompt"] = self.output_model_prompt
+        if not self.parse_response:
+            config["parse_response"] = self.parse_response
+        if self.structured_outputs is not None:
+            config["structured_outputs"] = self.structured_outputs
+        if self.use_json_mode:
+            config["use_json_mode"] = self.use_json_mode
+        if self.save_response_to_file is not None:
+            config["save_response_to_file"] = self.save_response_to_file
+
+        # --- Streaming settings ---
+        if self.stream is not None:
+            config["stream"] = self.stream
+        if self.stream_events is not None:
+            config["stream_events"] = self.stream_events
+        if self.store_events:
+            config["store_events"] = self.store_events
+        # Skip events_to_skip as it contains RunEvent enums
+
+        # --- Role and culture settings ---
+        if self.role is not None:
+            config["role"] = self.role
+        # --- Team and workflow settings ---
+        if self.team_id is not None:
+            config["team_id"] = self.team_id
+        if self.workflow_id is not None:
+            config["workflow_id"] = self.workflow_id
+
+        # --- Metadata ---
+        if self.metadata is not None:
+            config["metadata"] = self.metadata
+
+        # --- Context compression settings ---
+        if self.compress_tool_results:
+            config["compress_tool_results"] = self.compress_tool_results
+        # TODO: implement compression manager serialization
+        # if self.compression_manager is not None:
+        #     config["compression_manager"] = self.compression_manager.to_dict()
+
+        # --- Debug and telemetry settings ---
+        if self.debug_mode:
+            config["debug_mode"] = self.debug_mode
+        if self.debug_level != 1:
+            config["debug_level"] = self.debug_level
+        if not self.telemetry:
+            config["telemetry"] = self.telemetry
+
+        return config
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], registry: Optional[Registry] = None) -> "Agent":
+        """
+        Create an agent from a dictionary.
+
+        Args:
+            data: Dictionary containing agent configuration
+            registry: Optional registry for rehydrating tools and schemas
+
+        Returns:
+            Agent: Reconstructed agent instance
+        """
+        from agno.models.utils import get_model
+
+        config = data.copy()
+
+        # --- Handle Model reconstruction ---
+        if "model" in config:
+            model_data = config["model"]
+            if isinstance(model_data, dict) and "id" in model_data:
+                config["model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+            elif isinstance(model_data, str):
+                config["model"] = get_model(model_data)
+
+        # --- Handle reasoning_model reconstruction ---
+        # TODO: implement reasoning model deserialization
+        # if "reasoning_model" in config:
+        #     model_data = config["reasoning_model"]
+        #     if isinstance(model_data, dict) and "id" in model_data:
+        #         config["reasoning_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+        #     elif isinstance(model_data, str):
+        #         config["reasoning_model"] = get_model(model_data)
+
+        # --- Handle parser_model reconstruction ---
+        # TODO: implement parser model deserialization
+        # if "parser_model" in config:
+        #     model_data = config["parser_model"]
+        #     if isinstance(model_data, dict) and "id" in model_data:
+        #         config["parser_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+        #     elif isinstance(model_data, str):
+        #         config["parser_model"] = get_model(model_data)
+
+        # --- Handle output_model reconstruction ---
+        # TODO: implement output model deserialization
+        # if "output_model" in config:
+        #     model_data = config["output_model"]
+        #     if isinstance(model_data, dict) and "id" in model_data:
+        #         config["output_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+        #     elif isinstance(model_data, str):
+        #         config["output_model"] = get_model(model_data)
+
+        # --- Handle tools reconstruction ---
+        if "tools" in config and config["tools"]:
+            if registry:
+                config["tools"] = [registry.rehydrate_function(t) for t in config["tools"]]
+            else:
+                log_warning("No registry provided, tools will not be rehydrated.")
+                del config["tools"]
+
+        # --- Handle DB reconstruction ---
+        if "db" in config and isinstance(config["db"], dict):
+            db_data = config["db"]
+            db_id = db_data.get("id")
+
+            # First try to get the db from the registry (preferred - reuses existing connection)
+            if registry and db_id:
+                registry_db = registry.get_db(db_id)
+                if registry_db is not None:
+                    config["db"] = registry_db
+                else:
+                    del config["db"]
+            else:
+                # No registry or no db_id, fall back to creating from dict
+                config["db"] = db_from_dict(db_data)
+                if config["db"] is None:
+                    del config["db"]
+
+        # --- Handle Schema reconstruction ---
+        if "input_schema" in config and isinstance(config["input_schema"], str):
+            schema_cls = registry.get_schema(config["input_schema"]) if registry else None
+            if schema_cls:
+                config["input_schema"] = schema_cls
+            else:
+                log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
+                del config["input_schema"]
+
+        if "output_schema" in config and isinstance(config["output_schema"], str):
+            schema_cls = registry.get_schema(config["output_schema"]) if registry else None
+            if schema_cls:
+                config["output_schema"] = schema_cls
+            else:
+                log_warning(f"Output schema {config['output_schema']} not found in registry, skipping.")
+                del config["output_schema"]
+
+        # --- Handle MemoryManager reconstruction ---
+        # TODO: implement memory manager deserialization
+        # if "memory_manager" in config and isinstance(config["memory_manager"], dict):
+        #     from agno.memory import MemoryManager
+        #     config["memory_manager"] = MemoryManager.from_dict(config["memory_manager"])
+
+        # --- Handle SessionSummaryManager reconstruction ---
+        # TODO: implement session summary manager deserialization
+        # if "session_summary_manager" in config and isinstance(config["session_summary_manager"], dict):
+        #     from agno.session import SessionSummaryManager
+        #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
+
+        # --- Handle CultureManager reconstruction ---
+        # TODO: implement culture manager deserialization
+        # if "culture_manager" in config and isinstance(config["culture_manager"], dict):
+        #     from agno.culture import CultureManager
+        #     config["culture_manager"] = CultureManager.from_dict(config["culture_manager"])
+
+        # --- Handle Knowledge reconstruction ---
+        # TODO: implement knowledge deserialization
+        # if "knowledge" in config and isinstance(config["knowledge"], dict):
+        #     from agno.knowledge import Knowledge
+        #     config["knowledge"] = Knowledge.from_dict(config["knowledge"])
+
+        # --- Handle CompressionManager reconstruction ---
+        # TODO: implement compression manager deserialization
+        # if "compression_manager" in config and isinstance(config["compression_manager"], dict):
+        #     from agno.compression.manager import CompressionManager
+        #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
+
+        # Remove keys that aren't constructor parameters
+        config.pop("team_id", None)
+        config.pop("workflow_id", None)
+
+        return cls(
+            # --- Agent settings ---
+            model=config.get("model"),
+            name=config.get("name"),
+            id=config.get("id"),
+            # --- User settings ---
+            user_id=config.get("user_id"),
+            # --- Session settings ---
+            session_id=config.get("session_id"),
+            session_state=config.get("session_state"),
+            add_session_state_to_context=config.get("add_session_state_to_context", False),
+            enable_agentic_state=config.get("enable_agentic_state", False),
+            overwrite_db_session_state=config.get("overwrite_db_session_state", False),
+            cache_session=config.get("cache_session", False),
+            search_session_history=config.get("search_session_history", False),
+            num_history_sessions=config.get("num_history_sessions"),
+            enable_session_summaries=config.get("enable_session_summaries", False),
+            add_session_summary_to_context=config.get("add_session_summary_to_context"),
+            # session_summary_manager=config.get("session_summary_manager"),  # TODO
+            # --- Dependencies ---
+            dependencies=config.get("dependencies"),
+            add_dependencies_to_context=config.get("add_dependencies_to_context", False),
+            # --- Agentic Memory settings ---
+            # memory_manager=config.get("memory_manager"),  # TODO
+            enable_agentic_memory=config.get("enable_agentic_memory", False),
+            enable_user_memories=config.get("enable_user_memories", False),
+            add_memories_to_context=config.get("add_memories_to_context"),
+            # --- Database settings ---
+            db=config.get("db"),
+            # --- History settings ---
+            add_history_to_context=config.get("add_history_to_context", False),
+            num_history_runs=config.get("num_history_runs"),
+            num_history_messages=config.get("num_history_messages"),
+            max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
+            # --- Knowledge settings ---
+            # knowledge=config.get("knowledge"),  # TODO
+            knowledge_filters=config.get("knowledge_filters"),
+            enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
+            add_knowledge_to_context=config.get("add_knowledge_to_context", False),
+            references_format=config.get("references_format", "json"),
+            # --- Tools ---
+            tools=config.get("tools"),
+            tool_call_limit=config.get("tool_call_limit"),
+            tool_choice=config.get("tool_choice"),
+            # --- Reasoning settings ---
+            reasoning=config.get("reasoning", False),
+            # reasoning_model=config.get("reasoning_model"),  # TODO
+            reasoning_min_steps=config.get("reasoning_min_steps", 1),
+            reasoning_max_steps=config.get("reasoning_max_steps", 10),
+            # --- Default tools settings ---
+            read_chat_history=config.get("read_chat_history", False),
+            search_knowledge=config.get("search_knowledge", True),
+            update_knowledge=config.get("update_knowledge", False),
+            read_tool_call_history=config.get("read_tool_call_history", False),
+            send_media_to_model=config.get("send_media_to_model", True),
+            store_media=config.get("store_media", True),
+            store_tool_messages=config.get("store_tool_messages", True),
+            store_history_messages=config.get("store_history_messages", True),
+            # --- System message settings ---
+            system_message=config.get("system_message"),
+            system_message_role=config.get("system_message_role", "system"),
+            build_context=config.get("build_context", True),
+            # --- Context building settings ---
+            description=config.get("description"),
+            instructions=config.get("instructions"),
+            expected_output=config.get("expected_output"),
+            additional_context=config.get("additional_context"),
+            markdown=config.get("markdown", False),
+            add_name_to_context=config.get("add_name_to_context", False),
+            add_datetime_to_context=config.get("add_datetime_to_context", False),
+            add_location_to_context=config.get("add_location_to_context", False),
+            timezone_identifier=config.get("timezone_identifier"),
+            resolve_in_context=config.get("resolve_in_context", True),
+            # --- User message settings ---
+            user_message_role=config.get("user_message_role", "user"),
+            build_user_context=config.get("build_user_context", True),
+            # --- Response settings ---
+            retries=config.get("retries", 0),
+            delay_between_retries=config.get("delay_between_retries", 1),
+            exponential_backoff=config.get("exponential_backoff", False),
+            # --- Schema settings ---
+            input_schema=config.get("input_schema"),
+            output_schema=config.get("output_schema"),
+            # --- Parser and output settings ---
+            # parser_model=config.get("parser_model"),  # TODO
+            parser_model_prompt=config.get("parser_model_prompt"),
+            # output_model=config.get("output_model"),  # TODO
+            output_model_prompt=config.get("output_model_prompt"),
+            parse_response=config.get("parse_response", True),
+            structured_outputs=config.get("structured_outputs"),
+            use_json_mode=config.get("use_json_mode", False),
+            save_response_to_file=config.get("save_response_to_file"),
+            # --- Streaming settings ---
+            stream=config.get("stream"),
+            stream_events=config.get("stream_events"),
+            store_events=config.get("store_events", False),
+            role=config.get("role"),
+            # --- Culture settings ---
+            # culture_manager=config.get("culture_manager"),  # TODO
+            # --- Metadata ---
+            metadata=config.get("metadata"),
+            # --- Compression settings ---
+            compress_tool_results=config.get("compress_tool_results", False),
+            # compression_manager=config.get("compression_manager"),  # TODO
+            # --- Debug and telemetry settings ---
+            debug_mode=config.get("debug_mode", False),
+            debug_level=config.get("debug_level", 1),
+            telemetry=config.get("telemetry", True),
+        )
+
+    # -*- Component and Config Functions
+    def save(
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        stage: str = "published",
+        label: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Optional[int]:
+        """
+        Save the agent component and config.
+
+        Args:
+            db: The database to save the component and config to.
+            stage: The stage of the component. Defaults to "published".
+            label: The label of the component.
+            notes: The notes of the component.
+
+        Returns:
+            Optional[int]: The version number of the saved config.
+        """
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+        if not isinstance(db_, BaseDb):
+            raise ValueError("Async databases not yet supported for save(). Use a sync database.")
+
+        if self.id is None:
+            self.id = generate_id_from_name(self.name)
+
+        try:
+            # Create or update component
+            db_.upsert_component(
+                component_id=self.id,
+                component_type=ComponentType.AGENT,
+                name=getattr(self, "name", self.id),
+                description=getattr(self, "description", None),
+                metadata=getattr(self, "metadata", None),
+            )
+
+            # Create or update config
+            config = db_.upsert_config(
+                component_id=self.id,
+                config=self.to_dict(),
+                label=label,
+                stage=stage,
+                notes=notes,
+            )
+
+            return config.get("version")
+
+        except Exception as e:
+            log_error(f"Error saving Agent to database: {e}")
+            raise
+
+    @classmethod
+    def load(
+        cls,
+        id: str,
+        *,
+        db: "BaseDb",
+        registry: Optional["Registry"] = None,
+        label: Optional[str] = None,
+        version: Optional[int] = None,
+    ) -> Optional["Agent"]:
+        """
+        Load an agent by id.
+
+        Args:
+            id: The id of the agent to load.
+            db: The database to load the agent from.
+            label: The label of the agent to load.
+
+        Returns:
+            The agent loaded from the database or None if not found.
+        """
+
+        data = db.get_config(component_id=id, label=label, version=version)
+        if data is None:
+            return None
+
+        config = data.get("config")
+        if config is None:
+            return None
+
+        agent = cls.from_dict(config, registry=registry)
+        agent.id = id
+        agent.db = db
+
+        return agent
+
+    def delete(
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        hard_delete: bool = False,
+    ) -> bool:
+        """
+        Delete the agent component.
+
+        Args:
+            db: The database to delete the component from.
+            hard_delete: Whether to hard delete the component.
+
+        Returns:
+            True if the component was deleted, False otherwise.
+        """
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+        if not isinstance(db_, BaseDb):
+            raise ValueError("Async databases not yet supported for delete(). Use a sync database.")
+        if self.id is None:
+            raise ValueError("Cannot delete agent without an id")
+
+        return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
 
     # -*- Public Convenience Functions
     def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
@@ -11638,3 +12295,75 @@ class Agent:
 
         except Exception as e:
             log_debug(f"Could not create Agent run telemetry event: {e}")
+
+
+def get_agent_by_id(
+    db: "BaseDb",
+    id: str,
+    version: Optional[int] = None,
+    label: Optional[str] = None,
+    registry: Optional["Registry"] = None,
+) -> Optional["Agent"]:
+    """
+    Get an Agent by id from the database (new entities/configs schema).
+
+    Resolution order:
+    - if label is provided: load that labeled version
+    - else: load component.current_version
+
+    Args:
+        db: Database handle.
+        id: Agent entity_id.
+        label: Optional label.
+        registry: Optional Registry for reconstructing unserializable components.
+
+    Returns:
+        Agent instance or None.
+    """
+    try:
+        row = db.get_config(component_id=id, label=label, version=version)
+        if row is None:
+            return None
+
+        cfg = row.get("config") if isinstance(row, dict) else None
+        if cfg is None:
+            raise ValueError(f"Invalid config found for agent {id}")
+
+        agent = Agent.from_dict(cfg, registry=registry)
+        agent.id = id
+
+        return agent
+
+    except Exception as e:
+        log_error(f"Error loading Agent {id} from database: {e}")
+        return None
+
+
+def get_agents(
+    db: "BaseDb",
+    registry: Optional["Registry"] = None,
+) -> List["Agent"]:
+    """
+    Get all agents from the database.
+    """
+    agents: List[Agent] = []
+    try:
+        components, _ = db.list_components(component_type=ComponentType.AGENT)
+        for component in components:
+            config = db.get_config(component_id=component["component_id"])
+            if config is not None:
+                agent_config = config.get("config")
+                if agent_config is not None:
+                    component_id = component["component_id"]
+                    if "id" not in agent_config:
+                        agent_config["id"] = component_id
+                    agent = Agent.from_dict(agent_config, registry=registry)
+                    # Ensure agent.id is set to the component_id (the id used to load the agent)
+                    # This ensures events use the correct agent_id
+                    agent.id = component_id
+                    agents.append(agent)
+        return agents
+
+    except Exception as e:
+        log_error(f"Error loading Agents from database: {e}")
+        return []
