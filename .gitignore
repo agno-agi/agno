@@ -86,3 +86,4 @@ CLAUDE_PRIVATE.md
 # ignore pyrightconfig.json
 pyrightconfig.json
 .python-version
+CLAUDE_PRIVATE.md

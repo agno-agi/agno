@@ -932,6 +932,16 @@ class Gemini(Model):
 
         # Case 2: File is a URL
         elif file.url is not None:
+            # Case 2a: GCS URI (gs://) - pass directly to Gemini (supports up to 2GB)
+            if file.url.startswith("gs://") and file.mime_type:
+                return Part.from_uri(file_uri=file.url, mime_type=file.mime_type)
+
+            # Case 2b: HTTPS URL with mime_type - pass directly to Gemini (supports up to 100MB)
+            # This enables pre-signed URLs from S3/Azure and public URLs without downloading
+            if file.url.startswith("https://") and file.mime_type:
+                return Part.from_uri(file_uri=file.url, mime_type=file.mime_type)
+
+            # Case 2c: URL without mime_type - download and detect (existing behavior)
             url_content = file.file_url_content
             if url_content is not None:
                 content, mime_type = url_content

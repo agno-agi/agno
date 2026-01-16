@@ -676,6 +676,11 @@ class AgentOS:
 
             self._add_jwt_middleware(fastapi_app)
 
+        # Add trailing slash normalization middleware
+        from agno.os.middleware.trailing_slash import TrailingSlashMiddleware
+
+        fastapi_app.add_middleware(TrailingSlashMiddleware)
+
         return fastapi_app
 
     def _add_jwt_middleware(self, fastapi_app: FastAPI) -> None:
