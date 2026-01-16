@@ -1,9 +1,8 @@
 import logging
 import time
-from token import OP
 from typing import Any, Dict, List, Optional, Union
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency

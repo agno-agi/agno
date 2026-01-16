@@ -1,6 +1,5 @@
 """Table schemas and related utils used by the PostgresDb class"""
 
-from enum import Enum
 from typing import Any
 
 try:
