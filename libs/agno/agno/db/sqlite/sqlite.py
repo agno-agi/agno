@@ -3158,6 +3158,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="components", create_table_if_not_found=True)
+            if table is None:
+                raise ValueError("Components table not found")
 
             with self.Session() as sess, sess.begin():
                 existing = sess.execute(select(table).where(table.c.component_id == component_id)).fetchone()
@@ -3378,6 +3380,8 @@ class SqliteDb(BaseDb):
 
             if components_table is None:
                 raise ValueError("Components table not found")
+            if configs_table is None:
+                raise ValueError("Component configs table not found")
 
             with self.Session() as sess, sess.begin():
                 # Check if component already exists
@@ -3448,6 +3452,11 @@ class SqliteDb(BaseDb):
             # Fetch and return both
             component = self.get_component(component_id)
             config_result = self.get_config(component_id, version=version)
+
+            if component is None:
+                raise ValueError(f"Failed to get component {component_id} after creation")
+            if config_result is None:
+                raise ValueError(f"Failed to get config for {component_id} after creation")
 
             return component, config_result
 
@@ -3559,6 +3568,8 @@ class SqliteDb(BaseDb):
 
             if components_table is None:
                 raise ValueError("Components table not found")
+            if configs_table is None:
+                raise ValueError("Component configs table not found")
 
             with self.Session() as sess, sess.begin():
                 # Verify component exists and is not deleted
@@ -3686,7 +3697,10 @@ class SqliteDb(BaseDb):
                         .values(current_version=final_version, updated_at=int(time.time()))
                     )
 
-            return self.get_config(component_id, version=final_version)
+            result = self.get_config(component_id, version=final_version)
+            if result is None:
+                raise ValueError(f"Failed to get config {component_id} v{final_version} after upsert")
+            return result
 
         except Exception as e:
             log_error(f"Error upserting config: {e}")

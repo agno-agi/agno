@@ -3260,6 +3260,8 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="components", create_table_if_not_found=True)
+            if table is None:
+                raise ValueError("Components table not found")
 
             with self.Session() as sess, sess.begin():
                 existing = sess.execute(
@@ -3308,7 +3310,7 @@ class PostgresDb(BaseDb):
 
                 else:
                     # Update existing
-                    updates = {"updated_at": int(time.time())}
+                    updates: Dict[str, Any] = {"updated_at": int(time.time())}
                     if component_type is not None:
                         updates["component_type"] = component_type.value
                     if name is not None:
@@ -3321,7 +3323,10 @@ class PostgresDb(BaseDb):
                     sess.execute(table.update().where(table.c.component_id == component_id).values(**updates))
                     log_debug(f"Updated component {component_id}")
 
-            return self.get_component(component_id)
+            result = self.get_component(component_id)
+            if result is None:
+                raise ValueError(f"Failed to get component {component_id} after upsert")
+            return result
 
         except Exception as e:
             log_error(f"Error upserting component: {e}")
@@ -3493,6 +3498,8 @@ class PostgresDb(BaseDb):
 
             if components_table is None:
                 raise ValueError("Components table not found")
+            if configs_table is None:
+                raise ValueError("Component configs table not found")
 
             with self.Session() as sess, sess.begin():
                 # Check if component already exists
@@ -3563,6 +3570,11 @@ class PostgresDb(BaseDb):
             # Fetch and return both
             component = self.get_component(component_id)
             config_result = self.get_config(component_id, version=version)
+
+            if component is None:
+                raise ValueError(f"Failed to get component {component_id} after creation")
+            if config_result is None:
+                raise ValueError(f"Failed to get config for {component_id} after creation")
 
             return component, config_result
 
@@ -3674,6 +3686,8 @@ class PostgresDb(BaseDb):
 
             if components_table is None:
                 raise ValueError("Components table not found")
+            if configs_table is None:
+                raise ValueError("Component configs table not found")
 
             with self.Session() as sess, sess.begin():
                 # Verify component exists and is not deleted
@@ -3753,7 +3767,7 @@ class PostgresDb(BaseDb):
                         raise ValueError(f"Cannot update published config {component_id} v{version}")
 
                     # Build update dict with only provided fields
-                    updates = {"updated_at": int(time.time())}
+                    updates: Dict[str, Any] = {"updated_at": int(time.time())}
                     if label is not None:
                         updates["label"] = label
                     if stage is not None:
@@ -3805,7 +3819,10 @@ class PostgresDb(BaseDb):
                         .values(current_version=final_version, updated_at=int(time.time()))
                     )
 
-            return self.get_config(component_id, version=final_version)
+            result = self.get_config(component_id, version=final_version)
+            if result is None:
+                raise ValueError(f"Failed to get config {component_id} v{final_version} after upsert")
+            return result
 
         except Exception as e:
             log_error(f"Error upserting config: {e}")
@@ -4153,7 +4170,7 @@ class PostgresDb(BaseDb):
             if _max_depth <= 0:
                 return None
 
-            component = self.get_component(component_id, label=label)
+            component = self.get_component(component_id)
             if component is None:
                 return None
 
