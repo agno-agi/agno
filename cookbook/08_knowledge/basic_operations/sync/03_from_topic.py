@@ -7,6 +7,7 @@ It is important to specify the reader for the content when using topics.
 """
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.arxiv_reader import ArxivReader
 from agno.knowledge.reader.wikipedia_reader import WikipediaReader
@@ -18,6 +19,10 @@ knowledge = Knowledge(
     description="Agno 2.0 Knowledge Implementation",
     vector_db=PgVector(
         table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
+    ),
+    contents_db=PostgresDb(
+        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+        knowledge_table="knowledge_contents",
     ),
 )
 
@@ -39,6 +44,7 @@ knowledge.insert(
 knowledge.insert_many(
     topics=["Carbon Dioxide", "Nitrogen"],
     reader=ArxivReader(),
+    skip_if_exists=True,
 )
 
 agent = Agent(
