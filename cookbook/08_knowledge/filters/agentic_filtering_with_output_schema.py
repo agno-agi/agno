@@ -94,7 +94,7 @@ agent = Agent(
     knowledge=knowledge,
     search_knowledge=True,
     enable_agentic_knowledge_filters=True,
-    # output_schema=CSVDataOutput,
+    output_schema=CSVDataOutput,
 )
 
 agent.print_response(
