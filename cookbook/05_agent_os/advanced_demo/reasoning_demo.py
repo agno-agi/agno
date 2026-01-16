@@ -1,4 +1,4 @@
-"""Run `pip install openai exa_py ddgs yfinance pypdf sqlalchemy 'fastapi[standard]' youtube-transcript-api python-docx agno` to install dependencies."""
+"""Run `uv pip install openai exa_py ddgs yfinance pypdf sqlalchemy 'fastapi[standard]' youtube-transcript-api python-docx agno` to install dependencies."""
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
@@ -37,7 +37,7 @@ cot_agent = Agent(
     name="Chain-of-Thought Agent",
     role="Answer basic questions",
     id="cot-agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     db=db,
     add_history_to_context=True,
     num_history_runs=3,
@@ -61,7 +61,7 @@ reasoning_tool_agent = Agent(
     name="Reasoning Tool Agent",
     role="Answer basic questions",
     id="reasoning-tool-agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     db=db,
     add_history_to_context=True,
     num_history_runs=3,
@@ -74,7 +74,7 @@ reasoning_tool_agent = Agent(
 web_agent = Agent(
     name="Web Search Agent",
     role="Handle web search requests",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     id="web_agent",
     tools=[DuckDuckGoTools()],
     instructions="Always include sources",

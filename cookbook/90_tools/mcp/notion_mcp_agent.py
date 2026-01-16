@@ -7,7 +7,7 @@ This example shows how to use the Agno MCP tools to interact with your Notion wo
 2. Export your new Notion key: `export NOTION_API_KEY=ntn_****`
 3. Connect your relevant Notion pages to the integration. To do this, you'll need to visit that page, and click on the 3 dots, and select "Connect to integration".
 
-Dependencies: pip install agno mcp openai
+Dependencies: uv pip install agno mcp openai
 
 Usage:
   python cookbook/90_tools/mcp/notion_mcp_agent.py

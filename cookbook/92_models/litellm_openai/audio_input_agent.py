@@ -1,5 +1,5 @@
 """
-Please first install litellm[proxy] by running: pip install 'litellm[proxy]'
+Please first install litellm[proxy] by running: uv pip install 'litellm[proxy]'
 
 Before running this script, you need to start the LiteLLM server:
 

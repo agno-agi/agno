@@ -1,4 +1,4 @@
-"""Run `pip install google-generativeai` to install dependencies."""
+"""Run `uv pip install google-generativeai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.models.google import Gemini

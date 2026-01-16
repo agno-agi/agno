@@ -15,7 +15,7 @@ async def main():
     # Eval runs as post-hook, results saved to database
     agent_as_judge_eval = AgentAsJudgeEval(
         name="Response Quality Check",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         criteria="Response should be professional, well-balanced, and provide evidence-based perspectives",
         scoring_strategy="numeric",
         threshold=7,

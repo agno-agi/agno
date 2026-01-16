@@ -4,7 +4,7 @@
 This example demonstrates how to use Agno's MCP integration together with Graphiti, to build a personal diary assistant.
 
 - Run your Graphiti MCP server. Full instructions: https://github.com/getzep/graphiti/tree/main/mcp_server
-- Run: `pip install agno mcp openai` to install the dependencies
+- Run: `uv pip install agno mcp openai` to install the dependencies
 """
 
 import asyncio

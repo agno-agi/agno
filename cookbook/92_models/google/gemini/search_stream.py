@@ -3,7 +3,7 @@
 The search tool enables Gemini to access current information from Google Search.
 This is useful for getting up-to-date facts, news, and web content.
 
-Run `pip install google-generativeai` to install dependencies.
+Run `uv pip install google-generativeai` to install dependencies.
 """
 
 from agno.agent import Agent

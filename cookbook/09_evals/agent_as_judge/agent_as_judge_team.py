@@ -36,7 +36,7 @@ response = research_team.run("Explain quantum computing")
 
 evaluation = AgentAsJudgeEval(
     name="Team Response Quality",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     criteria="Response should be well-researched, clear, and comprehensive with good flow",
     scoring_strategy="binary",
     db=db,

@@ -22,7 +22,7 @@ from agno.tools.clickup import ClickUpTools
 clickup_agent = Agent(
     name="ClickUp Agent",
     role="Manage ClickUp tasks and spaces",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[
         ClickUpTools(
             exclude_tools=[

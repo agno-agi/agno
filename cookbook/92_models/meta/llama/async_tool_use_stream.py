@@ -1,4 +1,4 @@
-"""Run `pip install agno llama-api-client yfinance` to install dependencies."""
+"""Run `uv pip install agno llama-api-client yfinance` to install dependencies."""
 
 import asyncio
 

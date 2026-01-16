@@ -3,7 +3,7 @@ from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[
         DuckDuckGoTools(
             stop_after_tool_call_tools=["duckduckgo_search"],

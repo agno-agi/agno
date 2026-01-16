@@ -82,7 +82,7 @@ def set_user_preference(step_input: StepInput, session_state: dict) -> StepOutpu
 # Create specialized agents
 onboarding_agent = Agent(
     name="Onboarding Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=(
         "Welcome new users and ask about their preferences. "
         "Determine if they prefer technical or friendly assistance."
@@ -92,7 +92,7 @@ onboarding_agent = Agent(
 
 technical_agent = Agent(
     name="Technical Expert",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=(
         "You are a technical expert. Provide detailed, technical answers with code examples and best practices."
     ),
@@ -101,7 +101,7 @@ technical_agent = Agent(
 
 friendly_agent = Agent(
     name="Friendly Assistant",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=(
         "You are a friendly, casual assistant. Use simple language, emojis, and make the conversation fun."
     ),
@@ -110,7 +110,7 @@ friendly_agent = Agent(
 
 general_agent = Agent(
     name="General Assistant",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=(
         "You are a balanced assistant. Provide helpful answers that are neither too technical nor too casual."
     ),

@@ -1,5 +1,5 @@
 """
-1. Run: `pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
+1. Run: `uv pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
 2. Run: `python cookbook/teams/async/modes/02_async_coordinate.py` to run the agent
 
 This example demonstrates a coordinated team of AI agents working together to research topics across different platforms.
@@ -36,14 +36,14 @@ class Article(BaseModel):
 
 hn_researcher = Agent(
     name="HackerNews Researcher",
-    model=OpenAIChat("gpt-5-mini"),
+    model=OpenAIChat("gpt-5.2"),
     role="Gets top stories from hackernews.",
     tools=[HackerNewsTools()],
 )
 
 article_reader = Agent(
     name="Article Reader",
-    model=OpenAIChat("gpt-5-mini"),
+    model=OpenAIChat("gpt-5.2"),
     role="Reads articles from URLs.",
     tools=[Newspaper4kTools()],
 )
@@ -51,7 +51,7 @@ article_reader = Agent(
 
 hn_team = Team(
     name="HackerNews Team",
-    model=OpenAIChat("gpt-5-mini"),
+    model=OpenAIChat("gpt-5.2"),
     members=[hn_researcher, article_reader],
     instructions=[
         "First, search hackernews for what the user is asking about.",

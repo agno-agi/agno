@@ -8,7 +8,7 @@ Requirements:
    - Windows: Download from https://ffmpeg.org/download.html
 
 2. mlx-whisper library:
-   pip install mlx-whisper
+   uv pip install mlx-whisper
 
 Example Usage:
 - Place your audio files in the 'storage/audio' directory

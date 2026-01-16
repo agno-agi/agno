@@ -1,6 +1,6 @@
 """
 1. Run: `./cookbook/run_pgvector.sh` to start a postgres container with pgvector
-2. Run: `pip install openai sqlalchemy 'psycopg[binary]' pgvector agno` to install the dependencies
+2. Run: `uv pip install openai sqlalchemy 'psycopg[binary]' pgvector agno` to install the dependencies
 3. Run: `python cookbook/rag/02_agentic_rag_pgvector.py` to run the agent
 """
 

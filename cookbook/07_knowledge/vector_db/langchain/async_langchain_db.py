@@ -1,5 +1,5 @@
 """
-pip install langchain langchain-community langchain-openai langchain-chroma agno
+uv pip install langchain langchain-community langchain-openai langchain-chroma agno
 """
 
 import asyncio
@@ -54,7 +54,7 @@ async def main():
     )
 
     # Create an agent with the knowledge base
-    agent = Agent(model=OpenAIChat("gpt-5-mini"), knowledge=knowledge)
+    agent = Agent(model=OpenAIChat("gpt-5.2"), knowledge=knowledge)
     # Use the agent to ask a question and print a response asynchronously
     await agent.aprint_response(
         "What did the president say about broadcasting and the State of the Union?",

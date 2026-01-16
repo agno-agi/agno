@@ -60,7 +60,7 @@ def get_activities(city: str) -> str:
 
 weather_agent = Agent(
     id="weather_agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     description="You are a helpful assistant that can answer questions about the weather.",
     instructions="Be concise, reply with one sentence.",
     tools=[get_weather],
@@ -71,7 +71,7 @@ weather_agent = Agent(
 
 activities_agent = Agent(
     id="activities_agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     description="You are a helpful assistant that can answer questions about activities in a city.",
     instructions="Be concise, reply with one sentence.",
     tools=[get_activities],
@@ -82,7 +82,7 @@ activities_agent = Agent(
 
 team = Team(
     members=[weather_agent, activities_agent],
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="Be concise, reply with one sentence.",
     db=db,
     enable_user_memories=True,

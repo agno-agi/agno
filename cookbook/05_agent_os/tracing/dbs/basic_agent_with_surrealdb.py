@@ -1,7 +1,7 @@
 """
 Traces with AgentOS
 Requirements:
-    pip install agno opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno
+    uv pip install agno opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno
 """
 
 from agno.agent import Agent
@@ -21,7 +21,7 @@ db = SurrealDb(None, SURREALDB_URL, creds, SURREALDB_NAMESPACE, SURREALDB_DATABA
 
 agent = Agent(
     name="HackerNews Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[HackerNewsTools()],
     instructions="You are a hacker news agent. Answer questions concisely.",
     markdown=True,

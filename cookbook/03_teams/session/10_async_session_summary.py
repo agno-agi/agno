@@ -20,12 +20,12 @@ db = AsyncPostgresDb(db_url=db_url, session_table="sessions")
 async def main():
     # Create an agent to be part of the team
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
     )
 
     # Create a team with session summaries enabled
     team = Team(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         members=[agent],
         db=db,
         session_id="async_team_session_summary",

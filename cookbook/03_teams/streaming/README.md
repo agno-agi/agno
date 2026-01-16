@@ -5,7 +5,7 @@ Real-time response streaming from teams for interactive applications.
 ## Setup
 
 ```bash
-pip install agno openai
+uv pip install agno openai
 ```
 
 Set your API key:

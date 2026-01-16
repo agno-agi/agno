@@ -8,7 +8,7 @@ from agno.vectordb.qdrant import Qdrant
 
 agent = Agent(
     model=OpenAIChat(
-        id="gpt-4o-mini",
+        id="gpt-5.2",
     ),
     knowledge=Knowledge(
         vector_db=Qdrant(

@@ -21,7 +21,7 @@
 
 7. Test Connection:
    - Use the connection string in your code
-   - Ensure pymongo is installed: pip install "pymongo[srv]"
+   - Ensure pymongo is installed: uv pip install "pymongo[srv]"
    - Test with a simple query to verify connectivity
 
 Alternatively to test locally, you can run a docker container

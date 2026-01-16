@@ -5,7 +5,7 @@ This example demonstrates how to use CsvTools for CSV file operations.
 Shows enable_ flag patterns for selective function access.
 CsvTools is a small tool (<6 functions) so it uses enable_ flags.
 
-Run: `pip install pandas` to install the dependencies
+Run: `uv pip install pandas` to install the dependencies
 """
 
 from pathlib import Path

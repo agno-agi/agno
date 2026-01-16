@@ -1,4 +1,4 @@
-"""Run `pip install ddgs` to install dependencies."""
+"""Run `uv pip install ddgs` to install dependencies."""
 
 from agno.agent import Agent  # noqa
 from agno.models.deepinfra import DeepInfra  # noqa

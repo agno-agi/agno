@@ -1,4 +1,4 @@
-# install chromadb - `pip install chromadb`
+# install chromadb - `uv pip install chromadb`
 
 import asyncio
 

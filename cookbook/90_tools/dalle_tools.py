@@ -1,4 +1,4 @@
-"""Run `pip install openai` to install dependencies."""
+"""Run `uv pip install openai` to install dependencies."""
 
 from pathlib import Path
 

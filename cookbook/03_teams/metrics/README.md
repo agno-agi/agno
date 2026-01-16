@@ -5,7 +5,7 @@ Team performance monitoring and metrics collection for analyzing team efficiency
 ## Setup
 
 ```bash
-pip install agno openai pgvector "psycopg[binary]" sqlalchemy
+uv pip install agno openai pgvector "psycopg[binary]" sqlalchemy
 ```
 
 Set your OpenAI API key:

@@ -1,4 +1,4 @@
-# install upstash-vector - `uv pip install upstash-vector`
+# install upstash-vector - `uv uv pip install upstash-vector`
 # Add OPENAI_API_KEY to your environment variables for the agent response
 
 import os

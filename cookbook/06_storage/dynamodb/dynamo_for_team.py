@@ -7,7 +7,7 @@ Set the following environment variables to connect to your DynamoDb instance:
 
 Or pass those parameters when initializing the DynamoDb instance.
 
-Run `pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
+Run `uv pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
 """
 
 from typing import List

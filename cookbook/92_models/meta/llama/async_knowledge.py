@@ -1,4 +1,4 @@
-"""Run `pip install ddgs sqlalchemy pgvector pypdf llama-api-client` to install dependencies."""
+"""Run `uv pip install ddgs sqlalchemy pgvector pypdf llama-api-client` to install dependencies."""
 
 import asyncio
 

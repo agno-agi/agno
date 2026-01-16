@@ -7,7 +7,7 @@
 ### 1. Setup Environment
 
 ```bash
-pip install agno openai
+uv pip install agno openai
 ```
 
 ### 2. Choose Your Platform
@@ -16,22 +16,22 @@ Install platform-specific dependencies:
 
 ```bash
 # AgentOps
-pip install agentops
+uv pip install agentops
 
 # Langfuse via OpenInference  
-pip install langfuse opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
+uv pip install langfuse opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
 
 # Opik via OpenInference
-pip install opik opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
+uv pip install opik opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
 
 # Weave
-pip install weave
+uv pip install weave
 
 # Arize Phoenix
-pip install arize-phoenix openinference-instrumentation-agno
+uv pip install arize-phoenix openinference-instrumentation-agno
 
 # LangSmith
-pip install langsmith openinference-instrumentation-agno
+uv pip install langsmith openinference-instrumentation-agno
 ```
 
 ### 3. Basic Agent Monitoring
@@ -56,15 +56,15 @@ response = agent.run("Your query here")
 OpenTelemetry provides standardized observability that works across multiple platforms. Install the base requirements:
 
 ```bash
-pip install opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
+uv pip install opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
 ```
 
 | Platform | Description | Additional Dependencies |
 |----------|-------------|------------------------|
-| **Langfuse** | Comprehensive tracing and analytics | `pip install langfuse` |
-| **Opik** | Open-source tracing, evaluations, optimization and debugging for LLM/agent workflows | `pip install opik` |
-| **Arize Phoenix** | Open-source observability with real-time monitoring | `pip install arize-phoenix` |
-| **LangSmith** | LangChain's monitoring and debugging platform | `pip install langsmith` |
+| **Langfuse** | Comprehensive tracing and analytics | `uv pip install langfuse` |
+| **Opik** | Open-source tracing, evaluations, optimization and debugging for LLM/agent workflows | `uv pip install opik` |
+| **Arize Phoenix** | Open-source observability with real-time monitoring | `uv pip install arize-phoenix` |
+| **LangSmith** | LangChain's monitoring and debugging platform | `uv pip install langsmith` |
 
 **Files:**
 - **[Langfuse via OpenInference](./langfuse_via_openinference.py)** - Langfuse integration
@@ -78,8 +78,8 @@ Direct integrations with platform-specific SDKs:
 
 | Platform | Description | Installation | File |
 |----------|-------------|--------------|------|
-| **AgentOps** | Simple agent monitoring with automatic session tracking | `pip install agentops` | **[AgentOps](./agent_ops.py)** |
-| **Weave** | Weights & Biases experiment tracking and monitoring | `pip install weave` | **[Weave](./weave_op.py)** |
+| **AgentOps** | Simple agent monitoring with automatic session tracking | `uv pip install agentops` | **[AgentOps](./agent_ops.py)** |
+| **Weave** | Weights & Biases experiment tracking and monitoring | `uv pip install weave` | **[Weave](./weave_op.py)** |
 
 ### Teams Examples
 

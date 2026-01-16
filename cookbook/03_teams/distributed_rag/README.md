@@ -5,7 +5,7 @@ Distributed retrieval-augmented generation with teams for scalable knowledge pro
 ## Setup
 
 ```bash
-pip install agno openai anthropic cohere lancedb pgvector "psycopg[binary]" sqlalchemy
+uv pip install agno openai anthropic cohere lancedb pgvector "psycopg[binary]" sqlalchemy
 ```
 
 Set your API key based on your provider:

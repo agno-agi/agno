@@ -60,7 +60,7 @@ class FinalContentPlan(BaseModel):
 # Create individual agents for teams
 research_specialist = Agent(
     name="Research Specialist",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[HackerNewsTools()],
     role="Find and analyze the latest AI trends and developments",
     instructions=[
@@ -72,7 +72,7 @@ research_specialist = Agent(
 
 data_analyst = Agent(
     name="Data Analyst",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     role="Analyze research data and extract key insights",
     instructions=[
         "Process research findings to identify patterns",
@@ -83,7 +83,7 @@ data_analyst = Agent(
 
 content_strategist = Agent(
     name="Content Strategist",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     role="Develop content strategies based on research insights",
     instructions=[
         "Create comprehensive content strategies",
@@ -94,7 +94,7 @@ content_strategist = Agent(
 
 marketing_expert = Agent(
     name="Marketing Expert",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     role="Provide marketing insights and hashtag recommendations",
     instructions=[
         "Suggest effective hashtags and engagement tactics",

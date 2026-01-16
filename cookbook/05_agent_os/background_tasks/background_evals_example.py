@@ -19,7 +19,7 @@ db = AsyncSqliteDb(db_file="tmp/agent_as_judge_evals.db")
 completeness_eval = AgentAsJudgeEval(
     db=db,
     name="Completeness Check",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     criteria="Response should be thorough, complete, and address all aspects of the question",
     print_results=True,
     print_summary=True,
@@ -31,7 +31,7 @@ completeness_eval = AgentAsJudgeEval(
 quality_eval = AgentAsJudgeEval(
     db=db,
     name="Quality Assessment",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     criteria="Response should be well-structured, concise, and professional",
     scoring_strategy="numeric",
     threshold=8,
@@ -47,7 +47,7 @@ quality_eval = AgentAsJudgeEval(
 agent = Agent(
     id="geography-agent",
     name="GeographyAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="You are a helpful geography assistant. Provide accurate and concise answers.",
     db=db,
     post_hooks=[

@@ -23,7 +23,7 @@ export V0_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-pip install -U agno
+uv pip install -U agno
 ```
 
 ### 4. Run basic Agent

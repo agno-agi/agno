@@ -2,7 +2,7 @@
 
 This example shows how to create an agent that uses MCP and Gemini 2.5 Pro to search for Airbnb listings.
 
-Run: `pip install google-genai mcp agno` to install the dependencies
+Run: `uv pip install google-genai mcp agno` to install the dependencies
 """
 
 import asyncio

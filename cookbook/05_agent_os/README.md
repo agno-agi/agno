@@ -54,12 +54,12 @@ if __name__ == "__main__":
 Install the required dependencies:
 
 ```bash
-pip install -U agno fastapi uvicorn sqlalchemy pgvector psycopg openai
+uv pip install -U agno fastapi uvicorn sqlalchemy pgvector psycopg openai
 ```
 
 For additional tools and integrations:
 ```bash
-pip install ddgs yfinance
+uv pip install ddgs yfinance
 ```
 
 ## Getting Started

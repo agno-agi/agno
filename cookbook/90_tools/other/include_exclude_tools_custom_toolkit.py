@@ -47,7 +47,7 @@ class CustomerDBTools(Toolkit):
 
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[CustomerDBTools(include_tools=["retrieve_customer_profile"])],
 )
 

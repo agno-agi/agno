@@ -1,6 +1,6 @@
 """Use Postgres as the database for an agent.
 
-Run `pip install openai ddgs sqlalchemy psycopg` to install dependencies."""
+Run `uv pip install openai ddgs sqlalchemy psycopg` to install dependencies."""
 
 import asyncio
 

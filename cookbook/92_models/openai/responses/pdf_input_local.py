@@ -13,7 +13,7 @@ download_file(
 )
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[{"type": "file_search"}],
     markdown=True,
     add_history_to_context=True,

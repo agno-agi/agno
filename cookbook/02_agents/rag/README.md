@@ -12,7 +12,7 @@ source ~/.venvs/aienv/bin/activate
 ### 2. Install libraries
 
 ```shell
-pip install -U openai sqlalchemy "psycopg[binary]" pgvector lancedb tantivy pypdf sqlalchemy "fastapi[standard]" agno
+uv pip install -U openai sqlalchemy "psycopg[binary]" pgvector lancedb tantivy pypdf sqlalchemy "fastapi[standard]" agno
 ```
 
 ### 3. Run PgVector

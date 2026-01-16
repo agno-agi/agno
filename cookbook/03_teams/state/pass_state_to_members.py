@@ -6,13 +6,13 @@ from agno.team.team import Team
 agent = Agent(
     role="User Advisor",
     description="You answer questions related to the user.",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="User's name is {user_name} and age is {age}",
 )
 
 team = Team(
     db=InMemoryDb(),
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="You are a team that answers questions related to the user. Delegate to the member agent to address user requests or answer any questions about the user.",
     members=[agent],
     respond_directly=True,

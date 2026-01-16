@@ -43,7 +43,7 @@ vector_db = SingleStore(
 )
 agent = Agent(
     model=OpenAIChat(
-        id="gpt-4o-mini",
+        id="gpt-5.2",
     ),
     knowledge=Knowledge(vector_db=vector_db),
     # Enable the agent to search the knowledge base

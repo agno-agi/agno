@@ -7,13 +7,13 @@ Examples demonstrating MySQL database integration with Agno agents, teams, and w
 ### Synchronous MySQL
 
 ```shell
-pip install mysql-connector-python sqlalchemy pymysql
+uv pip install mysql-connector-python sqlalchemy pymysql
 ```
 
 ### Asynchronous MySQL
 
 ```shell
-pip install sqlalchemy asyncmy
+uv pip install sqlalchemy asyncmy
 ```
 
 ## Configuration

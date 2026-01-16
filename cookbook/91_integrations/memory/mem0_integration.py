@@ -6,7 +6,7 @@ try:
     from mem0 import MemoryClient
 except ImportError:
     raise ImportError(
-        "mem0 is not installed. Please install it using `pip install mem0ai`."
+        "mem0 is not installed. Please install it using `uv pip install mem0ai`."
     )
 
 client = MemoryClient()

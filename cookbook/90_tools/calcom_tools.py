@@ -10,7 +10,7 @@ Example showing how to use the Cal.com Tools with Agno.
 Requirements:
 - Cal.com API key (get from cal.com/settings/developer/api-keys)
 - Event Type ID from Cal.com
-- pip install requests pytz
+- uv pip install requests pytz
 
 Usage:
 - Set the following environment variables:

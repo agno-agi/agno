@@ -1,4 +1,4 @@
-"""Run `pip install ddgs sqlalchemy pgvector pypdf cerebras_cloud_sdk` to install dependencies."""
+"""Run `uv pip install ddgs sqlalchemy pgvector pypdf cerebras_cloud_sdk` to install dependencies."""
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge

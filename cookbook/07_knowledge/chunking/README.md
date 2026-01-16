@@ -5,7 +5,7 @@ Chunking breaks down large documents into manageable pieces for efficient knowle
 ## Setup
 
 ```bash
-pip install agno openai
+uv pip install agno openai
 ```
 
 Set your OpenAI API key:

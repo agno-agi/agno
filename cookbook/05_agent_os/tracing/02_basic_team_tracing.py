@@ -11,7 +11,7 @@ db = SqliteDb(db_file="tmp/traces.db")
 # Create agents - no need to set tracing on each one!
 agent = Agent(
     name="HackerNews Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[HackerNewsTools()],
     instructions="You are a hacker news agent. Answer questions concisely.",
     markdown=True,
@@ -19,7 +19,7 @@ agent = Agent(
 
 team = Team(
     name="HackerNews Team",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     members=[agent],
     instructions="You are a hacker news team. Answer questions concisely using HackerNews Agent member",
     db=db,

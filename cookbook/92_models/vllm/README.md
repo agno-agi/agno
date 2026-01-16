@@ -14,7 +14,7 @@ source ~/.venvs/aienv/bin/activate
 ### 2. Install vLLM package
 
 ```shell
-pip install vllm
+uv pip install vllm
 ```
 
 ### 3. Serve a model (this downloads the model to your local machine the first time you run it)
@@ -36,7 +36,7 @@ vLLM embedders can load and run embedding models locally without requiring a ser
 
 1. **Install vLLM** (if not already installed):
    ```bash
-   pip install vllm
+   uv pip install vllm
    ```
 
 2. **Choose an embedding model**:

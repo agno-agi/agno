@@ -2,7 +2,7 @@
 
 This example shows how to create an interactive CLI app with a collaborative writing team.
 
-Run `pip install openai agno duckduckgo-search` to install dependencies.
+Run `uv pip install openai agno duckduckgo-search` to install dependencies.
 """
 
 from textwrap import dedent
@@ -15,7 +15,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 research_agent = Agent(
     name="Research Specialist",
     role="Information Research and Fact Verification",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[DuckDuckGoTools()],
     instructions=dedent("""\
         You are an expert research specialist! 
@@ -37,7 +37,7 @@ research_agent = Agent(
 brainstorm_agent = Agent(
     name="Creative Brainstormer",
     role="Idea Generation and Creative Concepts",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=dedent("""\
         You are a creative brainstorming expert! 
         
@@ -58,7 +58,7 @@ brainstorm_agent = Agent(
 writer_agent = Agent(
     name="Content Writer",
     role="Content Creation and Storytelling",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=dedent("""\
         You are a skilled content writer! 
         
@@ -79,7 +79,7 @@ writer_agent = Agent(
 editor_agent = Agent(
     name="Editor",
     role="Content Editing and Quality Assurance",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=dedent("""\
         You are a meticulous editor! 
         
@@ -100,7 +100,7 @@ editor_agent = Agent(
 writing_team = Team(
     name="Writing Team",
     members=[research_agent, brainstorm_agent, writer_agent, editor_agent],
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=dedent("""\
         You are a collaborative writing team that excels at creating high-quality content!
         

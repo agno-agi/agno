@@ -1,5 +1,5 @@
 """
-pip install elevenlabs
+uv pip install elevenlabs
 """
 
 import base64

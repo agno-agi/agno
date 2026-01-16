@@ -5,7 +5,7 @@ Examples demonstrating SingleStore database integration with Agno agents and tea
 ## Setup
 
 ```shell
-pip install pymysql sqlalchemy
+uv pip install pymysql sqlalchemy
 ```
 
 ## Configuration

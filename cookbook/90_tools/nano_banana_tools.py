@@ -3,7 +3,7 @@ Example showing how to use the NanoBananaTools toolkit with your Agno Agent.
 
 Usage:
 - Set your Google API key as environment variable: `export GOOGLE_API_KEY="your_api_key"`
-- Run `pip install agno google-genai Pillow` to install dependencies
+- Run `uv pip install agno google-genai Pillow` to install dependencies
 """
 
 from pathlib import Path

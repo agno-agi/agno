@@ -12,7 +12,7 @@ Some practical applications:
 - Validating data transformations
 - Approving automated actions in critical systems
 
-Run `pip install openai httpx rich agno` to install dependencies.
+Run `uv pip install openai httpx rich agno` to install dependencies.
 """
 
 import json
@@ -84,7 +84,7 @@ def get_top_hackernews_stories(num_stories: int) -> Iterator[str]:
 
 # Initialize the agent with a tech-savvy personality and clear instructions
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[get_top_hackernews_stories],
     markdown=True,
 )

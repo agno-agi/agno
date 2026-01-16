@@ -47,7 +47,7 @@ def transform_team_input(
     # Input transformation agent
     transformer_agent = Agent(
         name="Team Input Transformer",
-        model=OpenAIChat(id="gpt-5-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         instructions=[
             "You are a team input transformation specialist.",
             "Rewrite user requests to maximize the collective capabilities of the team.",
@@ -80,25 +80,25 @@ def transform_team_input(
 # Create a multi-disciplinary consulting team with input transformation
 research_agent = Agent(
     name="Research Analyst",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     role="Expert in market research, data analysis, and competitive intelligence",
 )
 
 strategy_agent = Agent(
     name="Strategy Consultant",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     role="Specialist in business strategy, planning, and decision frameworks",
 )
 
 financial_agent = Agent(
     name="Financial Advisor",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     role="Expert in financial planning, investment analysis, and risk assessment",
 )
 
 consulting_team = Team(
     name="Business Consulting Team",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     members=[research_agent, strategy_agent, financial_agent],
     pre_hooks=[transform_team_input],
     instructions=[

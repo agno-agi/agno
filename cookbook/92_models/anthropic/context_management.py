@@ -6,7 +6,7 @@ This reduces token usage in long-running conversations with extensive tool use.
 
 You can read more in Anthropic docs: https://docs.claude.com/en/docs/build-with-claude/context-editing
 
-1. Install dependencies: `pip install -U agno anthropic ddgs sqlalchemy`
+1. Install dependencies: `uv pip install -U agno anthropic ddgs sqlalchemy`
 2. Set your `ANTHROPIC_API_KEY` in your environment variables.
 3. Run the cookbook
 """

@@ -5,7 +5,7 @@ Filters help you selectively retrieve and process knowledge based on metadata, c
 ## Setup
 
 ```bash
-pip install agno lancedb pandas
+uv pip install agno lancedb pandas
 ```
 
 Set your API key:

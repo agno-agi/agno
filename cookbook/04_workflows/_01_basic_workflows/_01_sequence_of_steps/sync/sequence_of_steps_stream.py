@@ -10,13 +10,13 @@ from agno.workflow.workflow import Workflow
 # Define agents
 hackernews_agent = Agent(
     name="Hackernews Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[HackerNewsTools()],
     role="Extract key insights and content from Hackernews posts",
 )
 web_agent = Agent(
     name="Web Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[DuckDuckGoTools()],
     role="Search the web for the latest news and trends",
 )
@@ -24,7 +24,7 @@ web_agent = Agent(
 # Define research team for complex analysis
 research_team = Team(
     name="Research Team",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     members=[hackernews_agent, web_agent],
     instructions="Research tech topics from Hackernews and the web",
 )

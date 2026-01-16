@@ -1,7 +1,7 @@
 """
 Traces with AgentOS
 Requirements:
-    pip install agno opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno
+    uv pip install agno opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno
 """
 
 from agno.agent import Agent
@@ -20,7 +20,7 @@ tracing_db = SqliteDb(db_file="tmp/traces.db", id="traces")
 
 agent = Agent(
     name="HackerNews Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[HackerNewsTools()],
     instructions="You are a hacker news agent. Answer questions concisely.",
     markdown=True,
@@ -29,7 +29,7 @@ agent = Agent(
 
 agent2 = Agent(
     name="Web Search Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[DuckDuckGoTools()],
     instructions="You are a web search agent. Answer questions concisely.",
     markdown=True,

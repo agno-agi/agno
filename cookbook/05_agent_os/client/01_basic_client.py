@@ -13,7 +13,7 @@ Prerequisites:
 
    agent = Agent(
        name='Assistant',
-       model=OpenAIChat(id='gpt-4o-mini'),
+       model=OpenAIChat(id='gpt-5.2'),
        instructions='You are a helpful assistant.',
    )
    agent_os = AgentOS(agents=[agent])

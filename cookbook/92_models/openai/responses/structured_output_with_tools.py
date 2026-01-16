@@ -26,7 +26,7 @@ class MovieScript(BaseModel):
 
 
 structured_output_agent = Agent(
-    model=OpenAIResponses(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[DuckDuckGoTools()],
     instructions="Use the tools to get the information you need. You have access to the DuckDuckGo search tools",
     description="You write movie scripts.",

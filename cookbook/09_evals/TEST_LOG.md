@@ -66,10 +66,12 @@ Testing evaluation examples in `cookbook/09_evals/`.
 **Fixes Applied:**
 1. Fixed CLAUDE.md path reference (`cookbook/12_evals/` -> `cookbook/09_evals/`)
 2. Fixed TEST_LOG.md path reference
+3. Fixed `pip install` -> `uv pip install` in 12 files (2026-01-15)
+4. Fixed `gpt-4o-mini` -> `gpt-5.2` in 20 files (2026-01-15)
 
 **Review (2026-01-15):**
-- Scanned all 50 files for model ID and emoji issues
-- No issues found - section is clean
+- Fixed pip install in 12 performance files
+- Fixed model IDs in 20 files across all eval categories
 
 **Key Features Verified:**
 - Accuracy evaluation with expected output comparison

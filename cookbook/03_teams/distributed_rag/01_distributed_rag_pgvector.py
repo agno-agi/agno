@@ -11,7 +11,7 @@ Team Composition:
 
 Setup:
 1. Run: `./cookbook/run_pgvector.sh` to start a postgres container with pgvector
-2. Run: `pip install openai sqlalchemy 'psycopg[binary]' pgvector agno`
+2. Run: `uv pip install openai sqlalchemy 'psycopg[binary]' pgvector agno`
 3. Run this script to see distributed PgVector RAG in action
 """
 

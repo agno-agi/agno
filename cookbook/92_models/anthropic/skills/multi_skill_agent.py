@@ -5,7 +5,7 @@ This cookbook demonstrates how to create an agent with multiple Claude Agent Ski
 that can create presentations, spreadsheets, and documents in a single workflow.
 
 Prerequisites:
-- pip install agno anthropic
+- uv pip install agno anthropic
 - export ANTHROPIC_API_KEY="your_api_key_here"
 """
 

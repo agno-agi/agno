@@ -10,7 +10,7 @@ from agno.workflow.workflow import Workflow
 # Define agents for the workflow
 researcher_agent = Agent(
     name="Research Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[DuckDuckGoTools()],
     role="Search the web and gather comprehensive research on the given topic",
     instructions=[
@@ -22,7 +22,7 @@ researcher_agent = Agent(
 
 writer_agent = Agent(
     name="Content Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     role="Create engaging content based on research findings",
     instructions=[
         "Write in a clear, engaging, and professional tone",

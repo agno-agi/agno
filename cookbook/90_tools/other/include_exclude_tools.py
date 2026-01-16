@@ -6,7 +6,7 @@ from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[
         CalculatorTools(
             exclude_tools=["exponentiate", "factorial", "is_prime", "square_root"],

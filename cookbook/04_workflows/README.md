@@ -823,7 +823,7 @@ def add_to_shared_data(session_state, data: str) -> str:
 
 shopping_assistant = Agent(
     name="Shopping Assistant",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[add_to_shared_data],
     instructions=[
         "You are a helpful shopping assistant.",

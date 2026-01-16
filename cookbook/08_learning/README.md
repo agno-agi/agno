@@ -97,7 +97,7 @@ Or manually:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r cookbook/08_learning/requirements.txt
+uv pip install -r cookbook/08_learning/requirements.txt
 ```
 
 ### 3. Export environment variables

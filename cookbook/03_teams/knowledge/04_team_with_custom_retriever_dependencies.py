@@ -10,7 +10,7 @@ This demonstrates the fix for issue #5594 - custom retrievers can now access
 runtime dependencies passed to team.run().
 
 Setup:
-    pip install agno qdrant-client openai
+    uv pip install agno qdrant-client openai
 
     # Start Qdrant locally
     docker run -p 6333:6333 qdrant/qdrant

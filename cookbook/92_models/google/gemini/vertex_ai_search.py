@@ -10,7 +10,7 @@ Prerequisites:
    export GOOGLE_CLOUD_PROJECT="your-project-id"
    export GOOGLE_CLOUD_LOCATION="your-location"
 
-Run `pip install google-generativeai` to install dependencies.
+Run `uv pip install google-generativeai` to install dependencies.
 """
 
 from agno.agent import Agent

@@ -18,7 +18,7 @@ export LITELLM_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-pip install -U openai 'litellm[proxy]' ddgs duckdb yfinance agno
+uv pip install -U openai 'litellm[proxy]' ddgs duckdb yfinance agno
 ```
 
 ### 4. Start the proxy server

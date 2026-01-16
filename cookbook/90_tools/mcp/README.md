@@ -40,7 +40,7 @@ This example shows how to create an agent that uses MCP and Gemini 2.5 Pro to se
 Install the required dependencies:
 
 ```bash
-pip install agno mcp openai
+uv pip install agno mcp openai
 ```
 
 Export your API keys:

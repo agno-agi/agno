@@ -5,7 +5,7 @@ Set the following environment variables to connect to your DynamoDb instance:
 - AWS_SECRET_ACCESS_KEY
 - AWS_REGION
 
-Run `pip install boto3` to install dependencies."""
+Run `uv pip install boto3` to install dependencies."""
 
 from agno.agent import Agent
 from agno.db import DynamoDb

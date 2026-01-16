@@ -4,7 +4,7 @@ from agno.agent import Agent
 from agno.models.azure import AzureOpenAI
 
 agent = Agent(
-    model=AzureOpenAI(id="gpt-4o-mini"),
+    model=AzureOpenAI(id="gpt-5.2"),
     description="You help people with their health and fitness goals.",
     instructions=["Recipes should be under 5 ingredients"],
 )

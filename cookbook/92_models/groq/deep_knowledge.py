@@ -10,7 +10,7 @@ Key Features:
 - Iteratively searches a knowledge base
 - Source attribution and citations
 
-Run `pip install openai lancedb tantivy inquirer agno groq` to install dependencies.
+Run `uv pip install openai lancedb tantivy inquirer agno groq` to install dependencies.
 """
 
 from textwrap import dedent

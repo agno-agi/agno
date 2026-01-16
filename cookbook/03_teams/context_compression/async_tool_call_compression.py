@@ -11,7 +11,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 tech_specialist = Agent(
     name="Tech Specialist",
     role="Technology Researcher",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=dedent("""
         You specialize in technology and AI research.
         - Focus on latest developments, trends, and breakthroughs
@@ -34,7 +34,7 @@ business_analyst = Agent(
 
 research_team = Team(
     name="Research Team",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     members=[tech_specialist, business_analyst],
     tools=[DuckDuckGoTools()],  # Team uses DuckDuckGo for research
     description="Research team that investigates topics and provides analysis.",

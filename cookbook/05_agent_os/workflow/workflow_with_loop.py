@@ -16,7 +16,7 @@ from agno.workflow.workflow import Workflow
 research_agent = Agent(
     name="Research Agent",
     role="Research specialist",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[HackerNewsTools(), DuckDuckGoTools()],
     instructions="You are a research specialist. Research the given topic thoroughly.",
     markdown=True,
@@ -24,7 +24,7 @@ research_agent = Agent(
 
 content_agent = Agent(
     name="Content Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     role="Content creator",
     instructions="You are a content creator. Create engaging content based on research.",
     markdown=True,

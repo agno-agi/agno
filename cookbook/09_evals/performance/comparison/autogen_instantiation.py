@@ -1,4 +1,4 @@
-"""Run `pip install autogen-agentchat "autogen-ext[openai]"` to install dependencies."""
+"""Run `uv pip install autogen-agentchat "autogen-ext[openai]"` to install dependencies."""
 
 from typing import Literal
 

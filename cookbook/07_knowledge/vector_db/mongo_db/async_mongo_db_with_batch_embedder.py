@@ -14,7 +14,7 @@ mdb_connection_string = "mongodb+srv://willem_db_user:lpG81MnM8quLg3ZT@cluster0.
 
 agent = Agent(
     model=OpenAIChat(
-        id="gpt-4o-mini",
+        id="gpt-5.2",
     ),
     knowledge=Knowledge(
         vector_db=MongoVectorDb(

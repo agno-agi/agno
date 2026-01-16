@@ -2,7 +2,7 @@
 Use JSON files as the database for an Agent.
 Useful for simple demos where performance is not critical.
 
-Run `pip install ddgs openai` to install dependencies."""
+Run `uv pip install ddgs openai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.db.json import JsonDb
@@ -13,7 +13,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 db = JsonDb(db_path="tmp/json_db")
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     db=db,
     session_id="session_storage",
     tools=[DuckDuckGoTools()],

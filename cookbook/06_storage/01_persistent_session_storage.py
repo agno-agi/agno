@@ -7,7 +7,7 @@ from agno.team.team import Team
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url, session_table="sessions")
 
-agent = Agent(name="test_agent", model=OpenAIChat(id="gpt-4o-mini"))
+agent = Agent(name="test_agent", model=OpenAIChat(id="gpt-5.2"))
 
 team = Team(
     members=[agent],

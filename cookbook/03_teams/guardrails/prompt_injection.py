@@ -19,7 +19,7 @@ def main():
     # Create an team with prompt injection protection
     team = Team(
         name="Guardrails Demo Team",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         pre_hooks=[PromptInjectionGuardrail()],
         members=[],
         description="A team that tells jokes and provides helpful information.",

@@ -5,7 +5,7 @@ Examples demonstrating AWS DynamoDB integration with Agno agents.
 ## Setup
 
 ```shell
-pip install boto3
+uv pip install boto3
 ```
 
 ## Configuration

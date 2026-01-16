@@ -1,6 +1,6 @@
 """Use MySQL as the database for an agent.
 
-Run `pip install openai` to install dependencies."""
+Run `uv pip install openai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.db.mysql import MySQLDb

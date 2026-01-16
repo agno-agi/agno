@@ -5,7 +5,7 @@ Teams with shared knowledge bases for decision making and responses.
 ## Setup
 
 ```bash
-pip install agno openai pgvector "psycopg[binary]" sqlalchemy
+uv pip install agno openai pgvector "psycopg[binary]" sqlalchemy
 ```
 
 Set your API key:

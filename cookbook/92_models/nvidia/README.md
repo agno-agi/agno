@@ -18,7 +18,7 @@ export NVIDIA_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-pip install -U openai agno
+uv pip install -U openai agno
 ```
 
 ### 4. Run basic Agent

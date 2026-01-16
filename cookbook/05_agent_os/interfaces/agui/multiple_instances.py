@@ -9,7 +9,7 @@ db = SqliteDb(db_file="tmp/agentos.db")
 
 chat_agent = Agent(
     name="Assistant",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     db=db,
     instructions="You are a helpful AI assistant.",
     add_datetime_to_context=True,
@@ -18,7 +18,7 @@ chat_agent = Agent(
 
 web_research_agent = Agent(
     name="Web Research Agent",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     db=db,
     tools=[DuckDuckGoTools()],
     instructions="You are a helpful AI assistant that can search the web.",

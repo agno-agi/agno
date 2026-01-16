@@ -1,5 +1,5 @@
 """
-1. Run: `pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
+1. Run: `uv pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
 2. Run: `python cookbook/db/async_postgres/async_postgres_for_team.py` to run the team
 """
 

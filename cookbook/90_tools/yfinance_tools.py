@@ -5,7 +5,7 @@ This example demonstrates how to use YFinanceTools for financial analysis,
 showing include_tools/exclude_tools patterns for selective function access.
 YFinanceTools is a large tool (≥6 functions) so it uses include_tools/exclude_tools.
 
-Run: `pip install yfinance` to install the dependencies
+Run: `uv pip install yfinance` to install the dependencies
 """
 
 from agno.agent import Agent

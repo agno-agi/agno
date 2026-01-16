@@ -3,7 +3,7 @@ This example shows how to instrument your agno agent with OpenInference and send
 
 Sign up to Logfire at https://logfire.dev
 
-1. Install dependencies: pip install openai langfuse opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
+1. Install dependencies: uv pip install openai langfuse opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
 2. Either self-host or sign up for an account at https://logfire.dev
 3. Set your Logfire API key as an environment variables:
   - export LOGFIRE_WRITE_TOKEN=<your-key>
@@ -42,7 +42,7 @@ AgnoInstrumentor().instrument(tracer_provider=tracer_provider)
 
 agent = Agent(
     name="Stock Price Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[YFinanceTools()],
     instructions="You are a stock price agent. Answer questions in the style of a stock analyst.",
 )

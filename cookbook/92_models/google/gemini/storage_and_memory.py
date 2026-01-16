@@ -1,4 +1,4 @@
-"""Run `pip install ddgs pgvector google.genai` to install dependencies."""
+"""Run `uv pip install ddgs pgvector google.genai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb

@@ -1,4 +1,4 @@
-"""Run `pip install ddgs sqlalchemy pgvector pypdf openai` to install dependencies."""
+"""Run `uv pip install ddgs sqlalchemy pgvector pypdf openai` to install dependencies."""
 
 import asyncio
 
@@ -25,7 +25,7 @@ asyncio.run(
 )
 
 agent = Agent(
-    model=AzureOpenAI(id="gpt-4o-mini"),
+    model=AzureOpenAI(id="gpt-5.2"),
     knowledge=knowledge,
 )
 agent.print_response("How to make Thai curry?", markdown=True)

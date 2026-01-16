@@ -2,7 +2,7 @@
 `fastmcp` is required for this demo.
 
 ```bash
-pip install fastmcp
+uv pip install fastmcp
 ```
 
 Run this with `fastmcp run cookbook/90_tools/mcp/local_server/server.py`

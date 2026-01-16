@@ -4,7 +4,7 @@ This is useful when using a custom model that doesn't support the default role m
 
 To run this example:
 - Set the MISTRAL_API_KEY environment variable.
-- Run `pip install openai agno` to install dependencies.
+- Run `uv pip install openai agno` to install dependencies.
 """
 
 from os import getenv

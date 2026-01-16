@@ -1,5 +1,5 @@
 """
-Run `pip install openai webexpythonsdk` to install dependencies.
+Run `uv pip install openai webexpythonsdk` to install dependencies.
 To get the Webex Teams Access token refer to - https://developer.webex.com/docs/bots
 
 Steps:

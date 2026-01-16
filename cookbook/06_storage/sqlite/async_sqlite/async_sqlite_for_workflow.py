@@ -1,5 +1,5 @@
 """
-Run: `pip install openai ddgs sqlalchemy aiosqlite` to install dependencies
+Run: `uv pip install openai ddgs sqlalchemy aiosqlite` to install dependencies
 Run: `python cookbook/db/async_sqlite/async_sqlite_for_workflow.py` to run the workflow
 """
 
@@ -19,13 +19,13 @@ db = AsyncSqliteDb(db_file="workflow_storage.db")
 
 hackernews_agent = Agent(
     name="Hackernews Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[HackerNewsTools()],
     role="Extract key insights and content from Hackernews posts",
 )
 web_agent = Agent(
     name="Web Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[DuckDuckGoTools()],
     role="Search the web for the latest news and trends",
 )

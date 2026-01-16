@@ -5,7 +5,7 @@ Team state management for maintaining shared state across team members and inter
 ## Setup
 
 ```bash
-pip install agno openai sqlalchemy
+uv pip install agno openai sqlalchemy
 ```
 
 Set your API key:

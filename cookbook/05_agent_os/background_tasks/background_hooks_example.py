@@ -54,7 +54,7 @@ async def send_notification(run_output, agent):
 agent = Agent(
     id="background-task-agent",
     name="BackgroundTaskAgent",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="You are a helpful assistant",
     db=AsyncSqliteDb(db_file="tmp/agent.db"),
     # Define hooks

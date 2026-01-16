@@ -10,7 +10,7 @@ from agno.workflow.workflow import Workflow
 # Define agents for different tasks
 researcher = Agent(
     name="Research Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[DuckDuckGoTools()],
     instructions="Research the given topic and provide key facts and insights.",
 )

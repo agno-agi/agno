@@ -44,14 +44,14 @@ class ResearchReport(BaseModel):
 
 researcher = Agent(
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[DuckDuckGoTools()],
     role="Conduct thorough research on assigned topics",
 )
 
 analyst = Agent(
     name="Analyst",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     role="Analyze research findings and provide recommendations",
 )
 
@@ -59,7 +59,7 @@ analyst = Agent(
 research_team = Team(
     name="Research Team",
     id="research-team",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     members=[researcher, analyst],
     output_schema=ResearchReport,
     markdown=False,

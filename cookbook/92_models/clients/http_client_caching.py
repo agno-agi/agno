@@ -11,7 +11,7 @@ Use cases:
 - Production-grade instrumentation
 
 Install:
-    pip install agno openai httpx
+    uv pip install agno openai httpx
 """
 
 import logging
@@ -58,7 +58,7 @@ request_id_client = httpx.Client(
 )
 set_default_sync_client(request_id_client)
 
-agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), name="Request-ID Agent")
+agent = Agent(model=OpenAIChat(id="gpt-5.2"), name="Request-ID Agent")
 agent.run("Hello!", stream=False)
 
 
@@ -93,7 +93,7 @@ header_client = httpx.Client(
 )
 set_default_sync_client(header_client)
 
-agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), name="Header Agent")
+agent = Agent(model=OpenAIChat(id="gpt-5.2"), name="Header Agent")
 agent.run("Inject company headers", stream=False)
 
 print("Look at the httpx debug logs to see your headers added!")
@@ -151,9 +151,9 @@ prod_client = httpx.Client(
 set_default_sync_client(prod_client)
 
 prod_agents = [
-    Agent(model=OpenAIChat(id="gpt-4o-mini"), name="Prod OpenAI"),
+    Agent(model=OpenAIChat(id="gpt-5.2"), name="Prod OpenAI"),
     # Could also run with your own openai compat api, however due to ai.example.com not being a real domain... It will fail
-    # Agent(model=OpenAILike(id="gpt-4o-mini", base_url="https://ai.example.com/v1"), name="Prod Internal"),
+    # Agent(model=OpenAILike(id="gpt-5.2", base_url="https://ai.example.com/v1"), name="Prod Internal"),
 ]
 
 for agent in prod_agents:

@@ -5,7 +5,7 @@ This example demonstrates how to use PandasTools for data manipulation and analy
 Shows enable_ flag patterns for selective function access.
 PandasTools is a small tool (<6 functions) so it uses enable_ flags.
 
-Run: `pip install pandas` to install the dependencies
+Run: `uv pip install pandas` to install the dependencies
 """
 
 from agno.agent import Agent

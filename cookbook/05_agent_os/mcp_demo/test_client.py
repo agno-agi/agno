@@ -25,7 +25,7 @@ async def run_agent() -> None:
         transport="streamable-http", url=server_url, timeout_seconds=60
     ) as mcp_tools:
         agent = Agent(
-            model=OpenAIChat(id="gpt-5-mini"),
+            model=OpenAIChat(id="gpt-5.2"),
             tools=[mcp_tools],
             instructions=[
                 "You are a helpful assistant that has access to the configuration of a AgentOS.",

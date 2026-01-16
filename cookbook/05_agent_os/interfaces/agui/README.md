@@ -34,7 +34,7 @@ That's it! Your Agent is now exposed in an AG-UI compatible way, and can be used
 Start by installing our backend dependencies:
 
 ```bash
-pip install ag-ui-protocol
+uv pip install ag-ui-protocol
 ```
 
 ### Run your backend

@@ -67,9 +67,27 @@ Testing database examples in `cookbook/06_storage/`.
 1. Fixed path references in CLAUDE.md (`07_database` -> `06_storage`)
 2. Fixed path references in TEST_LOG.md (`07_database` -> `06_storage`)
 
-**Review (2026-01-15):**
-- Scanned all 63 files for model ID and emoji issues
-- No issues found - section is clean
+**Fixes Applied (2026-01-15 session 2):**
+3. **Bulk fix: `pip install` -> `uv pip install` in 45 files:**
+   - `README.md` and all database `README.md` files
+   - `sqlite/*.py`, `sqlite/async_sqlite/*.py`
+   - `postgres/*.py`, `postgres/async_postgres/*.py`
+   - `mysql/*.py`, `mysql/async_mysql/*.py`
+   - `mongo/*.py`, `mongo/async_mongo/*.py`
+   - `json_db/*.py`, `in_memory/*.py`
+   - `redis/*.py`, `dynamodb/*.py`, `firestore/*.py`
+   - `singlestore/*.py`, `surrealdb/*.py`, `gcs/*.py`
+   - `examples/selecting_tables.py`
+
+4. **Bulk fix: Model IDs `gpt-4o-mini` -> `gpt-5.2` in 14 files:**
+   - `01_persistent_session_storage.py`, `02_session_summary.py`, `03_chat_history.py`
+   - `sqlite/sqlite_for_workflow.py`, `sqlite/async_sqlite/async_sqlite_for_workflow.py`
+   - `postgres/postgres_for_workflow.py`, `postgres/async_postgres/async_postgres_for_workflow.py`
+   - `mongo/async_mongo/async_mongodb_for_workflow.py`
+   - `redis/redis_for_workflow.py`
+   - `json_db/json_for_agent.py`, `json_db/json_for_workflows.py`
+   - `in_memory/in_memory_storage_for_workflow.py`, `in_memory/README.md`
+   - `examples/multi_user_multi_session.py`
 
 **Key Features Verified:**
 - SQLite local database storage (agent, team, workflow)

@@ -2,7 +2,7 @@
 Use JSON files as the database for a Workflow.
 Useful for simple demos where performance is not critical.
 
-Run `pip install ddgs openai` to install dependencies.
+Run `uv pip install ddgs openai` to install dependencies.
 """
 
 from agno.agent import Agent
@@ -20,13 +20,13 @@ db = InMemoryDb()
 # Define agents
 hackernews_agent = Agent(
     name="Hackernews Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[HackerNewsTools()],
     role="Extract key insights and content from Hackernews posts",
 )
 web_agent = Agent(
     name="Web Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[DuckDuckGoTools()],
     role="Search the web for the latest news and trends",
 )

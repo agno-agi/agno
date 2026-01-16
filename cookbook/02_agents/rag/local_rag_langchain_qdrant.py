@@ -1,6 +1,6 @@
 """
 Prerequisites:
- - pip install langchain-qdrant langchain-text-splitters langchain-community fastembed
+ - uv pip install langchain-qdrant langchain-text-splitters langchain-community fastembed
 """
 
 from agno.agent import Agent

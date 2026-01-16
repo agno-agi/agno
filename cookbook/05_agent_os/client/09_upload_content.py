@@ -36,7 +36,7 @@ async def upload_text_content():
     - Memory management
     
     ## Getting Started
-    1. Install agno: pip install agno
+    1. Install agno: uv pip install agno
     2. Create an agent with a model
     3. Add tools for specific capabilities
     4. Deploy with AgentOS

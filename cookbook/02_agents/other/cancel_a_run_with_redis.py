@@ -13,7 +13,7 @@ The Redis cancellation manager is useful when:
 - You need cancellation state to persist across process restarts
 
 Requirements:
-    pip install redis
+    uv pip install redis
 
 Usage:
     # Start Redis first (using Docker):

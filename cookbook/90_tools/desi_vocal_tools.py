@@ -1,5 +1,5 @@
 """
-pip install requests
+uv pip install requests
 """
 
 from agno.agent import Agent

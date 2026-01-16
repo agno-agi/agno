@@ -12,7 +12,7 @@ Example prompts to try:
 - "Analyze NVIDIA's (NVDA) stock performance and future outlook"
 - "What's the market saying about Amazon's (AMZN) latest quarter?"
 
-Run: `pip install openai yfinance agno` to install the dependencies
+Run: `uv pip install openai yfinance agno` to install the dependencies
 """
 
 from textwrap import dedent

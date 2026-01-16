@@ -23,7 +23,7 @@ export AZURE_DEPLOYMENT=***  # Optional
 ### 3. Install libraries
 
 ```shell
-pip install -U openai ddgs duckdb yfinance agno
+uv pip install -U openai ddgs duckdb yfinance agno
 ```
 
 ### 4. Run basic Agent

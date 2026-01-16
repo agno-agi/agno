@@ -1,4 +1,4 @@
-"""Run `pip install agents` to install dependencies."""
+"""Run `uv pip install agents` to install dependencies."""
 
 from typing import Literal
 
@@ -8,7 +8,7 @@ try:
     from agents import Agent, function_tool
 except ImportError:
     raise ImportError(
-        "OpenAI agents not installed. Please install it using `pip install agents`."
+        "OpenAI agents not installed. Please install it using `uv pip install agents`."
     )
 
 

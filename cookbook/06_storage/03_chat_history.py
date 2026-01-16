@@ -7,7 +7,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url, session_table="sessions")
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     db=db,
     session_id="chat_history",
     instructions="You are a helpful assistant that can answer questions about space and oceans.",

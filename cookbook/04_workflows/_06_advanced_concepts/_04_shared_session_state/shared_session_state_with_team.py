@@ -99,7 +99,7 @@ def assign_step(run_context: RunContext, step_name: str, new_assignee: str) -> s
 # === CREATE AGENTS ===
 step_manager = Agent(
     name="StepManager",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=[
         "You are a precise step manager. Your ONLY job is to use the provided tools.",
         "When asked to add a step: ALWAYS use add_step(step_name, assignee, priority).",
@@ -112,7 +112,7 @@ step_manager = Agent(
 
 step_coordinator = Agent(
     name="StepCoordinator",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=[
         "You coordinate with the StepManager to ensure tasks are completed.",
         "Support the team by confirming actions and helping with coordination.",
@@ -122,7 +122,7 @@ step_coordinator = Agent(
 
 status_manager = Agent(
     name="StatusManager",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[update_step_status, assign_step],
     instructions=[
         "You manage step statuses and assignments using the provided tools.",

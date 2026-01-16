@@ -11,7 +11,7 @@ Example prompts to try:
 - "Find all Python files in the project"
 - "Analyze the performance benefits of using Groq with MCP"
 
-Run: `pip install agno mcp openai` to install the dependencies
+Run: `uv pip install agno mcp openai` to install the dependencies
 """
 
 import asyncio

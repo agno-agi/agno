@@ -1,4 +1,4 @@
-"""Run `pip install openai yfinance` to install dependencies."""
+"""Run `uv pip install openai yfinance` to install dependencies."""
 
 import asyncio
 

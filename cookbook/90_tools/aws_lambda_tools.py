@@ -6,7 +6,7 @@ Shows enable_ flag patterns for selective function access.
 AWSLambdaTools is a small tool (<6 functions) so it uses enable_ flags.
 
 Prerequisites:
-- Run: `pip install boto3` to install dependencies
+- Run: `uv pip install boto3` to install dependencies
 - Set up AWS credentials (AWS CLI, environment variables, or IAM roles)
 - Ensure proper IAM permissions for Lambda operations
 """

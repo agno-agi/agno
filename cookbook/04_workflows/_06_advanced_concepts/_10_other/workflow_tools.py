@@ -1,7 +1,7 @@
 """
 Here is a tool with reasoning capabilities to allow agents to run workflows.
 
-1. Run: `pip install openai agno lancedb tantivy sqlalchemy` to install the dependencies
+1. Run: `uv pip install openai agno lancedb tantivy sqlalchemy` to install the dependencies
 2. Export your OPENAI_API_KEY
 3. Run: `python cookbook/workflows/_06_advanced_concepts/_06_other/workflow_tools.py` to run the agent
 """
@@ -36,20 +36,20 @@ FEW_SHOT_EXAMPLES = dedent(
 # Define agents
 web_agent = Agent(
     name="Web Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[DuckDuckGoTools()],
     role="Search the web for the latest news and trends",
 )
 hackernews_agent = Agent(
     name="Hackernews Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[HackerNewsTools()],
     role="Extract key insights and content from Hackernews posts",
 )
 
 writer_agent = Agent(
     name="Writer Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="Write a blog post on the topic",
 )
 
@@ -128,7 +128,7 @@ workflow_tools = WorkflowTools(
 )
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[workflow_tools],
     markdown=True,
 )

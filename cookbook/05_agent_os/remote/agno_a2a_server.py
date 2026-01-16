@@ -45,7 +45,7 @@ assistant = Agent(
     name="Assistant",
     id="assistant-agent-2",
     description="A helpful AI assistant with calculator capabilities.",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     db=db,
     instructions=[
         "You are a helpful AI assistant.",
@@ -63,7 +63,7 @@ researcher = Agent(
     name="Researcher",
     id="researcher-agent-2",
     description="A research assistant with web search capabilities.",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     db=db,
     instructions=[
         "You are a research assistant.",

@@ -4,7 +4,7 @@ Testing model provider examples in `cookbook/92_models/`.
 
 **Test Environment:**
 - Python: `.venvs/demo/bin/python`
-- Date: 2026-01-14
+- Date: 2026-01-15 (reviewed), 2026-01-14 (initial)
 
 ---
 
@@ -60,7 +60,9 @@ Testing model provider examples in `cookbook/92_models/`.
 
 **Fixes Applied:**
 1. Fixed 48 path references (`cookbook/11_models/` and `cookbook/models/` -> `cookbook/92_models/`)
-2. Fixed model IDs in 36 Python files (google/gemini/*.py and cometapi/multi_model.py):
+2. Fixed `pip install` -> `uv pip install` in 190 files (2026-01-15)
+3. Fixed `gpt-4o-mini` -> `gpt-5.2` in 30 files (2026-01-15)
+4. Fixed model IDs in 36 Python files (google/gemini/*.py and cometapi/multi_model.py):
    - All `gemini-2.0-flash-001` -> `gemini-3-flash-preview`
    - All `gemini-2.0-flash-exp` -> `gemini-3-flash-preview`
    - All `gemini-2.0-flash` -> `gemini-3-flash-preview`

@@ -17,7 +17,7 @@ knowledge = Knowledge(
 knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/introduction.md")
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     knowledge=knowledge,
     markdown=True,
 )

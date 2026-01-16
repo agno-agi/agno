@@ -13,7 +13,7 @@ GCS JSON Database Setup:
 Prerequisites:
 1. Create a GCS bucket
 2. Ensure proper GCS permissions
-3. Install google-cloud-storage: `pip install google-cloud-storage`
+3. Install google-cloud-storage: `uv pip install google-cloud-storage`
 """
 
 from agno.agent import Agent

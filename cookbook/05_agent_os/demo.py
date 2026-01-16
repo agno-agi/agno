@@ -4,7 +4,7 @@ AgentOS Demo
 Set the OS_SECURITY_KEY environment variable to your OS security key to enable authentication.
 
 Prerequisites:
-pip install -U fastapi uvicorn sqlalchemy pgvector psycopg openai ddgs yfinance
+uv pip install -U fastapi uvicorn sqlalchemy pgvector psycopg openai ddgs yfinance
 """
 
 from agno.agent import Agent
@@ -49,7 +49,7 @@ simple_agent = Agent(
     name="Simple Agent",
     role="Simple agent",
     id="simple_agent",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=["You are a simple agent"],
     db=db,
     enable_user_memories=True,
@@ -59,7 +59,7 @@ research_agent = Agent(
     name="Research Agent",
     role="Research agent",
     id="research_agent",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=["You are a research agent"],
     tools=[DuckDuckGoTools()],
     db=db,

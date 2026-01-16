@@ -13,7 +13,7 @@ surreal start -u root -p root
 
 Then:
 
-1. Run: `pip install anthropic ddgs newspaper4k lxml_html_clean surrealdb agno` to install the dependencies
+1. Run: `uv pip install anthropic ddgs newspaper4k lxml_html_clean surrealdb agno` to install the dependencies
 2. Run: `python cookbook/db/surrealdb/surrealdb_for_team.py` to run the team
 """
 

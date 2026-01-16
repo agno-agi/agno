@@ -26,7 +26,7 @@ async def main():
     basic_team = Team(
         name="Basic Moderated Team",
         members=[],
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         pre_hooks=[OpenAIModerationGuardrail()],
         description="A team with basic OpenAI content moderation.",
         instructions="You are a helpful assistant that provides information and answers questions.",
@@ -75,7 +75,7 @@ async def main():
     custom_team = Team(
         name="Custom Moderated Team",
         members=[],
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         pre_hooks=[
             OpenAIModerationGuardrail(
                 raise_for_categories=[

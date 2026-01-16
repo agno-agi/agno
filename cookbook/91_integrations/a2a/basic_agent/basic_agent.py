@@ -7,7 +7,7 @@ from agno.models.openai import OpenAIChat
 from typing_extensions import override
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
 )
 
 

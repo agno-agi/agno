@@ -20,7 +20,7 @@ agent_card = AgentCard(
 ```
 
 Prerequisites:
-    pip install google-adk a2a-sdk uvicorn
+    uv pip install google-adk a2a-sdk uvicorn
     export GOOGLE_API_KEY=your_key
 
 Usage:

@@ -232,6 +232,21 @@ Testing agent feature examples in `cookbook/02_agents/` to verify they work as e
 14. `hooks/output_validation_post_hook.py` - Removed emojis from print statements
 15. `agentic_search/agentic_rag_infinity_reranker.py` - Removed emojis, fixed `pip install` -> `uv pip install`, moved `asyncio.run()` inside main guard
 
+**Fixes Applied (2026-01-15 session 2):**
+16. **Bulk fix: `pip install` -> `uv pip install` in 33 files:**
+    - `agentic_search/agentic_rag.py`
+    - `agentic_search/agentic_rag_with_reasoning.py`
+    - `async/data_analyst.py`
+    - `culture/README.md`
+    - `human_in_the_loop/*.py` (14 files)
+    - `multimodal/video_caption_agent.py`
+    - `multimodal/video_to_shorts.py`
+    - `other/cancel_a_run_with_redis.py`
+    - `other/cancel_a_run_async_with_redis.py`
+    - `other/scenario_testing.py`
+    - `rag/*.py` (8 files)
+    - `rag/README.md`
+
 **Known Issues:**
 None - all issues have been fixed.
 

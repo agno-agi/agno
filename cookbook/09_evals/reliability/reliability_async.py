@@ -12,7 +12,7 @@ from agno.tools.calculator import CalculatorTools
 
 def factorial():
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         tools=[CalculatorTools()],
     )
     response: RunOutput = agent.run("What is 10!?")

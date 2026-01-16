@@ -2,7 +2,7 @@
 
 This script demonstrates how to use an agent to generate speech from a given text input and optionally save it to a specified audio file.
 
-Run `pip install openai agno` to install the necessary dependencies.
+Run `uv pip install openai agno` to install the necessary dependencies.
 """
 
 import base64

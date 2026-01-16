@@ -16,7 +16,7 @@ Before you can use the Discord client, you'll need:
 
 1. Install the required packages:
 ```bash
-pip install discord.py agno
+uv pip install discord.py agno
 ```
 
 2. Create a Discord bot:

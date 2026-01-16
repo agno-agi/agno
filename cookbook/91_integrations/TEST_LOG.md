@@ -63,7 +63,9 @@ Testing integration examples in `cookbook/91_integrations/`.
 **Fixes Applied:**
 1. Fixed CLAUDE.md path reference (`cookbook/13_integrations/` -> `cookbook/91_integrations/`)
 2. Fixed TEST_LOG.md path reference
-3. Fixed model IDs in 2 files:
+3. Fixed `pip install` -> `uv pip install` in 24 files (2026-01-15)
+4. Fixed `gpt-4o-mini` -> `gpt-5.2` in 16 files (2026-01-15)
+5. Fixed model IDs in 2 files:
    - `discord/agent_with_user_memory.py` - `gemini-2.0-flash` -> `gemini-3-flash-preview`
    - `discord/agent_with_media.py` - `gemini-2.0-flash` -> `gemini-3-flash-preview`
 

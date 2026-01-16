@@ -34,19 +34,19 @@ db = PostgresDb(id="basic-db", db_url="postgresql+psycopg://ai:ai@localhost:5532
 # === SETUP ADVANCED WORKFLOW ===
 story_writer = Agent(
     name="Story Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="You are tasked with writing a 100 word story based on a given topic",
 )
 
 story_editor = Agent(
     name="Story Editor",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="Review and improve the story's grammar, flow, and clarity",
 )
 
 story_formatter = Agent(
     name="Story Formatter",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="Break down the story into prologue, body, and epilogue sections",
 )
 
@@ -89,7 +89,7 @@ format_step = Step(
 )
 
 # Create a WorkflowAgent that will decide when to run the workflow
-workflow_agent = WorkflowAgent(model=OpenAIChat(id="gpt-4o-mini"), num_history_runs=4)
+workflow_agent = WorkflowAgent(model=OpenAIChat(id="gpt-5.2"), num_history_runs=4)
 
 advanced_workflow = Workflow(
     name="Story Generation with Conditional Editing",

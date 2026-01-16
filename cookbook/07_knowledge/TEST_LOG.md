@@ -39,7 +39,7 @@ Testing knowledge/RAG examples in `cookbook/07_knowledge/`.
 |------|--------|-------|
 | pgvector/pgvector_db.py | PASS | PgVector integration works with Thai recipes |
 | chroma_db/chroma_db.py | PASS | ChromaDb (local) works with Massaman Gai query |
-| lance_db/*.py | SKIP | Requires `lancedb` module |
+| lance_db/lance_db.py | PASS | LanceDb (local) works with Massaman Gai query |
 | qdrant_db/*.py | SKIP | Requires `qdrant-client` module |
 | pinecone_db/*.py | SKIP | Requires Pinecone API key |
 | milvus_db/*.py | SKIP | Requires Milvus server |
@@ -115,15 +115,18 @@ Testing knowledge/RAG examples in `cookbook/07_knowledge/`.
 1. Fixed 55 path references (`cookbook/08_knowledge/` -> `cookbook/07_knowledge/`)
 2. Fixed CLAUDE.md path references
 3. Fixed TEST_LOG.md path references
+4. Fixed `pip install` -> `uv pip install` in 25 files (2026-01-15)
+5. Fixed `gpt-4o-mini` -> `gpt-5.2` in 23 files (2026-01-15)
 
 **Review (2026-01-15):**
-- Scanned all 204 files for model ID and emoji issues
-- No issues found - section is clean
+- Fixed pip install in 25 files across READMEs and Python files
+- Fixed model IDs (gpt-4o-mini -> gpt-5.2) in 23 files
 
 **Key Features Verified:**
 - Basic knowledge operations (path, URL, multiple sources)
 - PgVector vector database integration
 - ChromaDb local vector database
+- LanceDb local vector database
 - Multiple search types (hybrid, keyword, vector)
 - Metadata filtering with PgVector
 - OpenAI embeddings
@@ -131,7 +134,6 @@ Testing knowledge/RAG examples in `cookbook/07_knowledge/`.
 - JSON file reading
 
 **Skipped Due to Optional Dependencies:**
-- `lancedb` - Local vector DB (not installed)
 - `qdrant-client` - Qdrant vector DB
 - `chonkie` - Semantic chunking
 - `aiofiles` - Async file operations

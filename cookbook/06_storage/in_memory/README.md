@@ -63,7 +63,7 @@ my_sessions = {}
 db = InMemoryDb(storage_dict=my_sessions)
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     db=db,
     add_history_to_context=True,
 )
@@ -83,7 +83,7 @@ loaded_sessions = load_sessions_from_s3("my-bucket", "agent-sessions.json")
 new_db = InMemoryDb(storage_dict=loaded_sessions)
 
 new_agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     db=new_db,
     session_id=agent.session_id,  # Use same session ID
     add_history_to_context=True,

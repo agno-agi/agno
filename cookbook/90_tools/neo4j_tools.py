@@ -47,7 +47,7 @@ such as listing node labels or executing Cypher queries.
 
 1. **Install required packages:**
    ```bash
-   pip install neo4j python-dotenv
+   uv pip install neo4j python-dotenv
    ```
 
 2. **Set environment variables** (create a `.env` file in your project root):
@@ -67,7 +67,7 @@ such as listing node labels or executing Cypher queries.
 
 - **Connection refused:** Make sure Neo4j is running on the correct port (7687)
 - **Authentication failed:** Verify your username/password in the Neo4j browser first
-- **Import errors:** Install the neo4j driver with `pip install neo4j`
+- **Import errors:** Install the neo4j driver with `uv pip install neo4j`
 """
 
 import os

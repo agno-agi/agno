@@ -2,7 +2,7 @@
 This example shows how to use agentops to log model calls.
 
 Steps to get started with agentops:
-1. Install agentops: pip install agentops
+1. Install agentops: uv pip install agentops
 2. Obtain an API key from https://app.agentops.ai/
 3. Export environment variables like AGENTOPS_API_KEY and OPENAI_API_KEY.
 4. Run the script.

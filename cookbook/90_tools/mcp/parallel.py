@@ -2,7 +2,7 @@
 
 This example shows how to create an agent that uses Parallel to search for information using the Parallel MCP server.
 
-Run: `pip install anthropic mcp agno` to install the dependencies
+Run: `uv pip install anthropic mcp agno` to install the dependencies
 
 Prerequisites:
 - Set the environment variable "PARALLEL_API_KEY" with your Parallel API key.

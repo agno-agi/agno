@@ -33,7 +33,7 @@ knowledge.add_content(
 
 # Create an agent with the knowledge
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     knowledge=knowledge,
     search_knowledge=True,
     debug_mode=True,

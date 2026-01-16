@@ -16,26 +16,26 @@ from agno.workflow.workflow import Workflow
 # Define agents for different tasks
 news_agent = Agent(
     name="News Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[HackerNewsTools()],
     instructions="You are a news researcher. Get the latest tech news and summarize key points.",
 )
 
 search_agent = Agent(
     name="Search Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="You are a search specialist. Find relevant information on given topics.",
 )
 
 analysis_agent = Agent(
     name="Analysis Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="You are an analyst. Analyze the provided information and give insights.",
 )
 
 summary_agent = Agent(
     name="Summary Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="You are a summarizer. Create concise summaries of the provided content.",
 )
 

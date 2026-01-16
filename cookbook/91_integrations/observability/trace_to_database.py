@@ -8,7 +8,7 @@ This example shows:
 4. The hierarchical relationship between traces and spans
 
 Requirements:
-    pip install agno opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno
+    uv pip install agno opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno
 """
 
 import time  # noqa
@@ -28,7 +28,7 @@ setup_tracing(db=db)
 
 agent = Agent(
     name="HackerNews Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[HackerNewsTools()],
     instructions="You are a hacker news agent. Answer questions concisely.",
     markdown=True,

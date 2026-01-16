@@ -9,7 +9,7 @@ Automatically categorize, store, and retrieve information from your Notion works
 ---
 Configuration Instructions:
 1. Install required dependencies:
-   pip install agno notion-client
+   uv pip install agno notion-client
 
 2. Create a Notion Integration:
    - Go to https://www.notion.so/my-integrations

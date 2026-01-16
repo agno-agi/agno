@@ -1,4 +1,4 @@
-"""Run `pip install requests` to install dependencies."""
+"""Run `uv pip install requests` to install dependencies."""
 
 from agno.agent import Agent
 from agno.models.response import FileType

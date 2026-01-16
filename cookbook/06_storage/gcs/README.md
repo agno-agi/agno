@@ -5,7 +5,7 @@ Examples demonstrating Google Cloud Storage (GCS) integration with Agno agents u
 ## Setup
 
 ```shell
-pip install google-cloud-storage
+uv pip install google-cloud-storage
 ```
 
 ## Configuration
@@ -51,7 +51,7 @@ Install the required Python packages:
 
 
 ```bash
-pip install google-auth google-cloud-storage openai ddgs
+uv pip install google-auth google-cloud-storage openai ddgs
 ```
 
 

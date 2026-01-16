@@ -7,7 +7,7 @@ This example uses the MCP GitHub Agent. Example prompts to try:
 - "Find issues labeled as bugs"
 - "Show me contributor activity"
 
-Run: `pip install agno mcp openai` to install the dependencies
+Run: `uv pip install agno mcp openai` to install the dependencies
 """
 
 import asyncio

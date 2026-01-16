@@ -1,4 +1,4 @@
-"""Run `pip install openai slack-sdk` to install dependencies."""
+"""Run `uv pip install openai slack-sdk` to install dependencies."""
 
 from agno.agent import Agent
 from agno.tools.slack import SlackTools

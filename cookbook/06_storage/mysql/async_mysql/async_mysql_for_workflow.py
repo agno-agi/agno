@@ -1,5 +1,5 @@
 """Use Async MySQL as the database for a workflow.
-Run `pip install openai duckduckgo-search sqlalchemy asyncmy agno` to install dependencies.
+Run `uv pip install openai duckduckgo-search sqlalchemy asyncmy agno` to install dependencies.
 """
 
 import asyncio

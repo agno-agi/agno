@@ -5,7 +5,7 @@ Agno client -> Google ADK server
 
 Prerequisites:
     1. Install dependencies:
-       pip install agno httpx google-adk uvicorn
+       uv pip install agno httpx google-adk uvicorn
 
     2. Set your Google API key:
        export GOOGLE_API_KEY=your_key

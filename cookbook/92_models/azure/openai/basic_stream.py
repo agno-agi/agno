@@ -3,7 +3,7 @@ from typing import Iterator  # noqa
 from agno.agent import Agent, RunOutputEvent  # noqa
 from agno.models.azure import AzureOpenAI
 
-agent = Agent(model=AzureOpenAI(id="gpt-4o-mini"), markdown=True)
+agent = Agent(model=AzureOpenAI(id="gpt-5.2"), markdown=True)
 
 # Get the response in a variable
 # run_response: Iterator[RunOutputEvent] = agent.run("Share a 2 sentence horror story", stream=True)

@@ -20,7 +20,7 @@ from agno.os import AgentOS
 db = SqliteDb(db_file="tmp/agent.db")
 chat_agent = Agent(
     name="basic-agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     id="basic-agent",
     db=db,
     description="A helpful AI assistant that provides thoughtful answers.",

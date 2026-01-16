@@ -5,7 +5,7 @@ Examples demonstrating PostgreSQL database integration with Agno agents, teams, 
 ## Setup
 
 ```shell
-pip install psycopg2-binary
+uv pip install psycopg2-binary
 ```
 
 ## Configuration

@@ -5,7 +5,7 @@ Structured data processing with teams using Pydantic models and schemas.
 ## Setup
 
 ```bash
-pip install agno openai pydantic
+uv pip install agno openai pydantic
 ```
 
 Set your API key:

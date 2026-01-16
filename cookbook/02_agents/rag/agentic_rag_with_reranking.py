@@ -1,5 +1,5 @@
 """
-1. Run: `pip install openai agno cohere lancedb tantivy sqlalchemy` to install the dependencies
+1. Run: `uv pip install openai agno cohere lancedb tantivy sqlalchemy` to install the dependencies
 2. Export your OPENAI_API_KEY and CO_API_KEY
 3. Run: `python cookbook/agent_concepts/rag/agentic_rag_with_reranking.py` to run the agent
 """

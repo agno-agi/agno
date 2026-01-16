@@ -9,7 +9,7 @@ weather_agent = Agent(
     id="weather-reporter-agent",
     name="Weather Reporter Agent",
     description="An agent that provides up-to-date weather information for any city.",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[
         OpenWeatherTools(
             units="standard"  # Can be 'standard', 'metric', 'imperial'

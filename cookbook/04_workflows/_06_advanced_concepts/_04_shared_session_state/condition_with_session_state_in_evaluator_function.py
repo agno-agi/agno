@@ -49,14 +49,14 @@ def mark_user_as_greeted(step_input: StepInput, session_state: dict) -> StepOutp
 # Create agents
 greeter_agent = Agent(
     name="Greeter",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="Greet the user warmly and introduce yourself.",
     markdown=True,
 )
 
 contextual_agent = Agent(
     name="Contextual Assistant",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="Continue the conversation with context. You already know the user.",
     markdown=True,
 )

@@ -5,7 +5,7 @@ Teams handling text, images, audio, and video for comprehensive multimedia proce
 ## Setup
 
 ```bash
-pip install agno openai
+uv pip install agno openai
 ```
 
 Set your OpenAI API key:

@@ -3,7 +3,7 @@
 ## Setup Instructions:
 
 ### 1. Install Dependencies
-Run: `pip install agno sentence-transformers`
+Run: `uv pip install agno sentence-transformers`
 
 ### 2. Start the Postgres Server with pgvector
 Run: `sh cookbook/scripts/run_pgvector.sh`

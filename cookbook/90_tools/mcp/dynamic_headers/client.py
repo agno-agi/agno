@@ -70,7 +70,7 @@ async def main():
         # Step 4: Create agent with MCP tools
         agent_1 = Agent(
             name="agent-1",
-            model=OpenAIChat(id="gpt-4o-mini"),
+            model=OpenAIChat(id="gpt-5.2"),
             tools=[mcp_tools],
             markdown=False,
         )
@@ -100,7 +100,7 @@ async def main():
 
         agent_2 = Agent(
             name="agent-2",
-            model=OpenAIChat(id="gpt-4o-mini"),
+            model=OpenAIChat(id="gpt-5.2"),
             tools=[mcp_tools],
             markdown=False,
         )

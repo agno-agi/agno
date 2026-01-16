@@ -1,6 +1,6 @@
 """Use AsyncMongoDb as the database for an agent.
 
-Run `pip install openai pymongo motor` to install dependencies
+Run `uv pip install openai pymongo motor` to install dependencies
 
 Run a local MongoDB server using:
 ```bash

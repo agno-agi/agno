@@ -8,7 +8,7 @@ Example showing how to use the Twilio Tools with Agno.
 Requirements:
 - Twilio Account SID and Auth Token (get from console.twilio.com)
 - A Twilio phone number
-- pip install twilio
+- uv pip install twilio
 
 Usage:
 - Set the following environment variables:

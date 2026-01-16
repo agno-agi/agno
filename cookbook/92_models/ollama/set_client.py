@@ -1,4 +1,4 @@
-"""Run `pip install yfinance` to install dependencies."""
+"""Run `uv pip install yfinance` to install dependencies."""
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.ollama import Ollama

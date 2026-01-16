@@ -1,4 +1,4 @@
-"""Run `pip install openai agno memory_profiler` to install dependencies."""
+"""Run `uv pip install openai agno memory_profiler` to install dependencies."""
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
@@ -11,7 +11,7 @@ db = SqliteDb(db_file="tmp/memory.db")
 
 def run_agent():
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         system_message="Be concise, reply with one sentence.",
         db=db,
         enable_user_memories=True,

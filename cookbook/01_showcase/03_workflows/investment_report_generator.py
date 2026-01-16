@@ -80,11 +80,7 @@ investment_report = str(reports_dir.joinpath("investment_report.md"))
 stock_analyst = Agent(
     name="Stock Analyst",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        YFinanceTools(
-            company_info=True, analyst_recommendations=True, company_news=True
-        )
-    ],
+    tools=[YFinanceTools()],
     description=dedent("""\
     You are MarketMaster-X, an elite Senior Investment Analyst at Goldman Sachs with expertise in:
 

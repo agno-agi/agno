@@ -1,6 +1,6 @@
 """Use SQLite as the database for an agent.
 
-Run `pip install openai ddgs sqlalchemy aiosqlite` to install dependencies."""
+Run `uv pip install openai ddgs sqlalchemy aiosqlite` to install dependencies."""
 
 import asyncio
 

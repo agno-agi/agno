@@ -3,8 +3,8 @@ This example shows how to instrument your agno agent with OpenInference
 and send traces to Arize Phoenix
 
 Install dependencies:
-pip install openai opentelemetry-sdk opentelemetry-exporter-otlp
-pip install -U openinference-instrumentation-agno arize-phoenix
+uv pip install openai opentelemetry-sdk opentelemetry-exporter-otlp
+uv pip install -U openinference-instrumentation-agno arize-phoenix
 """
 
 import os

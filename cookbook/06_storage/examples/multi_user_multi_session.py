@@ -5,7 +5,7 @@ from agno.models.openai import OpenAIChat
 db = SqliteDb(db_file="tmp/data.db")
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     db=db,
     enable_user_memories=True,
     add_history_to_context=True,

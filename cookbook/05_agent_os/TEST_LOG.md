@@ -123,6 +123,31 @@ Testing Agent OS examples in `cookbook/05_agent_os/`.
 - `dbs/redis_demo.py` - Requires Redis
 - `dbs/dynamo_demo.py` - Requires DynamoDB
 
+**Fixes Applied (2026-01-15 session 2):**
+3. **Bulk fix: `pip install` -> `uv pip install` in 33 files:**
+   - `README.md`, `demo.py`, `all_interfaces.py`
+   - `tracing/*.py` (18 files)
+   - `client_a2a/*.py` and `README.md`
+   - `dbs/dynamo_demo.py`, `dbs/gcs_json_demo.py`
+   - `advanced_demo/*.py` (2 files)
+   - `interfaces/*/README.md` (3 files)
+   - `client/09_upload_content.py`
+   - `customize/custom_fastapi_app.py`
+
+4. **Bulk fix: Model IDs `gpt-4o-mini` -> `gpt-5.2` in 51 files:**
+   - `demo.py`, `guardrails_demo.py`, `all_interfaces.py`
+   - `tracing/dbs/*.py` (15 files)
+   - `tracing/*.py` (3 more files)
+   - `workflow/*.py` (7 files)
+   - `background_tasks/*.py` (6 files)
+   - `interfaces/*/*.py` (5 files)
+   - `client/*.py` (3 files)
+   - `remote/*.py` (3 files)
+   - `mcp_demo/test_client.py`
+   - `advanced_demo/reasoning_demo.py`
+   - `*_with_output_schema.py`, `*_with_input_schema.py`
+   - `shopify_demo.py`
+
 **Notes:**
 - 189 total examples covering comprehensive AgentOS features
 - All core server initialization works correctly

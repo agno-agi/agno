@@ -9,7 +9,7 @@ The Apify ecosystem has 4000+ pre-built Actors for almost any web data extractio
 ---
 Configuration Instructions:
 1. Install required dependencies:
-   pip install agno langchain-apify apify-client
+   uv pip install agno langchain-apify apify-client
 
 2. Set the APIFY_API_TOKEN environment variable:
    Add a .env file with APIFY_API_TOKEN=your_apify_api_token

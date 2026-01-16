@@ -4,7 +4,7 @@ Prerequisites:
 1. Start a Postgres + pgvector container (helper script is provided):
        ./cookbook/scripts/run_pgvector.sh
 2. Install dependencies:
-       pip install sqlalchemy 'psycopg[binary]' pgvector
+       uv pip install sqlalchemy 'psycopg[binary]' pgvector
 3. Run a vLLM server (any open model).  Example with Phi-3:
        vllm serve microsoft/Phi-3-mini-128k-instruct \
          --dtype float32 \

@@ -2,7 +2,7 @@
 This example demonstrates using Weaviate as a vector database.
 
 Installation:
-    pip install weaviate-client
+    uv pip install weaviate-client
 
 You can use either Weaviate Cloud or a local instance.
 

@@ -1,4 +1,4 @@
-"""Run `pip install ddgs sqlalchemy ibm-watsonx-ai` to install dependencies."""
+"""Run `uv pip install ddgs sqlalchemy ibm-watsonx-ai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb

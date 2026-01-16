@@ -8,7 +8,7 @@ OpenCVTools is a small tool (<6 functions) so it uses enable_ flags.
 Steps to use OpenCV Tools:
 
 1. Install OpenCV
-   - Run: pip install opencv-python
+   - Run: uv pip install opencv-python
 
 2. Camera Permissions (macOS)
    - Go to System Settings > Privacy & Security > Camera

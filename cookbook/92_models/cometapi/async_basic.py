@@ -7,7 +7,7 @@ import asyncio
 from agno.agent import Agent
 from agno.models.cometapi import CometAPI
 
-agent = Agent(model=CometAPI(id="gpt-5-mini"), markdown=True)
+agent = Agent(model=CometAPI(id="gpt-5.2"), markdown=True)
 
 # Get the response in a variable
 # run: RunOutput = agent.run("Share a 2 sentence horror story")

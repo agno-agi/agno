@@ -145,6 +145,27 @@ Testing workflow examples in `cookbook/04_workflows/`.
 - **Early Stop**: Workflow terminates on condition
 - **Session State**: State shared across steps
 
+**Fixes Applied (2026-01-15 session 2):**
+10. **Bulk fix: `pip install` -> `uv pip install` in 4 files:**
+    - `_06_advanced_concepts/_09_long_running_workflows/01_workflow_websocket_reconnect.py`
+    - `_06_advanced_concepts/_09_long_running_workflows/02_workflow_events_replay.py`
+    - `_06_advanced_concepts/_09_long_running_workflows/03_workflow_disruption_fully_catchup.py`
+    - `_06_advanced_concepts/_10_other/workflow_tools.py`
+
+11. **Bulk fix: Model IDs `gpt-4o-mini` -> `gpt-5.2` in 49 files:**
+    - `README.md`
+    - `_01_basic_workflows/_01_sequence_of_steps/sync/*.py` (7 files)
+    - `_01_basic_workflows/_01_sequence_of_steps/async/*.py` (6 files)
+    - `_01_basic_workflows/_03_function_instead_of_steps/sync/*.py` (2 files)
+    - `_01_basic_workflows/_03_function_instead_of_steps/async/*.py` (2 files)
+    - `_06_advanced_concepts/_01_structured_io_at_each_level/*.py` (11 files)
+    - `_06_advanced_concepts/_02_early_stopping/*.py` (3 files)
+    - `_06_advanced_concepts/_04_shared_session_state/*.py` (5 files)
+    - `_06_advanced_concepts/_05_background_execution/*.py` (2 files)
+    - `_06_advanced_concepts/_06_guardrails/*.py` (1 file)
+    - `_06_advanced_concepts/_08_workflow_agent/*.py` (6 files)
+    - `_06_advanced_concepts/_10_other/*.py` (5 files)
+
 **Notes:**
 - 129 total examples with sync/async variants
 - All core workflow patterns work correctly

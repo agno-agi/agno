@@ -6,7 +6,7 @@ TrafilaturaTools provides powerful capabilities for extracting clean, readable t
 and converting raw HTML into structured, meaningful data.
 
 Prerequisites:
-- Install trafilatura: pip install trafilatura
+- Install trafilatura: uv pip install trafilatura
 - No API keys required
 """
 

@@ -16,7 +16,7 @@ def get_weather(city: str) -> str:
 
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     markdown=True,
 )
 

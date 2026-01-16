@@ -10,7 +10,7 @@ Team Composition:
 - Quality Validator: Validates answer quality and suggests improvements
 
 Setup:
-1. Run: `pip install openai lancedb tantivy pypdf sqlalchemy agno`
+1. Run: `uv pip install openai lancedb tantivy pypdf sqlalchemy agno`
 2. Run this script to see distributed RAG in action
 """
 

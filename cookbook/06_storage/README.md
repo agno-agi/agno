@@ -6,14 +6,14 @@ This directory contains examples demonstrating how to integrate various database
 
 ```shell
 # Install required database drivers based on your choice
-pip install psycopg2-binary  # PostgreSQL
-pip install pymongo         # MongoDB
-pip install mysql-connector-python  # MySQL
-pip install redis           # Redis
-pip install google-cloud-firestore  # Firestore
-pip install boto3           # DynamoDB
-pip install singlestoredb   # SingleStore
-pip install google-cloud-storage  # GCS
+uv pip install psycopg2-binary  # PostgreSQL
+uv pip install pymongo         # MongoDB
+uv pip install mysql-connector-python  # MySQL
+uv pip install redis           # Redis
+uv pip install google-cloud-firestore  # Firestore
+uv pip install boto3           # DynamoDB
+uv pip install singlestoredb   # SingleStore
+uv pip install google-cloud-storage  # GCS
 ```
 
 Navigate to the specific integration directory for detailed documentation and examples.

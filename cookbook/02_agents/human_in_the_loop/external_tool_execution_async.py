@@ -4,7 +4,7 @@ This example shows how to implement human-in-the-loop functionality in your Agno
 It shows how to:
 - Use external tool execution to execute a tool call outside of the agent
 
-Run `pip install openai agno` to install dependencies.
+Run `uv pip install openai agno` to install dependencies.
 """
 
 import asyncio

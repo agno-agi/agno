@@ -6,7 +6,7 @@ Generate a pre-signed URL from S3 and pass it directly to Gemini.
 
 Requirements:
 - AWS credentials configured (via environment variables or ~/.aws/credentials)
-- boto3 installed: pip install boto3
+- boto3 installed: uv pip install boto3
 
 Supported formats: PDF, JSON, HTML, CSS, XML, images (PNG, JPEG, WebP, GIF)
 

@@ -5,7 +5,7 @@ Examples demonstrating SurrealDB integration with Agno agents, teams, and workfl
 ## Setup
 
 ```shell
-pip install surrealdb
+uv pip install surrealdb
 ```
 
 ## Configuration

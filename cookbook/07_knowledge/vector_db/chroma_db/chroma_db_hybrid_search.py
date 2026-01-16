@@ -96,7 +96,7 @@ instructions = dedent(
 # Create an agent with the hybrid search knowledge base
 agent = Agent(
     name="Agno Knowledge Agent",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     knowledge=knowledge,
     instructions=instructions,
     description=description,

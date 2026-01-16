@@ -12,7 +12,7 @@ db = SqliteDb(db_file="tmp/agent_as_judge_team_post_hook.db")
 # Eval runs as post-hook, results saved to database
 agent_as_judge_eval = AgentAsJudgeEval(
     name="Team Response Quality",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     criteria="Response should be well-researched, clear, comprehensive, and show good collaboration between team members",
     scoring_strategy="numeric",
     threshold=7,

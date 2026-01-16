@@ -1,7 +1,7 @@
 """
 This example shows how to use langfuse via OpenLIT to trace model calls.
 
-1. Install dependencies: pip install openai langfuse openlit opentelemetry-sdk opentelemetry-exporter-otlp
+1. Install dependencies: uv pip install openai langfuse openlit opentelemetry-sdk opentelemetry-exporter-otlp
 2. Set your Langfuse API key as an environment variables:
   - export LANGFUSE_PUBLIC_KEY=<your-key>
   - export LANGFUSE_SECRET_KEY=<your-key>
@@ -49,7 +49,7 @@ import openlit  # noqa: E402
 openlit.init(tracer=tracer, disable_batch=True)
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[DuckDuckGoTools()],
     markdown=True,
     debug_mode=True,

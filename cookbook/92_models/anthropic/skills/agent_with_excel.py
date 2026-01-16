@@ -5,7 +5,7 @@ This cookbook demonstrates how to use Claude's xlsx skill to create Excel
 spreadsheets through Agno agents.
 
 Prerequisites:
-- pip install agno anthropic
+- uv pip install agno anthropic
 - export ANTHROPIC_API_KEY="your_api_key_here"
 """
 

@@ -33,13 +33,13 @@ async def log_team_result(run_output: TeamRunOutput, team: Team) -> None:
 # Create team members
 researcher = Agent(
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="You research topics and provide factual information.",
 )
 
 writer = Agent(
     name="Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="You write clear, engaging content based on research.",
 )
 
@@ -47,7 +47,7 @@ writer = Agent(
 content_team = Team(
     id="content-team",
     name="ContentTeam",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     members=[researcher, writer],
     instructions="Coordinate between researcher and writer to create content.",
     db=AsyncSqliteDb(db_file="tmp/team.db"),

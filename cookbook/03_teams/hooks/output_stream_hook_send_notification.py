@@ -33,7 +33,7 @@ async def main():
     # Team equipped with a post-hook to send email notifications
     team = Team(
         name="Financial Report Team",
-        model=OpenAIChat(id="gpt-5-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         members=[],
         post_hooks=[send_notification],
         tools=[YFinanceTools()],

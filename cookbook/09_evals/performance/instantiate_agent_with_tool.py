@@ -1,4 +1,4 @@
-"""Run `pip install agno openai memory_profiler` to install dependencies."""
+"""Run `uv pip install agno openai memory_profiler` to install dependencies."""
 
 from typing import Literal
 

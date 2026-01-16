@@ -5,7 +5,7 @@ This example demonstrates how to use ArxivTools for searching academic papers.
 Shows enable_ flag patterns for selective function access.
 ArxivTools is a small tool (<6 functions) so it uses enable_ flags.
 
-Run: `pip install arxiv` to install the dependencies
+Run: `uv pip install arxiv` to install the dependencies
 """
 
 from agno.agent import Agent

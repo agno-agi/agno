@@ -1,4 +1,4 @@
-"""Run `pip install groq exa-py` to install dependencies."""
+"""Run `uv pip install groq exa-py` to install dependencies."""
 
 from datetime import datetime
 from pathlib import Path

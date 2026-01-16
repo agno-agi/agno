@@ -20,7 +20,7 @@ response = agent.run("What is the maximum speed of the Tesla Model 3?")
 
 evaluation = AgentAsJudgeEval(
     name="Product Info Quality",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     criteria="Response should be informative, well-formatted, and accurate for product specifications",
     scoring_strategy="numeric",
     threshold=8,

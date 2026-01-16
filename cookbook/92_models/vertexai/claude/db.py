@@ -1,4 +1,4 @@
-"""Run `pip install ddgs sqlalchemy anthropic` to install dependencies."""
+"""Run `uv pip install ddgs sqlalchemy anthropic` to install dependencies."""
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb

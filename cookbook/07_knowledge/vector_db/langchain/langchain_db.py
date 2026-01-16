@@ -1,5 +1,5 @@
 """
-pip install langchain langchain-community langchain-openai langchain-chroma agno
+uv pip install langchain langchain-community langchain-openai langchain-chroma agno
 """
 
 import pathlib
@@ -45,7 +45,7 @@ knowledge = Knowledge(
 )
 
 # Create an agent with the knowledge base
-agent = Agent(model=OpenAIChat("gpt-5-mini"), knowledge=knowledge)
+agent = Agent(model=OpenAIChat("gpt-5.2"), knowledge=knowledge)
 
 # Use the agent to ask a question and print a response.
 agent.print_response(

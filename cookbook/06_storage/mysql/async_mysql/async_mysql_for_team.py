@@ -1,5 +1,5 @@
 """Use Async MySQL as the database for a team.
-Run `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno sqlalchemy asyncmy` to install the dependencies
+Run `uv pip install openai duckduckgo-search newspaper4k lxml_html_clean agno sqlalchemy asyncmy` to install the dependencies
 """
 
 import asyncio

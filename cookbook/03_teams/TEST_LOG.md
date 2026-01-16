@@ -198,8 +198,30 @@ Testing team examples in `cookbook/03_teams/`.
 - `other/run_as_cli.py`
 - `other/team_cancel_a_run.py`
 
+**Fixes Applied (2026-01-15 session 2):**
+9. **Bulk fix: `pip install` -> `uv pip install` in 24 files:**
+   - `README.md` and all subfolder `README.md` files
+   - `async_flows/01_async_coordination_team.py`
+   - `basic_flows/01_basic_coordination.py`
+   - `distributed_rag/*.py` (3 files)
+   - `knowledge/04_team_with_custom_retriever_dependencies.py`
+   - `multimodal/video_caption_generation.py`
+   - `other/run_as_cli.py`
+   - `search_coordination/*.py` (3 files)
+
+10. **Bulk fix: Model IDs `gpt-4o-mini` -> `gpt-5.2` in 25 files:**
+    - `basic_flows/01_basic_coordination.py`, `06_history_of_members.py`, `07_share_member_interactions.py`
+    - `context_compression/async_tool_call_compression.py`
+    - `dependencies/*.py` (4 files)
+    - `guardrails/*.py` (3 files)
+    - `hooks/*.py` (5 files)
+    - `other/run_as_cli.py`, `team_model_string.py`, `team_model_inheritance.py`
+    - `session/*.py` (3 files)
+    - `state/*.py` (3 files)
+
 **Notes:**
 - Teams folder mirrors 02_agents structure for consistency
 - Core team patterns (basic_flows, state, streaming) all work
 - Production patterns (guardrails, hooks, memory) verified
 - Model IDs fixed from gemini-2.0-flash-exp to gemini-3-flash-preview
+- Model IDs fixed from gpt-4o-mini to gpt-5.2

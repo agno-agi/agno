@@ -12,7 +12,7 @@ Example prompts to try:
 - "Find all Python files in the project"
 - "Summarize the main functionality of the codebase"
 
-Run: `pip install agno mcp openai` to install the dependencies
+Run: `uv pip install agno mcp openai` to install the dependencies
 """
 
 import asyncio

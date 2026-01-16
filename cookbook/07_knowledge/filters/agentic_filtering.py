@@ -92,7 +92,7 @@ knowledge.add_contents(
 
 # Enable agentic filtering
 agent = Agent(
-    model=OpenAIChat("gpt-5-mini"),
+    model=OpenAIChat("gpt-5.2"),
     knowledge=knowledge,
     search_knowledge=True,
     enable_agentic_knowledge_filters=True,

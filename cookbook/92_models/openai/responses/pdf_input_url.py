@@ -8,7 +8,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     db=db,
     tools=[{"type": "file_search"}, {"type": "web_search_preview"}],
     markdown=True,

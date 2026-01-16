@@ -96,7 +96,7 @@ def structure_team_response(run_output: TeamRunOutput, team: Team) -> None:
     # Create a team response formatter
     formatter_agent = Agent(
         name="Team Response Formatter",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         instructions=[
             "You are a team response formatting specialist.",
             "Transform team responses into well-structured formats that highlight:",
@@ -179,19 +179,19 @@ def main():
     # Create simple team
     analyst_agent = Agent(
         name="Market Analyst",
-        model=OpenAIChat(id="gpt-5-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         description="Expert in market trends and competitive analysis",
     )
 
     advisor_agent = Agent(
         name="Business Advisor",
-        model=OpenAIChat(id="gpt-5-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         description="Specialist in business strategy and operations",
     )
 
     metadata_team = Team(
         name="Business Intelligence Team",
-        model=OpenAIChat(id="gpt-5-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         members=[analyst_agent, advisor_agent],
         post_hooks=[add_team_metadata],
         instructions=[
@@ -213,17 +213,17 @@ def main():
         members=[
             Agent(
                 name="UX Designer",
-                model=OpenAIChat(id="gpt-5-mini"),
+                model=OpenAIChat(id="gpt-5.2"),
                 description="User experience and interface design expert",
             ),
             Agent(
                 name="Product Manager",
-                model=OpenAIChat(id="gpt-5-mini"),
+                model=OpenAIChat(id="gpt-5.2"),
                 description="Product strategy and roadmap specialist",
             ),
             Agent(
                 name="Engineer",
-                model=OpenAIChat(id="gpt-5-mini"),
+                model=OpenAIChat(id="gpt-5.2"),
                 description="Technical implementation and architecture expert",
             ),
         ],
@@ -250,17 +250,17 @@ def main():
         members=[
             Agent(
                 name="Strategy Consultant",
-                model=OpenAIChat(id="gpt-5-mini"),
+                model=OpenAIChat(id="gpt-5.2"),
                 description="Business strategy and planning expert",
             ),
             Agent(
                 name="Operations Specialist",
-                model=OpenAIChat(id="gpt-5-mini"),
+                model=OpenAIChat(id="gpt-5.2"),
                 description="Process optimization and efficiency expert",
             ),
             Agent(
                 name="Change Management Expert",
-                model=OpenAIChat(id="gpt-5-mini"),
+                model=OpenAIChat(id="gpt-5.2"),
                 description="Organizational change and transformation specialist",
             ),
         ],

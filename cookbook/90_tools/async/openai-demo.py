@@ -50,7 +50,7 @@ async def atask3(delay: int):
 
 
 async_agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[atask2, atask1, atask3],
     markdown=True,
 )
@@ -106,7 +106,7 @@ def task3(delay: int):
 
 
 sync_agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[task2, task1, task3],
     markdown=True,
 )

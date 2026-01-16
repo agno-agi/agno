@@ -150,7 +150,7 @@ def clear_completed_tasks(run_context: RunContext) -> str:
 # Create specialized agents with different tool sets
 task_manager = Agent(
     name="Task Manager",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[add_task, complete_task, set_task_priority],
     instructions=[
         "You are a task management specialist.",
@@ -163,7 +163,7 @@ task_manager = Agent(
 
 task_viewer = Agent(
     name="Task Viewer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[list_tasks],
     instructions=[
         "You are a task viewing specialist.",
@@ -175,7 +175,7 @@ task_viewer = Agent(
 
 task_organizer = Agent(
     name="Task Organizer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[list_tasks, clear_completed_tasks, set_task_priority],
     instructions=[
         "You are a task organization specialist.",

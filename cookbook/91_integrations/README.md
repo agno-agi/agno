@@ -20,10 +20,10 @@ Install required dependencies based on the integration you want to use:
 
 ```bash
 # For Discord integration
-pip install discord.py agno
+uv pip install discord.py agno
 
 # For A2A integration
-pip install a2a-python agno
+uv pip install a2a-python agno
 ```
 
 ## Getting Started

@@ -14,7 +14,7 @@ Prerequisites:
    - Navigate to the Dashboard to get your API key
 
 2. Install required packages:
-   pip install e2b_code_interpreter pandas matplotlib
+   uv pip install e2b_code_interpreter pandas matplotlib
 
 3. Set environment variable:
    export E2B_API_KEY=your_api_key

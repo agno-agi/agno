@@ -12,7 +12,7 @@ Example prompts to try:
 - "Find issues labeled as bugs"
 - "Show me contributor activity"
 
-Run: `pip install agno mcp openai` to install the dependencies
+Run: `uv pip install agno mcp openai` to install the dependencies
 Environment variables needed:
 - Create a GitHub personal access token following these steps:
     - https://github.com/modelcontextprotocol/servers/tree/main/src/github#setup

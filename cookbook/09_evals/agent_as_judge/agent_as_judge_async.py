@@ -28,7 +28,7 @@ async def main():
 
     evaluation = AgentAsJudgeEval(
         name="ML Explanation Quality",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         criteria="Explanation should be clear, beginner-friendly, and avoid jargon",
         scoring_strategy="numeric",
         threshold=10,

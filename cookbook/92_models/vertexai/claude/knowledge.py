@@ -1,4 +1,4 @@
-"""Run `pip install ddgs sqlalchemy pgvector pypdf anthropic openai` to install dependencies."""
+"""Run `uv pip install ddgs sqlalchemy pgvector pypdf anthropic openai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder

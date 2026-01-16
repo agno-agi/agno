@@ -59,8 +59,8 @@ uv venv ${VENV_DIR} --python 3.12 --quiet
 
 echo ""
 echo -e "    ${DIM}Installing requirements...${NC}"
-echo -e "    ${DIM}> VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${REQUIREMENTS_FILE}${NC}"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${REQUIREMENTS_FILE} --quiet
+echo -e "    ${DIM}> VIRTUAL_ENV=${VENV_DIR} uv uv pip install -r ${REQUIREMENTS_FILE}${NC}"
+VIRTUAL_ENV=${VENV_DIR} uv uv pip install -r ${REQUIREMENTS_FILE} --quiet
 
 # Copy activation command to clipboard
 ACTIVATE_CMD="source .venvs/learning/bin/activate"

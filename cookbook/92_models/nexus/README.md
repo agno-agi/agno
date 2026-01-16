@@ -23,7 +23,7 @@ export ANTHROPIC_API_KEY=***
 ### 4. Install libraries
 
 ```shell
-pip install -U openai agno
+uv pip install -U openai agno
 ```
 
 ### 5. Run basic Agent

@@ -1,6 +1,6 @@
 """Use MySQL as the database for a team.
 
-Run `pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
+Run `uv pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
 """
 
 from typing import List

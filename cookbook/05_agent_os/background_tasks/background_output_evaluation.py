@@ -41,7 +41,7 @@ class EvaluationResult(BaseModel):
 # Create the evaluator agent once (not in the hook for performance)
 evaluator_agent = Agent(
     name="OutputEvaluator",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=[
         "You are an expert at evaluating AI assistant responses.",
         "Analyze responses for:",
@@ -153,7 +153,7 @@ db = AsyncSqliteDb(db_file="tmp/evaluation.db")
 main_agent = Agent(
     id="support-agent",
     name="CustomerSupportAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=[
         "You are a helpful customer support agent.",
         "Provide clear, accurate, and friendly responses.",

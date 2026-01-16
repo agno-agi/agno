@@ -1,7 +1,7 @@
 """
 Example AgentOS app with a custom FastAPI app with basic routes.
 
-You can also run this using the FastAPI cli (pip install fastapi["standard"]):
+You can also run this using the FastAPI cli (uv pip install fastapi["standard"]):
 ```
 fastapi run custom_fastapi_app.py
 ```

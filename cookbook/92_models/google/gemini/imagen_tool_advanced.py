@@ -4,7 +4,7 @@ An Agent using the Gemini image generation tool.
 
 Make sure to set the Vertex AI credentials. Here's the authentication guide: https://cloud.google.com/sdk/docs/initializing
 
-Run `pip install google-genai agno` to install the required packages.
+Run `uv pip install google-genai agno` to install the required packages.
 """
 
 from agno.agent import Agent

@@ -3,7 +3,7 @@ from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # Model strings follow the format "{provider}:{model_id}", for example:
-model_string = "openai:gpt-4o-mini"
+model_string = "openai:gpt-5.2"
 
 # Create a research team
 team = Team(

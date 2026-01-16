@@ -9,7 +9,7 @@ Team Composition:
 - Result Synthesizer: Combines and ranks all results for final response
 
 Setup:
-1. Install dependencies: `pip install agno anthropic infinity-client lancedb`
+1. Install dependencies: `uv pip install agno anthropic infinity-client lancedb`
 2. Set up Infinity Server:
    ```bash
    pip install "infinity-emb[all]"

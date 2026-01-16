@@ -6,7 +6,7 @@ Prerequisites:
 - Traceloop API key
 
 Steps:
-1. `pip install agno openai traceloop-sdk`
+1. `uv pip install agno openai traceloop-sdk`
 2. Set the Traceloop API key as an environment variable: `export TRACELOOP_API_KEY=<your-api-key>`
 """
 
@@ -19,7 +19,7 @@ Traceloop.init(app_name="agno_workflows")
 
 agent = Agent(
     name="AnalysisAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     debug_mode=True,
 )
 

@@ -7,7 +7,7 @@ Example prompts to try:
 - "Design a cute cartoon mascot for a tech startup, vector style"
 - "Create an artistic portrait of a cyberpunk samurai in a rainy city"
 
-Run `pip install google-genai agno` to install the necessary dependencies.
+Run `uv pip install google-genai agno` to install the necessary dependencies.
 """
 
 from agno.agent import Agent

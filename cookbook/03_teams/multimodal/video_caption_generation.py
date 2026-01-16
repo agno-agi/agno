@@ -1,5 +1,5 @@
 """Please install dependencies using:
-pip install openai moviepy ffmpeg
+uv pip install openai moviepy ffmpeg
 """
 
 from agno.agent import Agent

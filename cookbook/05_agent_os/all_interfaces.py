@@ -2,7 +2,7 @@
 AgentOS Demo
 
 Prerequisites:
-pip install -U fastapi uvicorn sqlalchemy pgvector psycopg openai ddgs yfinance
+uv pip install -U fastapi uvicorn sqlalchemy pgvector psycopg openai ddgs yfinance
 """
 
 from agno.agent import Agent
@@ -41,7 +41,7 @@ simple_agent = Agent(
     name="Simple Agent",
     role="Simple agent",
     id="simple-agent",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=["You are a simple agent"],
     knowledge=knowledge,
 )
@@ -52,7 +52,7 @@ simple_team = Team(
     name="Simple Team",
     description="A team of agents",
     members=[simple_agent],
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     id="simple-team",
     instructions=[
         "You are the team lead.",

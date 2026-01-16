@@ -6,7 +6,7 @@ from agno.team.team import Team
 
 # Create an Team that maintains state
 team = Team(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     db=SqliteDb(db_file="tmp/agents.db"),
     members=[],
     markdown=True,

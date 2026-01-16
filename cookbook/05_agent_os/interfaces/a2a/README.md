@@ -37,7 +37,7 @@ That's it! Your Agent is now exposed via A2A protocol and can be called by other
 Start by installing the backend dependencies:
 
 ```bash
-pip install agno
+uv pip install agno
 ```
 
 ### Run your backend

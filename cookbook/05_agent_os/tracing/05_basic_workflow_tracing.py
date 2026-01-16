@@ -1,7 +1,7 @@
 """
 Traces with AgentOS
 Requirements:
-    pip install agno opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno
+    uv pip install agno opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno
 """
 
 from agno.agent import Agent

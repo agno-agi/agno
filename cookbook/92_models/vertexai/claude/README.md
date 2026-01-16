@@ -29,7 +29,7 @@ or
 ### 4. Install libraries
 
 ```shell
-pip install -U anthropic ddgs duckdb agno
+uv pip install -U anthropic ddgs duckdb agno
 ```
 
 ### 5. Run basic Agent

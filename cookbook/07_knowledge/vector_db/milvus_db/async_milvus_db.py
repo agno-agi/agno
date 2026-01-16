@@ -1,4 +1,4 @@
-# install pymilvus - `pip install pymilvus`
+# install pymilvus - `uv pip install pymilvus`
 
 import asyncio
 

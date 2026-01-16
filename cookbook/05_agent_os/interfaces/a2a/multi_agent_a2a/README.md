@@ -5,7 +5,7 @@ Overview
 
 Prerequisites
 - Python 3.8+
-- Install project dependencies (e.g., pip install -r requirements.txt) or your project's deps.
+- Install project dependencies (e.g., uv pip install -r requirements.txt) or your project's deps.
 - Set any required API keys (OpenAI, OpenWeather) as environment variables if your setup expects them.
 
 Run order (required)

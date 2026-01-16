@@ -10,7 +10,7 @@ on any EVM-compatible blockchain.
 
 2. Or pass them directly to the EvmTools constructor
 3. Install dependencies:
-    pip install agno web3
+    uv pip install agno web3
 """
 
 from agno.agent import Agent

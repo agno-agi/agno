@@ -17,7 +17,7 @@ evaluator_agent = Agent(
 
 evaluation = AccuracyEval(
     model=OpenAIChat(id="o4-mini"),
-    agent=Agent(model=OpenAIChat(id="gpt-5-mini"), tools=[CalculatorTools()]),
+    agent=Agent(model=OpenAIChat(id="gpt-5.2"), tools=[CalculatorTools()]),
     input="What is 10*5 then to the power of 2? do it step by step",
     expected_output="2500",
     # Use your evaluator Agent

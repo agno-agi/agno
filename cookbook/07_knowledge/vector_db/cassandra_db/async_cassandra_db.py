@@ -10,7 +10,7 @@ try:
     from cassandra.cluster import Cluster  # type: ignore
 except (ImportError, ModuleNotFoundError):
     raise ImportError(
-        "Could not import cassandra-driver python package.Please install it with pip install cassandra-driver."
+        "Could not import cassandra-driver python package.Please install it with uv pip install cassandra-driver."
     )
 
 cluster = Cluster()

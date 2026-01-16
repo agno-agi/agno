@@ -5,7 +5,7 @@ Persistent memory management for teams to maintain context across interactions.
 ## Setup
 
 ```bash
-pip install agno openai pgvector "psycopg[binary]" sqlalchemy
+uv pip install agno openai pgvector "psycopg[binary]" sqlalchemy
 ```
 
 Set your API key:

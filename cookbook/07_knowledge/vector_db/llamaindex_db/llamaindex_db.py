@@ -1,5 +1,5 @@
 """
-pip install llama-index-core llama-index-readers-file llama-index-embeddings-openai agno
+uv pip install llama-index-core llama-index-readers-file llama-index-embeddings-openai agno
 """
 
 from pathlib import Path
@@ -53,7 +53,7 @@ knowledge = Knowledge(
 
 # Create an agent with the knowledge instance
 agent = Agent(
-    model=OpenAIChat("gpt-5-mini"),
+    model=OpenAIChat("gpt-5.2"),
     knowledge=knowledge,
     search_knowledge=True,
     debug_mode=True,

@@ -18,7 +18,7 @@ export PERPLEXITY_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-pip install -U ddgs duckdb agno
+uv pip install -U ddgs duckdb agno
 ```
 
 ### 4. Run basic Agent

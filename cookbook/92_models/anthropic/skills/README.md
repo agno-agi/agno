@@ -28,10 +28,10 @@ Before you can use Claude Agent Skills, you'll need:
 
 1. Install the required packages:
 ```bash
-pip install anthropic agno
+uv pip install anthropic agno
 
 # Optional: Install document manipulation libraries
-pip install python-pptx openpyxl python-docx PyPDF2 pdfplumber
+uv pip install python-pptx openpyxl python-docx PyPDF2 pdfplumber
 ```
 
 2. Set up your Anthropic API key:

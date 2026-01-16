@@ -4,7 +4,7 @@ This example shows how to create an agent that uses Anthropic to search for info
 
 You can get the Brave API key from https://brave.com/search/api/
 
-Run: `pip install anthropic mcp agno` to install the dependencies
+Run: `uv pip install anthropic mcp agno` to install the dependencies
 """
 
 import asyncio

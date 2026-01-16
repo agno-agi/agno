@@ -13,7 +13,7 @@ db_path = os.getenv("DATABASE_PATH", "memori_agno.db")
 engine = create_engine(f"sqlite:///{db_path}")
 Session = sessionmaker(bind=engine)
 
-model = OpenAIChat(id="gpt-4o-mini")
+model = OpenAIChat(id="gpt-5.2")
 
 # Initialize Memori and register with LLM client
 mem = Memori(conn=Session).llm.register(model.get_client())

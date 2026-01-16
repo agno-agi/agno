@@ -70,12 +70,12 @@ from agno.workflow.workflow import Workflow
 
 # Define your workflow steps
 story_writer = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="Write a 100 word story based on a given topic",
 )
 
 story_formatter = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="Break down a story into prologue, body, and epilogue",
 )
 
@@ -87,7 +87,7 @@ def add_references(step_input: StepInput):
 
 # Create WorkflowAgent
 workflow_agent = WorkflowAgent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
 )
 
 # Create Workflow with WorkflowAgent

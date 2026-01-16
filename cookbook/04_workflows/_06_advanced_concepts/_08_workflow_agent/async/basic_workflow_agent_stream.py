@@ -12,13 +12,13 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 story_writer = Agent(
     name="story_writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="You are tasked with writing a 100 word story based on a given topic",
 )
 
 story_formatter = Agent(
     name="story_formatter",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="You are tasked with breaking down a short story in prelogues, body and epilogue",
 )
 
@@ -33,7 +33,7 @@ def add_references(step_input: StepInput):
 
 
 # Create a WorkflowAgent that will decide when to run the workflow
-workflow_agent = WorkflowAgent(model=OpenAIChat(id="gpt-4o-mini"), num_history_runs=4)
+workflow_agent = WorkflowAgent(model=OpenAIChat(id="gpt-5.2"), num_history_runs=4)
 
 # Create workflow with the WorkflowAgent
 workflow = Workflow(

@@ -1,7 +1,7 @@
 """
 Get an API key from https://play.cartesia.ai/keys
 
-Run `pip install cartesia` to install the dependencies.
+Run `uv pip install cartesia` to install the dependencies.
 """
 
 from agno.agent import Agent

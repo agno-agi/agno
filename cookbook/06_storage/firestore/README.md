@@ -5,7 +5,7 @@ Examples demonstrating Google Cloud Firestore integration with Agno agents.
 ## Setup
 
 ```shell
-pip install google-cloud-firestore
+uv pip install google-cloud-firestore
 ```
 
 ## Configuration

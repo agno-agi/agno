@@ -1,4 +1,4 @@
-"""Run `pip install sqlalchemy` and ensure Postgres is running (`./cookbook/scripts/run_pgvector.sh`)."""
+"""Run `uv pip install sqlalchemy` and ensure Postgres is running (`./cookbook/scripts/run_pgvector.sh`)."""
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb

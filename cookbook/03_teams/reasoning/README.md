@@ -6,7 +6,7 @@ Multi-agent reasoning and analysis.
 
 ```bash
 # install dep's based on your preferred model provider
-pip install agno openai anthropic
+uv pip install agno openai anthropic
 ```
 
 Set your API keys:

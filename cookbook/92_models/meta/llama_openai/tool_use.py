@@ -1,4 +1,4 @@
-"""Run `pip install openai yfinance` to install dependencies."""
+"""Run `uv pip install openai yfinance` to install dependencies."""
 
 from agno.agent import Agent
 from agno.models.meta import LlamaOpenAI

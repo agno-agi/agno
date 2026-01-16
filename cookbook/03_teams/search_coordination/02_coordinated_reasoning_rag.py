@@ -10,7 +10,7 @@ Team Composition:
 - Response Coordinator: Synthesizes everything into a final reasoned response
 
 Setup:
-1. Run: `pip install agno anthropic cohere lancedb tantivy sqlalchemy`
+1. Run: `uv pip install agno anthropic cohere lancedb tantivy sqlalchemy`
 2. Export your ANTHROPIC_API_KEY and CO_API_KEY
 3. Run this script to see coordinated reasoning RAG in action
 """

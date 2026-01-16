@@ -11,7 +11,7 @@ if os.path.exists("tmp/data.db"):
 
 # Create agents for different users to demonstrate user-specific session history
 team = Team(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     members=[],  # No members, just for the demo
     db=AsyncSqliteDb(db_file="tmp/data.db"),
     search_session_history=True,  # allow searching previous sessions

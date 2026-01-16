@@ -33,7 +33,7 @@ writer = Agent(
 editor = Agent(
     name="Editor",
     role="Edit and refine content",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=["Ensure clarity and correctness"],
 )
 
@@ -45,7 +45,7 @@ analyst = Agent(
 
 sub_team = Team(
     name="Analysis Team",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     members=[analyst],
 )
 
@@ -71,7 +71,7 @@ if __name__ == "__main__":
     print(f"Writer model: {writer.model.id}")
     # editor keeps its explicit model
     print(f"Editor model: {editor.model.id}")
-    # analyst inherits gpt-4o-mini from its sub-team
+    # analyst inherits gpt-5.2 from its sub-team
     print(f"Analyst model: {analyst.model.id}")
 
     team.print_response("Write a brief article about AI", stream=True)

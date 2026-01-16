@@ -1,4 +1,4 @@
-"""Run `pip install duckdb` to install dependencies."""
+"""Run `uv pip install duckdb` to install dependencies."""
 
 import asyncio
 from textwrap import dedent

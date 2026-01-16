@@ -33,7 +33,7 @@ def get_current_context() -> dict:
 
 team = Team(
     name="PersonalizationTeam",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     members=[],
     instructions=[
         "Analyze the user profile and current context to provide a personalized summary of today's priorities."

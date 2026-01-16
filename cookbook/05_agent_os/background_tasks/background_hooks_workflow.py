@@ -30,14 +30,14 @@ async def log_step_completion(run_output: RunOutput, agent: Agent) -> None:
 # Create agents for the workflow steps
 analyzer = Agent(
     name="Analyzer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="Analyze the input and identify key points.",
     post_hooks=[log_step_completion],
 )
 
 summarizer = Agent(
     name="Summarizer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="Summarize the analysis into a brief response.",
     post_hooks=[log_step_completion],
 )

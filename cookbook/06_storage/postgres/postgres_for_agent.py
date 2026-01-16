@@ -1,6 +1,6 @@
 """Use Postgres as the database for an agent.
 
-Run `pip install ddgs sqlalchemy openai` to install dependencies."""
+Run `uv pip install ddgs sqlalchemy openai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb

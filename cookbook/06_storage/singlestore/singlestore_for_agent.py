@@ -1,6 +1,6 @@
 """Use SingleStore as the database for an agent.
 
-Run `pip install ddgs sqlalchemy openai` to install dependencies."""
+Run `uv pip install ddgs sqlalchemy openai` to install dependencies."""
 
 from os import getenv
 

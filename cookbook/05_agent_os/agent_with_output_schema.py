@@ -41,7 +41,7 @@ class MovieScript(BaseModel):
 movie_agent = Agent(
     name="Movie Script Agent",
     id="movie-agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     description="Creates structured outputs - default MovieScript format, but can be overridden",
     output_schema=MovieScript,
     markdown=False,

@@ -1,5 +1,5 @@
 """
-1. Run: `pip install openai lancedb tantivy pypdf sqlalchemy agno` to install the dependencies
+1. Run: `uv pip install openai lancedb tantivy pypdf sqlalchemy agno` to install the dependencies
 2. Run: `python cookbook/rag/04_agentic_rag_lancedb.py` to run the agent
 """
 

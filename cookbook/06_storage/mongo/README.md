@@ -5,7 +5,7 @@ Examples demonstrating MongoDB integration with Agno agents and teams.
 ## Setup
 
 ```shell
-pip install pymongo
+uv pip install pymongo
 ```
 
 Run a local MongoDB server using:

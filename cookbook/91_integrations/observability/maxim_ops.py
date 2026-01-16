@@ -2,7 +2,7 @@
 This example shows how to use Maxim to log agent calls and traces.
 
 Steps to get started with Maxim:
-1. Install Maxim: pip install maxim-py
+1. Install Maxim: uv pip install maxim-py
 2. Add instrument_agno(Maxim().logger()) to initialize tracing
 3. Authentication:
  - Go to https://getmaxim.ai and create an account
@@ -24,7 +24,7 @@ try:
     from maxim.logger.agno import instrument_agno
 except ImportError:
     raise ImportError(
-        "`maxim` not installed. Please install using `pip install maxim-py`"
+        "`maxim` not installed. Please install using `uv pip install maxim-py`"
     )
 
 # Instrument Agno with Maxim for automatic tracing and logging

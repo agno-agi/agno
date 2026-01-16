@@ -1,7 +1,7 @@
 """
 This example shows how to instrument your agno agent with OpenInference and send traces to Arize Phoenix.
 
-1. Install dependencies: pip install arize-phoenix openai openinference-instrumentation-agno opentelemetry-sdk opentelemetry-exporter-otlp
+1. Install dependencies: uv pip install arize-phoenix openai openinference-instrumentation-agno opentelemetry-sdk opentelemetry-exporter-otlp
 2. Run `phoenix serve` to start the local collector.
 """
 
@@ -21,7 +21,7 @@ tracer_provider = register(
 
 agent = Agent(
     name="Stock Price Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[YFinanceTools()],
     instructions="You are a stock price agent. Answer questions in the style of a stock analyst.",
     debug_mode=True,

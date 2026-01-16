@@ -1,4 +1,4 @@
-"""Run `pip install openai agno` to install dependencies."""
+"""Run `uv pip install openai agno` to install dependencies."""
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
@@ -10,7 +10,7 @@ db = SqliteDb(db_file="tmp/storage.db")
 
 def run_agent():
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         system_message="Be concise, reply with one sentence.",
         add_history_to_context=True,
     )

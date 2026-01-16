@@ -3,7 +3,7 @@ Example showing how to use the Todoist Tools with Agno
 
 Requirements:
 - Sign up/login to Todoist and get a Todoist API Token (get from https://app.todoist.com/app/settings/integrations/developer)
-- pip install todoist-api-python
+- uv pip install todoist-api-python
 
 Usage:
 - Set the following environment variables:

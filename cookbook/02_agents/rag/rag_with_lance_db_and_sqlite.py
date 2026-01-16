@@ -1,4 +1,4 @@
-"""Run `pip install lancedb` to install dependencies."""
+"""Run `uv pip install lancedb` to install dependencies."""
 
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb

@@ -1,7 +1,7 @@
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.cometapi import CometAPI
 
-agent = Agent(model=CometAPI(id="gpt-5-mini"), markdown=True)
+agent = Agent(model=CometAPI(id="gpt-5.2"), markdown=True)
 
 # Get the response in a variable
 # run: RunOutput = agent.run("Explain quantum computing in simple terms")

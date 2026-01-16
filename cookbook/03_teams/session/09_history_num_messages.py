@@ -13,10 +13,10 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 db = PostgresDb(db_url=db_url, session_table="sessions")
 
-agent = Agent(model=OpenAIChat(id="gpt-5-mini"))
+agent = Agent(model=OpenAIChat(id="gpt-5.2"))
 
 team = Team(
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     members=[agent],
     db=db,
     add_history_to_context=True,

@@ -26,7 +26,7 @@ class MovieScript(BaseModel):
 
 
 agent = Agent(
-    model=AzureOpenAI(id="gpt-4o-mini"),
+    model=AzureOpenAI(id="gpt-5.2"),
     description="You help people write movie scripts.",
     output_schema=MovieScript,
 )

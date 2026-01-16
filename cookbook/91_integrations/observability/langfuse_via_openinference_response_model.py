@@ -2,7 +2,7 @@
 This example shows how to instrument your agno agent with OpenInference and send traces to Langfuse,
 using an Agent with a response model.
 
-1. Install dependencies: pip install openai langfuse opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
+1. Install dependencies: uv pip install openai langfuse opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
 2. Either self-host or sign up for an account at https://us.cloud.langfuse.com
 3. Set your Langfuse API key as an environment variables:
   - export LANGFUSE_PUBLIC_KEY=<your-key>
@@ -57,7 +57,7 @@ class StockPrice(BaseModel):
 
 agent = Agent(
     name="Stock Price Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[YFinanceTools()],
     instructions="You are a stock price agent. You check and return the current price of a stock.",
     debug_mode=True,

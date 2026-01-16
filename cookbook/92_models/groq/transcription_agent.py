@@ -1,4 +1,4 @@
-"""Run `pip install groq` to install dependencies."""
+"""Run `uv pip install groq` to install dependencies."""
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
@@ -8,7 +8,7 @@ url = "https://agno-public.s3.amazonaws.com/demo_data/sample_conversation.wav"
 
 agent = Agent(
     name="Groq Transcription Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[GroqTools(exclude_tools=["generate_speech"])],
 )
 

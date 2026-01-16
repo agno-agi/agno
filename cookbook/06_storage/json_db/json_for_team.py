@@ -2,7 +2,7 @@
 Use JSON files as the database for a Team.
 Useful for simple demos where performance is not critical.
 
-Run `pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
+Run `uv pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
 """
 
 from typing import List

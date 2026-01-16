@@ -10,7 +10,7 @@ from agno.models.openai import OpenAIChat
 # Simple async function to run an Agent.
 async def arun_agent():
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         system_message="Be concise, reply with one sentence.",
     )
     response = await agent.arun("What is the capital of France?")

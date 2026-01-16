@@ -38,7 +38,7 @@ Create a shell script (e.g., set_couchbase_env.sh):
 
 Install couchbase-sdk:
 ----------------------
-    pip install couchbase
+    uv pip install couchbase
 """
 
 import os

@@ -26,7 +26,7 @@ class MovieScript(BaseModel):
 
 
 json_mode_agent = Agent(
-    model=AIMLAPI(id="gpt-4o-mini"),
+    model=AIMLAPI(id="gpt-5.2"),
     description="You help people write movie scripts.",
     output_schema=MovieScript,
     use_json_mode=True,

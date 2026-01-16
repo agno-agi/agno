@@ -6,7 +6,7 @@ from agno.workflow.types import StepInput, StepOutput
 # Create agents
 security_scanner = Agent(
     name="Security Scanner",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=[
         "You are a security scanner. Analyze the provided code or system for security vulnerabilities.",
         "Return 'SECURE' if no critical vulnerabilities found.",
@@ -17,13 +17,13 @@ security_scanner = Agent(
 
 code_deployer = Agent(
     name="Code Deployer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="Deploy the security-approved code to production environment.",
 )
 
 monitoring_agent = Agent(
     name="Monitoring Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions="Set up monitoring and alerts for the deployed application.",
 )
 

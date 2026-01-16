@@ -1,4 +1,4 @@
-"""Run `pip install ddgs openai` to install dependencies."""
+"""Run `uv pip install ddgs openai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb

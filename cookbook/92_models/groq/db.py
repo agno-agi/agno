@@ -1,4 +1,4 @@
-"""Run `pip install ddgs sqlalchemy groq` to install dependencies."""
+"""Run `uv pip install ddgs sqlalchemy groq` to install dependencies."""
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb

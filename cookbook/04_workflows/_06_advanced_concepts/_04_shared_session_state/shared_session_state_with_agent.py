@@ -77,7 +77,7 @@ def list_items(run_context: RunContext) -> str:
 # Create agents with tools that use workflow session state
 shopping_assistant = Agent(
     name="Shopping Assistant",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[add_item, remove_item, list_items],
     instructions=[
         "You are a helpful shopping assistant.",
@@ -89,7 +89,7 @@ shopping_assistant = Agent(
 
 list_manager = Agent(
     name="List Manager",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[list_items, remove_all_items],
     instructions=[
         "You are a list management specialist.",

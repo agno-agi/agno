@@ -8,7 +8,7 @@ from agno.agent import Agent
 from agno.models.aimlapi import AIMLAPI
 
 agent = Agent(
-    model=AIMLAPI(id="gpt-4o-mini"),
+    model=AIMLAPI(id="gpt-5.2"),
     markdown=True,
 )
 

@@ -19,7 +19,7 @@ db = SqliteDb(db_file="tmp/workflow_demo.db")
 # Create agents with different toolsets
 search_agent = Agent(
     name="Hotel Search Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=[
         "You are a hotel search expert. Find hotels based on user requirements.",
         "Always provide hotel IDs, names, locations, and availability.",
@@ -29,7 +29,7 @@ search_agent = Agent(
 
 booking_agent = Agent(
     name="Hotel Booking Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     instructions=[
         "You are a booking specialist. Book hotels using the hotel IDs provided.",
         "Always confirm successful bookings with hotel name and ID.",

@@ -11,7 +11,7 @@
 ```bash
 python3 -m venv ~/.venvs/aienv
 source ~/.venvs/aienv/bin/activate
-pip install -U agno openai pgvector "psycopg[binary]" sqlalchemy
+uv pip install -U agno openai pgvector "psycopg[binary]" sqlalchemy
 ```
 
 ### 2. Start PgVector Database

@@ -6,7 +6,7 @@ Example prompts to try:
 - "Generate an image of a dog and tell me the color of the dog"
 - "Create an image of a cat driving a car"
 
-Run `pip install google-genai agno` to install the necessary dependencies.
+Run `uv pip install google-genai agno` to install the necessary dependencies.
 """
 
 import base64

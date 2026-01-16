@@ -4,7 +4,7 @@ For this example to run you need:
 - Create a GitHub personal access token following these steps:
     - https://github.com/modelcontextprotocol/servers/tree/main/src/github#setup
 - Set the GITHUB_TOKEN environment variable: `export GITHUB_TOKEN=<Your GitHub access token>`
-- Run: `pip install agno mcp openai` to install the dependencies
+- Run: `uv pip install agno mcp openai` to install the dependencies
 """
 
 from contextlib import asynccontextmanager

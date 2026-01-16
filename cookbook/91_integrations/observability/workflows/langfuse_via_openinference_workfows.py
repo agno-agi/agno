@@ -1,7 +1,7 @@
 """
 This example shows how to instrument your agno agent with OpenInference and send traces to Langfuse.
 
-1. Install dependencies: pip install openai langfuse opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
+1. Install dependencies: uv pip install openai langfuse opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
 2. Either self-host or sign up for an account at https://us.cloud.langfuse.com
 3. Set your Langfuse API key as an environment variables:
   - export LANGFUSE_PUBLIC_KEY=<your-key>

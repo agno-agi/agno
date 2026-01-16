@@ -10,17 +10,17 @@ A2A (Agent-to-Agent) is a standardized protocol for agent-to-agent communication
 
 ### Client Only
 ```bash
-pip install agno httpx
+uv pip install agno httpx
 ```
 
 ### Running AgentOS Server
 ```bash
-pip install "agno[os]"
+uv pip install "agno[os]"
 ```
 
 ### Running Google ADK Server
 ```bash
-pip install google-adk a2a-sdk uvicorn
+uv pip install google-adk a2a-sdk uvicorn
 export GOOGLE_API_KEY=your_api_key_here
 ```
 

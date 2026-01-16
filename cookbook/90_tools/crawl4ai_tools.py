@@ -5,7 +5,7 @@ This example demonstrates how to use Crawl4aiTools for web crawling and content 
 Shows enable_ flag patterns for selective function access.
 Crawl4aiTools is a small tool (<6 functions) so it uses enable_ flags.
 
-Run: `pip install crawl4ai` to install the dependencies
+Run: `uv pip install crawl4ai` to install the dependencies
 """
 
 from agno.agent import Agent

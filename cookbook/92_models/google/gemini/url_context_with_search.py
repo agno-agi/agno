@@ -1,6 +1,6 @@
 """Combine URL context with Google Search for comprehensive web analysis.
 
-Run `pip install google-generativeai` to install dependencies.
+Run `uv pip install google-generativeai` to install dependencies.
 """
 
 from agno.agent import Agent

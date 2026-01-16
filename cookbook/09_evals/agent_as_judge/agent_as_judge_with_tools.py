@@ -17,7 +17,7 @@ response = agent.run("What is 15 * 23 + 47?")
 
 evaluation = AgentAsJudgeEval(
     name="Calculator Tool Usage Quality",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     criteria="Response should clearly explain the calculation process, show intermediate steps, and present the final answer in a user-friendly way",
     scoring_strategy="numeric",
     threshold=7,

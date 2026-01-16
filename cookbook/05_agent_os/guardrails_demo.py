@@ -25,7 +25,7 @@ db = PostgresDb(id="basic-db", db_url="postgresql+psycopg://ai:ai@localhost:5532
 # Setup basic agents, teams and workflows
 chat_agent = Agent(
     name="Chat Agent",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     pre_hooks=[
         OpenAIModerationGuardrail(),
         PromptInjectionGuardrail(),
@@ -46,7 +46,7 @@ chat_agent = Agent(
 guardrails_team = Team(
     id="guardrails-team",
     name="Guardrails Team",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     members=[chat_agent],
     add_history_to_context=True,
     num_history_runs=3,

@@ -2,7 +2,7 @@
 This cookbook demonstrates how to use the Valyu Toolkit for academic and web search.
 
 Prerequisites:
-- Install: pip install valyu
+- Install: uv pip install valyu
 - Get API key: https://platform.valyu.network
 - Set environment variable: export VALYU_API_KEY with your api key or pass the api key while initializing the toolkit
 """

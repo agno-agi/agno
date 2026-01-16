@@ -40,7 +40,7 @@ def add_item(run_context: RunContext, item: str) -> str:
 
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     session_id="retry_tool_call_from_post_hook_session",
     db=SqliteDb(
         session_table="retry_tool_call_from_post_hook_session",

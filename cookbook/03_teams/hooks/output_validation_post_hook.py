@@ -60,7 +60,7 @@ def validate_team_response_quality(run_output: TeamRunOutput, team: Team) -> Non
     # Create a team validation agent
     validator_agent = Agent(
         name="Team Output Validator",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         instructions=[
             "You are a team output quality validator. Analyze team responses for:",
             "1. COMPREHENSIVENESS: Response leverages multiple team members' expertise effectively",
@@ -182,17 +182,17 @@ async def main():
         members=[
             Agent(
                 name="Corporate Lawyer",
-                model=OpenAIChat(id="gpt-4o-mini"),
+                model=OpenAIChat(id="gpt-5.2"),
                 description="Expert in corporate law, contracts, and compliance",
             ),
             Agent(
                 name="Tax Attorney",
-                model=OpenAIChat(id="gpt-4o-mini"),
+                model=OpenAIChat(id="gpt-5.2"),
                 description="Specialist in tax law, regulations, and planning",
             ),
             Agent(
                 name="Risk Analyst",
-                model=OpenAIChat(id="gpt-4o-mini"),
+                model=OpenAIChat(id="gpt-5.2"),
                 description="Expert in legal risk assessment and mitigation",
             ),
         ],
@@ -211,8 +211,8 @@ async def main():
     team_simple = Team(
         name="Content Creation Team",
         members=[
-            Agent(name="Writer", model=OpenAIChat(id="gpt-4o-mini")),
-            Agent(name="Editor", model=OpenAIChat(id="gpt-4o-mini")),
+            Agent(name="Writer", model=OpenAIChat(id="gpt-5.2")),
+            Agent(name="Editor", model=OpenAIChat(id="gpt-5.2")),
         ],
         post_hooks=[simple_team_coordination_check],
         instructions=[
@@ -248,14 +248,14 @@ async def main():
         members=[
             Agent(
                 name="Agent1",
-                model=OpenAIChat(id="gpt-4o-mini"),
+                model=OpenAIChat(id="gpt-5.2"),
                 instructions=[
                     "Give brief, individual responses without considering teammates."
                 ],
             ),
             Agent(
                 name="Agent2",
-                model=OpenAIChat(id="gpt-4o-mini"),
+                model=OpenAIChat(id="gpt-5.2"),
                 instructions=["Provide minimal responses without team coordination."],
             ),
         ],

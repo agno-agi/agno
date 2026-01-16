@@ -7,7 +7,7 @@ Set the following environment variables to connect to your DynamoDb instance:
 
 Or pass those parameters when initializing the DynamoDb instance.
 
-Run `pip install boto3` to install dependencies.
+Run `uv pip install boto3` to install dependencies.
 """
 
 from agno.agent import Agent

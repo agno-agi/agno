@@ -4,7 +4,7 @@ Grounding enables Gemini to search the web and provide responses backed by
 real-time information with citations. This is a legacy tool - for Gemini 2.0+
 models, consider using the 'search' parameter instead.
 
-Run `pip install google-generativeai` to install dependencies.
+Run `uv pip install google-generativeai` to install dependencies.
 """
 
 from agno.agent import Agent

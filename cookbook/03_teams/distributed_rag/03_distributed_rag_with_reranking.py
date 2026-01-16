@@ -10,7 +10,7 @@ Team Composition:
 - Final Synthesizer: Synthesizes reranked results into optimal responses
 
 Setup:
-1. Run: `pip install openai lancedb tantivy pypdf sqlalchemy agno`
+1. Run: `uv pip install openai lancedb tantivy pypdf sqlalchemy agno`
 2. Run this script to see advanced reranking RAG in action
 """
 

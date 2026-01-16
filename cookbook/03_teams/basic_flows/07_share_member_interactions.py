@@ -27,20 +27,20 @@ def get_user_profile() -> dict:
 user_profile_agent = Agent(
     name="User Profile Agent",
     role="You are a user profile agent that can retrieve information about the user and the user's account.",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[get_user_profile],
 )
 
 technical_support_agent = Agent(
     name="Technical Support Agent",
     role="You are a technical support agent that can answer questions about the technical support.",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
 )
 
 billing_agent = Agent(
     name="Billing Agent",
     role="You are a billing agent that can answer questions about the billing.",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
 )
 
 

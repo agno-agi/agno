@@ -5,7 +5,7 @@ Coordinated search across multiple agents and knowledge sources.
 ## Setup
 
 ```bash
-pip install agno openai anthropic cohere lancedb tantivy sqlalchemy
+uv pip install agno openai anthropic cohere lancedb tantivy sqlalchemy
 ```
 
 Set your API key based on your provider:

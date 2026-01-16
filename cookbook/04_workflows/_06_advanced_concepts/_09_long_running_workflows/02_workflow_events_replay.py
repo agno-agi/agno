@@ -21,7 +21,7 @@ try:
     import websockets
 except ImportError:
     print(
-        "[ERROR] websockets library not installed. Install with: pip install websockets"
+        "[ERROR] websockets library not installed. Install with: uv pip install websockets"
     )
     exit(1)
 

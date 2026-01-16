@@ -5,7 +5,7 @@ Teams with custom tools and tool coordination for enhanced functionality.
 ## Setup
 
 ```bash
-pip install agno openai
+uv pip install agno openai
 ```
 
 Set your OpenAI API key:

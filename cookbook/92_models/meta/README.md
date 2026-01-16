@@ -18,13 +18,13 @@ export LLAMA_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-pip install -U agno llama-api-client
+uv pip install -U agno llama-api-client
 ```
 
 If using LlamaOpenAI, install the following:
 
 ```shell
-pip install -U agno openai
+uv pip install -U agno openai
 ```
 
 ### 4. Run a basic Agent
@@ -43,7 +43,7 @@ python cookbook/92_models/meta/llama/basic.py
 
 ### 5. Run an Agent with Tools
 
-> Run `pip install ddgs` to install dependencies.
+> Run `uv pip install ddgs` to install dependencies.
 
 - Streaming on
 

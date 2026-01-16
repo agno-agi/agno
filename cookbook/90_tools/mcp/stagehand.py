@@ -13,7 +13,7 @@ Prerequisites:
 - Clone the Stagehand MCP server: git clone https://github.com/browserbase/mcp-server-browserbase
 - Build the Stagehand MCP server: cd mcp-server-browserbase/stagehand && npm install && npm run build
   - This will create a dist/index.js file in the location where you cloned the repository
-- Install dependencies: pip install agno mcp
+- Install dependencies: uv pip install agno mcp
 - Set environment variables: BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID, OPENAI_API_KEY
 - Run this example: python cookbook/90_tools/mcp/stagehand.py
 """

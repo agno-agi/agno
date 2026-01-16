@@ -9,7 +9,7 @@ from agno.models.openai import OpenAIChat
 # Simple function to run an agent which performance we will evaluate
 def run_agent():
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         system_message="Be concise, reply with one sentence.",
     )
     response = agent.run("What is the capital of France?")

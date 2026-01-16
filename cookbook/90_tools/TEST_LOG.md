@@ -4,7 +4,7 @@ Testing tool examples in `cookbook/90_tools/`.
 
 **Test Environment:**
 - Python: `.venvs/demo/bin/python`
-- Date: 2026-01-14
+- Date: 2026-01-15 (reviewed), 2026-01-14 (initial)
 
 ---
 
@@ -62,7 +62,9 @@ Testing tool examples in `cookbook/90_tools/`.
 1. Fixed CLAUDE.md path reference (`cookbook/14_tools/` -> `cookbook/90_tools/`)
 2. Fixed TEST_LOG.md path reference
 3. Fixed 9 additional files with path references in mcp/ subfolder
-4. Fixed model IDs in 4 files (6 occurrences):
+4. Fixed `pip install` -> `uv pip install` in 55 files (2026-01-15)
+5. Fixed `gpt-4o-mini` -> `gpt-5.2` in 18 files (2026-01-15)
+6. Fixed model IDs in 4 files (6 occurrences):
    - `webbrowser_tools.py` - 2x `gemini-2.0-flash` -> `gemini-3-flash-preview`
    - `todoist_tools.py` - 2x `gemini-2.0-flash-exp` -> `gemini-3-flash-preview`
    - `google_bigquery_tools.py` - 1x `gemini-2.0-flash` -> `gemini-3-flash-preview`

@@ -2,7 +2,7 @@
 This is an example that uses the [scenario](https://github.com/langwatch/scenario) testing library to test an agent.
 
 Prerequisites:
-- Install scenario: `pip install scenario`
+- Install scenario: `uv pip install scenario`
 """
 
 import pytest

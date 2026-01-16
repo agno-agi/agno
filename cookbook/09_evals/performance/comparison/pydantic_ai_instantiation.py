@@ -1,4 +1,4 @@
-"""Run `pip install openai pydantic-ai` to install dependencies."""
+"""Run `uv pip install openai pydantic-ai` to install dependencies."""
 
 from typing import Literal
 

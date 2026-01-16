@@ -1,4 +1,4 @@
-"""Run `pip install ddgs` to install dependencies."""
+"""Run `uv pip install ddgs` to install dependencies."""
 
 import asyncio
 

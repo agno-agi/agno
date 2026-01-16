@@ -5,7 +5,7 @@ Custom retrievers provide complete control over how your agents find and process
 ## Setup
 
 ```bash
-pip install agno qdrant-client openai
+uv pip install agno qdrant-client openai
 ```
 
 Start Qdrant locally:

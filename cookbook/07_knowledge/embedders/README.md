@@ -8,17 +8,17 @@ Choose your preferred provider and install dependencies:
 
 ```bash
 # OpenAI (default)
-pip install agno openai
+uv pip install agno openai
 export OPENAI_API_KEY=your_api_key
 
 # Local models with Ollama
-pip install agno ollama
+uv pip install agno ollama
 
 # HuggingFace models
-pip install agno transformers torch
+uv pip install agno transformers torch
 
 # Cloud providers
-pip install agno cohere google-generativeai
+uv pip install agno cohere google-generativeai
 ```
 
 ## Embedding Dimensions

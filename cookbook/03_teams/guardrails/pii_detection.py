@@ -24,7 +24,7 @@ async def main():
     team = Team(
         name="Privacy-Protected Team",
         members=[],
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         pre_hooks=[PIIDetectionGuardrail()],
         description="A team that helps with customer service while protecting privacy.",
         instructions="You are a helpful customer service assistant. Always protect user privacy and handle sensitive information appropriately.",
@@ -117,7 +117,7 @@ async def main():
     team = Team(
         name="Privacy-Protected Team",
         members=[],
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         pre_hooks=[PIIDetectionGuardrail(mask_pii=True)],
         description="A team that helps with customer service while protecting privacy.",
         instructions="You are a helpful customer service assistant. Always protect user privacy and handle sensitive information appropriately.",

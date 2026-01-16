@@ -27,7 +27,7 @@ db = PostgresDb(id="basic-db", db_url="postgresql+psycopg://ai:ai@localhost:5532
 
 sales_agent = Agent(
     name="Sales Analyst",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     db=db,
     tools=[ShopifyTools()],
     instructions=[

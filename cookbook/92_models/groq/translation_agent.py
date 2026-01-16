@@ -10,7 +10,7 @@ path = "tmp/sample-fr.mp3"
 
 agent = Agent(
     name="Groq Translation Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[GroqTools()],
     cache_session=True,
 )

@@ -5,7 +5,7 @@ This example demonstrates how to use AirflowTools for managing Apache Airflow DA
 Shows enable_ flag patterns for selective function access.
 AirflowTools is a small tool (<6 functions) so it uses enable_ flags.
 
-Run: `pip install apache-airflow` to install the dependencies
+Run: `uv pip install apache-airflow` to install the dependencies
 """
 
 from agno.agent import Agent

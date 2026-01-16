@@ -30,7 +30,7 @@ export GOOGLE_CLOUD_LOCATION="your-location"
 ### 3. Install libraries
 
 ```shell
-pip install -U google-generativeai ddgs yfinance agno
+uv pip install -U google-generativeai ddgs yfinance agno
 ```
 
 ### 4. Run basic Agent

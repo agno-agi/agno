@@ -1,7 +1,7 @@
 """
 This example shows how to add observability to your agno agent with Atla.
 
-1. Install dependencies: pip install "atla-insights"
+1. Install dependencies: uv pip install "atla-insights"
 2. Sign up for an account at https://app.atla-ai.com
 3. Set your Atla Insights API key as an environment variable:
   - export ATLA_API_KEY=<your-key>
@@ -18,7 +18,7 @@ configure(token=getenv("ATLA_API_KEY"))
 
 agent = Agent(
     name="Stock Price Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[DuckDuckGoTools()],
     instructions="You are a stock price agent. Answer questions in the style of a stock analyst.",
     debug_mode=True,

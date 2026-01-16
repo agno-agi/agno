@@ -7,6 +7,9 @@ Testing all cookbooks in `cookbook/08_learning/` to verify they work as expected
 - Database: PostgreSQL with PgVector at `localhost:5532`
 - Last Verified: 2026-01-15 (originally tested 2026-01-11)
 
+**Fixes Applied (2026-01-15):**
+- Fixed `pip install` -> `uv pip install` in 2 files (setup_venv.sh, README.md)
+
 **Changes Tested:**
 - Renamed `memories` to `user_memory` throughout (field, property, learning_type)
 - Added new `08_custom_stores/` folder with custom store examples

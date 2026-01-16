@@ -8,7 +8,7 @@ This example shows how to use Agno's Daytona integration to run Agent-generated 
     export DAYTONA_API_KEY=<your_api_key>
     export DAYTONA_API_URL=<your_api_url> (optional)
 3. Install the dependencies:
-    pip install agno anthropic daytona
+    uv pip install agno anthropic daytona
 """
 
 from agno.agent import Agent

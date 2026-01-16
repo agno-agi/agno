@@ -45,7 +45,7 @@ def comprehensive_team_input_validation(run_input: TeamRunInput, team: Team) -> 
     # Team-specific input validation agent
     validator_agent = Agent(
         name="Team Input Validator",
-        model=OpenAIChat(id="gpt-5-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         instructions=[
             "You are a team input validation specialist. Analyze user requests for team execution:",
             "1. RELEVANCE: Ensure the request is appropriate for this specific team's capabilities",
@@ -104,19 +104,19 @@ def main():
     # Create a software development team with comprehensive validation
     frontend_agent = Agent(
         name="Frontend Developer",
-        model=OpenAIChat(id="gpt-5-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         description="Expert in React, TypeScript, and modern frontend development",
     )
 
     backend_agent = Agent(
         name="Backend Developer",
-        model=OpenAIChat(id="gpt-5-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         description="Specialist in Node.js, APIs, databases, and server architecture",
     )
 
     devops_agent = Agent(
         name="DevOps Engineer",
-        model=OpenAIChat(id="gpt-5-mini"),
+        model=OpenAIChat(id="gpt-5.2"),
         description="Expert in deployment, CI/CD, cloud infrastructure, and monitoring",
     )
 

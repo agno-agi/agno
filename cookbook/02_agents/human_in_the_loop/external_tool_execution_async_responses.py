@@ -3,7 +3,7 @@
 This example mirrors the external tool execution async example but uses
 OpenAIResponses with gpt-4.1-mini to validate tool-call id handling.
 
-Run `pip install openai agno` to install dependencies.
+Run `uv pip install openai agno` to install dependencies.
 """
 
 import asyncio

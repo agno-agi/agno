@@ -1,7 +1,7 @@
 """
 This example shows how to instrument your agno agent with OpenInference and send traces to Arize Phoenix.
 
-1. Install dependencies: pip install arize-phoenix openai openinference-instrumentation-agno opentelemetry-sdk opentelemetry-exporter-otlp
+1. Install dependencies: uv pip install arize-phoenix openai openinference-instrumentation-agno opentelemetry-sdk opentelemetry-exporter-otlp
 2. Setup your Arize Phoenix account and get your API key: https://phoenix.arize.com/.
 3. Set your Arize Phoenix API key as an environment variable:
   - export PHOENIX_API_KEY=<your-key>
@@ -34,7 +34,7 @@ class StockPrice(BaseModel):
 
 agent = Agent(
     name="Stock Price Agent",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[YFinanceTools()],
     db=InMemoryDb(),
     instructions="You are a stock price agent. Answer questions in the style of a stock analyst.",

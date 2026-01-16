@@ -2,7 +2,7 @@
 Instrument your Agno agents with OpenTelemetry and stream traces to Opik for rich debugging, cost tracking, and production monitoring.
 
 1. Install dependencies:
-   pip install -U opik agno openai opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
+   uv pip install -U opik agno openai opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
 2. Point the OTLP exporter at the Opik collector:
    - Opik Cloud:
      export OTEL_EXPORTER_OTLP_ENDPOINT=https://www.comet.com/opik/api/v1/private/otel
@@ -31,7 +31,7 @@ AgnoInstrumentor().instrument()
 
 agent = Agent(
     name="Stock Price Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[YFinanceTools()],
     instructions="You are a stock price analyst. Answer with concise, well-sourced updates.",
     debug_mode=True,

@@ -8,7 +8,7 @@ Example prompts to try:
 - "Design a cute cartoon mascot for a tech startup"
 - "Create an artistic portrait of a cyberpunk samurai"
 
-Run `pip install openai agno` to install the necessary dependencies.
+Run `uv pip install openai agno` to install the necessary dependencies.
 """
 
 from agno.agent import Agent

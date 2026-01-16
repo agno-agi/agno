@@ -1,5 +1,5 @@
 """This cookbook shows how to implement Agentic RAG with Reasoning.
-1. Run: `pip install agno anthropic cohere lancedb tantivy sqlalchemy` to install the dependencies
+1. Run: `uv pip install agno anthropic cohere lancedb tantivy sqlalchemy` to install the dependencies
 2. Export your ANTHROPIC_API_KEY and CO_API_KEY
 3. Run: `python cookbook/agent_concepts/agentic_search/agentic_rag_with_reasoning.py` to run the agent
 """

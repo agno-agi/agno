@@ -60,7 +60,7 @@ class FinalContentPlan(BaseModel):
 # Define agents with response models
 research_agent = Agent(
     name="AI Research Specialist",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[HackerNewsTools(), DuckDuckGoTools()],
     role="Research AI trends and extract structured insights",
     output_schema=ResearchFindings,
@@ -74,7 +74,7 @@ research_agent = Agent(
 
 strategy_agent = Agent(
     name="Content Strategy Expert",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     role="Create content strategies based on research findings",
     output_schema=ContentStrategy,
     instructions=[

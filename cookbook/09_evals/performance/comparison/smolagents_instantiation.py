@@ -1,4 +1,4 @@
-"""Run `pip install smolagents` to install dependencies."""
+"""Run `uv pip install smolagents` to install dependencies."""
 
 from agno.eval.performance import PerformanceEval
 from smolagents import InferenceClientModel, Tool, ToolCallingAgent

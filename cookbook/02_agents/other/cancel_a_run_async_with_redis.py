@@ -13,7 +13,7 @@ The async Redis cancellation manager is useful when:
 - You're running in an async web framework (FastAPI, Starlette, etc.)
 
 Requirements:
-    pip install redis
+    uv pip install redis
 
 Usage:
     # Start Redis first (using Docker):

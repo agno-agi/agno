@@ -26,7 +26,7 @@ export OLLAMA_API_KEY=***
 ### 4. Install libraries
 
 ```shell
-pip install -U ollama ddgs duckdb yfinance agno
+uv pip install -U ollama ddgs duckdb yfinance agno
 ```
 
 ### 5. Run basic Agent

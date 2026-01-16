@@ -10,7 +10,7 @@ db = PostgresDb(db_url=db_url, session_table="sessions")
 # Method 1: Set enable_session_summaries to True
 
 # agent = Agent(
-#     model=OpenAIChat(id="gpt-4o-mini"),
+#     model=OpenAIChat(id="gpt-5.2"),
 #     db=db,
 #     enable_session_summaries=True,
 #     session_id="session_summary",
@@ -22,10 +22,10 @@ db = PostgresDb(db_url=db_url, session_table="sessions")
 
 # Method 2: Set session_summary_manager
 
-session_summary_manager = SessionSummaryManager(model=OpenAIChat(id="gpt-4o-mini"))
+session_summary_manager = SessionSummaryManager(model=OpenAIChat(id="gpt-5.2"))
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.2"),
     db=db,
     session_id="session_summary",
     session_summary_manager=session_summary_manager,

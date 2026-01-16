@@ -9,7 +9,7 @@ Basic Agno A2A Agent example that uses A2A to send and receive messages to/from 
 2. Install the a2a library in your virtual environment which has Agno installed
 
    ```bash
-   pip install .
+   uv pip install .
    ```
 
 3. Start the server
