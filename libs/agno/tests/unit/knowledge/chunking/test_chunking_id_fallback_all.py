@@ -4,6 +4,7 @@ import pytest
 
 from agno.knowledge.document.base import Document
 
+
 @pytest.fixture
 def document_with_id():
     """Document with explicit ID."""
