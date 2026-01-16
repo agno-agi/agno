@@ -1,3 +1,5 @@
+import asyncio
+
 from agno.knowledge.embedder.sentence_transformer import SentenceTransformerEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
@@ -18,4 +20,10 @@ knowledge = Knowledge(
         embedder=SentenceTransformerEmbedder(),
     ),
     max_results=2,
+)
+
+asyncio.run(
+    knowledge.ainsert(
+        path="cookbook/08_knowledge/testing_resources/cv_1.pdf",
+    )
 )

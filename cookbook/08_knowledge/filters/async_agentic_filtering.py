@@ -16,21 +16,16 @@ downloaded_csv_paths = download_knowledge_filters_sample_data(
     num_files=4, file_extension=SampleDataFileExtension.CSV
 )
 
-# Clean up old databases
+# Clean up old database
 if os.path.exists("tmp/knowledge_contents.db"):
     os.remove("tmp/knowledge_contents.db")
-if os.path.exists("tmp/lancedb") and os.path.isdir("tmp/lancedb"):
-    from shutil import rmtree
-
-    rmtree(path="tmp/lancedb", ignore_errors=True)
 
 
 db = AsyncSqliteDb(
     db_file="tmp/knowledge_contents.db",
 )
 
-# Initialize LanceDB
-# By default, it stores data in /tmp/lancedb
+# Initialize PgVector
 vector_db = PgVector(
     table_name="recipes",
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
