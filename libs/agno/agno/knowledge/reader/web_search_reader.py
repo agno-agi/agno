@@ -208,6 +208,9 @@ class WebSearchReader(Reader):
 
     def read(self, query: str) -> List[Document]:
         """Read content for a given query by performing web search and fetching content"""
+        # Reset state for each query
+        self._visited_urls.clear()
+
         if not query:
             raise ValueError("Query cannot be empty")
 

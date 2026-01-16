@@ -186,6 +186,7 @@ a2a = ["a2a-sdk"]
 huggingface = [
     "huggingface-hub",
 ]
+fastembed = ["fastembed"]
 
 # Dependencies for Performance
 performance = ["memory_profiler"]
@@ -310,6 +311,7 @@ knowledge = [
 # All embedders
 embedders = [
   "agno[huggingface]",
+  "agno[fastembed]",
   "agno[vllm]"
 ]
 

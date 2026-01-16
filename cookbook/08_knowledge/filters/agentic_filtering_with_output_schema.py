@@ -90,7 +90,7 @@ knowledge.insert_many(
 
 # Enable agentic filtering
 agent = Agent(
-    model=OpenAIChat("gpt-5-mini"),
+    model=OpenAIChat("gpt-5.1"),
     knowledge=knowledge,
     search_knowledge=True,
     enable_agentic_knowledge_filters=True,
