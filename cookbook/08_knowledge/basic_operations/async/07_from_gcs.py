@@ -1,5 +1,6 @@
-"""This cookbook shows how to add content from a GCS bucket to the knowledge base.
-1. Run: `python cookbook/agent_concepts/knowledge/07_from_gcs.py` to run the cookbook
+"""This cookbook shows how to add content from a GCS bucket to the knowledge base (async).
+
+1. Run: `python cookbook/08_knowledge/basic_operations/async/07_from_gcs.py`
 """
 
 import asyncio

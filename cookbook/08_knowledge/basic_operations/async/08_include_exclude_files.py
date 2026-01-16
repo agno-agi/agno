@@ -1,6 +1,6 @@
-"""This cookbook shows how to use include and exclude filters when adding content to Knowledge.
+"""This cookbook shows how to use include and exclude filters when adding content to Knowledge (async).
 
-1. Run: `python cookbook/agent_concepts/knowledge/08_include_exclude_files.py` to run the cookbook
+1. Run: `python cookbook/08_knowledge/basic_operations/async/08_include_exclude_files.py`
 """
 
 import asyncio

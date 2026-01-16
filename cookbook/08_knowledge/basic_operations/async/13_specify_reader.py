@@ -1,9 +1,9 @@
-"""This cookbook shows how to specify a reader for reading content.
+"""This cookbook shows how to specify a reader for reading content (async).
 Readers are assigned by default to the content based on the file extension.
 You can specify a reader for a specific content by passing the reader to the insert method
 if you want to use a different reader for a specific content.
 
-1. Run: `python cookbook/agent_concepts/knowledge/13_specify_reader.py` to run the cookbook
+1. Run: `python cookbook/08_knowledge/basic_operations/async/13_specify_reader.py`
 """
 
 import asyncio
