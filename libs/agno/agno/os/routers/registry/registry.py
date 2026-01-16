@@ -1,7 +1,7 @@
 import time
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from agno.os.auth import get_authentication_dependency
@@ -117,7 +117,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
 
                 # Also expose individual functions within toolkit
                 for func in functions.values():
-                    func_name = _safe_name(func, fallback=getattr(func, "name", None) or func.__class__.__name__)
+                    func_name = _safe_name(func, fallback=func.__class__.__name__)
                     # Check if function requires confirmation or external execution
                     # First check function-level settings, then toolkit-level settings
                     requires_confirmation = getattr(func, "requires_confirmation", None)
@@ -160,7 +160,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     )
 
             elif isinstance(tool, Function):
-                func_name = _safe_name(tool, fallback=getattr(tool, "name", None) or tool.__class__.__name__)
+                func_name = _safe_name(tool, fallback=tool.__class__.__name__)
                 requires_confirmation = getattr(tool, "requires_confirmation", None)
                 external_execution = getattr(tool, "external_execution", None)
 
@@ -289,16 +289,15 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         return components
 
     @router.get(
-        "/registry/components",
+        "/registry",
         response_model=PaginatedResponse[ComponentResponse],
         response_model_exclude_none=True,
         status_code=200,
-        operation_id="list_components",
-        summary="List Registry Components",
+        operation_id="list_registry",
+        summary="List Registry",
         description="List all components in the registry with optional filtering.",
     )
-    async def list_components(
-        request: Request,
+    async def list_registry(
         component_type: Optional[ComponentType] = Query(None, description="Filter by component type"),
         name: Optional[str] = Query(None, description="Filter by name (partial match)"),
         include_schema: bool = Query(False, description="Include JSON schema for schema components"),
