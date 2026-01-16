@@ -2,7 +2,6 @@
 This cookbook demonstrates how to use a registry with the AgentOS app.
 """
 
-from agno.agent.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
 from agno.models.google.gemini import Gemini
@@ -28,14 +27,7 @@ registry = Registry(
     dbs=[db],
 )
 
-agent = Agent(
-    id="demo-agent",
-    model=Claude(id="claude-sonnet-4-5"),
-    db=db,
-)
-
 agent_os = AgentOS(
-    agents=[agent],
     id="demo-agent-os",
     registry=registry,
     db=db,

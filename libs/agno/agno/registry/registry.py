@@ -53,3 +53,16 @@ class Registry:
         if self.schemas:
             return next((s for s in self.schemas if s.__name__ == name), None)
         return None
+
+    def get_db(self, db_id: str) -> Optional[BaseDb]:
+        """Get a database by id from the registry.
+
+        Args:
+            db_id: The database id to look up
+
+        Returns:
+            The database instance if found, None otherwise
+        """
+        if self.dbs:
+            return next((db for db in self.dbs if db.id == db_id), None)
+        return None

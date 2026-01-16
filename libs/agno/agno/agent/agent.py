@@ -35,6 +35,7 @@ from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
+from agno.db.utils import db_from_dict
 from agno.eval.base import BaseEval
 from agno.exceptions import (
     InputCheckError,
@@ -7654,24 +7655,20 @@ class Agent:
         # --- Handle DB reconstruction ---
         if "db" in config and isinstance(config["db"], dict):
             db_data = config["db"]
-            db_type = db_data.get("type")
-            if db_type == "postgres":
-                try:
-                    from agno.db.postgres import PostgresDb
+            db_id = db_data.get("id")
 
-                    config["db"] = PostgresDb.from_dict(db_data)
-                except Exception as e:
-                    log_error(f"Error reconstructing DB from dictionary: {e}")
-                    config["db"] = None
-            elif db_type == "sqlite":
-                try:
-                    from agno.db.sqlite import SqliteDb
-
-                    config["db"] = SqliteDb.from_dict(db_data)
-                except Exception as e:
-                    log_error(f"Error reconstructing DB from dictionary: {e}")
-                    config["db"] = None
-            # TODO: Extend support for other DB types and create a db_from_dict method.
+            # First try to get the db from the registry (preferred - reuses existing connection)
+            if registry and db_id:
+                registry_db = registry.get_db(db_id)
+                if registry_db is not None:
+                    config["db"] = registry_db
+                else:
+                    del config["db"]
+            else:
+                # No registry or no db_id, fall back to creating from dict
+                config["db"] = db_from_dict(db_data)
+                if config["db"] is None:
+                    del config["db"]
 
         # --- Handle Schema reconstruction ---
         if "input_schema" in config and isinstance(config["input_schema"], str):
@@ -7723,6 +7720,8 @@ class Agent:
         # Remove keys that aren't constructor parameters
         config.pop("team_id", None)
         config.pop("workflow_id", None)
+
+        print(f"config.db: {config.get('db')}")
 
         return cls(
             # --- Agent settings ---
@@ -12333,11 +12332,6 @@ def get_agent_by_id(
         agent = Agent.from_dict(cfg, registry=registry)
         agent.id = id
 
-        try:
-            agent.db = db  # type: ignore[attr-defined]
-        except Exception:
-            pass
-
         return agent
 
     except Exception as e:
@@ -12367,7 +12361,6 @@ def get_agents(
                     # Ensure agent.id is set to the component_id (the id used to load the agent)
                     # This ensures events use the correct agent_id
                     agent.id = component_id
-                    agent.db = db
                     agents.append(agent)
         return agents
 

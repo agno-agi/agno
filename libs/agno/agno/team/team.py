@@ -34,6 +34,7 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType, UserMemory
+from agno.db.utils import db_from_dict
 from agno.eval.base import BaseEval
 from agno.exceptions import (
     InputCheckError,
@@ -8589,25 +8590,20 @@ class Team:
         # --- Handle DB reconstruction ---
         if "db" in config and isinstance(config["db"], dict):
             db_data = config["db"]
-            db_type = db_data.get("type")
-            if db_type == "postgres":
-                try:
-                    from agno.db.postgres import PostgresDb
+            db_id = db_data.get("id")
 
-                    config["db"] = PostgresDb.from_dict(db_data)
-                except Exception as e:
-                    log_error(f"Error reconstructing DB from dictionary: {e}")
-                    del config["db"]
-            elif db_type == "sqlite":
-                try:
-                    from agno.db.sqlite import SqliteDb
-
-                    config["db"] = SqliteDb.from_dict(db_data)
-                except Exception as e:
-                    log_error(f"Error reconstructing DB from dictionary: {e}")
+            # First try to get the db from the registry (preferred - reuses existing connection)
+            if registry and db_id:
+                registry_db = registry.get_db(db_id)
+                if registry_db is not None:
+                    config["db"] = registry_db
+                else:
                     del config["db"]
             else:
-                del config["db"]
+                # No registry or no db_id, fall back to creating from dict
+                config["db"] = db_from_dict(db_data)
+                if config["db"] is None:
+                    del config["db"]
 
         # --- Handle Schema reconstruction ---
         if "input_schema" in config and isinstance(config["input_schema"], str):
@@ -10302,9 +10298,8 @@ def get_team_by_id(
             raise ValueError(f"Invalid config found for team {id}")
 
         team = Team.from_dict(cfg, db=db, registry=registry)
-
+        # Ensure team.id is set to the component_id
         team.id = id
-        team.db = db
 
         return team
 
@@ -10341,7 +10336,6 @@ def get_teams(
                     team = Team.from_dict(team_config, db=db, registry=registry)
                     # Ensure team.id is set to the component_id
                     team.id = component_id
-                    team.db = db
                     teams.append(team)
         return teams
 

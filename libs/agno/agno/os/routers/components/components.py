@@ -31,6 +31,51 @@ from agno.utils.string import generate_id_from_name
 logger = logging.getLogger(__name__)
 
 
+def _resolve_db_in_config(
+    config: Dict[str, Any],
+    os_db: BaseDb,
+    registry: Optional[Registry] = None,
+) -> Dict[str, Any]:
+    """
+    Resolve db reference in config by looking up in registry or OS db.
+
+    If config contains a db dict with an id, this function will:
+    1. Check if the id matches the OS db
+    2. Check if the id exists in the registry
+    3. Convert the found db to a dict for serialization
+
+    Args:
+        config: The config dict that may contain a db reference
+        os_db: The OS database instance
+        registry: Optional registry containing registered databases
+
+    Returns:
+        Updated config dict with resolved db
+    """
+    component_db = config.get("db")
+    if component_db is not None and isinstance(component_db, dict):
+        component_db_id = component_db.get("id")
+        if component_db_id is not None:
+            resolved_db = None
+            # First check if it matches the OS db
+            if component_db_id == os_db.id:
+                resolved_db = os_db
+            # Then check the registry
+            elif registry is not None:
+                resolved_db = registry.get_db(component_db_id)
+
+            # Store the full db dict for serialization
+            if resolved_db is not None:
+                config["db"] = resolved_db.to_dict()
+            else:
+                log_error(f"Could not resolve db with id: {component_db_id}")
+    elif component_db is None and "db" in config:
+        # Explicitly set to None, remove the key
+        config.pop("db", None)
+
+    return config
+
+
 def get_components_router(
     os_db: Union[BaseDb, AsyncBaseDb],
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -117,29 +162,10 @@ def attach_routes(
                 component_id = generate_id_from_name(body.name)
 
             # TODO: Create links from config
-            # TODO: Use DB from registry
 
-            # Prepare config - ensure it's a dict
+            # Prepare config - ensure it's a dict and resolve db reference
             config = body.config or {}
-
-            db_dict: Dict[str, Any] = {}
-            try:
-                component_db = config.get("db")
-                if component_db is not None:
-                    component_db_id = component_db.get("id")
-                    if component_db_id is not None and component_db_id == db.id:
-                        db_dict = db.to_dict()
-                    else:
-                        if registry is not None and registry.dbs is not None and len(registry.dbs) > 0:
-                            for registry_db in registry.dbs:
-                                if registry_db.id == component_db_id:
-                                    db_dict = registry_db.to_dict()
-                                    break
-            except Exception as e:
-                log_error(f"Error getting OS Database: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
-
-            config["db"] = db_dict
+            config = _resolve_db_in_config(config, db, registry)
 
             component, _config = db.create_component_with_config(
                 component_id=component_id,
@@ -275,10 +301,14 @@ def attach_routes(
         body: ConfigCreate = Body(description="Config data"),
     ) -> ComponentConfigResponse:
         try:
+            # Resolve db from config if present
+            config_data = body.config or {}
+            config_data = _resolve_db_in_config(config_data, db, registry)
+
             config = db.upsert_config(
                 component_id=component_id,
                 version=None,  # Always create new
-                config=body.config,
+                config=config_data,
                 label=body.label,
                 stage=body.stage,
                 notes=body.notes,
@@ -306,10 +336,15 @@ def attach_routes(
         body: ConfigUpdate = Body(description="Config fields to update"),
     ) -> ComponentConfigResponse:
         try:
+            # Resolve db from config if present
+            config_data = body.config
+            if config_data is not None:
+                config_data = _resolve_db_in_config(config_data, db, registry)
+
             config = db.upsert_config(
                 component_id=component_id,
                 version=version,  # Always update existing
-                config=body.config,
+                config=config_data,
                 label=body.label,
                 stage=body.stage,
                 notes=body.notes,

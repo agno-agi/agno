@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
+from agno.db.utils import db_from_dict
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
@@ -615,24 +616,20 @@ class Workflow:
         # --- Handle DB reconstruction ---
         if "db" in config and isinstance(config["db"], dict):
             db_data = config["db"]
-            db_type = db_data.get("type")
-            if db_type == "postgres":
-                try:
-                    from agno.db.postgres import PostgresDb
+            db_id = db_data.get("id")
 
-                    config["db"] = PostgresDb.from_dict(db_data)
-                except Exception as e:
-                    log_error(f"Error reconstructing DB from dictionary: {e}")
-                    config["db"] = None
-            elif db_type == "sqlite":
-                try:
-                    from agno.db.sqlite import SqliteDb
-
-                    config["db"] = SqliteDb.from_dict(db_data)
-                except Exception as e:
-                    log_error(f"Error reconstructing DB from dictionary: {e}")
-                    config["db"] = None
-            # TODO: Extend support for other DB types and create a db_from_dict method.
+            # First try to get the db from the registry (preferred - reuses existing connection)
+            if registry and db_id:
+                registry_db = registry.get_db(db_id)
+                if registry_db is not None:
+                    config["db"] = registry_db
+                else:
+                    del config["db"]
+            else:
+                # No registry or no db_id, fall back to creating from dict
+                config["db"] = db_from_dict(db_data)
+                if config["db"] is None:
+                    del config["db"]
 
         # --- Handle Schema reconstruction ---
         if "input_schema" in config and isinstance(config["input_schema"], str):
@@ -4986,10 +4983,8 @@ def get_workflow_by_id(
 
         workflow = Workflow.from_dict(cfg, db=db, links=links, registry=registry)
 
-        # Ensure workflow.id is set to the component_id (the id used to load the workflow)
-        # This ensures events use the correct workflow_id
+        # Ensure workflow.id is set to the component_id
         workflow.id = id
-        workflow.db = db
 
         return workflow
 
@@ -5015,10 +5010,8 @@ def get_workflows(
                     if "id" not in workflow_config:
                         workflow_config["id"] = component_id
                     workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
-                    # Ensure workflow.id is set to the component_id (the id used to load the workflow)
-                    # This ensures events use the correct workflow_id
+                    # Ensure workflow.id is set to the component_id
                     workflow.id = component_id
-                    workflow.db = db
                     workflows.append(workflow)
         return workflows
 
