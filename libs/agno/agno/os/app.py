@@ -179,8 +179,8 @@ class AgentOS:
             telemetry: Whether to enable telemetry
 
         """
-        if not agents and not workflows and not teams and not knowledge:
-            raise ValueError("Either agents, teams, workflows or knowledge bases must be provided.")
+        if not agents and not workflows and not teams and not knowledge and not db:
+            raise ValueError("Either agents, teams, workflows, knowledge bases or a database must be provided.")    
 
         self.config = load_yaml_config(config) if isinstance(config, str) else config
 
