@@ -737,7 +737,7 @@ class Knowledge:
 
     def get_valid_filters(self) -> Set[str]:
         if self.contents_db is None:
-            log_warning("No contents db provided. This is required for filtering.")
+            log_info("Advanced filtering is not supported without a contents db. All filter keys considered valid.")
             return set()
         contents, _ = self.get_content()
         valid_filters: Set[str] = set()
@@ -749,7 +749,7 @@ class Knowledge:
 
     async def aget_valid_filters(self) -> Set[str]:
         if self.contents_db is None:
-            log_warning("No contents db provided. This is required for filtering.")
+            log_info("Advanced filtering is not supported without a contents db. All filter keys considered valid.")
             return set()
         contents, _ = await self.aget_content()
         valid_filters: Set[str] = set()
@@ -2935,6 +2935,34 @@ class Knowledge:
     # Protocol Implementation (build_context, get_tools, retrieve)
     # ========================================================================
 
+    # Shared context strings
+    _KNOWLEDGE_BASE_SEARCH_INSTRUCTION = (
+        "You have access to a knowledge base. Use the search_knowledge_base tool to find relevant information."
+    )
+
+    _AGENTIC_FILTER_INSTRUCTION_TEMPLATE = """
+The knowledge base contains documents with these metadata filters: {valid_filters_str}.
+Always use filters when the user query indicates specific metadata.
+
+Examples:
+1. If the user asks about a specific person like "Jordan Mitchell", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like user_id>': '<valid value based on the user query>'}}.
+2. If the user asks about a specific document type like "contracts", you MUST use the search_knowledge_base tool with the filters parameter set to {{'document_type': 'contract'}}.
+3. If the user asks about a specific location like "documents from New York", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like location>': 'New York'}}.
+
+General Guidelines:
+- Always analyze the user query to identify relevant metadata.
+- Use the most specific filter(s) possible to narrow down results.
+- If multiple filters are relevant, combine them in the filters parameter (e.g., {{'name': 'Jordan Mitchell', 'document_type': 'contract'}}).
+- Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
+
+Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
+""".strip()
+
+    def _get_agentic_filter_instructions(self, valid_filters: Set[str]) -> str:
+        """Generate the agentic filter instructions for the given valid filters."""
+        valid_filters_str = ", ".join(valid_filters)
+        return self._AGENTIC_FILTER_INSTRUCTION_TEMPLATE.format(valid_filters_str=valid_filters_str)
+
     def build_context(
         self,
         enable_agentic_filters: bool = False,
@@ -2952,41 +2980,40 @@ class Knowledge:
         Returns:
             Context string to add to system prompt.
         """
-        from textwrap import dedent
-
-        context_parts: List[str] = []
-
-        # Always provide basic search instructions
-        context_parts.append(
-            "You have access to a knowledge base. Use the search_knowledge_base tool to find relevant information."
-        )
+        context_parts: List[str] = [self._KNOWLEDGE_BASE_SEARCH_INSTRUCTION]
 
         # Add filter instructions if agentic filters are enabled
         if enable_agentic_filters:
             valid_filters = self.get_valid_filters()
             if valid_filters:
-                valid_filters_str = ", ".join(valid_filters)
-                context_parts.append(
-                    dedent(
-                        f"""
-                    The knowledge base contains documents with these metadata filters: {valid_filters_str}.
-                    Always use filters when the user query indicates specific metadata.
+                context_parts.append(self._get_agentic_filter_instructions(valid_filters))
 
-                    Examples:
-                    1. If the user asks about a specific person like "Jordan Mitchell", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like user_id>': '<valid value based on the user query>'}}.
-                    2. If the user asks about a specific document type like "contracts", you MUST use the search_knowledge_base tool with the filters parameter set to {{'document_type': 'contract'}}.
-                    3. If the user asks about a specific location like "documents from New York", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like location>': 'New York'}}.
+        return "\n".join(context_parts)
 
-                    General Guidelines:
-                    - Always analyze the user query to identify relevant metadata.
-                    - Use the most specific filter(s) possible to narrow down results.
-                    - If multiple filters are relevant, combine them in the filters parameter (e.g., {{'name': 'Jordan Mitchell', 'document_type': 'contract'}}).
-                    - Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
+    async def abuild_context(
+        self,
+        enable_agentic_filters: bool = False,
+        **kwargs,
+    ) -> str:
+        """Async version of build_context.
 
-                    Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
-                """
-                    ).strip()
-                )
+        Returns instructions about how to use the search_knowledge_base tool
+        and available filters.
+
+        Args:
+            enable_agentic_filters: Whether agentic filters are enabled.
+            **kwargs: Additional context (unused).
+
+        Returns:
+            Context string to add to system prompt.
+        """
+        context_parts: List[str] = [self._KNOWLEDGE_BASE_SEARCH_INSTRUCTION]
+
+        # Add filter instructions if agentic filters are enabled
+        if enable_agentic_filters:
+            valid_filters = await self.aget_valid_filters()
+            if valid_filters:
+                context_parts.append(self._get_agentic_filter_instructions(valid_filters))
 
         return "\n".join(context_parts)
 
@@ -3170,7 +3197,13 @@ class Knowledge:
             # Merge agentic filters with user-provided filters
             search_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
             if filters and get_agentic_or_user_search_filters is not None:
-                filters_dict = {filt.key: filt.value for filt in filters} if filters else None
+                # Handle both KnowledgeFilter objects and plain dictionaries
+                filters_dict: Dict[str, Any] = {}
+                for filt in filters:
+                    if isinstance(filt, dict):
+                        filters_dict.update(filt)
+                    elif hasattr(filt, "key") and hasattr(filt, "value"):
+                        filters_dict[filt.key] = filt.value
                 search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
             else:
                 search_filters = knowledge_filters
@@ -3218,7 +3251,13 @@ class Knowledge:
             # Merge agentic filters with user-provided filters
             search_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
             if filters and get_agentic_or_user_search_filters is not None:
-                filters_dict = {filt.key: filt.value for filt in filters} if filters else None
+                # Handle both KnowledgeFilter objects and plain dictionaries
+                filters_dict: Dict[str, Any] = {}
+                for filt in filters:
+                    if isinstance(filt, dict):
+                        filters_dict.update(filt)
+                    elif hasattr(filt, "key") and hasattr(filt, "value"):
+                        filters_dict[filt.key] = filt.value
                 search_filters = get_agentic_or_user_search_filters(filters_dict, knowledge_filters)
             else:
                 search_filters = knowledge_filters
