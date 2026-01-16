@@ -162,7 +162,7 @@ def attach_routes(
                     videos=[Video(content=await get_media_async(message_video))] if message_video else None,
                     audio=[Audio(content=await get_media_async(message_audio))] if message_audio else None,
                 )
-            if response.status=="ERROR":
+            if response.status == "ERROR":
                 await _send_whatsapp_message(
                     phone_number, "Sorry, there was an error processing your message. Please try again later."
                 )
