@@ -53,6 +53,7 @@ class WikipediaReader(Reader):
         if summary:
             return [
                 Document(
+                    id=f"wikipedia_{topic}",
                     name=topic,
                     meta_data={"topic": topic},
                     content=summary,
@@ -84,6 +85,7 @@ class WikipediaReader(Reader):
         if summary:
             return [
                 Document(
+                    id=f"wikipedia_{topic}",
                     name=topic,
                     meta_data={"topic": topic},
                     content=summary,
