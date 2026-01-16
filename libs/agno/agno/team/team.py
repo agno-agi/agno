@@ -5402,8 +5402,10 @@ class Team:
                     _func = _func.model_copy(deep=True)
 
                     _func._team = self
-                    _func.process_entrypoint(strict=strict)
-                    if strict:
+                    # Respect the function's explicit strict setting if set
+                    effective_strict = strict if _func.strict is None else _func.strict
+                    _func.process_entrypoint(strict=effective_strict)
+                    if strict and _func.strict is None:
                         _func.strict = True
                     if self.tool_hooks:
                         _func.tool_hooks = self.tool_hooks
@@ -5422,7 +5424,9 @@ class Team:
                 _function_names.append(tool.name)
                 tool = tool.model_copy(deep=True)
                 tool._team = self
-                tool.process_entrypoint(strict=strict)
+                # Respect the function's explicit strict setting if set
+                effective_strict = strict if tool.strict is None else tool.strict
+                tool.process_entrypoint(strict=effective_strict)
                 if strict and tool.strict is None:
                     tool.strict = True
                 if self.tool_hooks:

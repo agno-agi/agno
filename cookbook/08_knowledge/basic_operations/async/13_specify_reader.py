@@ -34,4 +34,4 @@ asyncio.run(
 
 agent = Agent(knowledge=knowledge)
 
-agent.print_response("What can you tell me about my documents?", markdown=True)
+agent.print_response("What documents are in the knowledge base?", markdown=True)
