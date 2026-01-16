@@ -166,7 +166,9 @@ class Step:
         if "agent_id" in config and config["agent_id"]:
             from agno.agent.agent import get_agent_by_id
 
-            agent = get_agent_by_id(db=db, id=config.get("agent_id"), registry=registry)
+            agent_id = config.get("agent_id")
+            if db is not None and agent_id is not None:
+                agent = get_agent_by_id(db=db, id=agent_id, registry=registry)
 
         # --- Handle Team reconstruction ---
         # if "team_id" in config and config["team_id"] and registry:

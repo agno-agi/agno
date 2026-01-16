@@ -555,7 +555,7 @@ class Workflow:
         config["overwrite_db_session_state"] = self.overwrite_db_session_state
 
         # --- Database settings ---
-        if self.db is not None:
+        if self.db is not None and hasattr(self.db, "to_dict"):
             config["db"] = self.db.to_dict()
 
         # --- History settings ---
@@ -572,7 +572,7 @@ class Workflow:
 
         # --- Schema settings ---
         if self.input_schema is not None:
-            if issubclass(self.input_schema, BaseModel):
+            if isinstance(self.input_schema, type) and issubclass(self.input_schema, BaseModel):
                 config["input_schema"] = self.input_schema.__name__
             elif isinstance(self.input_schema, dict):
                 config["input_schema"] = self.input_schema
@@ -588,7 +588,7 @@ class Workflow:
         # --- Steps ---
         # TODO: Implement steps serialization for step types other than Step
         if self.steps and isinstance(self.steps, list):
-            config["steps"] = [step.to_dict() for step in self.steps]
+            config["steps"] = [step.to_dict() for step in self.steps if hasattr(step, "to_dict")]
 
         return config
 
@@ -646,7 +646,7 @@ class Workflow:
                 del config["input_schema"]
 
         # --- Handle steps reconstruction ---
-        steps = None
+        steps: Optional[WorkflowSteps] = None
         if "steps" in config and config["steps"]:
             steps = [Step.from_dict(step_data, db=db, links=links, registry=registry) for step_data in config["steps"]]
             del config["steps"]
@@ -707,6 +707,10 @@ class Workflow:
         db_ = db or self.db
         if not db_:
             raise ValueError("Db not initialized or provided")
+        if not isinstance(db_, BaseDb):
+            raise ValueError("Async databases not yet supported for save(). Use a sync database.")
+        if self.id is None:
+            raise ValueError("Cannot save workflow without an id")
 
         # Track saved entity versions for pinning links
         saved_versions: Dict[str, int] = {}
@@ -716,7 +720,8 @@ class Workflow:
         steps_config = []
 
         try:
-            for position, step in enumerate(self.steps or []):
+            steps_to_save = self.steps if isinstance(self.steps, list) else []
+            for position, step in enumerate(steps_to_save):
                 # TODO: Support other Step types
                 if isinstance(step, Step):
                     # TODO: Allow not saving a new config if the agent/team already has a published config and no changes have been made
@@ -728,11 +733,13 @@ class Workflow:
                             label=label,
                             notes=notes,
                         )
-                        saved_versions[step.agent.id] = agent_version
+                        if step.agent.id is not None and agent_version is not None:
+                            saved_versions[step.agent.id] = agent_version
 
                     if step.team and isinstance(step.team, Team):
                         team_version = step.team.save(db=db_, stage=stage, label=label, notes=notes)
-                        saved_versions[step.team.id] = team_version
+                        if step.team.id is not None and team_version is not None:
+                            saved_versions[step.team.id] = team_version
 
                     # Add step config
                     steps_config.append(step.to_dict())
@@ -822,6 +829,10 @@ class Workflow:
         db_ = db or self.db
         if not db_:
             raise ValueError("Db not initialized or provided")
+        if not isinstance(db_, BaseDb):
+            raise ValueError("Async databases not yet supported for delete(). Use a sync database.")
+        if self.id is None:
+            raise ValueError("Cannot delete workflow without an id")
 
         return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
 
