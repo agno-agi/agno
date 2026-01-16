@@ -14,7 +14,7 @@ def run_agent():
         model=OpenAIChat(id="gpt-4o-mini"),
         system_message="Be concise, reply with one sentence.",
         db=db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
     )
 
     response = agent.run("My name is Tom! I'm 25 years old and I live in New York.")

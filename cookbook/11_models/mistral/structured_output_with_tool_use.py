@@ -1,6 +1,6 @@
 from agno.agent import Agent
 from agno.models.mistral import MistralChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel
 
 
@@ -23,7 +23,7 @@ researcher = Agent(
         "- Find out if they have public contact details"
         "- Return the information in a structured format"
     ],
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     output_schema=Person,
     add_datetime_to_context=True,
 )

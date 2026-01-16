@@ -12,7 +12,7 @@ from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.middleware import JWTMiddleware
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from fastapi import FastAPI, Form, HTTPException
 
 # JWT Secret (use environment variable in production)
@@ -27,7 +27,7 @@ research_agent = Agent(
     name="Research Agent",
     model=OpenAIChat(id="gpt-4o"),
     db=db,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
     markdown=True,
 )

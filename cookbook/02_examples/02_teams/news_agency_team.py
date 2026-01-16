@@ -9,8 +9,8 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.newspaper4k import Newspaper4kTools
+from agno.tools.websearch import WebSearchTools
 
 urls_file = Path(__file__).parent.joinpath("tmp", "urls__{session_id}.md")
 urls_file.parent.mkdir(parents=True, exist_ok=True)
@@ -24,7 +24,7 @@ searcher = Agent(
         "For each search term, search the web and analyze the results.Return the 10 most relevant URLs to the topic.",
         "You are writing for the New York Times, so the quality of the sources is important.",
     ],
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_datetime_to_context=True,
 )
 writer = Agent(

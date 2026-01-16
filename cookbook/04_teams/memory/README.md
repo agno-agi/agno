@@ -38,7 +38,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 team = Team(
     members=[agent1, agent2],
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     session_id="team_session_1",
 )
 ```

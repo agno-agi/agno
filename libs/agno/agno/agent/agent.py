@@ -46,6 +46,7 @@ from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.types import KnowledgeFilter
+from agno.learn.machine import LearningMachine
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.base import Model
@@ -121,6 +122,10 @@ from agno.utils.agent import (
 from agno.utils.common import is_typed_dict
 from agno.utils.events import (
     add_error_event,
+    create_compression_completed_event,
+    create_compression_started_event,
+    create_model_request_completed_event,
+    create_model_request_started_event,
     create_parser_model_response_completed_event,
     create_parser_model_response_started_event,
     create_post_hook_completed_event,
@@ -235,7 +240,9 @@ class Agent:
     # Enable the agent to manage memories of the user
     enable_agentic_memory: bool = False
     # If True, the agent creates/updates user memories at the end of runs
-    enable_user_memories: bool = False
+    update_memory_on_run: bool = False
+    # Soon to be deprecated. Use update_memory_on_run
+    enable_user_memories: Optional[bool] = None
     # If True, the agent adds a reference to the user memories in the response
     add_memories_to_context: Optional[bool] = None
 
@@ -341,6 +348,8 @@ class Agent:
     description: Optional[str] = None
     # List of instructions for the agent.
     instructions: Optional[Union[str, List[str], Callable]] = None
+    # If True, wrap instructions in <instructions> tags. Default is False.
+    use_instruction_tags: bool = False
     # Provide the expected output from the Agent.
     expected_output: Optional[str] = None
     # Additional context added to the end of the system message.
@@ -359,6 +368,12 @@ class Agent:
     timezone_identifier: Optional[str] = None
     # If True, resolve session_state, dependencies, and metadata in the user and system messages
     resolve_in_context: bool = True
+
+    # --- Learning Machine ---
+    # LearningMachine for unified learning capabilities
+    learning: Optional[Union[bool, LearningMachine]] = None
+    # Add learnings context to system prompt
+    add_learnings_to_context: bool = True
 
     # --- Extra Messages ---
     # A list of extra messages added after the system message and before the user message.
@@ -473,7 +488,8 @@ class Agent:
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
-        enable_user_memories: bool = False,
+        update_memory_on_run: bool = False,
+        enable_user_memories: Optional[bool] = None,  # Soon to be deprecated. Use update_memory_on_run
         add_memories_to_context: Optional[bool] = None,
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
@@ -517,6 +533,7 @@ class Agent:
         build_context: bool = True,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
+        use_instruction_tags: bool = False,
         expected_output: Optional[str] = None,
         additional_context: Optional[str] = None,
         markdown: bool = False,
@@ -525,6 +542,8 @@ class Agent:
         add_location_to_context: bool = False,
         timezone_identifier: Optional[str] = None,
         resolve_in_context: bool = True,
+        learning: Optional[Union[bool, LearningMachine]] = None,
+        add_learnings_to_context: bool = True,
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
         user_message_role: str = "user",
         build_user_context: bool = True,
@@ -577,7 +596,17 @@ class Agent:
 
         self.memory_manager = memory_manager
         self.enable_agentic_memory = enable_agentic_memory
-        self.enable_user_memories = enable_user_memories
+
+        if enable_user_memories is not None:
+            log_debug(
+                "The 'enable_user_memories' parameter is deprecated and will be removed in future versions. "
+                "Use 'update_memory_on_run' instead."
+            )
+            self.update_memory_on_run = enable_user_memories
+        else:
+            self.update_memory_on_run = update_memory_on_run
+        self.enable_user_memories = self.update_memory_on_run  # Soon to be deprecated. Use update_memory_on_run
+
         self.add_memories_to_context = add_memories_to_context
 
         self.enable_session_summaries = enable_session_summaries
@@ -642,9 +671,9 @@ class Agent:
         self.system_message = system_message
         self.system_message_role = system_message_role
         self.build_context = build_context
-
         self.description = description
         self.instructions = instructions
+        self.use_instruction_tags = use_instruction_tags
         self.expected_output = expected_output
         self.additional_context = additional_context
         self.markdown = markdown
@@ -653,6 +682,8 @@ class Agent:
         self.add_location_to_context = add_location_to_context
         self.timezone_identifier = timezone_identifier
         self.resolve_in_context = resolve_in_context
+        self.learning = learning
+        self.add_learnings_to_context = add_learnings_to_context
         self.additional_input = additional_input
         self.user_message_role = user_message_role
         self.build_user_context = build_user_context
@@ -694,6 +725,10 @@ class Agent:
             debug_level = 1
         self.debug_level = debug_level
         self.telemetry = telemetry
+
+        # Internal use: _learning holds the resolved LearningMachine instance
+        # use get_learning_machine() to access it.
+        self._learning: Optional[LearningMachine] = None
 
         # If we are caching the agent session
         self._cached_session: Optional[AgentSession] = None
@@ -798,8 +833,51 @@ class Agent:
 
         if self.add_memories_to_context is None:
             self.add_memories_to_context = (
-                self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None
+                self.update_memory_on_run or self.enable_agentic_memory or self.memory_manager is not None
             )
+
+    def _set_learning_machine(self) -> None:
+        """Initialize LearningMachine with agent's db and model.
+
+        Sets the internal _learning field without modifying the public learning field.
+
+        Handles:
+        - learning=True: Create default LearningMachine
+        - learning=False/None: Disabled
+        - learning=LearningMachine(...): Use provided, inject db/model/knowledge
+        """
+        # Handle learning=False or learning=None
+        if self.learning is None or self.learning is False:
+            self._learning = None
+            return
+
+        # Check db requirement
+        if self.db is None:
+            log_warning("Database not provided. LearningMachine not initialized.")
+            self._learning = None
+            return
+
+        # Handle learning=True: create default LearningMachine
+        if self.learning is True:
+            self._learning = LearningMachine(db=self.db, model=self.model, user_profile=True)
+            return
+
+        # Handle learning=LearningMachine(...): inject dependencies
+        if isinstance(self.learning, LearningMachine):
+            if self.learning.db is None:
+                self.learning.db = self.db
+            if self.learning.model is None:
+                self.learning.model = self.model
+            self._learning = self.learning
+
+    def get_learning_machine(self) -> Optional[LearningMachine]:
+        """Get the resolved LearningMachine instance.
+
+        Returns:
+            The LearningMachine instance if learning is enabled and initialized,
+            None otherwise.
+        """
+        return self._learning
 
     def _set_session_summary_manager(self) -> None:
         if self.enable_session_summaries and self.session_summary_manager is None:
@@ -848,7 +926,7 @@ class Agent:
         self._set_default_model()
         self._set_debug(debug_mode=debug_mode)
         self.set_id()
-        if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
+        if self.update_memory_on_run or self.enable_agentic_memory or self.memory_manager is not None:
             self._set_memory_manager()
         if (
             self.add_culture_to_context
@@ -861,6 +939,8 @@ class Agent:
             self._set_session_summary_manager()
         if self.compress_tool_results or self.compression_manager is not None:
             self._set_compression_manager()
+        if self.learning is not None and self.learning is not False:
+            self._set_learning_machine()
 
         log_debug(f"Agent ID: {self.id}", center=True)
 
@@ -982,6 +1062,7 @@ class Agent:
         13. Cleanup and store the run response and session
         """
         memory_future = None
+        learning_future = None
         cultural_knowledge_future = None
 
         try:
@@ -1057,6 +1138,14 @@ class Agent:
                         existing_future=memory_future,
                     )
 
+                    # Start learning extraction as a background task (runs concurrently with the main execution)
+                    learning_future = self._start_learning_future(
+                        run_messages=run_messages,
+                        session=session,
+                        user_id=user_id,
+                        existing_future=learning_future,
+                    )
+
                     # Start cultural knowledge creation in background thread
                     cultural_knowledge_future = self._start_cultural_knowledge_future(
                         run_messages=run_messages,
@@ -1106,6 +1195,7 @@ class Agent:
                         wait_for_open_threads(
                             memory_future=memory_future,  # type: ignore
                             cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
+                            learning_future=learning_future,  # type: ignore
                         )
 
                         return self._handle_agent_run_paused(
@@ -1140,6 +1230,7 @@ class Agent:
                     wait_for_open_threads(
                         memory_future=memory_future,  # type: ignore
                         cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
+                        learning_future=learning_future,  # type: ignore
                     )
 
                     # 12. Create session summary
@@ -1227,6 +1318,8 @@ class Agent:
                 memory_future.cancel()
             if cultural_knowledge_future is not None and not cultural_knowledge_future.done():
                 cultural_knowledge_future.cancel()
+            if learning_future is not None and not learning_future.done():
+                learning_future.cancel()
 
             # Always disconnect connectable tools
             self._disconnect_connectable_tools()
@@ -1266,6 +1359,7 @@ class Agent:
         10. Cleanup and store the run response and session
         """
         memory_future = None
+        learning_future = None
         cultural_knowledge_future = None
 
         try:
@@ -1340,6 +1434,14 @@ class Agent:
                         run_messages=run_messages,
                         user_id=user_id,
                         existing_future=memory_future,
+                    )
+
+                    # Start learning extraction as a background task (runs concurrently with the main execution)
+                    learning_future = self._start_learning_future(
+                        run_messages=run_messages,
+                        session=session,
+                        user_id=user_id,
+                        existing_future=learning_future,
                     )
 
                     # Start cultural knowledge creation in background thread
@@ -1431,10 +1533,12 @@ class Agent:
                         yield from wait_for_thread_tasks_stream(
                             memory_future=memory_future,  # type: ignore
                             cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
+                            learning_future=learning_future,  # type: ignore
                             stream_events=stream_events,
                             run_response=run_response,
                             events_to_skip=self.events_to_skip,
                             store_events=self.store_events,
+                            get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
                         )
 
                         # Handle the paused run
@@ -1470,8 +1574,12 @@ class Agent:
                     yield from wait_for_thread_tasks_stream(
                         memory_future=memory_future,  # type: ignore
                         cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
+                        learning_future=learning_future,  # type: ignore
                         stream_events=stream_events,
                         run_response=run_response,
+                        events_to_skip=self.events_to_skip,
+                        store_events=self.store_events,
+                        get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
                     )
 
                     # 9. Create session summary
@@ -1620,6 +1728,8 @@ class Agent:
                 memory_future.cancel()
             if cultural_knowledge_future is not None and not cultural_knowledge_future.done():
                 cultural_knowledge_future.cancel()
+            if learning_future is not None and not learning_future.done():
+                learning_future.cancel()
 
             # Always disconnect connectable tools
             self._disconnect_connectable_tools()
@@ -1912,8 +2022,9 @@ class Agent:
         await aregister_run(run_context.run_id)
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
-        cultural_knowledge_task = None
         memory_task = None
+        learning_task = None
+        cultural_knowledge_task = None
 
         # Set up retry logic
         num_attempts = self.retries + 1
@@ -2005,6 +2116,14 @@ class Agent:
                         existing_task=memory_task,
                     )
 
+                    # Start learning extraction as a background task
+                    learning_task = await self._astart_learning_task(
+                        run_messages=run_messages,
+                        session=agent_session,
+                        user_id=user_id,
+                        existing_task=learning_task,
+                    )
+
                     # Start cultural knowledge creation as a background task (runs concurrently with the main execution)
                     cultural_knowledge_task = await self._astart_cultural_knowledge_task(
                         run_messages=run_messages,
@@ -2058,7 +2177,9 @@ class Agent:
                     # We should break out of the run function
                     if any(tool_call.is_paused for tool_call in run_response.tools or []):
                         await await_for_open_threads(
-                            memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task
+                            memory_task=memory_task,
+                            cultural_knowledge_task=cultural_knowledge_task,
+                            learning_task=learning_task,
                         )
                         return await self._ahandle_agent_run_paused(
                             run_response=run_response, session=agent_session, user_id=user_id
@@ -2090,7 +2211,9 @@ class Agent:
 
                     # 14. Wait for background memory creation
                     await await_for_open_threads(
-                        memory_task=memory_task, cultural_knowledge_task=cultural_knowledge_task
+                        memory_task=memory_task,
+                        cultural_knowledge_task=cultural_knowledge_task,
+                        learning_task=learning_task,
                     )
 
                     # 15. Create session summary
@@ -2206,6 +2329,12 @@ class Agent:
                     await cultural_knowledge_task
                 except asyncio.CancelledError:
                     pass
+            if learning_task is not None and not learning_task.done():
+                learning_task.cancel()
+                try:
+                    await learning_task
+                except asyncio.CancelledError:
+                    pass
 
             # Always clean up the run tracking
             await acleanup_run(run_response.run_id)  # type: ignore
@@ -2250,6 +2379,7 @@ class Agent:
 
         memory_task = None
         cultural_knowledge_task = None
+        learning_task = None
 
         # 1. Read or create session. Reads from the database if provided.
         agent_session = await self._aread_or_create_session(session_id=session_id, user_id=user_id)
@@ -2349,6 +2479,14 @@ class Agent:
                         existing_task=memory_task,
                     )
 
+                    # Start learning extraction as a background task
+                    learning_task = await self._astart_learning_task(
+                        run_messages=run_messages,
+                        session=agent_session,
+                        user_id=user_id,
+                        existing_task=learning_task,
+                    )
+
                     # Start cultural knowledge creation as a background task (runs concurrently with the main execution)
                     cultural_knowledge_task = await self._astart_cultural_knowledge_task(
                         run_messages=run_messages,
@@ -2442,8 +2580,12 @@ class Agent:
                         async for item in await_for_thread_tasks_stream(
                             memory_task=memory_task,
                             cultural_knowledge_task=cultural_knowledge_task,
+                            learning_task=learning_task,
                             stream_events=stream_events,
                             run_response=run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                            get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
                         ):
                             yield item
 
@@ -2472,10 +2614,12 @@ class Agent:
                     async for item in await_for_thread_tasks_stream(
                         memory_task=memory_task,
                         cultural_knowledge_task=cultural_knowledge_task,
+                        learning_task=learning_task,
                         stream_events=stream_events,
                         run_response=run_response,
                         events_to_skip=self.events_to_skip,
                         store_events=self.store_events,
+                        get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
                     ):
                         yield item
 
@@ -2664,6 +2808,13 @@ class Agent:
                 cultural_knowledge_task.cancel()
                 try:
                     await cultural_knowledge_task
+                except asyncio.CancelledError:
+                    pass
+
+            if learning_task is not None and not learning_task.done():
+                learning_task.cancel()
+                try:
+                    await learning_task
                 except asyncio.CancelledError:
                     pass
 
@@ -5443,6 +5594,70 @@ class Agent:
             send_media_to_model=self.send_media_to_model,
             compression_manager=self.compression_manager if self.compress_tool_results else None,
         ):
+            # Handle LLM request events and compression events from ModelResponse
+            if isinstance(model_response_event, ModelResponse):
+                if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_model_request_started_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.model_request_completed.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_model_request_completed_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                                input_tokens=model_response_event.input_tokens,
+                                output_tokens=model_response_event.output_tokens,
+                                total_tokens=model_response_event.total_tokens,
+                                time_to_first_token=model_response_event.time_to_first_token,
+                                reasoning_tokens=model_response_event.reasoning_tokens,
+                                cache_read_tokens=model_response_event.cache_read_tokens,
+                                cache_write_tokens=model_response_event.cache_write_tokens,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                # Handle compression events
+                if model_response_event.event == ModelResponseEvent.compression_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_compression_started_event(from_run_response=run_response),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                    if stream_events:
+                        stats = model_response_event.compression_stats or {}
+                        yield handle_event(  # type: ignore
+                            create_compression_completed_event(
+                                from_run_response=run_response,
+                                tool_results_compressed=stats.get("tool_results_compressed"),
+                                original_size=stats.get("original_size"),
+                                compressed_size=stats.get("compressed_size"),
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+                    continue
+
             yield from self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
@@ -5454,6 +5669,16 @@ class Agent:
                 session_state=session_state,
                 run_context=run_context,
             )
+
+        # Update RunOutput
+        # Build a list of messages that should be added to the RunOutput
+        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        # Update the RunOutput messages
+        run_response.messages = messages_for_run_response
+        # Update the RunOutput metrics
+        run_response.metrics = self._calculate_run_metrics(
+            messages=messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
         # Determine reasoning completed
         if stream_events and reasoning_state["reasoning_started"]:
@@ -5476,16 +5701,6 @@ class Agent:
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
                 )
-
-        # Update RunOutput
-        # Build a list of messages that should be added to the RunOutput
-        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
-        # Update the RunOutput messages
-        run_response.messages = messages_for_run_response
-        # Update the RunOutput metrics
-        run_response.metrics = self._calculate_run_metrics(
-            messages=messages_for_run_response, current_run_metrics=run_response.metrics
-        )
 
         # Update the run_response audio if streaming
         if model_response.audio is not None:
@@ -5532,6 +5747,70 @@ class Agent:
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
+            # Handle LLM request events and compression events from ModelResponse
+            if isinstance(model_response_event, ModelResponse):
+                if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_model_request_started_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.model_request_completed.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_model_request_completed_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                                input_tokens=model_response_event.input_tokens,
+                                output_tokens=model_response_event.output_tokens,
+                                total_tokens=model_response_event.total_tokens,
+                                time_to_first_token=model_response_event.time_to_first_token,
+                                reasoning_tokens=model_response_event.reasoning_tokens,
+                                cache_read_tokens=model_response_event.cache_read_tokens,
+                                cache_write_tokens=model_response_event.cache_write_tokens,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                # Handle compression events
+                if model_response_event.event == ModelResponseEvent.compression_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_compression_started_event(from_run_response=run_response),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                    if stream_events:
+                        stats = model_response_event.compression_stats or {}
+                        yield handle_event(  # type: ignore
+                            create_compression_completed_event(
+                                from_run_response=run_response,
+                                tool_results_compressed=stats.get("tool_results_compressed"),
+                                original_size=stats.get("original_size"),
+                                compressed_size=stats.get("compressed_size"),
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,  # type: ignore
+                            store_events=self.store_events,
+                        )
+                    continue
+
             for event in self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
@@ -5544,6 +5823,16 @@ class Agent:
                 run_context=run_context,
             ):
                 yield event
+
+        # Update RunOutput
+        # Build a list of messages that should be added to the RunOutput
+        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        # Update the RunOutput messages
+        run_response.messages = messages_for_run_response
+        # Update the RunOutput metrics
+        run_response.metrics = self._calculate_run_metrics(
+            messages=messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
         if stream_events and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
@@ -5565,16 +5854,6 @@ class Agent:
                     events_to_skip=self.events_to_skip,  # type: ignore
                     store_events=self.store_events,
                 )
-
-        # Update RunOutput
-        # Build a list of messages that should be added to the RunOutput
-        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
-        # Update the RunOutput messages
-        run_response.messages = messages_for_run_response
-        # Update the RunOutput metrics
-        run_response.metrics = self._calculate_run_metrics(
-            messages=messages_for_run_response, current_run_metrics=run_response.metrics
-        )
 
         # Update the run_response audio if streaming
         if model_response.audio is not None:
@@ -5966,7 +6245,7 @@ class Agent:
             user_message_str is not None
             and user_message_str.strip() != ""
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
         ):
             log_debug("Managing user memories")
             self.memory_manager.create_user_memories(  # type: ignore
@@ -5995,7 +6274,7 @@ class Agent:
                 for msg in parsed_messages
                 if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
             ]
-            if len(non_empty_messages) > 0 and self.memory_manager is not None and self.enable_user_memories:
+            if len(non_empty_messages) > 0 and self.memory_manager is not None and self.update_memory_on_run:
                 self.memory_manager.create_user_memories(messages=non_empty_messages, user_id=user_id, agent_id=self.id)  # type: ignore
             else:
                 log_warning("Unable to add messages to memory")
@@ -6012,7 +6291,7 @@ class Agent:
             user_message_str is not None
             and user_message_str.strip() != ""
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
         ):
             log_debug("Managing user memories")
             await self.memory_manager.acreate_user_memories(  # type: ignore
@@ -6041,7 +6320,7 @@ class Agent:
                 for msg in parsed_messages
                 if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
             ]
-            if len(non_empty_messages) > 0 and self.memory_manager is not None and self.enable_user_memories:
+            if len(non_empty_messages) > 0 and self.memory_manager is not None and self.update_memory_on_run:
                 await self.memory_manager.acreate_user_memories(  # type: ignore
                     messages=non_empty_messages, user_id=user_id, agent_id=self.id
                 )
@@ -6076,7 +6355,7 @@ class Agent:
         if (
             run_messages.user_message is not None
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
             and not self.enable_agentic_memory
         ):
             log_debug("Starting memory creation in background task.")
@@ -6117,6 +6396,93 @@ class Agent:
 
         return None
 
+    def _process_learnings(
+        self,
+        run_messages: RunMessages,
+        session: AgentSession,
+        user_id: Optional[str],
+    ) -> None:
+        """Process learnings from conversation (runs in background thread)."""
+        if self._learning is None:
+            return
+
+        try:
+            # Convert run messages to list format expected by LearningMachine
+            messages = run_messages.messages if run_messages else []
+
+            self._learning.process(
+                messages=messages,
+                user_id=user_id,
+                session_id=session.session_id if session else None,
+                agent_id=self.id,
+                team_id=self.team_id,
+            )
+            log_debug("Learning extraction completed.")
+        except Exception as e:
+            log_warning(f"Error processing learnings: {e}")
+
+    async def _astart_learning_task(
+        self,
+        run_messages: RunMessages,
+        session: AgentSession,
+        user_id: Optional[str],
+        existing_task: Optional[Task] = None,
+    ) -> Optional[Task]:
+        """Start learning extraction as async task.
+
+        Args:
+            run_messages: The run messages containing conversation.
+            session: The agent session.
+            user_id: The user ID for learning extraction.
+            existing_task: An existing task to cancel before starting a new one.
+
+        Returns:
+            A new learning task if conditions are met, None otherwise.
+        """
+        # Cancel any existing task from a previous retry attempt
+        if existing_task is not None and not existing_task.done():
+            existing_task.cancel()
+            try:
+                await existing_task
+            except CancelledError:
+                pass
+
+        # Create new task if learning is enabled
+        if self._learning is not None:
+            log_debug("Starting learning extraction as async task.")
+            return create_task(
+                self._aprocess_learnings(
+                    run_messages=run_messages,
+                    session=session,
+                    user_id=user_id,
+                )
+            )
+
+        return None
+
+    async def _aprocess_learnings(
+        self,
+        run_messages: RunMessages,
+        session: AgentSession,
+        user_id: Optional[str],
+    ) -> None:
+        """Async process learnings from conversation."""
+        if self._learning is None:
+            return
+
+        try:
+            messages = run_messages.messages if run_messages else []
+            await self._learning.aprocess(
+                messages=messages,
+                user_id=user_id,
+                session_id=session.session_id if session else None,
+                agent_id=self.id,
+                team_id=self.team_id,
+            )
+            log_debug("Learning extraction completed.")
+        except Exception as e:
+            log_warning(f"Error processing learnings: {e}")
+
     def _start_memory_future(
         self,
         run_messages: RunMessages,
@@ -6142,11 +6508,45 @@ class Agent:
         if (
             run_messages.user_message is not None
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
             and not self.enable_agentic_memory
         ):
             log_debug("Starting memory creation in background thread.")
             return self.background_executor.submit(self._make_memories, run_messages=run_messages, user_id=user_id)
+
+        return None
+
+    def _start_learning_future(
+        self,
+        run_messages: RunMessages,
+        session: AgentSession,
+        user_id: Optional[str],
+        existing_future: Optional[Future] = None,
+    ) -> Optional[Future]:
+        """Start learning extraction in background thread.
+
+        Args:
+            run_messages: The run messages containing conversation.
+            session: The agent session.
+            user_id: The user ID for learning extraction.
+            existing_future: An existing future to cancel before starting a new one.
+
+        Returns:
+            A new learning future if conditions are met, None otherwise.
+        """
+        # Cancel any existing future from a previous retry attempt
+        if existing_future is not None and not existing_future.done():
+            existing_future.cancel()
+
+        # Create new future if learning is enabled
+        if self._learning is not None:
+            log_debug("Starting learning extraction in background thread.")
+            return self.background_executor.submit(
+                self._process_learnings,
+                run_messages=run_messages,
+                session=session,
+                user_id=user_id,
+            )
 
         return None
 
@@ -6240,6 +6640,15 @@ class Agent:
 
         if self.enable_agentic_memory:
             agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=False))
+
+        # Add learning machine tools
+        if self._learning is not None:
+            learning_tools = self._learning.get_tools(
+                user_id=user_id,
+                session_id=session.session_id if session else None,
+                agent_id=self.id,
+            )
+            agent_tools.extend(learning_tools)
 
         if self.enable_agentic_culture:
             agent_tools.append(self._get_update_cultural_knowledge_function(async_mode=False))
@@ -6349,6 +6758,18 @@ class Agent:
 
         if self.enable_agentic_memory:
             agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=True))
+
+        # Add learning machine tools (async)
+        if self._learning is not None:
+            learning_tools = await self._learning.aget_tools(
+                user_id=user_id,
+                session_id=session.session_id if session else None,
+                agent_id=self.id,
+            )
+            agent_tools.extend(learning_tools)
+
+        if self.enable_agentic_culture:
+            agent_tools.append(self._get_update_cultural_knowledge_function(async_mode=True))
 
         if self.enable_agentic_state:
             agent_tools.append(Function(name="update_session_state", entrypoint=self._update_session_state_tool))
@@ -8447,22 +8868,29 @@ class Agent:
         # 3.3.2 Then add the Agent role if provided
         if self.role is not None:
             system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
-        # 3.3.4 Then add instructions for the Agent
+        # 3.3.3 Then add instructions for the Agent
         if len(instructions) > 0:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
+            if self.use_instruction_tags:
+                system_message_content += "<instructions>"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"\n- {_upi}"
+                else:
+                    system_message_content += "\n" + instructions[0]
+                system_message_content += "\n</instructions>\n\n"
             else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
-        # 3.3.6 Add additional information
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"- {_upi}\n"
+                else:
+                    system_message_content += instructions[0] + "\n\n"
+        # 3.3.4 Add additional information
         if len(additional_information) > 0:
             system_message_content += "<additional_information>"
             for _ai in additional_information:
                 system_message_content += f"\n- {_ai}"
             system_message_content += "\n</additional_information>\n\n"
-        # 3.3.7 Then add instructions for the tools
+        # 3.3.5 Then add instructions for the tools
         if self._tool_instructions is not None:
             for _ti in self._tool_instructions:
                 system_message_content += f"{_ti}\n"
@@ -8598,12 +9026,22 @@ class Agent:
                 "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
             )
 
-        # 3.3.12 Add the system message from the Model
+        # 3.3.12 then add learnings to the system prompt
+        if self._learning is not None and self.add_learnings_to_context:
+            learning_context = self._learning.build_context(
+                user_id=user_id,
+                session_id=session.session_id if session else None,
+                agent_id=self.id,
+            )
+            if learning_context:
+                system_message_content += learning_context + "\n"
+
+        # 3.3.13 Add the system message from the Model
         system_message_from_model = self.model.get_system_message_for_model(tools)
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
-        # 3.3.13 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
+        # 3.3.14 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
         # or if use_json_mode is True
         if (
             output_schema is not None
@@ -8615,11 +9053,11 @@ class Agent:
         ):
             system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
 
-        # 3.3.14 Add the response model format prompt if output_schema is provided (Pydantic only)
+        # 3.3.15 Add the response model format prompt if output_schema is provided (Pydantic only)
         if output_schema is not None and self.parser_model is not None and not isinstance(output_schema, dict):
             system_message_content += f"{get_response_model_format_prompt(output_schema)}"
 
-        # 3.3.15 Add the session state to the system message
+        # 3.3.16 Add the session state to the system message
         if add_session_state_to_context and session_state is not None:
             system_message_content += f"\n<session_state>\n{session_state}\n</session_state>\n\n"
 
@@ -8784,22 +9222,29 @@ class Agent:
         # 3.3.2 Then add the Agent role if provided
         if self.role is not None:
             system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
-        # 3.3.4 Then add instructions for the Agent
+        # 3.3.3 Then add instructions for the Agent
         if len(instructions) > 0:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
+            if self.use_instruction_tags:
+                system_message_content += "<instructions>"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"\n- {_upi}"
+                else:
+                    system_message_content += "\n" + instructions[0]
+                system_message_content += "\n</instructions>\n\n"
             else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
-        # 3.3.6 Add additional information
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"- {_upi}\n"
+                else:
+                    system_message_content += instructions[0] + "\n\n"
+        # 3.3.4 Add additional information
         if len(additional_information) > 0:
             system_message_content += "<additional_information>"
             for _ai in additional_information:
                 system_message_content += f"\n- {_ai}"
             system_message_content += "\n</additional_information>\n\n"
-        # 3.3.7 Then add instructions for the tools
+        # 3.3.5 Then add instructions for the tools
         if self._tool_instructions is not None:
             for _ti in self._tool_instructions:
                 system_message_content += f"{_ti}\n"
@@ -8938,12 +9383,22 @@ class Agent:
                 "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
             )
 
-        # 3.3.12 Add the system message from the Model
+        # 3.3.12 then add learnings to the system prompt
+        if self._learning is not None and self.add_learnings_to_context:
+            learning_context = await self._learning.abuild_context(
+                user_id=user_id,
+                session_id=session.session_id if session else None,
+                agent_id=self.id,
+            )
+            if learning_context:
+                system_message_content += learning_context + "\n"
+
+        # 3.3.13 Add the system message from the Model
         system_message_from_model = self.model.get_system_message_for_model(tools)
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
-        # 3.3.13 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
+        # 3.3.14 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
         # or if use_json_mode is True
         if (
             output_schema is not None
@@ -8955,11 +9410,11 @@ class Agent:
         ):
             system_message_content += f"{get_json_output_prompt(output_schema)}"  # type: ignore
 
-        # 3.3.14 Add the response model format prompt if output_schema is provided (Pydantic only)
+        # 3.3.15 Add the response model format prompt if output_schema is provided (Pydantic only)
         if output_schema is not None and self.parser_model is not None and not isinstance(output_schema, dict):
             system_message_content += f"{get_response_model_format_prompt(output_schema)}"
 
-        # 3.3.15 Add the session state to the system message
+        # 3.3.16 Add the session state to the system message
         if add_session_state_to_context and session_state is not None:
             system_message_content += self._get_formatted_session_state_for_system_message(session_state)
 
@@ -10041,18 +10496,30 @@ class Agent:
         fields_for_new_agent: Dict[str, Any] = {}
 
         for f in fields(self):
+            # Skip private fields (not part of __init__ signature)
+            if f.name.startswith("_"):
+                continue
+
             field_value = getattr(self, f.name)
             if field_value is not None:
-                fields_for_new_agent[f.name] = self._deep_copy_field(f.name, field_value)
+                try:
+                    fields_for_new_agent[f.name] = self._deep_copy_field(f.name, field_value)
+                except Exception as e:
+                    log_warning(f"Failed to deep copy field '{f.name}': {e}. Using original value.")
+                    fields_for_new_agent[f.name] = field_value
 
         # Update fields if provided
         if update:
             fields_for_new_agent.update(update)
 
         # Create a new Agent
-        new_agent = self.__class__(**fields_for_new_agent)
-        log_debug(f"Created new {self.__class__.__name__}")
-        return new_agent
+        try:
+            new_agent = self.__class__(**fields_for_new_agent)
+            log_debug(f"Created new {self.__class__.__name__}")
+            return new_agent
+        except Exception as e:
+            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
+            raise
 
     def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
         """Helper method to deep copy a field based on its type."""
@@ -10062,19 +10529,52 @@ class Agent:
         if field_name == "reasoning_agent":
             return field_value.deep_copy()
 
-        # For storage, model and reasoning_model, use a deep copy
-        elif field_name in ("db", "model", "reasoning_model"):
+        # For tools, share MCP tools but copy others
+        if field_name == "tools" and field_value is not None:
             try:
-                return deepcopy(field_value)
-            except Exception:
-                try:
-                    return copy(field_value)
-                except Exception as e:
-                    log_warning(f"Failed to copy field: {field_name} - {e}")
-                    return field_value
+                copied_tools = []
+                for tool in field_value:
+                    try:
+                        # Share MCP tools (they maintain server connections)
+                        is_mcp_tool = hasattr(type(tool), "__mro__") and any(
+                            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                        )
+                        if is_mcp_tool:
+                            copied_tools.append(tool)
+                        else:
+                            try:
+                                copied_tools.append(deepcopy(tool))
+                            except Exception:
+                                # Tool can't be deep copied, share by reference
+                                copied_tools.append(tool)
+                    except Exception:
+                        # MCP detection failed, share tool by reference to be safe
+                        copied_tools.append(tool)
+                return copied_tools
+            except Exception as e:
+                # If entire tools processing fails, log and return original list
+                log_warning(f"Failed to process tools for deep copy: {e}")
+                return field_value
+
+        # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
+        if field_name in (
+            "db",
+            "model",
+            "reasoning_model",
+            "knowledge",
+            "memory_manager",
+            "parser_model",
+            "output_model",
+            "session_summary_manager",
+            "culture_manager",
+            "compression_manager",
+            "learning",
+            "skills",
+        ):
+            return field_value
 
         # For compound types, attempt a deep copy
-        elif isinstance(field_value, (list, dict, set)):
+        if isinstance(field_value, (list, dict, set)):
             try:
                 return deepcopy(field_value)
             except Exception:
@@ -10085,7 +10585,7 @@ class Agent:
                     return field_value
 
         # For pydantic models, attempt a model_copy
-        elif isinstance(field_value, BaseModel):
+        if isinstance(field_value, BaseModel):
             try:
                 return field_value.model_copy(deep=True)
             except Exception:
@@ -10097,8 +10597,6 @@ class Agent:
 
         # For other types, attempt a shallow copy first
         try:
-            from copy import copy
-
             return copy(field_value)
         except Exception:
             # If copy fails, return as is
@@ -11757,9 +12255,10 @@ class Agent:
             "parser_model": self.parser_model.to_dict() if self.parser_model else None,
             "output_model": self.output_model.to_dict() if self.output_model else None,
             "has_tools": self.tools is not None,
-            "has_memory": self.enable_user_memories is True
+            "has_memory": self.update_memory_on_run is True
             or self.enable_agentic_memory is True
             or self.memory_manager is not None,
+            "has_learnings": self._learning is not None,
             "has_culture": self.enable_agentic_culture is True
             or self.update_cultural_knowledge is True
             or self.culture_manager is not None,

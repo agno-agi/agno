@@ -15,11 +15,11 @@ user_id = "peter_rabbit"
 
 # Create agent with the new memory system
 agent = Agent(
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=Claude(id="claude-sonnet-4-5-20250929"),
     user_id=user_id,
     db=db,
     # Enable the Agent to dynamically create and manage user memories
-    enable_user_memories=True,
+    update_memory_on_run=True,
     add_datetime_to_context=True,
     markdown=True,
 )

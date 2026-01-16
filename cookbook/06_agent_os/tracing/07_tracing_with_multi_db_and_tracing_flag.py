@@ -8,8 +8,8 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 
 # Set up databases - each agent has its own db
 db1 = SqliteDb(db_file="tmp/db1.db", id="db1")
@@ -30,7 +30,7 @@ agent = Agent(
 agent2 = Agent(
     name="Web Search Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="You are a web search agent. Answer questions concisely.",
     markdown=True,
     db=db2,

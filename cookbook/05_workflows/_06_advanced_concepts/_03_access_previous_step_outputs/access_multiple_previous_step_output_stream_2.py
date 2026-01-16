@@ -6,8 +6,8 @@ We dont use Step objects in this example.
 """
 
 from agno.agent.agent import Agent
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
@@ -20,7 +20,7 @@ hackernews_agent = Agent(
 
 web_agent = Agent(
     instructions="You are a comprehensive web researcher. Search across multiple sources including news sites, blogs, and official documentation to gather detailed information.",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
 )
 
 reasoning_agent = Agent(

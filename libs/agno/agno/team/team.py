@@ -118,6 +118,10 @@ from agno.utils.agent import (
 from agno.utils.common import is_typed_dict
 from agno.utils.events import (
     add_team_error_event,
+    create_team_compression_completed_event,
+    create_team_compression_started_event,
+    create_team_model_request_completed_event,
+    create_team_model_request_started_event,
     create_team_parser_model_response_completed_event,
     create_team_parser_model_response_started_event,
     create_team_post_hook_completed_event,
@@ -266,6 +270,8 @@ class Team:
     description: Optional[str] = None
     # List of instructions for the team.
     instructions: Optional[Union[str, List[str], Callable]] = None
+    # If True, wrap instructions in <instructions> tags. Default is False.
+    use_instruction_tags: bool = False
     # Provide the expected output from the Team.
     expected_output: Optional[str] = None
     # Additional context added to the end of the system message.
@@ -395,7 +401,9 @@ class Team:
     # Enable the agent to manage memories of the user
     enable_agentic_memory: bool = False
     # If True, the agent creates/updates user memories at the end of runs
-    enable_user_memories: bool = False
+    update_memory_on_run: bool = False
+    # Soon to be deprecated. Use update_memory_on_run
+    enable_user_memories: Optional[bool] = None
     # If True, the agent adds a reference to the user memories in the response
     add_memories_to_context: Optional[bool] = None
     # If True, the agent creates/updates session summaries at the end of runs
@@ -497,6 +505,7 @@ class Team:
         num_history_sessions: Optional[int] = None,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
+        use_instruction_tags: bool = False,
         expected_output: Optional[str] = None,
         additional_context: Optional[str] = None,
         markdown: bool = False,
@@ -546,7 +555,8 @@ class Team:
         parse_response: bool = True,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         enable_agentic_memory: bool = False,
-        enable_user_memories: bool = False,
+        update_memory_on_run: bool = False,
+        enable_user_memories: Optional[bool] = None,  # Soon to be deprecated. Use update_memory_on_run
         add_memories_to_context: Optional[bool] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_session_summaries: bool = False,
@@ -615,6 +625,7 @@ class Team:
 
         self.description = description
         self.instructions = instructions
+        self.use_instruction_tags = use_instruction_tags
         self.expected_output = expected_output
         self.additional_context = additional_context
         self.markdown = markdown
@@ -670,7 +681,17 @@ class Team:
         self.db = db
 
         self.enable_agentic_memory = enable_agentic_memory
-        self.enable_user_memories = enable_user_memories
+
+        if enable_user_memories is not None:
+            log_debug(
+                "The 'enable_user_memories' parameter is deprecated and will be removed in future versions. "
+                "Use 'update_memory_on_run' instead."
+            )
+            self.update_memory_on_run = enable_user_memories
+        else:
+            self.update_memory_on_run = update_memory_on_run
+        self.enable_user_memories = self.update_memory_on_run  # Soon to be deprecated. Use update_memory_on_run
+
         self.add_memories_to_context = add_memories_to_context
         self.memory_manager = memory_manager
         self.enable_session_summaries = enable_session_summaries
@@ -862,7 +883,7 @@ class Team:
 
         if self.add_memories_to_context is None:
             self.add_memories_to_context = (
-                self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None
+                self.update_memory_on_run or self.enable_agentic_memory or self.memory_manager is not None
             )
 
     def _set_session_summary_manager(self) -> None:
@@ -966,7 +987,7 @@ class Team:
         self.set_id()
 
         # Set the memory manager and session summary manager
-        if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
+        if self.update_memory_on_run or self.enable_agentic_memory or self.memory_manager is not None:
             self._set_memory_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
             self._set_session_summary_manager()
@@ -1898,6 +1919,7 @@ class Team:
                         stream_events=stream_events,
                         events_to_skip=self.events_to_skip,  # type: ignore
                         store_events=self.store_events,
+                        get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
                     )
 
                     raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2850,6 +2872,7 @@ class Team:
                         stream_events=stream_events,
                         events_to_skip=self.events_to_skip,  # type: ignore
                         store_events=self.store_events,
+                        get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
                     ):
                         yield event
 
@@ -3336,6 +3359,70 @@ class Team:
             send_media_to_model=self.send_media_to_model,
             compression_manager=self.compression_manager if self.compress_tool_results else None,
         ):
+            # Handle LLM request events and compression events from ModelResponse
+            if isinstance(model_response_event, ModelResponse):
+                if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_model_request_started_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.model_request_completed.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_model_request_completed_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                                input_tokens=model_response_event.input_tokens,
+                                output_tokens=model_response_event.output_tokens,
+                                total_tokens=model_response_event.total_tokens,
+                                time_to_first_token=model_response_event.time_to_first_token,
+                                reasoning_tokens=model_response_event.reasoning_tokens,
+                                cache_read_tokens=model_response_event.cache_read_tokens,
+                                cache_write_tokens=model_response_event.cache_write_tokens,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                # Handle compression events
+                if model_response_event.event == ModelResponseEvent.compression_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_compression_started_event(from_run_response=run_response),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                    if stream_events:
+                        stats = model_response_event.compression_stats or {}
+                        yield handle_event(  # type: ignore
+                            create_team_compression_completed_event(
+                                from_run_response=run_response,
+                                tool_results_compressed=stats.get("tool_results_compressed"),
+                                original_size=stats.get("original_size"),
+                                compressed_size=stats.get("compressed_size"),
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
             yield from self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
@@ -3431,6 +3518,70 @@ class Team:
             compression_manager=self.compression_manager if self.compress_tool_results else None,
         )  # type: ignore
         async for model_response_event in model_stream:
+            # Handle LLM request events and compression events from ModelResponse
+            if isinstance(model_response_event, ModelResponse):
+                if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_model_request_started_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.model_request_completed.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_model_request_completed_event(
+                                from_run_response=run_response,
+                                model=self.model.id,
+                                model_provider=self.model.provider,
+                                input_tokens=model_response_event.input_tokens,
+                                output_tokens=model_response_event.output_tokens,
+                                total_tokens=model_response_event.total_tokens,
+                                time_to_first_token=model_response_event.time_to_first_token,
+                                reasoning_tokens=model_response_event.reasoning_tokens,
+                                cache_read_tokens=model_response_event.cache_read_tokens,
+                                cache_write_tokens=model_response_event.cache_write_tokens,
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                # Handle compression events
+                if model_response_event.event == ModelResponseEvent.compression_started.value:
+                    if stream_events:
+                        yield handle_event(  # type: ignore
+                            create_team_compression_started_event(from_run_response=run_response),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
+                if model_response_event.event == ModelResponseEvent.compression_completed.value:
+                    if stream_events:
+                        stats = model_response_event.compression_stats or {}
+                        yield handle_event(  # type: ignore
+                            create_team_compression_completed_event(
+                                from_run_response=run_response,
+                                tool_results_compressed=stats.get("tool_results_compressed"),
+                                original_size=stats.get("original_size"),
+                                compressed_size=stats.get("compressed_size"),
+                            ),
+                            run_response,
+                            events_to_skip=self.events_to_skip,
+                            store_events=self.store_events,
+                        )
+                    continue
+
             for event in self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
@@ -3923,7 +4074,7 @@ class Team:
             user_message_str is not None
             and user_message_str.strip() != ""
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
         ):
             log_debug("Managing user memories")
             self.memory_manager.create_user_memories(
@@ -3944,7 +4095,7 @@ class Team:
             user_message_str is not None
             and user_message_str.strip() != ""
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
         ):
             log_debug("Managing user memories")
             await self.memory_manager.acreate_user_memories(
@@ -3981,7 +4132,7 @@ class Team:
         if (
             run_messages.user_message is not None
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
             and not self.enable_agentic_memory
         ):
             log_debug("Starting memory creation in background task.")
@@ -4013,7 +4164,7 @@ class Team:
         if (
             run_messages.user_message is not None
             and self.memory_manager is not None
-            and self.enable_user_memories
+            and self.update_memory_on_run
             and not self.enable_agentic_memory
         ):
             log_debug("Starting memory creation in background thread.")
@@ -5670,15 +5821,22 @@ class Team:
         if self.role is not None:
             system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
 
-        # 3.3.5 Then add instructions for the Agent
+        # 3.3.5 Then add instructions for the Team
         if len(instructions) > 0:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
+            if self.use_instruction_tags:
+                system_message_content += "<instructions>"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"\n- {_upi}"
+                else:
+                    system_message_content += "\n" + instructions[0]
+                system_message_content += "\n</instructions>\n\n"
             else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"- {_upi}\n"
+                else:
+                    system_message_content += instructions[0] + "\n\n"
         # 3.3.6 Add additional information
         if len(additional_information) > 0:
             system_message_content += "<additional_information>"
@@ -5975,15 +6133,22 @@ class Team:
         if self.role is not None:
             system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
 
-        # 3.3.5 Then add instructions for the Agent
+        # 3.3.5 Then add instructions for the Team
         if len(instructions) > 0:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
+            if self.use_instruction_tags:
+                system_message_content += "<instructions>"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"\n- {_upi}"
+                else:
+                    system_message_content += "\n" + instructions[0]
+                system_message_content += "\n</instructions>\n\n"
             else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
+                if len(instructions) > 1:
+                    for _upi in instructions:
+                        system_message_content += f"- {_upi}\n"
+                else:
+                    system_message_content += instructions[0] + "\n\n"
         # 3.3.6 Add additional information
         if len(additional_information) > 0:
             system_message_content += "<additional_information>"
@@ -9969,6 +10134,138 @@ class Team:
             )
         except Exception as e:
             log_debug(f"Could not create Team run telemetry event: {e}")
+
+    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> "Team":
+        """Create and return a deep copy of this Team, optionally updating fields.
+
+        This creates a fresh Team instance with isolated mutable state while sharing
+        heavy resources like database connections and models. Member agents are also
+        deep copied to ensure complete isolation.
+
+        Args:
+            update: Optional dictionary of fields to override in the new Team.
+
+        Returns:
+            Team: A new Team instance with copied state.
+        """
+        from dataclasses import fields
+
+        # Extract the fields to set for the new Team
+        fields_for_new_team: Dict[str, Any] = {}
+
+        for f in fields(self):
+            # Skip private fields (not part of __init__ signature)
+            if f.name.startswith("_"):
+                continue
+
+            field_value = getattr(self, f.name)
+            if field_value is not None:
+                try:
+                    fields_for_new_team[f.name] = self._deep_copy_field(f.name, field_value)
+                except Exception as e:
+                    log_warning(f"Failed to deep copy field '{f.name}': {e}. Using original value.")
+                    fields_for_new_team[f.name] = field_value
+
+        # Update fields if provided
+        if update:
+            fields_for_new_team.update(update)
+
+        # Create a new Team
+        try:
+            new_team = self.__class__(**fields_for_new_team)
+            log_debug(f"Created new {self.__class__.__name__}")
+            return new_team
+        except Exception as e:
+            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
+            raise
+
+    def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
+        """Helper method to deep copy a field based on its type."""
+        from copy import copy, deepcopy
+
+        # For members, deep copy each agent/team
+        if field_name == "members" and field_value is not None:
+            copied_members = []
+            for member in field_value:
+                if hasattr(member, "deep_copy"):
+                    copied_members.append(member.deep_copy())
+                else:
+                    copied_members.append(member)
+            return copied_members
+
+        # For tools, share MCP tools but copy others
+        if field_name == "tools" and field_value is not None:
+            try:
+                copied_tools = []
+                for tool in field_value:
+                    try:
+                        # Share MCP tools (they maintain server connections)
+                        is_mcp_tool = hasattr(type(tool), "__mro__") and any(
+                            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                        )
+                        if is_mcp_tool:
+                            copied_tools.append(tool)
+                        else:
+                            try:
+                                copied_tools.append(deepcopy(tool))
+                            except Exception:
+                                # Tool can't be deep copied, share by reference
+                                copied_tools.append(tool)
+                    except Exception:
+                        # MCP detection failed, share tool by reference to be safe
+                        copied_tools.append(tool)
+                return copied_tools
+            except Exception as e:
+                # If entire tools processing fails, log and return original list
+                log_warning(f"Failed to process tools for deep copy: {e}")
+                return field_value
+
+        # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
+        if field_name in (
+            "db",
+            "model",
+            "reasoning_model",
+            "knowledge",
+            "memory_manager",
+            "parser_model",
+            "output_model",
+            "session_summary_manager",
+            "culture_manager",
+            "compression_manager",
+            "learning",
+            "skills",
+        ):
+            return field_value
+
+        # For compound types, attempt a deep copy
+        if isinstance(field_value, (list, dict, set)):
+            try:
+                return deepcopy(field_value)
+            except Exception:
+                try:
+                    return copy(field_value)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
+
+        # For pydantic models, attempt a model_copy
+        if isinstance(field_value, BaseModel):
+            try:
+                return field_value.model_copy(deep=True)
+            except Exception:
+                try:
+                    return field_value.model_copy(deep=False)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
+
+        # For other types, attempt a shallow copy first
+        try:
+            return copy(field_value)
+        except Exception:
+            # If copy fails, return as is
+            return field_value
+
 
 
 def get_team_by_id(

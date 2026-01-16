@@ -61,7 +61,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             return
 
         # Get workflow from OS
-        workflow = get_workflow_by_id(workflow_id, os.workflows, os.db, registry=os.registry)
+        workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
         if not workflow:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
             return
@@ -141,7 +141,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
         if buffer_status is None:
             # Run not in buffer - check database
             if workflow_id and session_id:
-                workflow = get_workflow_by_id(workflow_id, os.workflows, os.db, registry=os.registry)
+                workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
                 if workflow and isinstance(workflow, Workflow):
                     workflow_run = await workflow.aget_run_output(run_id, session_id)
 
@@ -585,7 +585,7 @@ def get_workflow_router(
         dependencies=[Depends(require_resource_access("workflows", "read", "workflow_id"))],
     )
     async def get_workflow(workflow_id: str, request: Request) -> WorkflowResponse:
-        workflow = get_workflow_by_id(workflow_id, os.workflows, os.db, registry=os.registry)
+        workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
         if isinstance(workflow, RemoteWorkflow):
@@ -665,7 +665,7 @@ def get_workflow_router(
             kwargs["metadata"] = metadata
 
         # Retrieve the workflow by ID
-        workflow = get_workflow_by_id(workflow_id, os.workflows, os.db, version=version, registry=os.registry)
+        workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, version=version, registry=os.registry, create_fresh=True)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
@@ -731,7 +731,7 @@ def get_workflow_router(
         dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
     )
     async def cancel_workflow_run(workflow_id: str, run_id: str):
-        workflow = get_workflow_by_id(workflow_id, os.workflows, os.db, registry=os.registry)
+        workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
 
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")

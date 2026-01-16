@@ -11,9 +11,9 @@ from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.slack import SlackTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.pgvector.pgvector import PgVector
 
@@ -82,7 +82,7 @@ market_research_agent = Agent(
     name="Market Research Agent",
     role="Market Research",
     model=OpenAIChat("gpt-4o"),
-    tools=[DuckDuckGoTools(), ExaTools()],
+    tools=[WebSearchTools(), ExaTools()],
     knowledge=knowledge,
     instructions=[
         "You are the Market Research Agent of a startup, responsible for market intelligence and analysis.",

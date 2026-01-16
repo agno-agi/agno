@@ -3,7 +3,7 @@ from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/persistent_memory.db")
 
@@ -19,7 +19,7 @@ basic_agent = Agent(
 web_research_agent = Agent(
     name="Web Research Agent",
     model=OpenAIChat(id="gpt-5-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     db=agent_db,
     add_history_to_context=True,
     num_history_runs=3,

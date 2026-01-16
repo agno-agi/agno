@@ -3,11 +3,11 @@ import asyncio
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.dashscope import DashScope
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=DashScope(id="qwen-vl-plus"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

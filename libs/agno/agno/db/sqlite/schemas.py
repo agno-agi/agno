@@ -210,6 +210,23 @@ COMPONENT_LINKS_TABLE_SCHEMA = {
     ],
 }
 
+LEARNINGS_TABLE_SCHEMA = {
+    "learning_id": {"type": String, "primary_key": True, "nullable": False},
+    "learning_type": {"type": String, "nullable": False, "index": True},
+    "namespace": {"type": String, "nullable": True, "index": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "agent_id": {"type": String, "nullable": True, "index": True},
+    "team_id": {"type": String, "nullable": True, "index": True},
+    "workflow_id": {"type": String, "nullable": True, "index": True},
+    "session_id": {"type": String, "nullable": True, "index": True},
+    "entity_id": {"type": String, "nullable": True, "index": True},
+    "entity_type": {"type": String, "nullable": True, "index": True},
+    "content": {"type": JSON, "nullable": False},
+    "metadata": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+}
+
 
 def get_table_schema_definition(table_type: str, traces_table_name: str = "agno_traces") -> dict[str, Any]:
     """
@@ -238,6 +255,7 @@ def get_table_schema_definition(table_type: str, traces_table_name: str = "agno_
         "components": COMPONENTS_TABLE_SCHEMA,
         "component_configs": COMPONENT_CONFIGS_TABLE_SCHEMA,
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
+        "learnings": LEARNINGS_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
 

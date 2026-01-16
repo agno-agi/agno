@@ -3,10 +3,10 @@ from typing import Dict, List, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.parallel import ParallelTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow import Step, Workflow
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import StepInput, StepOutput
@@ -39,7 +39,7 @@ web_researcher = Agent(
     name="Web Researcher",
     role="Search the web for current information and sources",
     model=OpenAIChat(id="gpt-5-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     description=dedent("""\
         You are the Web Researcher — an agent that searches the web for up-to-date information,
         news articles, and credible sources on any topic.

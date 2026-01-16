@@ -204,7 +204,7 @@ def test_screenshot(browserbase_tools, mock_playwright):
 
 
 def test_get_page_content(browserbase_tools, mock_playwright):
-    """Test get_page_content method."""
+    """Test get_page_content method with text_only=True (default)."""
     # Setup mock page
     mock_page = mock_playwright["page"]
     mock_page.content.return_value = "<html><body>Test content</body></html>"
@@ -217,9 +217,35 @@ def test_get_page_content(browserbase_tools, mock_playwright):
     # Call the method
     result = browserbase_tools.get_page_content()
 
-    # Verify results
-    assert result == "<html><body>Test content</body></html>"
+    # Verify results - text_only=True by default, so HTML tags are stripped
+    assert result == "Test content"
     mock_page.content.assert_called_once()
+
+
+def test_get_page_content_raw_html(mock_browserbase, mock_playwright):
+    """Test get_page_content method with parse_html=False returns raw HTML."""
+    with (
+        patch("agno.tools.browserbase.Browserbase"),
+        patch.dict("os.environ", {"BROWSERBASE_API_KEY": TEST_API_KEY, "BROWSERBASE_PROJECT_ID": TEST_PROJECT_ID}),
+    ):
+        tools = BrowserbaseTools(parse_html=False)
+        tools.app = mock_browserbase
+
+        # Setup mock page
+        mock_page = mock_playwright["page"]
+        mock_page.content.return_value = "<html><body>Test content</body></html>"
+
+        # Set the page on the tools instance to avoid connect_over_cdp
+        tools._page = mock_page
+        tools._browser = mock_playwright["browser"]
+        tools._playwright = mock_playwright["playwright"]
+
+        # Call the method
+        result = tools.get_page_content()
+
+        # Verify results - parse_html=False, so raw HTML is returned
+        assert result == "<html><body>Test content</body></html>"
+        mock_page.content.assert_called_once()
 
 
 def test_close_session_with_session_id(browserbase_tools, mock_browserbase):
@@ -426,7 +452,7 @@ async def test_ascreenshot(async_browserbase_tools, mock_async_playwright):
 
 @pytest.mark.asyncio
 async def test_aget_page_content(async_browserbase_tools, mock_async_playwright):
-    """Test aget_page_content method."""
+    """Test aget_page_content method with text_only=True (default)."""
     # Setup mock page
     mock_page = mock_async_playwright["page"]
     mock_page.content = AsyncMock(return_value="<html><body>Test content</body></html>")
@@ -439,9 +465,36 @@ async def test_aget_page_content(async_browserbase_tools, mock_async_playwright)
     # Call the method
     result = await async_browserbase_tools.aget_page_content()
 
-    # Verify results
-    assert result == "<html><body>Test content</body></html>"
+    # Verify results - text_only=True by default, so HTML tags are stripped
+    assert result == "Test content"
     mock_page.content.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_aget_page_content_raw_html(mock_browserbase, mock_async_playwright):
+    """Test aget_page_content method with parse_html=False returns raw HTML."""
+    with (
+        patch("agno.tools.browserbase.Browserbase"),
+        patch.dict("os.environ", {"BROWSERBASE_API_KEY": TEST_API_KEY, "BROWSERBASE_PROJECT_ID": TEST_PROJECT_ID}),
+    ):
+        tools = BrowserbaseTools(parse_html=False)
+        tools.app = mock_browserbase
+
+        # Setup mock page
+        mock_page = mock_async_playwright["page"]
+        mock_page.content = AsyncMock(return_value="<html><body>Test content</body></html>")
+
+        # Set the page on the tools instance to avoid connect_over_cdp
+        tools._async_page = mock_page
+        tools._async_browser = mock_async_playwright["browser"]
+        tools._async_playwright = mock_async_playwright["playwright"]
+
+        # Call the method
+        result = await tools.aget_page_content()
+
+        # Verify results - parse_html=False, so raw HTML is returned
+        assert result == "<html><body>Test content</body></html>"
+        mock_page.content.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -677,4 +730,5 @@ async def test_aget_page_content_with_connect_url(async_browserbase_tools):
 
         # Verify the custom connect_url was used
         assert async_browserbase_tools._connect_url == "ws://custom.connect.url"
-        assert result == "<html>Custom content</html>"
+        # text_only=True by default, so HTML tags are stripped
+        assert result == "Custom content"
