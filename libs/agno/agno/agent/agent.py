@@ -7674,12 +7674,11 @@ class Agent:
                 registry_db = registry.get_db(db_id)
                 if registry_db is not None:
                     config["db"] = registry_db
-                else:
-                    # Fall back to creating a new db instance from the dict
-                    config["db"] = db_from_dict(db_data)
             else:
                 # No registry or no db_id, fall back to creating from dict
                 config["db"] = db_from_dict(db_data)
+                if config["db"] is None:
+                    del config["db"]
 
         # --- Handle Schema reconstruction ---
         if "input_schema" in config and isinstance(config["input_schema"], str):
@@ -12350,11 +12349,6 @@ def get_agent_by_id(
         agent = Agent.from_dict(cfg, registry=registry)
         agent.id = id
 
-        try:
-            agent.db = db  # type: ignore[attr-defined]
-        except Exception:
-            pass
-
         return agent
 
     except Exception as e:
@@ -12384,7 +12378,6 @@ def get_agents(
                     # Ensure agent.id is set to the component_id (the id used to load the agent)
                     # This ensures events use the correct agent_id
                     agent.id = component_id
-                    agent.db = db
                     agents.append(agent)
         return agents
 

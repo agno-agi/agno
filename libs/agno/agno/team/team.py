@@ -8636,11 +8636,6 @@ class Team:
                 registry_db = registry.get_db(db_id)
                 if registry_db is not None:
                     config["db"] = registry_db
-                else:
-                    # Fall back to creating a new db instance from the dict
-                    config["db"] = db_from_dict(db_data)
-                    if config["db"] is None:
-                        del config["db"]
             else:
                 # No registry or no db_id, fall back to creating from dict
                 config["db"] = db_from_dict(db_data)
@@ -10317,9 +10312,8 @@ def get_team_by_id(
             raise ValueError(f"Invalid config found for team {id}")
 
         team = Team.from_dict(cfg, db=db, registry=registry)
-
+        # Ensure team.id is set to the component_id
         team.id = id
-        team.db = db
 
         return team
 
@@ -10356,7 +10350,6 @@ def get_teams(
                     team = Team.from_dict(team_config, db=db, registry=registry)
                     # Ensure team.id is set to the component_id
                     team.id = component_id
-                    team.db = db
                     teams.append(team)
         return teams
 

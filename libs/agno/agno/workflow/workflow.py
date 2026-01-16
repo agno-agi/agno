@@ -623,12 +623,11 @@ class Workflow:
                 registry_db = registry.get_db(db_id)
                 if registry_db is not None:
                     config["db"] = registry_db
-                else:
-                    # Fall back to creating a new db instance from the dict
-                    config["db"] = db_from_dict(db_data)
             else:
                 # No registry or no db_id, fall back to creating from dict
                 config["db"] = db_from_dict(db_data)
+                if config["db"] is None:
+                    del config["db"]
 
         # --- Handle Schema reconstruction ---
         if "input_schema" in config and isinstance(config["input_schema"], str):
@@ -4982,10 +4981,8 @@ def get_workflow_by_id(
 
         workflow = Workflow.from_dict(cfg, db=db, links=links, registry=registry)
 
-        # Ensure workflow.id is set to the component_id (the id used to load the workflow)
-        # This ensures events use the correct workflow_id
+        # Ensure workflow.id is set to the component_id
         workflow.id = id
-        workflow.db = db
 
         return workflow
 
@@ -5011,10 +5008,8 @@ def get_workflows(
                     if "id" not in workflow_config:
                         workflow_config["id"] = component_id
                     workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
-                    # Ensure workflow.id is set to the component_id (the id used to load the workflow)
-                    # This ensures events use the correct workflow_id
+                    # Ensure workflow.id is set to the component_id
                     workflow.id = component_id
-                    workflow.db = db
                     workflows.append(workflow)
         return workflows
 
