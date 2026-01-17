@@ -300,16 +300,11 @@ def test_clean_page_numbers_untrustable(p_nr_format):
     assert not clean_content[0].endswith(p_nr_format["end"].format(page_nr=2))
 
 
-# --- Password handling tests ---
-
-
 def _create_encrypted_pdf_with_empty_password() -> BytesIO:
-    """Create a PDF encrypted with empty user password and non-empty owner password."""
     from pypdf import PdfWriter
 
     writer = PdfWriter()
     writer.add_blank_page(width=612, height=792)
-    # Encrypt with empty user password - common for PDFs readable by Preview/Google Drive
     writer.encrypt(user_password="", owner_password="owner123")
 
     buffer = BytesIO()
@@ -320,7 +315,6 @@ def _create_encrypted_pdf_with_empty_password() -> BytesIO:
 
 
 def _create_encrypted_pdf_with_password(password: str) -> BytesIO:
-    """Create a PDF encrypted with a specific user password."""
     from pypdf import PdfWriter
 
     writer = PdfWriter()
@@ -335,49 +329,40 @@ def _create_encrypted_pdf_with_password(password: str) -> BytesIO:
 
 
 def test_pdf_reader_decrypt_with_empty_password():
-    """Empty string password works for PDFs with blank user password."""
     pdf = _create_encrypted_pdf_with_empty_password()
 
     reader = PDFReader()
-    # Empty string is a valid password - should NOT raise an error
     docs = reader.read(pdf, password="")
     assert docs is not None
-    assert len(docs) >= 0  # May be empty since it's a blank page
+    assert len(docs) >= 0
 
 
 def test_pdf_reader_password_none_falls_back_to_instance():
-    """Password=None falls back to instance password."""
     pdf = _create_encrypted_pdf_with_empty_password()
 
-    # Instance has empty password, method gets None (should fall back)
     reader = PDFReader(password="")
     docs = reader.read(pdf, password=None)
     assert docs is not None
 
 
 def test_pdf_reader_explicit_password_overrides_instance():
-    """Explicit password overrides instance password."""
     pdf = _create_encrypted_pdf_with_empty_password()
 
-    # Instance has wrong password, but method gets correct empty password
     reader = PDFReader(password="wrong")
     docs = reader.read(pdf, password="")
     assert docs is not None
 
 
 def test_pdf_reader_no_password_for_encrypted_pdf_returns_empty():
-    """Encrypted PDF without password returns empty list."""
     pdf = _create_encrypted_pdf_with_password("secret123")
 
     reader = PDFReader()
-    # No password provided for encrypted PDF - should return empty list
     docs = reader.read(pdf)
     assert docs == []
 
 
 @pytest.mark.asyncio
 async def test_pdf_reader_async_decrypt_with_empty_password():
-    """Async: Empty string password works for PDFs with blank user password."""
     pdf = _create_encrypted_pdf_with_empty_password()
 
     reader = PDFReader()
@@ -387,7 +372,6 @@ async def test_pdf_reader_async_decrypt_with_empty_password():
 
 @pytest.mark.asyncio
 async def test_pdf_reader_async_password_none_falls_back_to_instance():
-    """Async: Password=None falls back to instance password."""
     pdf = _create_encrypted_pdf_with_empty_password()
 
     reader = PDFReader(password="")
