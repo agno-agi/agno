@@ -746,7 +746,7 @@ class OpenAIChat(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def _should_collect_metrics(self, response: ChatCompletion) -> bool:
+    def _should_collect_metrics(self, response: ChatCompletionChunk) -> bool:
         """
         Determine if metrics should be collected from the response.
         """
@@ -832,7 +832,7 @@ class OpenAIChat(Model):
         elif hasattr(response_message, "reasoning") and response_message.reasoning is not None:  # type: ignore
             model_response.reasoning_content = response_message.reasoning  # type: ignore
 
-        if self._should_collect_metrics(response):
+        if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
 
         if model_response.provider_data is None:
@@ -929,7 +929,7 @@ class OpenAIChat(Model):
                         log_warning(f"Error processing audio: {e}")
 
         # Add usage metrics if present
-        if self._should_collect_metrics(response_delta):
+        if self._should_collect_metrics(response_delta) and response_delta.usage is not None:
             model_response.response_usage = self._get_metrics(response_delta.usage)
 
         return model_response
