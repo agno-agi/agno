@@ -9,7 +9,7 @@
 </div>
 
 <p align="center">
-  Build, run, and manage multi-agent systems.
+  Build, run, manage multi-agent systems.
 </p>
 
 <div align="center">
@@ -29,7 +29,7 @@ Agno is a framework, runtime, and control plane for multi-agent systems.
 | Layer | What it does |
 |-------|--------------|
 | **Framework** | Build agents, teams, and workflows with memory, knowledge, guardrails, and 100+ integrations |
-| **AgentOS Runtime** | Serve your system in production with a stateless, secure FastAPI backend |
+| **AgentOS Runtime** | Run your system in production with a stateless, secure FastAPI backend |
 | **Control Plane** | Test, monitor, and manage your system using the [AgentOS UI](https://os.agno.com) |
 
 ## Why Agno?
