@@ -1,7 +1,7 @@
 """
 Unit tests for Perplexity metrics collection fix.
 
-Tests the collect_metrics_only_on_last_chunk flag that prevents
+Tests the collect_metrics_on_completion flag that prevents
 incorrect accumulation of cumulative token counts in streaming responses.
 """
 
@@ -46,15 +46,15 @@ class MockChatCompletionChunk:
 
 
 def test_openai_chat_default_collect_metrics_flag():
-    """Test that OpenAIChat has collect_metrics_only_on_last_chunk set to False by default."""
+    """Test that OpenAIChat has collect_metrics_on_completion set to False by default."""
     model = OpenAIChat(id="gpt-4o")
-    assert model.collect_metrics_only_on_last_chunk is False
+    assert model.collect_metrics_on_completion is False
 
 
 def test_perplexity_collect_metrics_flag():
-    """Test that Perplexity has collect_metrics_only_on_last_chunk set to True."""
+    """Test that Perplexity has collect_metrics_on_completion set to True."""
     model = Perplexity(id="sonar", api_key="test-key")
-    assert model.collect_metrics_only_on_last_chunk is True
+    assert model.collect_metrics_on_completion is True
 
 
 def test_should_collect_metrics_when_usage_is_none():
@@ -66,7 +66,7 @@ def test_should_collect_metrics_when_usage_is_none():
 
 
 def test_should_collect_metrics_default_behavior():
-    """Test that _should_collect_metrics returns True when collect_metrics_only_on_last_chunk is False."""
+    """Test that _should_collect_metrics returns True when collect_metrics_on_completion is False."""
     model = OpenAIChat(id="gpt-4o")
     usage = MockCompletionUsage(prompt_tokens=100, completion_tokens=20, total_tokens=120)
 
@@ -79,7 +79,7 @@ def test_should_collect_metrics_default_behavior():
     assert model._should_collect_metrics(response) is True  # type: ignore[arg-type]
 
 
-def test_should_collect_metrics_only_on_last_chunk():
+def test_should_collect_metrics_on_completion():
     """Test that _should_collect_metrics only returns True on last chunk when flag is True."""
     model = Perplexity(id="sonar", api_key="test-key")
     usage = MockCompletionUsage(prompt_tokens=100, completion_tokens=20, total_tokens=120)

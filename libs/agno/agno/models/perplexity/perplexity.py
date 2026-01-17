@@ -41,7 +41,7 @@ class Perplexity(OpenAILike):
     id: str = "sonar"
     name: str = "Perplexity"
     provider: str = "Perplexity"
-    collect_metrics_only_on_last_chunk: bool = True
+    collect_metrics_on_completion: bool = True
 
     api_key: Optional[str] = field(default_factory=lambda: getenv("PERPLEXITY_API_KEY"))
     base_url: str = "https://api.perplexity.ai/"

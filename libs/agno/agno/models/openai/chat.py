@@ -43,7 +43,7 @@ class OpenAIChat(Model):
     name: str = "OpenAIChat"
     provider: str = "OpenAI"
     supports_native_structured_outputs: bool = True
-    collect_metrics_only_on_last_chunk: bool = False
+    collect_metrics_on_completion: bool = False
 
     # Request parameters
     store: Optional[bool] = None
@@ -750,14 +750,16 @@ class OpenAIChat(Model):
         """
         Determine if metrics should be collected from the response.
         """
-        if response.usage is None:
+        if not response.usage:
             return False
-        if self.collect_metrics_only_on_last_chunk:
-            choice = response.choices[-1]
-            if choice and choice.finish_reason is not None:
-                return True
+
+        if not self.collect_metrics_on_completion:
+            return True
+
+        if not response.choices:
             return False
-        return True
+
+        return response.choices[-1].finish_reason is not None
 
     def _parse_provider_response(
         self,
