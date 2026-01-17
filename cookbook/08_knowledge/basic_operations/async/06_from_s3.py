@@ -1,5 +1,4 @@
-"""This cookbook shows how to add content from an S3 bucket to the knowledge base (async).
-
+"""This cookbook shows how to add content from a S3 bucket to the knowledge base.
 1. Run: `python cookbook/08_knowledge/basic_operations/async/06_from_s3.py`
 """
 

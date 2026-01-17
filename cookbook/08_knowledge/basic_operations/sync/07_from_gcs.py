@@ -1,5 +1,4 @@
 """This cookbook shows how to add content from a GCS bucket to the knowledge base.
-
 1. Run: `python cookbook/08_knowledge/basic_operations/sync/07_from_gcs.py`
 """
 

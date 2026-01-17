@@ -1,4 +1,4 @@
-"""This cookbook shows how to specify a reader for reading content (async).
+"""This cookbook shows how to specify a reader for reading content.
 Readers are assigned by default to the content based on the file extension.
 You can specify a reader for a specific content by passing the reader to the insert method
 if you want to use a different reader for a specific content.

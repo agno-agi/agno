@@ -1,4 +1,4 @@
-"""This cookbook shows how to remove content from Knowledge when using a ContentDB (async).
+"""This cookbook shows how to remove content from Knowledge when using a ContentDB.
 
 You can remove content by id or by name.
 

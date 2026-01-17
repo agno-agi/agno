@@ -1,5 +1,4 @@
 """This cookbook shows how to add content from multiple paths and URLs to the knowledge base.
-
 1. Run: `python cookbook/08_knowledge/basic_operations/sync/04_from_multiple.py`
 """
 

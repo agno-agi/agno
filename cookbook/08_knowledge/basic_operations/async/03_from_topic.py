@@ -1,4 +1,4 @@
-"""This cookbook shows how to add topics from Wikipedia and Arxiv to the knowledge base (async).
+"""This cookbook shows how to add topics from Wikipedia and Arxiv to the knowledge base.
 
 It is important to specify the reader for the content when using topics.
 

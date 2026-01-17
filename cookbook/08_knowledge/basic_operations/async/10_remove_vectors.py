@@ -1,4 +1,4 @@
-"""This cookbook shows how to remove vectors from Knowledge (async).
+"""This cookbook shows how to remove vectors from Knowledge.
 
 You can remove vectors by metadata or by name.
 

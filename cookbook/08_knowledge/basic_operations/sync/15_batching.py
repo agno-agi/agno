@@ -15,6 +15,7 @@ from agno.vectordb.pgvector import PgVector
 embedder = OpenAIEmbedder(
     batch_size=100,  # Process embeddings in batches of 100
     dimensions=1536,
+    enable_batch=True,  # Required to enable batch embedding API calls
 )
 
 vector_db = PgVector(

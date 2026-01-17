@@ -1,5 +1,4 @@
-"""This cookbook shows how to add content from a YouTube video to Knowledge (async).
-
+"""This cookbook shows how to add content from a Youtube video to Knowledge.
 1. Run: `python cookbook/08_knowledge/basic_operations/async/05_from_youtube.py`
 """
 
