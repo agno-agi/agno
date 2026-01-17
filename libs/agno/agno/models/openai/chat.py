@@ -43,6 +43,7 @@ class OpenAIChat(Model):
     name: str = "OpenAIChat"
     provider: str = "OpenAI"
     supports_native_structured_outputs: bool = True
+    collect_metrics_on_completion: bool = False
 
     # Request parameters
     store: Optional[bool] = None
@@ -745,6 +746,21 @@ class OpenAIChat(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
+    def _should_collect_metrics(self, response: ChatCompletionChunk) -> bool:
+        """
+        Determine if metrics should be collected from the response.
+        """
+        if not response.usage:
+            return False
+
+        if not self.collect_metrics_on_completion:
+            return True
+
+        if not response.choices:
+            return False
+
+        return response.choices[-1].finish_reason is not None
+
     def _parse_provider_response(
         self,
         response: ChatCompletion,
@@ -913,7 +929,7 @@ class OpenAIChat(Model):
                         log_warning(f"Error processing audio: {e}")
 
         # Add usage metrics if present
-        if response_delta.usage is not None:
+        if self._should_collect_metrics(response_delta) and response_delta.usage is not None:
             model_response.response_usage = self._get_metrics(response_delta.usage)
 
         return model_response
