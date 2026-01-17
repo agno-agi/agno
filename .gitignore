@@ -14,11 +14,9 @@
 
 # Machine specific
 .idea
-.vscode
 *.code-workspace
 
 # Ignore .env files
-.env
 
 # Ignore .envrc files (used by direnv: https://direnv.net/)
 .envrc
@@ -84,3 +82,5 @@ projects
 pyrightconfig.json
 .python-version
 CLAUDE_PRIVATE.md
+config.bat
+node_modules
