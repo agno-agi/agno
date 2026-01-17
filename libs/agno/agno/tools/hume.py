@@ -86,8 +86,7 @@ class HumeTools(Toolkit):
             return json.dumps(result, indent=2)
             
         except Exception as e:
-            return json.dumps({"error": str(e), "success": False}, indent=2)
-
+            return self._handle_error(e, "Text emotion analysis")
     def analyze_batch_emotions(self, texts: List[str]) -> str:
         """Analyze emotions in multiple text samples.
         
@@ -125,8 +124,7 @@ class HumeTools(Toolkit):
             return json.dumps(result, indent=2)
             
         except Exception as e:
-            return json.dumps({"error": str(e), "success": False}, indent=2)
-
+            return self._handle_error(e, "Batch emotion analysis")
     def list_evi_configs(self) -> str:
         """List all Empathic Voice Interface (EVI) configurations.
         
@@ -146,8 +144,7 @@ class HumeTools(Toolkit):
                 })
             return json.dumps({"success": True, "count": len(config_list), "configs": config_list}, indent=2)
         except Exception as e:
-            return json.dumps({"error": str(e), "success": False}, indent=2)
-
+            return self._handle_error(e, "EVI config list")
     def synthesize_speech(self, text: str, voice: Optional[str] = None) -> str:
         """Synthesize speech from text using Hume TTS.
         
@@ -173,4 +170,38 @@ class HumeTools(Toolkit):
                 "note": "Audio generated. Use SDK directly to access audio bytes."
             }, indent=2)
         except Exception as e:
-            return json.dumps({"error": str(e), "success": False}, indent=2)
+            return self._handle_error(e, "Speech synthesis")
+    def _handle_error(self, error: Exception, context: str) -> str:
+        """Centralized error handling with detailed error messages.
+        
+        Args:
+            error: The exception that occurred.
+            context: Context string describing where the error occurred.
+            
+        Returns:
+            JSON string with error details and troubleshooting info.
+        """
+        error_msg = str(error)
+        
+        # Provide more specific error messages
+        if "401" in error_msg or "Unauthorized" in error_msg:
+            return json.dumps({
+                "success": False,
+                "error": "Authentication failed",
+                "message": "Invalid API key. Please check your HUME_API_KEY.",
+                "retry_after": None
+            }, indent=2)
+        elif "429" in error_msg or "rate limit" in error_msg.lower():
+            return json.dumps({
+                "success": False,
+                "error": "Rate limit exceeded",
+                "message": "Too many requests. Please wait before retrying.",
+                "retry_after": 30
+            }, indent=2)
+        else:
+            return json.dumps({
+                "success": False,
+                "error": f"{context}: {error_msg}",
+                "error_code": type(error).__name__,
+                "retry_after": None
+            }, indent=2)
