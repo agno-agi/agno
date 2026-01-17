@@ -1,9 +1,7 @@
 import asyncio
-import os
 
 from agno.agent import Agent
 from agno.db.postgres import AsyncPostgresDb
-from agno.db.sqlite import AsyncSqliteDb
 from agno.filters import IN
 from agno.knowledge.knowledge import Knowledge
 from agno.utils.media import (
@@ -17,13 +15,7 @@ downloaded_cv_paths = download_knowledge_filters_sample_data(
     num_files=5, file_extension=SampleDataFileExtension.DOCX
 )
 
-# Clean up old databases
-if os.path.exists("tmp/knowledge_contents.db"):
-    os.remove("tmp/knowledge_contents.db")
-db = AsyncSqliteDb(
-    db_file="tmp/knowledge_contents.db",
-)
-
+# Initialize AsyncPostgresDb for contents
 db = AsyncPostgresDb(
     db_url="postgresql+psycopg_async://ai:ai@localhost:5532/ai",
     knowledge_table="knowledge_contents",

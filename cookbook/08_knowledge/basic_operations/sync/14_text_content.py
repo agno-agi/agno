@@ -1,5 +1,9 @@
-"""This cookbook shows how to add content from a local file to the knowledge base.
-1. Run: `python cookbook/agent_concepts/knowledge/01_from_path.py` to run the cookbook
+"""This cookbook shows how to add text content directly to the knowledge base.
+
+Use `text_content` for single strings or `text_contents` for multiple strings.
+This is useful when you have text that doesn't come from a file.
+
+1. Run: `python cookbook/08_knowledge/basic_operations/sync/14_text_content.py`
 """
 
 from agno.db.postgres.postgres import PostgresDb

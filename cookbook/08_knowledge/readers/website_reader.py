@@ -7,7 +7,7 @@ from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-# Create a knowledge base with the ArXiv documents
+# Create a knowledge base with website content
 knowledge = Knowledge(
     # Table name: ai.website_documents
     vector_db=PgVector(

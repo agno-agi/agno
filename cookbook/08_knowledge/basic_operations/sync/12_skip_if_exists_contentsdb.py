@@ -1,9 +1,9 @@
 """This cookbook shows how to skip content if it already exists in the knowledge base.
 It also demonstrates how contents can be added to the contents database post processing when
 it is already in the vectorDB.
-Existing content is skipped by default.
+By default, skip_if_exists=False, so content is re-indexed. Set skip_if_exists=True to skip.
 
-1. Run: `python cookbook/agent_concepts/knowledge/12_skip_if_exists_contentsdb.py` to run the cookbook
+1. Run: `python cookbook/08_knowledge/basic_operations/sync/12_skip_if_exists_contentsdb.py`
 """
 
 from agno.db.postgres.postgres import PostgresDb
@@ -19,10 +19,10 @@ knowledge = Knowledge(
 )
 # Add from a URL to the knowledge base
 knowledge.insert(
-    name="CV",
+    name="Thai Recipes",
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    metadata={"user_tag": "Engineering Candidates"},
-    skip_if_exists=True,  # True by default
+    metadata={"user_tag": "Recipes"},
+    skip_if_exists=True,  # Set to True to skip re-indexing existing content
 )
 
 # Now add a contents_db to our Knowledge instance
@@ -34,8 +34,8 @@ knowledge.contents_db = contents_db
 
 # Add from a URL to the knowledge base that already exists in the vectorDB, but adds it to the contentsDB
 knowledge.insert(
-    name="CV",
+    name="Thai Recipes",
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    metadata={"user_tag": "Engineering Candidates"},
+    metadata={"user_tag": "Recipes"},
     skip_if_exists=True,
 )

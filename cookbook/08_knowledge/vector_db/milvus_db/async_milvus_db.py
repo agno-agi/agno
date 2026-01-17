@@ -18,7 +18,6 @@ vector_db = Milvus(
 )
 # Create knowledge base
 knowledge = Knowledge(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
     vector_db=vector_db,
 )
 

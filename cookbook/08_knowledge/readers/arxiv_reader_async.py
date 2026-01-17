@@ -37,3 +37,7 @@ def main():
             "What can you tell me about Generative AI?", markdown=True
         )
     )
+
+
+if __name__ == "__main__":
+    main()
