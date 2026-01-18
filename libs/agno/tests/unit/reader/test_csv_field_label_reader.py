@@ -540,3 +540,66 @@ def test_reader_factory_integration():
     assert isinstance(reader, FieldLabeledCSVReader)
     assert reader.name == "Field Labeled CSV Reader"
     assert "field-labeled text format" in reader.description
+
+
+LATIN1_CSV = "name,city\nJosé,São Paulo\nFrançois,Montréal"
+
+
+def test_read_bytesio_with_custom_encoding():
+    """Test reading BytesIO with custom encoding (Latin-1).
+
+    This tests the fix for BUG-007 where BytesIO reads were hardcoded to UTF-8.
+    """
+    latin1_bytes = LATIN1_CSV.encode("latin-1")
+    file_obj = io.BytesIO(latin1_bytes)
+    file_obj.name = "latin1.csv"
+
+    reader = FieldLabeledCSVReader(encoding="latin-1")
+    documents = reader.read(file_obj)
+
+    assert len(documents) == 2
+    content = documents[0].content
+
+    # Verify accented characters are correctly decoded
+    assert "José" in content
+    assert "São Paulo" in content
+
+
+def test_read_bytesio_wrong_encoding_fails():
+    """Test that reading Latin-1 bytes as UTF-8 fails or corrupts data.
+
+    This demonstrates why the encoding parameter is important.
+    """
+    latin1_bytes = LATIN1_CSV.encode("latin-1")
+    file_obj = io.BytesIO(latin1_bytes)
+    file_obj.name = "latin1.csv"
+
+    reader = FieldLabeledCSVReader()  # Uses UTF-8 by default
+
+    # This should either raise an error or produce corrupted output
+    documents = reader.read(file_obj)
+
+    # If it didn't raise, the content should be corrupted (mojibake)
+    if documents:
+        content = documents[0].content
+        # The accented characters should NOT be correctly decoded
+        assert "José" not in content or "São Paulo" not in content
+
+
+@pytest.mark.asyncio
+async def test_async_read_bytesio_with_custom_encoding():
+    """Test async reading BytesIO with custom encoding (Latin-1).
+
+    This tests the fix for BUG-007 in the async path.
+    """
+    latin1_bytes = LATIN1_CSV.encode("latin-1")
+    file_obj = io.BytesIO(latin1_bytes)
+    file_obj.name = "latin1.csv"
+
+    reader = FieldLabeledCSVReader(encoding="latin-1")
+    documents = await reader.async_read(file_obj)
+
+    assert len(documents) == 2
+    content = documents[0].content
+    assert "José" in content
+    assert "São Paulo" in content
