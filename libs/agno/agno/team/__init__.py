@@ -16,11 +16,19 @@ from agno.run.team import (
     ToolCallStartedEvent,
 )
 from agno.team.remote import RemoteTeam
-from agno.team.team import Team, get_team_by_id, get_teams
+from agno.team.team import (
+    DELEGATE_TASK_TO_MEMBER,
+    DELEGATE_TASK_TO_MEMBERS,
+    Team,
+    get_team_by_id,
+    get_teams,
+)
 
 __all__ = [
     "Team",
     "RemoteTeam",
+    "DELEGATE_TASK_TO_MEMBER",
+    "DELEGATE_TASK_TO_MEMBERS",
     "TeamRunOutput",
     "TeamRunOutputEvent",
     "TeamRunEvent",
