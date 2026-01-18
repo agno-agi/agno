@@ -2,11 +2,11 @@
 
 from agno.agent import Agent
 from agno.models.xai import xAI
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=xAI(id="grok-2"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 agent.print_response("Whats happening in France?")

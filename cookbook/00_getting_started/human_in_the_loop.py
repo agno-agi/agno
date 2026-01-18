@@ -91,7 +91,7 @@ def save_learning(title: str, learning: str) -> str:
         "saved_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    learnings_kb.add_content(
+    learnings_kb.insert(
         name=payload["title"],
         text_content=json.dumps(payload, ensure_ascii=False),
         reader=TextReader(),

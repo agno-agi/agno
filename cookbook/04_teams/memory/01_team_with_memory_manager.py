@@ -3,7 +3,7 @@ This example shows you how to use persistent memory with an Agent.
 
 After each run, user memories are created/updated.
 
-To enable this, set `enable_user_memories=True` in the Agent config.
+To enable this, set `update_memory_on_run=True` in the Agent config.
 """
 
 from uuid import uuid4
@@ -33,7 +33,7 @@ team = Team(
     memory_manager=memory_manager,
     members=[agent],
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
 )
 
 team.print_response(

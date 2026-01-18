@@ -117,7 +117,7 @@ def save_research_snapshot(
     }
 
     logger.info(f"Saving research snapshot: {payload['name']}")
-    research_snapshots.add_content(
+    research_snapshots.insert(
         name=payload["name"],
         text_content=json.dumps(payload, ensure_ascii=False),
         reader=TextReader(),

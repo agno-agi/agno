@@ -29,7 +29,7 @@ agent_os = AgentOS(
     ],
     config=config_path,
     tracing=True,
-    tracing_db=gemini_agents_db,
+    db=gemini_agents_db,
 )
 app = agent_os.get_app()
 

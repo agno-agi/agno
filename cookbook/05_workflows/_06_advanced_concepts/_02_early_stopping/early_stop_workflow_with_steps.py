@@ -1,6 +1,6 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
 from agno.workflow.types import StepInput, StepOutput
@@ -10,7 +10,7 @@ from agno.workflow.workflow import Workflow
 content_creator = Agent(
     name="Content Creator",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="Create engaging content on the given topic. Research and write comprehensive articles.",
 )
 

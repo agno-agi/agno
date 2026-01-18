@@ -14,7 +14,7 @@ from agno.db.sqlite import SqliteDb
 from agno.exceptions import InputCheckError
 from agno.guardrails import PromptInjectionGuardrail
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
@@ -36,7 +36,7 @@ input_validator = Agent(
 content_processor = Agent(
     name="Content Processor Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     description="Processes validated content and provides helpful information.",
     instructions=[
         "Process the validated input and provide comprehensive, helpful information.",

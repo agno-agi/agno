@@ -2,8 +2,8 @@ from typing import List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 from pydantic import BaseModel, Field
@@ -204,7 +204,7 @@ def simple_data_processor(step_input: StepInput) -> StepOutput:
 research_agent = Agent(
     name="AI Research Specialist",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[HackerNewsTools(), DuckDuckGoTools()],
+    tools=[HackerNewsTools(), WebSearchTools()],
     role="Research AI trends and extract structured insights",
     output_schema=ResearchFindings,
     instructions=[

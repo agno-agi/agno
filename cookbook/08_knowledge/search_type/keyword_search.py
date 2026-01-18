@@ -12,7 +12,7 @@ knowledge = Knowledge(
     vector_db=keyword_db,
 )
 
-knowledge.add_content(
+knowledge.insert(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
 )
 

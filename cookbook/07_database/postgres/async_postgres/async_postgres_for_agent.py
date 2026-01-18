@@ -6,14 +6,14 @@ import asyncio
 
 from agno.agent import Agent
 from agno.db.postgres import AsyncPostgresDb
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 db_url = "postgresql+psycopg_async://ai:ai@localhost:5532/ai"
 db = AsyncPostgresDb(db_url=db_url)
 
 agent = Agent(
     db=db,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
     add_datetime_to_context=True,
 )

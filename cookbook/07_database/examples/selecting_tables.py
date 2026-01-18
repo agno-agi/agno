@@ -18,7 +18,7 @@ db = SqliteDb(
 # Setup a basic agent with the SQLite database
 agent = Agent(
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     add_history_to_context=True,
     add_datetime_to_context=True,
 )

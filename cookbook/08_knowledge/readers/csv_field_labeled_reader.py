@@ -46,7 +46,7 @@ knowledge_base = Knowledge(
     ),
 )
 
-knowledge_base.add_content(
+knowledge_base.insert(
     url="https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv",
     reader=reader,
 )

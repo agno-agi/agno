@@ -30,7 +30,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     db=db,
     instructions=["You are a helpful AI assistant"],
-    enable_user_memories=True,
+    update_memory_on_run=True,
     markdown=True,
 )
 

@@ -8,7 +8,7 @@ from agno.run import RunContext
 from agno.run.team import TeamRunOutput
 from agno.session.team import TeamSession
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.string import is_valid_uuid
 
@@ -19,7 +19,7 @@ def team():
         name="Web Agent",
         model=OpenAIChat("gpt-4o"),
         role="Search the web for information",
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
     )
 
     finance_agent = Agent(

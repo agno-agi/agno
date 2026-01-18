@@ -14,7 +14,7 @@ knowledge = Knowledge(
     ),
 )
 # Load the knowledge
-knowledge.add_content(
+knowledge.insert(
     topics=["Generative AI", "Machine Learning"],
     reader=ArxivReader(),
 )

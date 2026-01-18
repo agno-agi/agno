@@ -12,6 +12,10 @@ class ChunkingStrategy(ABC):
     def chunk(self, document: Document) -> List[Document]:
         raise NotImplementedError
 
+    async def achunk(self, document: Document) -> List[Document]:
+        """Async version of chunk. Override for truly async implementations."""
+        return self.chunk(document)
+
     def clean_text(self, text: str) -> str:
         """Clean the text by replacing multiple newlines with a single newline"""
         import re

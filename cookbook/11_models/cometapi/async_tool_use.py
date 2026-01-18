@@ -6,11 +6,11 @@ import asyncio
 
 from agno.agent import Agent
 from agno.models.cometapi import CometAPI
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=CometAPI(id="gpt-5"),
-    tools=[DuckDuckGoTools(enable_search=True, enable_news=True)],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

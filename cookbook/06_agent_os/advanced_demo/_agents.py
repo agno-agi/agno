@@ -7,9 +7,9 @@ from agno.db.postgres import PostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic.claude import Claude
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.file import FileTools
+from agno.tools.websearch import WebSearchTools
 from agno.vectordb.pgvector.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -17,7 +17,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 AGENT_DESCRIPTION = dedent("""\
     You are Sage, a cutting-edge Answer Engine built to deliver precise, context-rich, and engaging responses.
     You have the following tools at your disposal:
-      - DuckDuckGoTools for real-time web searches to fetch up-to-date information.
+      - WebSearchTools for real-time web searches to fetch up-to-date information.
       - ExaTools for structured, in-depth analysis.
       - FileTools for saving the output upon user confirmation.
 
@@ -39,7 +39,7 @@ AGENT_INSTRUCTIONS = dedent("""\
     1. Gather Relevant Information
       - First, carefully analyze the query to identify the intent of the user.
       - Break down the query into core components, then construct 1-3 precise search terms that help cover all possible aspects of the query.
-      - Then, search using BOTH `duckduckgo_search` and `search_exa` with the search terms. Remember to search both tools.
+      - Then, search using BOTH `web_search` and `search_exa` with the search terms. Remember to search both tools.
       - Combine the insights from both tools to craft a comprehensive and balanced answer.
       - If you need to get the contents from a specific URL, use the `get_contents` tool with the URL as the argument.
       - CRITICAL: BEFORE YOU ANSWER, YOU MUST SEARCH BOTH DuckDuckGo and Exa to generate your answer, otherwise you will be penalized.
@@ -118,7 +118,7 @@ sage = Agent(
             type="keyword",
             num_results=10,
         ),
-        DuckDuckGoTools(
+        WebSearchTools(
             timeout=20,
             fixed_max_results=5,
         ),
@@ -131,7 +131,7 @@ sage = Agent(
     num_history_runs=5,
     add_datetime_to_context=True,
     add_name_to_context=True,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     description=AGENT_DESCRIPTION,
     instructions=AGENT_INSTRUCTIONS,
     expected_output=EXPECTED_OUTPUT_TEMPLATE,

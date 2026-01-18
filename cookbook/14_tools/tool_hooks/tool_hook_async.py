@@ -5,7 +5,7 @@ from inspect import iscoroutinefunction
 from typing import Any, Callable, Dict
 
 from agno.agent import Agent
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.utils.log import logger
 
 
@@ -26,6 +26,6 @@ async def logger_hook(
     return result
 
 
-agent = Agent(tools=[DuckDuckGoTools()], tool_hooks=[logger_hook])
+agent = Agent(tools=[WebSearchTools()], tool_hooks=[logger_hook])
 
 asyncio.run(agent.aprint_response("What is currently trending on Twitter?"))

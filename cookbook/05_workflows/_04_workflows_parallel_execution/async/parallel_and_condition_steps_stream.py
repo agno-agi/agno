@@ -1,9 +1,9 @@
 import asyncio
 
 from agno.agent.agent import Agent
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.condition import Condition
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step
@@ -20,7 +20,7 @@ hackernews_agent = Agent(
 web_agent = Agent(
     name="Web Researcher",
     instructions="Research general information from the web",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
 )
 
 exa_agent = Agent(

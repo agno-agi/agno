@@ -16,7 +16,7 @@ agent = Agent(
     model=Perplexity(id="sonar-pro"),
     # Store the memories and summary in a database
     db=PostgresDb(db_url=db_url),
-    enable_user_memories=True,
+    update_memory_on_run=True,
     enable_session_summaries=True,
 )
 

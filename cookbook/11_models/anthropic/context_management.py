@@ -13,7 +13,7 @@ You can read more in Anthropic docs: https://docs.claude.com/en/docs/build-with-
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=Claude(
@@ -31,7 +31,7 @@ agent = Agent(
         },
     ),
     instructions="You are a helpful assistant with access to the web.",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     session_id="context-editing",
     add_history_to_context=True,
     markdown=True,

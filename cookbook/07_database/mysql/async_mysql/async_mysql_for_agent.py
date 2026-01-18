@@ -8,14 +8,14 @@ import uuid
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.db.mysql import AsyncMySQLDb
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 db_url = "mysql+asyncmy://ai:ai@localhost:3306/ai"
 db = AsyncMySQLDb(db_url=db_url)
 
 agent = Agent(
     db=db,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
     add_datetime_to_context=True,
 )

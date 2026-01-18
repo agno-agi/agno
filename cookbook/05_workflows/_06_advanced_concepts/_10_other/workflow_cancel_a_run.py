@@ -15,7 +15,7 @@ from agno.models.openai import OpenAIChat
 from agno.run.agent import RunEvent
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowRunEvent
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
@@ -142,7 +142,7 @@ def main():
     researcher = Agent(
         name="Research Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[DuckDuckGoTools()],
+        tools=[WebSearchTools()],
         instructions="Research the given topic and provide key facts and insights.",
     )
 

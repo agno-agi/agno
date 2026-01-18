@@ -2,8 +2,8 @@ import asyncio
 from typing import List
 
 from agno.agent.agent import Agent
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.loop import Loop
 from agno.workflow.router import Router
 from agno.workflow.step import Step
@@ -20,7 +20,7 @@ hackernews_agent = Agent(
 web_agent = Agent(
     name="Web Researcher",
     instructions="You are a comprehensive web researcher. Search across multiple sources including news sites, blogs, and official documentation to gather detailed information.",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
 )
 
 content_agent = Agent(

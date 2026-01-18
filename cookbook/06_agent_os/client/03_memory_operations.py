@@ -5,7 +5,7 @@ This example demonstrates how to manage user memories using
 AgentOSClient.
 
 Prerequisites:
-1. Start an AgentOS server with an agent that has enable_user_memories=True
+1. Start an AgentOS server with an agent that has update_memory_on_run=True
 2. Run this script: python 03_memory_operations.py
 """
 

@@ -84,6 +84,7 @@ async def await_for_thread_tasks_stream(
     stream_events: bool = False,
     events_to_skip: Optional[List[RunEvent]] = None,
     store_events: bool = False,
+    get_memories_callback: Optional[Callable[[], Optional[List[Any]]]] = None,
 ) -> AsyncIterator[RunOutputEvent]:
     if memory_task is not None:
         if stream_events:
@@ -106,16 +107,24 @@ async def await_for_thread_tasks_stream(
         except Exception as e:
             log_warning(f"Error in memory creation: {str(e)}")
         if stream_events:
+            # Get memories after update if callback provided
+            memories = None
+            if get_memories_callback is not None:
+                try:
+                    memories = get_memories_callback()
+                except Exception as e:
+                    log_warning(f"Error getting memories: {str(e)}")
+
             if isinstance(run_response, TeamRunOutput):
                 yield handle_event(  # type: ignore
-                    create_team_memory_update_completed_event(from_run_response=run_response),
+                    create_team_memory_update_completed_event(from_run_response=run_response, memories=memories),
                     run_response,
                     events_to_skip=events_to_skip,  # type: ignore
                     store_events=store_events,
                 )
             else:
                 yield handle_event(  # type: ignore
-                    create_memory_update_completed_event(from_run_response=run_response),
+                    create_memory_update_completed_event(from_run_response=run_response, memories=memories),
                     run_response,
                     events_to_skip=events_to_skip,  # type: ignore
                     store_events=store_events,
@@ -142,6 +151,7 @@ def wait_for_thread_tasks_stream(
     stream_events: bool = False,
     events_to_skip: Optional[List[RunEvent]] = None,
     store_events: bool = False,
+    get_memories_callback: Optional[Callable[[], Optional[List[Any]]]] = None,
 ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]:
     if memory_future is not None:
         if stream_events:
@@ -164,16 +174,24 @@ def wait_for_thread_tasks_stream(
         except Exception as e:
             log_warning(f"Error in memory creation: {str(e)}")
         if stream_events:
+            # Get memories after update if callback provided
+            memories = None
+            if get_memories_callback is not None:
+                try:
+                    memories = get_memories_callback()
+                except Exception as e:
+                    log_warning(f"Error getting memories: {str(e)}")
+
             if isinstance(run_response, TeamRunOutput):
                 yield handle_event(  # type: ignore
-                    create_team_memory_update_completed_event(from_run_response=run_response),
+                    create_team_memory_update_completed_event(from_run_response=run_response, memories=memories),
                     run_response,
                     events_to_skip=events_to_skip,  # type: ignore
                     store_events=store_events,
                 )
             else:
                 yield handle_event(  # type: ignore
-                    create_memory_update_completed_event(from_run_response=run_response),
+                    create_memory_update_completed_event(from_run_response=run_response, memories=memories),
                     run_response,
                     events_to_skip=events_to_skip,  # type: ignore
                     store_events=store_events,

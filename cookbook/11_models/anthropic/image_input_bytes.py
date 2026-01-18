@@ -3,12 +3,12 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.anthropic.claude import Claude
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.utils.media import download_image
 
 agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

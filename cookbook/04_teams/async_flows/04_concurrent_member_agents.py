@@ -7,8 +7,8 @@ You should see both member agents starting at the same time, but finishing at di
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 
 hackernews_agent = Agent(
     name="Hackernews Agent",
@@ -24,7 +24,7 @@ news_agent = Agent(
     name="News Agent",
     role="Handle news requests and current events analysis",
     model=OpenAIChat(id="gpt-4.1"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions=[
         "Use tables to display news information and findings.",
         "Clearly state the source and publication date.",

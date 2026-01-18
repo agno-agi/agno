@@ -3,12 +3,12 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.xai import xAI
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.utils.media import download_image
 
 agent = Agent(
     model=xAI(id="grok-2-vision-latest"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

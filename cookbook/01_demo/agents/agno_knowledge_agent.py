@@ -62,9 +62,9 @@ instructions = dedent(
         Example:
         ```python
         from agno.agent import Agent
-        from agno.tools.duckduckgo import DuckDuckGoTools
+        from agno.tools.websearch import WebSearchTools
 
-        agent = Agent(tools=[DuckDuckGoTools()])
+        agent = Agent(tools=[WebSearchTools()])
 
         response = agent.run("What's happening in France?")
         print(response)
@@ -90,6 +90,6 @@ agno_knowledge_agent = Agent(
 )
 
 if __name__ == "__main__":
-    knowledge.add_content(
+    knowledge.insert(
         name="Agno Documentation", url="https://docs.agno.com/llms-full.txt"
     )

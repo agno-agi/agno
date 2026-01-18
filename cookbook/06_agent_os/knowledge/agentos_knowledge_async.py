@@ -1,9 +1,11 @@
 import asyncio
 from textwrap import dedent
 
+from agno.agent import Agent
 from agno.db.postgres import AsyncPostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
+from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.vectordb.pgvector import PgVector, SearchType
 
@@ -41,10 +43,27 @@ faq_knowledge = Knowledge(
     contents_db=faq_db,
 )
 
+# ************* Create Knowledge Agent *************
+knowledge_agent = Agent(
+    name="Knowledge Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    knowledge=documents_knowledge,
+    search_knowledge=True,
+    db=documents_db,
+    enable_user_memories=True,
+    add_history_to_context=True,
+    markdown=True,
+    instructions=[
+        "You are a helpful assistant with access to Agno documentation.",
+        "Search the knowledge base to answer questions about Agno.",
+    ],
+)
+# *******************************
+
 agent_os = AgentOS(
-    description="Example app with AgentOS Knowledge",
-    # Add the knowledge bases to AgentOS
-    knowledge=[documents_knowledge, faq_knowledge],
+    description="Example app with AgentOS Knowledge (Async)",
+    agents=[knowledge_agent],
+    knowledge=[faq_knowledge],  # documents_knowledge auto-discovered from agent
 )
 
 
@@ -52,14 +71,14 @@ app = agent_os.get_app()
 
 if __name__ == "__main__":
     asyncio.run(
-        documents_knowledge.add_content_async(
+        documents_knowledge.ainsert(
             name="Agno Docs",
             url="https://docs.agno.com/llms-full.txt",
             skip_if_exists=True,
         )
     )
     asyncio.run(
-        faq_knowledge.add_content_async(
+        faq_knowledge.ainsert(
             name="Agno FAQ",
             text_content=dedent("""
             What is Agno?
@@ -72,4 +91,4 @@ if __name__ == "__main__":
     )
     # Run your AgentOS
     # You can test your AgentOS at: http://localhost:7777/
-    agent_os.serve(app="agentos_knowledge:app", reload=True)
+    agent_os.serve(app="agentos_knowledge_async:app", reload=True)

@@ -14,7 +14,7 @@ from agno.models.mistral import MistralChat
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.agentql import AgentQLTools
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.wikipedia import WikipediaTools
 
 # Wikipedia search agent
@@ -33,7 +33,7 @@ website_agent = Agent(
     name="Website Agent",
     role="Search the website for information",
     model=OpenAIChat(id="o3-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions=[
         "Search the website for information",
     ],

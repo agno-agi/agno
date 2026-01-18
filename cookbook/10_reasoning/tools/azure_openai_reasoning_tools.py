@@ -1,12 +1,12 @@
 from agno.agent import Agent
 from agno.models.azure.openai_chat import AzureOpenAI
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 
 reasoning_agent = Agent(
     model=AzureOpenAI(id="gpt-4o-mini"),
     tools=[
-        DuckDuckGoTools(),
+        WebSearchTools(),
         ReasoningTools(
             enable_think=True,
             enable_analyze=True,

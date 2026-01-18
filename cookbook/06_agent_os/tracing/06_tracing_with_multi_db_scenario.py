@@ -8,8 +8,8 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.tracing.setup import setup_tracing
 
 # Set up databases - each agent has its own db
@@ -35,18 +35,18 @@ agent = Agent(
 agent2 = Agent(
     name="Web Search Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="You are a web search agent. Answer questions concisely.",
     markdown=True,
     db=db2,
 )
 
-# Setup our AgentOS app with dedicated traces_db
+# Setup our AgentOS app with dedicated db
 # This ensures traces are written to and read from the same database
 agent_os = AgentOS(
     description="Example app for tracing HackerNews",
     agents=[agent, agent2],
-    tracing_db=tracing_db,  # Dedicated database for traces
+    db=tracing_db,  # Default database for the AgentOS (used for tracing)
 )
 app = agent_os.get_app()
 

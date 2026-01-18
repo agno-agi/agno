@@ -51,7 +51,7 @@ from typing import Any
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.utils.pprint import pprint_run_response
 from agno.workflow.types import WorkflowExecutionInput
 from agno.workflow.workflow import Workflow
@@ -118,7 +118,7 @@ idea_clarifier_agent = Agent(
 market_research_agent = Agent(
     name="Market Research Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions=[
         "You are provided with a startup idea and the company's mission and objectives.",
         "Estimate the total addressable market (TAM), serviceable available market (SAM), and serviceable obtainable market (SOM).",
@@ -134,7 +134,7 @@ market_research_agent = Agent(
 competitor_analysis_agent = Agent(
     name="Competitor Analysis Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions=[
         "You are provided with a startup idea and market research data.",
         "Identify existing competitors in the market.",

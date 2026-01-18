@@ -41,7 +41,6 @@ class ParallelTools(Toolkit):
         include_domains (Optional[List[str]]): Default domains to restrict results to. Default is None.
         exclude_domains (Optional[List[str]]): Default domains to exclude from results. Default is None.
         max_age_seconds (Optional[int]): Default cache age threshold (minimum 600). Default is None.
-        timeout_seconds (Optional[float]): Default timeout for content retrieval. Default is None.
         disable_cache_fallback (Optional[bool]): Default cache fallback behavior. Default is None.
     """
 
@@ -58,7 +57,6 @@ class ParallelTools(Toolkit):
         include_domains: Optional[List[str]] = None,
         exclude_domains: Optional[List[str]] = None,
         max_age_seconds: Optional[int] = None,
-        timeout_seconds: Optional[float] = None,
         disable_cache_fallback: Optional[bool] = None,
         **kwargs,
     ):
@@ -73,7 +71,6 @@ class ParallelTools(Toolkit):
         self.include_domains = include_domains
         self.exclude_domains = exclude_domains
         self.max_age_seconds = max_age_seconds
-        self.timeout_seconds = timeout_seconds
         self.disable_cache_fallback = disable_cache_fallback
 
         self.parallel_client = ParallelClient(
@@ -153,8 +150,6 @@ class ParallelTools(Toolkit):
             fetch_policy: Dict[str, Any] = {}
             if self.max_age_seconds is not None:
                 fetch_policy["max_age_seconds"] = self.max_age_seconds
-            if self.timeout_seconds is not None:
-                fetch_policy["timeout_seconds"] = self.timeout_seconds
             if self.disable_cache_fallback is not None:
                 fetch_policy["disable_cache_fallback"] = self.disable_cache_fallback
 
@@ -256,8 +251,6 @@ class ParallelTools(Toolkit):
             fetch_policy: Dict[str, Any] = {}
             if self.max_age_seconds is not None:
                 fetch_policy["max_age_seconds"] = self.max_age_seconds
-            if self.timeout_seconds is not None:
-                fetch_policy["timeout_seconds"] = self.timeout_seconds
             if self.disable_cache_fallback is not None:
                 fetch_policy["disable_cache_fallback"] = self.disable_cache_fallback
 

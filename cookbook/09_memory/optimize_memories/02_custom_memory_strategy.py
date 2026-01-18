@@ -65,7 +65,7 @@ user_id = "user3"
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
 )
 
 # Create some memories

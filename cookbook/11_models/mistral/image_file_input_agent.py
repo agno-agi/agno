@@ -3,12 +3,12 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.mistral.mistral import MistralChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=MistralChat(id="pixtral-12b-2409"),
     tools=[
-        DuckDuckGoTools()
+        WebSearchTools()
     ],  # pixtral-12b-2409 is not so great at tool calls, but it might work.
     markdown=True,
 )

@@ -7,9 +7,9 @@ from typing import Optional
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.groq import Groq
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.file import FileTools
+from agno.tools.websearch import WebSearchTools
 from agno.utils.streamlit import get_model_from_id
 
 
@@ -53,7 +53,7 @@ def get_llama_tutor_agent(
             num_results=5,
             show_results=True,
         ),
-        DuckDuckGoTools(
+        WebSearchTools(
             timeout=20,
             fixed_max_results=5,
         ),
@@ -63,7 +63,7 @@ def get_llama_tutor_agent(
     description = dedent(f"""
         You are Llama Tutor, an educational AI assistant designed to teach concepts at a {education_level} level.
         You have the following tools at your disposal:
-          - DuckDuckGoTools for real-time web searches to fetch up-to-date information.
+          - WebSearchTools for real-time web searches to fetch up-to-date information.
           - ExaTools for structured, in-depth analysis.
           - FileTools for saving the output upon user confirmation.
 
@@ -72,10 +72,10 @@ def get_llama_tutor_agent(
         Engage the user with follow-up questions to check understanding and deepen learning.
 
         <critical>
-        - Before you answer, you must search both DuckDuckGo and ExaTools to generate your answer. If you don't, you will be penalized.
+        - Before you answer, you must search both web search and ExaTools to generate your answer. If you don't, you will be penalized.
         - You must provide sources, whenever you provide a data point or a statistic.
         - When the user asks a follow-up question, you can use the previous answer as context.
-        - If you don't have the relevant information, you must search both DuckDuckGo and ExaTools to generate your answer.
+        - If you don't have the relevant information, you must search both web search and ExaTools to generate your answer.
         </critical>
     """)
 
@@ -85,10 +85,10 @@ def get_llama_tutor_agent(
         1. Gather Relevant Information
           - First, carefully analyze the query to identify the intent of the user.
           - Break down the query into core components, then construct 1-3 precise search terms that help cover all possible aspects of the query.
-          - Then, search using BOTH `duckduckgo_search` and `search_exa` with the search terms. Remember to search both tools.
+          - Then, search using BOTH `web_search` and `search_exa` with the search terms. Remember to search both tools.
           - Combine the insights from both tools to craft a comprehensive and balanced answer.
           - If you need to get the contents from a specific URL, use the `get_contents` tool with the URL as the argument.
-          - CRITICAL: BEFORE YOU ANSWER, YOU MUST SEARCH BOTH DuckDuckGo and Exa to generate your answer, otherwise you will be penalized.
+          - CRITICAL: BEFORE YOU ANSWER, YOU MUST SEARCH BOTH web search and Exa to generate your answer, otherwise you will be penalized.
 
         2. Construct Your Response
           - **Start** with a succinct, clear and direct answer that immediately addresses the user's query, tailored to a {education_level} level.

@@ -4,7 +4,7 @@ from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge import PDFUrlKnowledgeBase
 from agno.models.google import Gemini
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -17,11 +17,11 @@ knowledge_base.load(recreate=True)  # Comment out after first run
 
 agent = Agent(
     model=Gemini(id="gemini-2.0-flash-001"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     knowledge=knowledge_base,
     # Store the memories and summary in a database
     db=PostgresDb(db_url=db_url, memory_table="agent_memory"),
-    enable_user_memories=True,
+    update_memory_on_run=True,
     enable_session_summaries=True,
     # This setting adds a tool to search the knowledge base for information
     search_knowledge=True,

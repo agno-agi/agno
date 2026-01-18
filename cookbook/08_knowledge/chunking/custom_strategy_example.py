@@ -82,7 +82,7 @@ knowledge = Knowledge(
 # - "\n\n" for paragraph breaks
 # - "---" for section dividers
 # - Any custom pattern that fits your content
-knowledge.add_content(
+knowledge.insert(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
     reader=PDFReader(
         name="Custom Strategy Reader",

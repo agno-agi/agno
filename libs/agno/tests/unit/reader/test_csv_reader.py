@@ -191,14 +191,14 @@ async def test_async_read_multi_page_csv(csv_reader, multi_page_csv_file):
 
 @pytest.mark.asyncio
 async def test_async_read_with_chunking(csv_reader, csv_file):
-    def mock_chunk(doc):
+    async def mock_achunk(doc):
         return [
             Document(name=f"{doc.name}_chunk1", id=f"{doc.id}_chunk1", content=f"{doc.content}_chunked1"),
             Document(name=f"{doc.name}_chunk2", id=f"{doc.id}_chunk2", content=f"{doc.content}_chunked2"),
         ]
 
     csv_reader.chunk = True
-    csv_reader.chunk_document = mock_chunk
+    csv_reader.achunk_document = mock_achunk
 
     documents = await csv_reader.async_read(csv_file)
 

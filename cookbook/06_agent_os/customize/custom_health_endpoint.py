@@ -9,7 +9,7 @@ from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.os.routers.health import get_health_router
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from fastapi import FastAPI
 
 # Setup the database
@@ -20,7 +20,7 @@ web_research_agent = Agent(
     name="Web Research Agent",
     model=Claude(id="claude-sonnet-4-0"),
     db=db,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
     num_history_runs=3,
     add_datetime_to_context=True,

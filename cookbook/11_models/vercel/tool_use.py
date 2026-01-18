@@ -2,11 +2,11 @@
 
 from agno.agent import Agent
 from agno.models.vercel import V0
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=V0(id="v0-1.0-md"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 agent.print_response("Whats happening in France?", stream=True)

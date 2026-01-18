@@ -20,8 +20,8 @@ from typing import List, Optional
 from agno.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.mcp import MCPTools
+from agno.tools.websearch import WebSearchTools
 from mcp import StdioServerParameters
 from pydantic import BaseModel
 
@@ -108,7 +108,7 @@ async def run_team():
             name="Web Search",
             role="Web Search Agent",
             model=OpenAIChat("gpt-4o"),
-            tools=[DuckDuckGoTools(cache_results=True)],
+            tools=[WebSearchTools()],
             instructions=dedent("""\
                 You are an agent that can search the web for information.
                 Search for information about a given location.
@@ -120,7 +120,7 @@ async def run_team():
             name="Weather Search",
             role="Weather Search Agent",
             model=OpenAIChat("gpt-4o"),
-            tools=[DuckDuckGoTools()],
+            tools=[WebSearchTools()],
             instructions=dedent("""\
                 You are an agent that can search the web for information.
                 Search for the weather forecast for a given location and date.

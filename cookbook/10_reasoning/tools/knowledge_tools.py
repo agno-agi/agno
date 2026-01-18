@@ -22,7 +22,7 @@ agno_docs = Knowledge(
     ),
 )
 # Add content to the knowledge
-agno_docs.add_content(url="https://docs.agno.com/llms-full.txt")
+agno_docs.insert(url="https://docs.agno.com/llms-full.txt")
 
 knowledge_tools = KnowledgeTools(
     knowledge=agno_docs,

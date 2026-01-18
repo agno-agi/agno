@@ -24,8 +24,8 @@ from typing import Dict, Optional
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.newspaper4k import Newspaper4kTools
+from agno.tools.websearch import WebSearchTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
 from agno.workflow.workflow import Workflow
@@ -61,7 +61,7 @@ class ScrapedArticle(BaseModel):
 research_agent = Agent(
     name="Blog Research Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     description=dedent("""\
     You are BlogResearch-X, an elite research assistant specializing in discovering
     high-quality sources for compelling blog content. Your expertise includes:

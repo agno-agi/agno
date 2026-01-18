@@ -3,7 +3,7 @@ from typing import Optional
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.utils.streamlit import get_model_with_provider
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -36,7 +36,7 @@ def get_vision_agent(
         db_schema="ai",
     )
 
-    tools = [DuckDuckGoTools()] if enable_search else []
+    tools = [WebSearchTools()] if enable_search else []
 
     agent = Agent(
         name="Vision AI Agent",

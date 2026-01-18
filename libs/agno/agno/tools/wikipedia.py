@@ -38,7 +38,7 @@ class WikipediaTools(Toolkit):
             return "Knowledge not provided"
 
         log_debug(f"Adding to knowledge: {topic}")
-        self.knowledge.add_content(
+        self.knowledge.insert(
             topics=[topic],
             reader=WikipediaReader(),
         )

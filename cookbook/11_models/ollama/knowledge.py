@@ -16,9 +16,7 @@ knowledge = Knowledge(
     ),
 )
 # Add content to the knowledge
-knowledge.add_content(
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-)
+knowledge.insert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
 
 agent = Agent(model=Ollama(id="llama3.2"), knowledge=knowledge)
 agent.print_response("How to make Thai curry?", markdown=True)

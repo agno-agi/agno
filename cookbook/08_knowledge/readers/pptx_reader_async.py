@@ -26,9 +26,9 @@ agent = Agent(
 
 def main():
     # Load PPTX content from file(s) asynchronously
-    # You can load multiple PPTX files by calling add_content_async multiple times
+    # You can load multiple PPTX files by calling ainsert multiple times
     asyncio.run(
-        knowledge.add_content_async(
+        knowledge.ainsert(
             path="path/to/your/presentation.pptx",  # Replace with actual PPTX file path
             reader=PPTXReader(),
         )

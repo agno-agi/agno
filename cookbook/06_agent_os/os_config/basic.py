@@ -22,7 +22,7 @@ basic_agent = Agent(
     name="Marketing Agent",
     db=db,
     enable_session_summaries=True,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     add_history_to_context=True,
     num_history_runs=3,
     add_datetime_to_context=True,
@@ -34,7 +34,7 @@ basic_team = Team(
     model=OpenAIChat(id="gpt-4o"),
     db=db,
     members=[basic_agent],
-    enable_user_memories=True,
+    update_memory_on_run=True,
 )
 basic_workflow = Workflow(
     id="basic-workflow",

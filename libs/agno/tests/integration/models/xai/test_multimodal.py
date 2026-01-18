@@ -1,13 +1,13 @@
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.xai import xAI
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 
 def test_image_input():
     agent = Agent(
         model=xAI(id="grok-2-vision-1212"),
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )

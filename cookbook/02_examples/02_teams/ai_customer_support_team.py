@@ -3,9 +3,9 @@ from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.website_reader import WebsiteReader
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.slack import SlackTools
+from agno.tools.websearch import WebSearchTools
 from agno.vectordb.pgvector.pgvector import PgVector
 
 knowledge = Knowledge(
@@ -15,7 +15,7 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content(
+knowledge.insert(
     url="https://docs.agno.com/introduction",
     reader=WebsiteReader(
         # Number of links to follow from the seed URLs
@@ -31,7 +31,7 @@ doc_researcher_agent = Agent(
     name="Doc researcher Agent",
     role="Search the knowledge base for information",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools(), ExaTools()],
+    tools=[WebSearchTools(), ExaTools()],
     knowledge=knowledge,
     search_knowledge=True,
     instructions=[
@@ -42,7 +42,7 @@ doc_researcher_agent = Agent(
         "If you're unsure about an answer, acknowledge it and suggest where the user might find more information.",
         "Format your responses clearly with headings, bullet points, and code examples when appropriate.",
         "Always verify that your answer directly addresses the user's specific question.",
-        "If you cannot find the answer in the documentation knowledge base, use the DuckDuckGoTools or ExaTools to search the web for relevant information to answer the user's question.",
+        "If you cannot find the answer in the documentation knowledge base, use the WebSearchTools or ExaTools to search the web for relevant information to answer the user's question.",
     ],
 )
 

@@ -5,7 +5,7 @@ import pytest
 from agno.agent.agent import Agent
 from agno.media import Image
 from agno.models.cohere.chat import Cohere
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 
 def test_image_input():
@@ -64,7 +64,7 @@ def test_image_input_local_file():
 def test_image_input_with_tool_call():
     agent = Agent(
         model=Cohere(id="c4ai-aya-vision-8b"),
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )

@@ -16,9 +16,7 @@ knowledge = Knowledge(
     ),
 )
 # Add content to the knowledge
-knowledge.add_content(
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-)
+knowledge.insert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
 
 agent = Agent(
     model=AzureAIFoundry(id="Cohere-command-r-08-2024"),

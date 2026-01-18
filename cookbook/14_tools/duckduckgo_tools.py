@@ -1,6 +1,7 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 # Example 1: Enable specific DuckDuckGo functions
 agent = Agent(
@@ -8,8 +9,11 @@ agent = Agent(
     tools=[DuckDuckGoTools(enable_search=True, enable_news=False)],
 )
 
-# Example 2: Enable all DuckDuckGo functions
-agent_all = Agent(model=OpenAIChat(id="gpt-4o"), tools=[DuckDuckGoTools(all=True)])
+# Example 2: Enable all DuckDuckGo functions (both search and news)
+agent_all = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools(enable_search=True, enable_news=True)],
+)
 
 # Example 3: Enable only news search
 news_agent = Agent(
@@ -17,10 +21,12 @@ news_agent = Agent(
     tools=[DuckDuckGoTools(enable_search=False, enable_news=True)],
 )
 
-# Example 4: Specify the search engine
+# Example 4: Use WebSearchTools for other search backends (e.g., yandex)
+# Note: DuckDuckGoTools always uses duckduckgo backend.
+# For other backends, use WebSearchTools directly.
 yandex_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools(enable_search=True, enable_news=False, backend="yandex")],
+    tools=[WebSearchTools(enable_search=True, enable_news=False, backend="yandex")],
     add_datetime_to_context=True,
 )
 

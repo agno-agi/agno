@@ -4,7 +4,7 @@ import google.auth
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.db.gcs_json import GcsJsonDb
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 DEBUG_MODE = False
 # Obtain the default credentials and project id from your gcloud CLI session.
@@ -26,7 +26,7 @@ db = GcsJsonDb(
 # Initialize the Agno agent1 with the new storage backend and a DuckDuckGo search tool.
 agent1 = Agent(
     db=db,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
     debug_mode=DEBUG_MODE,
 )
@@ -39,7 +39,7 @@ agent1.print_response("What is their national anthem called?")
 agent2 = Agent(
     db=db,
     session_id=agent1.session_id,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
     debug_mode=DEBUG_MODE,
 )

@@ -17,7 +17,7 @@ knowledge = Knowledge(
 )
 
 # Add from Youtube link to knowledge. Youtube links are automatically detected and the reader is assigned automatically.
-knowledge.add_content(
+knowledge.insert(
     name="Agents from Scratch",
     url="https://www.youtube.com/watch?v=nLkBNnnA8Ac",
     metadata={"user_tag": "Youtube video"},

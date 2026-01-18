@@ -39,7 +39,7 @@ def initialize_knowledge_base():
             embedder=OpenAIEmbedder(id="text-embedding-3-small"),
         ),
     )
-    agent_knowledge.add_content(url="https://docs.agno.com/llms-full.txt")
+    agent_knowledge.insert(url="https://docs.agno.com/llms-full.txt")
     return agent_knowledge
 
 

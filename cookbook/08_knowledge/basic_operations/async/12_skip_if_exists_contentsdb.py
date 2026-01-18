@@ -21,7 +21,7 @@ knowledge = Knowledge(
 )
 # Add from a URL to the knowledge base
 asyncio.run(
-    knowledge.add_content_async(
+    knowledge.ainsert(
         name="CV",
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
         metadata={"user_tag": "Engineering Candidates"},
@@ -38,7 +38,7 @@ knowledge.contents_db = contents_db
 
 # Add from a URL to the knowledge base that already exists in the vectorDB, but adds it to the contentsDB
 asyncio.run(
-    knowledge.add_content_async(
+    knowledge.ainsert(
         name="CV",
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
         metadata={"user_tag": "Engineering Candidates"},

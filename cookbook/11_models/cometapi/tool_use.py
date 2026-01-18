@@ -1,10 +1,10 @@
 from agno.agent import Agent
 from agno.models.cometapi import CometAPI
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=CometAPI(id="gpt-5-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

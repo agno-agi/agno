@@ -21,7 +21,7 @@ uv run cookbook/db/surrealdb/surrealdb_for_agent.py
 from agno.agent import Agent
 from agno.db.surrealdb import SurrealDb
 from agno.models.anthropic import Claude
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 # SurrealDB connection parameters
 SURREALDB_URL = "ws://localhost:8000"
@@ -36,7 +36,7 @@ db = SurrealDb(None, SURREALDB_URL, creds, SURREALDB_NAMESPACE, SURREALDB_DATABA
 agent = Agent(
     db=db,
     model=Claude(id="claude-sonnet-4-5-20250929"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
 )
 agent.print_response("How many people live in Costa Rica?")

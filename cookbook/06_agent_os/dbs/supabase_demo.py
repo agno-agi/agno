@@ -23,7 +23,7 @@ db = PostgresDb(db_url=SUPABASE_DB_URL)
 agent = Agent(
     name="Basic Agent",
     id="basic-agent",
-    enable_user_memories=True,
+    update_memory_on_run=True,
     enable_session_summaries=True,
     add_history_to_context=True,
     num_history_runs=3,
@@ -34,7 +34,7 @@ team = Team(
     id="basic-team",
     name="Team Agent",
     model=OpenAIChat(id="gpt-4o"),
-    enable_user_memories=True,
+    update_memory_on_run=True,
     members=[agent],
     debug_mode=True,
 )

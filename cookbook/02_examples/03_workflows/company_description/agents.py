@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.firecrawl import FirecrawlTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.wikipedia import WikipediaTools
 from prompts import (
     COMPETITOR_INSTRUCTIONS,
@@ -27,7 +27,7 @@ crawl_agent: Agent = Agent(
 
 search_agent: Agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions=SEARCH_INSTRUCTIONS,
 )
 
@@ -39,7 +39,7 @@ wikipedia_agent: Agent = Agent(
 
 competitor_agent: Agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions=COMPETITOR_INSTRUCTIONS,
 )
 

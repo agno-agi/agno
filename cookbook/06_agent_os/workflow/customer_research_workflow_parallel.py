@@ -10,8 +10,8 @@ from agno.os import AgentOS
 from agno.run import RunContext
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
@@ -146,7 +146,7 @@ class ConsolidatedResearch(BaseModel):
 customer_profile_agent = Agent(
     name="Customer Profile Researcher",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     output_schema=CustomerProfileResearch,
     instructions=[
         "You are an expert customer profile researcher specializing in comprehensive customer analysis",
@@ -163,7 +163,7 @@ customer_profile_agent = Agent(
 business_goals_agent = Agent(
     name="Business Goals Researcher",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools(), HackerNewsTools()],
+    tools=[WebSearchTools(), HackerNewsTools()],
     output_schema=BusinessGoalsResearch,
     instructions=[
         "You are a business strategy and goals research specialist with deep market expertise",
@@ -181,7 +181,7 @@ business_goals_agent = Agent(
 web_intelligence_agent = Agent(
     name="Web Intelligence Researcher",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools(), HackerNewsTools()],
+    tools=[WebSearchTools(), HackerNewsTools()],
     output_schema=WebIntelligenceResearch,
     instructions=[
         "You are a web intelligence and market research specialist with expertise in digital analytics",

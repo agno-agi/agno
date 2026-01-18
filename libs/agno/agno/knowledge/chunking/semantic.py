@@ -11,7 +11,7 @@ try:
 except ImportError:
     raise ImportError(
         "`chonkie` is required for semantic chunking. "
-        "Please install it using `pip install chonkie` to use SemanticChunking."
+        'Please install it using `pip install "chonkie[semantic]"` to use SemanticChunking.'
     )
 
 from agno.knowledge.chunking.strategy import ChunkingStrategy

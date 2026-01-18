@@ -3,7 +3,7 @@
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.litellm import LiteLLM
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 # Setup the database
 db = SqliteDb(
@@ -14,7 +14,7 @@ db = SqliteDb(
 agent = Agent(
     model=LiteLLM(id="gpt-4o"),
     db=db,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
 )
 

@@ -15,7 +15,7 @@ agent = Agent(
     model=Cohere(id="command-a-03-2025"),
     # Store agent sessions in a database
     db=PostgresDb(db_url=db_url),
-    enable_user_memories=True,
+    update_memory_on_run=True,
     enable_session_summaries=True,
 )
 

@@ -3,7 +3,7 @@ This example shows you how to use persistent memory with an Agent.
 
 After each run, user memories are created/updated.
 
-To enable this, set `enable_user_memories=True` in the Agent config.
+To enable this, set `update_memory_on_run=True` in the Agent config.
 """
 
 import asyncio
@@ -26,7 +26,7 @@ john_doe_id = "john_doe@example.com"
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
 )
 
 asyncio.run(

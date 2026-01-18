@@ -3,14 +3,14 @@ Example showing how tools can access dependencies passed to the agent.
 
 This demonstrates:
 1. Passing dependencies to agent.run()
-2. A simple tool that receives resolved dependencies
+2. A simple tool that receives resolved dependencies via run_context
 """
 
 from datetime import datetime
-from typing import Any, Dict, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 
 
 def get_current_context() -> dict:
@@ -22,7 +22,7 @@ def get_current_context() -> dict:
     }
 
 
-def analyze_user(user_id: str, dependencies: Optional[Dict[str, Any]] = None) -> str:
+def analyze_user(user_id: str, run_context: RunContext) -> str:
     """
     Analyze a specific user's profile and provide insights.
 
@@ -31,11 +31,12 @@ def analyze_user(user_id: str, dependencies: Optional[Dict[str, Any]] = None) ->
 
     Args:
         user_id: The user ID to analyze (e.g., 'john_doe', 'jane_smith')
-        dependencies: Available data sources (automatically provided)
+        run_context: The run context containing dependencies (automatically provided)
 
     Returns:
         Detailed analysis and insights about the user
     """
+    dependencies = run_context.dependencies
     if not dependencies:
         return "No data sources available for analysis."
 

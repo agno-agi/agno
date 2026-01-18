@@ -2,11 +2,11 @@
 
 from agno.agent import Agent
 from agno.models.openrouter import OpenRouter
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=OpenRouter(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 agent.print_response("Whats happening in France?", stream=True)

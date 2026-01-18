@@ -15,7 +15,7 @@ knowledge = Knowledge(
     contents_db=PostgresDb(db_url=db_url),
 )
 
-knowledge.add_content(
+knowledge.insert(
     url="https://agno-public.s3.us-east-1.amazonaws.com/recipes/ThaiRecipes_protected.pdf",
     auth=ContentAuth(password="ThaiRecipes"),
 )

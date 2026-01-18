@@ -2,8 +2,8 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -13,7 +13,7 @@ web_agent = Agent(
     role="Handle web search requests",
     model=Claude(id="claude-3-7-sonnet-latest"),
     db=PostgresDb(db_url=db_url, session_table="web_agent_sessions"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions=["Always include sources"],
 )
 

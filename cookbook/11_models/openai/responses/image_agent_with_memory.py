@@ -1,11 +1,11 @@
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.openai import OpenAIResponses
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=OpenAIResponses(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
     add_history_to_context=True,
     num_history_runs=3,

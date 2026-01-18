@@ -33,7 +33,7 @@ knowledge = Knowledge(
     vector_db=vector_db,
 )
 
-knowledge.add_contents(
+knowledge.insert_many(
     [
         {
             "path": downloaded_cv_paths[0],

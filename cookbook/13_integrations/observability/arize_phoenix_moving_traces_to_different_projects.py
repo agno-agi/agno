@@ -13,7 +13,7 @@ import os
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 from openinference.instrumentation import dangerously_using_project
 from phoenix.otel import register
@@ -55,7 +55,7 @@ stock_agent = Agent(
 search_agent = Agent(
     name="Search Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     db=InMemoryDb(),
     instructions="You are a search agent. Find and summarize information from the web.",
     session_id="search_session",

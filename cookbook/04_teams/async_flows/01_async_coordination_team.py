@@ -16,9 +16,9 @@ from typing import List
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.newspaper4k import Newspaper4kTools
+from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel, Field
 
 
@@ -41,7 +41,7 @@ web_searcher = Agent(
     name="Web Searcher",
     model=OpenAIChat("o3-mini"),
     role="Searches the web for information on a topic",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_datetime_to_context=True,
 )
 

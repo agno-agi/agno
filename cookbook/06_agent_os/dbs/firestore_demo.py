@@ -25,7 +25,7 @@ basic_agent = Agent(
     id="basic-agent",
     model=OpenAIChat(id="gpt-4o"),
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     enable_session_summaries=True,
     add_history_to_context=True,
     num_history_runs=3,
@@ -37,7 +37,7 @@ basic_team = Team(
     name="Team Agent",
     model=OpenAIChat(id="gpt-4o"),
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     members=[basic_agent],
     debug_mode=True,
 )

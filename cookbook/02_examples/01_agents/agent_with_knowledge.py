@@ -30,7 +30,7 @@ agent = Agent(
 
 if __name__ == "__main__":
     # Load Agno documentation into the knowledge base
-    knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/introduction.md")
+    knowledge.insert(name="Agno Docs", url="https://docs.agno.com/introduction.md")
 
     # Ask the agent about Agno
     agent.print_response("What is Agno?", stream=True)
