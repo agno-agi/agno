@@ -1,5 +1,6 @@
+import asyncio
 from asyncio import Future, Task
-from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Sequence, Type, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Sequence, Type, Union
 
 from pydantic import BaseModel
 
@@ -84,7 +85,9 @@ async def await_for_thread_tasks_stream(
     stream_events: bool = False,
     events_to_skip: Optional[List[RunEvent]] = None,
     store_events: bool = False,
-    get_memories_callback: Optional[Callable[[], Optional[List[Any]]]] = None,
+    get_memories_callback: Optional[
+        Callable[[], Union[Optional[List[Any]], Awaitable[Optional[List[Any]]]]]
+    ] = None,
 ) -> AsyncIterator[RunOutputEvent]:
     if memory_task is not None:
         if stream_events:
@@ -111,7 +114,12 @@ async def await_for_thread_tasks_stream(
             memories = None
             if get_memories_callback is not None:
                 try:
-                    memories = get_memories_callback()
+                    result = get_memories_callback()
+                    # Handle both sync and async callbacks
+                    if asyncio.iscoroutine(result):
+                        memories = await result
+                    else:
+                        memories = result
                 except Exception as e:
                     log_warning(f"Error getting memories: {str(e)}")
 

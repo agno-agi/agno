@@ -315,8 +315,9 @@ class AgentOS:
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
         ]
-        # Add component and registry routers only if db and registry are available
-        if self.db is not None:
+        # Add component and registry routers only if a sync db (BaseDb) is available
+        # Component routes require sync database operations
+        if self.db is not None and isinstance(self.db, BaseDb):
             updated_routers.append(get_components_router(os_db=self.db, registry=self.registry))
         if self.registry is not None:
             updated_routers.append(get_registry_router(registry=self.registry))
@@ -627,8 +628,9 @@ class AgentOS:
             get_traces_router(dbs=self.dbs),
             get_database_router(self, settings=self.settings),
         ]
-        # Add component and registry routers only if db and registry are available
-        if self.db is not None:
+        # Add component and registry routers only if a sync db (BaseDb) is available
+        # Component routes require sync database operations
+        if self.db is not None and isinstance(self.db, BaseDb):
             routers.append(get_components_router(os_db=self.db, registry=self.registry))
         if self.registry is not None:
             routers.append(get_registry_router(registry=self.registry))

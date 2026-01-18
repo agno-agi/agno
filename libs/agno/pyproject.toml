@@ -339,8 +339,7 @@ integration-tests = [
     "yfinance",
     "sqlalchemy",
     "Pillow",
-    "fastmcp",
-    "PyJWT",
+    "fastmcp"
 ]
 
 # Dependencies for demo application

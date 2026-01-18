@@ -2868,7 +2868,7 @@ class Team:
                         stream_events=stream_events,
                         events_to_skip=self.events_to_skip,  # type: ignore
                         store_events=self.store_events,
-                        get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
+                        get_memories_callback=lambda: self.aget_user_memories(user_id=user_id),
                     ):
                         yield event
 

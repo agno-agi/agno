@@ -553,10 +553,9 @@ def get_workflow_router(
             from agno.workflow.workflow import get_workflows
 
             db_workflows = get_workflows(db=os.db, registry=os.registry)
-
-        if db_workflows:
-            for db_workflow in db_workflows:
-                workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow))
+            if db_workflows:
+                for db_workflow in db_workflows:
+                    workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow))
 
         return workflows
 
