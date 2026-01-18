@@ -31,6 +31,7 @@ try:
     from google.genai.types import (
         Content,
         DynamicRetrievalConfig,
+        ExternalApi,
         FileSearch,
         FunctionCallingConfigMode,
         GenerateContentConfig,
@@ -89,6 +90,12 @@ class Gemini(Model):
     url_context: bool = False
     vertexai_search: bool = False
     vertexai_search_datastore: Optional[str] = None
+
+    # Parallel web search grounding (Vertex AI only)
+    # Uses Parallel Web Systems' search API for grounding with public web data
+    parallel_search: bool = False
+    parallel_api_key: Optional[str] = None
+    parallel_endpoint: Optional[str] = None
 
     # Gemini File Search capabilities
     file_search_store_names: Optional[List[str]] = None
@@ -280,6 +287,28 @@ class Gemini(Model):
                 raise ValueError("vertexai_search_datastore must be provided when vertexai_search is enabled.")
             builtin_tools.append(
                 Tool(retrieval=Retrieval(vertex_ai_search=VertexAISearch(datastore=self.vertexai_search_datastore)))
+            )
+
+        if self.parallel_search:
+            log_debug("Gemini Parallel web search grounding enabled.")
+            if not self.vertexai:
+                log_error("Parallel search grounding is only available with Vertex AI. Set vertexai=True.")
+                raise ValueError("Parallel search grounding requires vertexai=True.")
+            parallel_key = self.parallel_api_key or getenv("PARALLEL_API_KEY")
+            if not parallel_key:
+                log_error("PARALLEL_API_KEY not set. Please set the PARALLEL_API_KEY environment variable.")
+                raise ValueError("parallel_api_key must be provided when parallel_search is enabled.")
+            parallel_endpoint = self.parallel_endpoint or "https://api.parallel.ai/v1/search"
+            builtin_tools.append(
+                Tool(
+                    retrieval=Retrieval(
+                        external_api=ExternalApi(
+                            api_spec="SIMPLE_SEARCH",
+                            endpoint=parallel_endpoint,
+                            api_auth={"apiKeyConfig": {"apiKeyString": parallel_key}},
+                        )
+                    )
+                )
             )
 
         self._append_file_search_tool(builtin_tools)
