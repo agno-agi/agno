@@ -656,6 +656,7 @@ async def test_async_drop(async_vector_db: MongoVectorDb, mock_async_mongodb_cli
 
     mock_collection.drop.assert_called_once()
 
+
 @pytest.fixture
 def tracking_embedder() -> MagicMock:
     """

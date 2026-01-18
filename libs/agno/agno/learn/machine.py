@@ -17,6 +17,7 @@ from os import getenv
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.learn.config import (
+    DecisionLogConfig,
     EntityMemoryConfig,
     LearnedKnowledgeConfig,
     LearningMode,
@@ -45,6 +46,7 @@ UserMemoryInput = Union[bool, UserMemoryConfig, LearningStore, None]
 EntityMemoryInput = Union[bool, EntityMemoryConfig, LearningStore, None]
 SessionContextInput = Union[bool, SessionContextConfig, LearningStore, None]
 LearnedKnowledgeInput = Union[bool, LearnedKnowledgeConfig, LearningStore, None]
+DecisionLogInput = Union[bool, DecisionLogConfig, LearningStore, None]
 
 
 @dataclass
@@ -80,6 +82,7 @@ class LearningMachine:
     session_context: SessionContextInput = False
     entity_memory: EntityMemoryInput = False
     learned_knowledge: LearnedKnowledgeInput = False
+    decision_log: DecisionLogInput = False  # Phase 2
 
     # Namespace for entity_memory and learned_knowledge
     namespace: str = "global"
@@ -144,6 +147,13 @@ class LearningMachine:
                 store_type="learned_knowledge",
             )
 
+        # Decision Log (Phase 2)
+        if self.decision_log:
+            self._stores["decision_log"] = self._resolve_store(
+                input_value=self.decision_log,
+                store_type="decision_log",
+            )
+
         # Custom stores
         if self.custom_stores:
             for name, store in self.custom_stores.items():
@@ -180,6 +190,8 @@ class LearningMachine:
             return self._create_entity_memory_store(config=input_value)
         elif store_type == "learned_knowledge":
             return self._create_learned_knowledge_store(config=input_value)
+        elif store_type == "decision_log":
+            return self._create_decision_log_store(config=input_value)
         else:
             raise ValueError(f"Unknown store type: {store_type}")
 
@@ -274,6 +286,24 @@ class LearningMachine:
 
         return LearnedKnowledgeStore(config=config, debug_mode=self.debug_mode)
 
+    def _create_decision_log_store(self, config: Any) -> LearningStore:
+        """Create DecisionLogStore with resolved config."""
+        from agno.learn.stores import DecisionLogStore
+
+        if isinstance(config, DecisionLogConfig):
+            if config.db is None:
+                config.db = self.db
+            if config.model is None:
+                config.model = self.model
+        else:
+            config = DecisionLogConfig(
+                db=self.db,
+                model=self.model,
+                mode=LearningMode.AGENTIC,  # Default to AGENTIC for explicit logging
+            )
+
+        return DecisionLogStore(config=config, debug_mode=self.debug_mode)
+
     # =========================================================================
     # Store Accessors (Type-Safe)
     # =========================================================================
@@ -302,6 +332,11 @@ class LearningMachine:
     def learned_knowledge_store(self) -> Optional[LearningStore]:
         """Get learned knowledge store if enabled."""
         return self.stores.get("learned_knowledge")
+
+    @property
+    def decision_log_store(self) -> Optional[LearningStore]:
+        """Get decision log store if enabled."""
+        return self.stores.get("decision_log")
 
     @property
     def was_updated(self) -> bool:
