@@ -893,22 +893,72 @@ class SessionPlanningExtractionResponse:
 
 
 @dataclass
-class Decision:
-    """Schema for Decision Logs. (Phase 2)
+class DecisionLog:
+    """Schema for Decision Logs.
 
     Records decisions made by the agent with reasoning and context.
+    Useful for:
+    - Auditing agent behavior
+    - Learning from past decisions
+    - Debugging unexpected outcomes
+    - Building feedback loops
+
+    Example:
+        DecisionLog(
+            id="dec_abc123",
+            decision="Used web search instead of knowledge base",
+            reasoning="User asked about current events which require fresh data",
+            decision_type="tool_selection",
+            context="User query: 'What happened in the news today?'",
+            alternatives=["search_knowledge_base", "ask_for_clarification"],
+            confidence=0.85,
+        )
+
+    Attributes:
+        id: Unique identifier for this decision.
+        decision: What was decided (the choice made).
+        reasoning: Why this decision was made.
+        decision_type: Category of decision (tool_selection, response_style, etc).
+        context: The situation that required a decision.
+        alternatives: Other options that were considered.
+        confidence: How confident the agent was (0.0 to 1.0).
+        outcome: What happened as a result (can be updated later).
+        outcome_quality: Was the outcome good/bad/neutral.
+        tags: Categories for organization.
+        session_id: Which session this decision was made in.
+        user_id: Which user this decision was for.
+        agent_id: Which agent made this decision.
+        team_id: Which team context.
+        created_at: When the decision was made.
+        updated_at: When the outcome was recorded.
     """
 
+    id: str
     decision: str
-    reasoning: Optional[str] = None
-    context: Optional[str] = None
-    outcome: Optional[str] = None
-    agent_id: Optional[str] = None
-    team_id: Optional[str] = None
-    created_at: Optional[str] = None
+    reasoning: Optional[str] = field(default=None, metadata={"description": "Why this decision was made"})
+    decision_type: Optional[str] = field(
+        default=None,
+        metadata={"description": "Category: tool_selection, response_style, clarification, escalation, etc"},
+    )
+    context: Optional[str] = field(default=None, metadata={"description": "The situation that required a decision"})
+    alternatives: Optional[List[str]] = field(
+        default=None, metadata={"description": "Other options that were considered"}
+    )
+    confidence: Optional[float] = field(default=None, metadata={"description": "Confidence level 0.0 to 1.0"})
+    outcome: Optional[str] = field(default=None, metadata={"description": "What happened as a result"})
+    outcome_quality: Optional[str] = field(default=None, metadata={"description": "Was outcome good/bad/neutral"})
+    tags: Optional[List[str]] = field(default=None, metadata={"description": "Categories for organization"})
+
+    # Scope
+    session_id: Optional[str] = field(default=None, metadata={"internal": True})
+    user_id: Optional[str] = field(default=None, metadata={"internal": True})
+    agent_id: Optional[str] = field(default=None, metadata={"internal": True})
+    team_id: Optional[str] = field(default=None, metadata={"internal": True})
+    created_at: Optional[str] = field(default=None, metadata={"internal": True})
+    updated_at: Optional[str] = field(default=None, metadata={"internal": True})
 
     @classmethod
-    def from_dict(cls, data: Any) -> Optional["Decision"]:
+    def from_dict(cls, data: Any) -> Optional["DecisionLog"]:
         """Parse from dict/JSON, returning None on any failure."""
         if data is None:
             return None
@@ -921,8 +971,9 @@ class Decision:
                 log_debug(f"{cls.__name__}.from_dict: _parse_json returned None for data={_truncate_for_log(data)}")
                 return None
 
-            if not parsed.get("decision"):
-                log_debug(f"{cls.__name__}.from_dict: missing required field 'decision'")
+            # id and decision are required
+            if not parsed.get("id") or not parsed.get("decision"):
+                log_debug(f"{cls.__name__}.from_dict: missing required fields 'id' or 'decision'")
                 return None
 
             field_names = {f.name for f in fields(cls)}
@@ -940,6 +991,26 @@ class Decision:
         except Exception as e:
             log_debug(f"{self.__class__.__name__}.to_dict failed: {e}")
             return {}
+
+    def to_text(self) -> str:
+        """Convert to searchable text format."""
+        parts = [f"Decision: {self.decision}"]
+        if self.reasoning:
+            parts.append(f"Reasoning: {self.reasoning}")
+        if self.context:
+            parts.append(f"Context: {self.context}")
+        if self.decision_type:
+            parts.append(f"Type: {self.decision_type}")
+        if self.outcome:
+            parts.append(f"Outcome: {self.outcome}")
+        return "\n".join(parts)
+
+    def __repr__(self) -> str:
+        return f"DecisionLog(id={self.id}, decision={self.decision[:50]}...)"
+
+
+# Backwards compatibility alias
+Decision = DecisionLog
 
 
 @dataclass

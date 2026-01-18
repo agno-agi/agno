@@ -14,13 +14,13 @@ def shared_model():
 @pytest.fixture
 def web_agent(shared_model):
     """Create a web agent for testing."""
-    from agno.tools.duckduckgo import DuckDuckGoTools
+    from agno.tools.websearch import WebSearchTools
 
     return Agent(
         name="Web Agent",
         model=shared_model,
         role="Search the web for information",
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
     )
 
 
@@ -62,4 +62,4 @@ def test_tools_available_to_agents(web_agent, finance_agent):
         # Get the tools passed to invoke
         tools = mock_invoke.call_args[1].get("tools", [])
         tool_names = [tool["function"]["name"] for tool in tools]
-        assert tool_names == ["duckduckgo_search", "duckduckgo_news"]
+        assert tool_names == ["web_search", "search_news"]

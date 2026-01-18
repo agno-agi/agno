@@ -121,7 +121,7 @@ class WorkflowResponse(BaseModel):
 
     @classmethod
     async def from_workflow(cls, workflow: Workflow) -> "WorkflowResponse":
-        workflow_dict = workflow.to_dict()
+        workflow_dict = workflow.to_dict_for_steps()
         steps = workflow_dict.get("steps")
 
         if steps:

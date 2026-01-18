@@ -53,7 +53,7 @@ class WebSearchReader(Reader):
     chunking_strategy: Optional[ChunkingStrategy] = SemanticChunking()
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Web Search readers."""
         return [
             ChunkingStrategyType.CODE_CHUNKER,
@@ -65,7 +65,7 @@ class WebSearchReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.TOPIC]
 
     def _respect_rate_limits(self):

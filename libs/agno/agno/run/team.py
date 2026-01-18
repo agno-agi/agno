@@ -165,6 +165,12 @@ class TeamRunEvent(str, Enum):
     output_model_response_started = "TeamOutputModelResponseStarted"
     output_model_response_completed = "TeamOutputModelResponseCompleted"
 
+    model_request_started = "TeamModelRequestStarted"
+    model_request_completed = "TeamModelRequestCompleted"
+
+    compression_started = "TeamCompressionStarted"
+    compression_completed = "TeamCompressionCompleted"
+
     custom_event = "CustomEvent"
 
 
@@ -322,6 +328,7 @@ class MemoryUpdateStartedEvent(BaseTeamRunEvent):
 @dataclass
 class MemoryUpdateCompletedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.memory_update_completed.value
+    memories: Optional[List[Any]] = None
 
 
 @dataclass
@@ -407,6 +414,48 @@ class OutputModelResponseCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class ModelRequestStartedEvent(BaseTeamRunEvent):
+    """Event sent when a model request is about to be made"""
+
+    event: str = TeamRunEvent.model_request_started.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+
+
+@dataclass
+class ModelRequestCompletedEvent(BaseTeamRunEvent):
+    """Event sent when a model request has completed"""
+
+    event: str = TeamRunEvent.model_request_completed.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    time_to_first_token: Optional[float] = None
+    reasoning_tokens: Optional[int] = None
+    cache_read_tokens: Optional[int] = None
+    cache_write_tokens: Optional[int] = None
+
+
+@dataclass
+class CompressionStartedEvent(BaseTeamRunEvent):
+    """Event sent when tool result compression is about to start"""
+
+    event: str = TeamRunEvent.compression_started.value
+
+
+@dataclass
+class CompressionCompletedEvent(BaseTeamRunEvent):
+    """Event sent when tool result compression has completed"""
+
+    event: str = TeamRunEvent.compression_completed.value
+    tool_results_compressed: Optional[int] = None
+    original_size: Optional[int] = None
+    compressed_size: Optional[int] = None
+
+
+@dataclass
 class CustomEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.custom_event.value
 
@@ -441,6 +490,10 @@ TeamRunOutputEvent = Union[
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     OutputModelResponseCompletedEvent,
+    ModelRequestStartedEvent,
+    ModelRequestCompletedEvent,
+    CompressionStartedEvent,
+    CompressionCompletedEvent,
     CustomEvent,
 ]
 
@@ -472,6 +525,10 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     TeamRunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
     TeamRunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
+    TeamRunEvent.model_request_started.value: ModelRequestStartedEvent,
+    TeamRunEvent.model_request_completed.value: ModelRequestCompletedEvent,
+    TeamRunEvent.compression_started.value: CompressionStartedEvent,
+    TeamRunEvent.compression_completed.value: CompressionCompletedEvent,
     TeamRunEvent.custom_event.value: CustomEvent,
 }
 

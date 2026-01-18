@@ -1,5 +1,4 @@
 import inspect
-import warnings
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
@@ -289,7 +288,6 @@ class Condition:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,  # type: ignore
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
@@ -315,15 +313,6 @@ class Condition:
         else:
             condition_result = self._evaluate_condition(step_input, session_state=session_state)
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
             # Yield condition started event
@@ -582,7 +571,6 @@ class Condition:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
@@ -608,15 +596,6 @@ class Condition:
         else:
             condition_result = await self._aevaluate_condition(step_input, session_state=session_state)
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
             # Yield condition started event

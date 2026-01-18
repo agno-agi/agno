@@ -1,5 +1,4 @@
 import inspect
-import warnings
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
@@ -241,7 +240,6 @@ class Loop:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
@@ -261,15 +259,6 @@ class Loop:
         self._prepare_steps()
 
         loop_step_id = str(uuid4())
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
             # Yield loop started event
@@ -566,7 +555,6 @@ class Loop:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_events: bool = False,
-        stream_intermediate_steps: bool = False,
         stream_executor_events: bool = True,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
@@ -586,15 +574,6 @@ class Loop:
 
         # Prepare steps first
         self._prepare_steps()
-
-        # Considering both stream_events and stream_intermediate_steps (deprecated)
-        if stream_intermediate_steps is not None:
-            warnings.warn(
-                "The 'stream_intermediate_steps' parameter is deprecated and will be removed in future versions. Use 'stream_events' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        stream_events = stream_events or stream_intermediate_steps
 
         if stream_events and workflow_run_response:
             # Yield loop started event

@@ -11,6 +11,7 @@ Main Components:
 """
 
 from agno.learn.config import (
+    DecisionLogConfig,
     EntityMemoryConfig,
     LearnedKnowledgeConfig,
     LearningMode,
@@ -21,6 +22,7 @@ from agno.learn.config import (
 )
 from agno.learn.machine import LearningMachine
 from agno.learn.schemas import (
+    DecisionLog,
     EntityMemory,
     LearnedKnowledge,
     Memories,
@@ -28,6 +30,7 @@ from agno.learn.schemas import (
     UserProfile,
 )
 from agno.learn.stores import (
+    DecisionLogStore,
     EntityMemoryStore,
     LearnedKnowledgeStore,
     LearningStore,
@@ -48,12 +51,14 @@ __all__ = [
     "EntityMemoryConfig",
     "SessionContextConfig",
     "LearnedKnowledgeConfig",
+    "DecisionLogConfig",  # Phase 2
     # Schemas
     "UserProfile",
     "Memories",
     "EntityMemory",
     "SessionContext",
     "LearnedKnowledge",
+    "DecisionLog",  # Phase 2
     # Stores
     "LearningStore",
     "UserProfileStore",
@@ -62,4 +67,5 @@ __all__ = [
     "SessionContextStore",
     "LearnedKnowledgeStore",
     "EntityMemoryStore",
+    "DecisionLogStore",  # Phase 2
 ]

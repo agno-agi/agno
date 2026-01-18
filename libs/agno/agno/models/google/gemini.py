@@ -172,6 +172,45 @@ class Gemini(Model):
         self.client = genai.Client(**client_params)
         return self.client
 
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the model to a dictionary.
+
+        Returns:
+            Dict[str, Any]: The dictionary representation of the model.
+        """
+        model_dict = super().to_dict()
+        model_dict.update(
+            {
+                "search": self.search,
+                "grounding": self.grounding,
+                "grounding_dynamic_threshold": self.grounding_dynamic_threshold,
+                "url_context": self.url_context,
+                "vertexai_search": self.vertexai_search,
+                "vertexai_search_datastore": self.vertexai_search_datastore,
+                "file_search_store_names": self.file_search_store_names,
+                "file_search_metadata_filter": self.file_search_metadata_filter,
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "top_k": self.top_k,
+                "max_output_tokens": self.max_output_tokens,
+                "stop_sequences": self.stop_sequences,
+                "logprobs": self.logprobs,
+                "presence_penalty": self.presence_penalty,
+                "frequency_penalty": self.frequency_penalty,
+                "seed": self.seed,
+                "response_modalities": self.response_modalities,
+                "thinking_budget": self.thinking_budget,
+                "include_thoughts": self.include_thoughts,
+                "thinking_level": self.thinking_level,
+                "vertexai": self.vertexai,
+                "project_id": self.project_id,
+                "location": self.location,
+            }
+        )
+        cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
+        return cleaned_dict
+
     def _append_file_search_tool(self, builtin_tools: List[Tool]) -> None:
         """Append Gemini File Search tool to builtin_tools if file search is enabled.
 

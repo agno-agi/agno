@@ -27,14 +27,12 @@ class ExaTools(Toolkit):
         all (bool): Enable all tools. Overrides individual flags when True. Default is False.
         text (bool): Retrieve text content from results. Default is True.
         text_length_limit (int): Max length of text content per result. Default is 1000.
-        highlights (bool): Include highlighted snippets. Deprecated since it was removed in the Exa API. It will be removed from Agno in a future release.
         api_key (Optional[str]): Exa API key. Retrieved from `EXA_API_KEY` env variable if not provided.
         num_results (Optional[int]): Default number of search results. Overrides individual searches if set.
         start_crawl_date (Optional[str]): Include results crawled on/after this date (`YYYY-MM-DD`).
         end_crawl_date (Optional[str]): Include results crawled on/before this date (`YYYY-MM-DD`).
         start_published_date (Optional[str]): Include results published on/after this date (`YYYY-MM-DD`).
         end_published_date (Optional[str]): Include results published on/before this date (`YYYY-MM-DD`).
-        use_autoprompt (Optional[bool]): Enable autoprompt features in queries. Deprecated since it was removed in the Exa API. It will be removed from Agno in a future release.
         type (Optional[str]): Specify content type (e.g., article, blog, video).
         category (Optional[str]): Filter results by category. Options are "company", "research paper", "news", "pdf", "github", "tweet", "personal site", "linkedin profile", "financial report".
         include_domains (Optional[List[str]]): Restrict results to these domains.
@@ -54,7 +52,6 @@ class ExaTools(Toolkit):
         all: bool = False,
         text: bool = True,
         text_length_limit: int = 1000,
-        highlights: Optional[bool] = None,  # Deprecated
         summary: bool = False,
         api_key: Optional[str] = None,
         num_results: Optional[int] = None,
@@ -63,7 +60,6 @@ class ExaTools(Toolkit):
         end_crawl_date: Optional[str] = None,
         start_published_date: Optional[str] = None,
         end_published_date: Optional[str] = None,
-        use_autoprompt: Optional[bool] = None,
         type: Optional[str] = None,
         category: Optional[str] = None,
         include_domains: Optional[List[str]] = None,
@@ -84,23 +80,6 @@ class ExaTools(Toolkit):
 
         self.text: bool = text
         self.text_length_limit: int = text_length_limit
-
-        if highlights:
-            import warnings
-
-            warnings.warn(
-                "The 'highlights' parameter is deprecated since it was removed in the Exa API. It will be removed from Agno in a future release.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        if use_autoprompt:
-            import warnings
-
-            warnings.warn(
-                "The 'use_autoprompt' parameter is deprecated since it was removed in the Exa API. It will be removed from Agno in a future release.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
         self.summary: bool = summary
         self.num_results: Optional[int] = num_results

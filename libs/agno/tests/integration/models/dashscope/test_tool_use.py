@@ -4,8 +4,8 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.dashscope import DashScope
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -111,7 +111,7 @@ def test_parallel_tool_calls():
 def test_multiple_tool_calls():
     agent = Agent(
         model=DashScope(id="qwen-plus"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )

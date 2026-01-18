@@ -68,7 +68,7 @@ def initialize_knowledge(load_knowledge: bool = False):
         print("   • Loading Agno documentation")
         print("   • Building vector embeddings")
         print("   • Optimizing for hybrid search")
-        agent_knowledge.add_content(
+        agent_knowledge.insert(
             name="Agno Docs", url="https://docs.agno.com/llms-full.txt"
         )
         print("[bold green]✨ Knowledge ready![/bold green]\n")
@@ -131,9 +131,9 @@ def create_agent(
             - Create complete, working code examples that users can run. For example:
             ```python
             from agno.agent import Agent
-            from agno.tools.duckduckgo import DuckDuckGoTools
+            from agno.tools.websearch import WebSearchTools
 
-            agent = Agent(tools=[DuckDuckGoTools()])
+            agent = Agent(tools=[WebSearchTools()])
 
             # Perform a web search and capture the response
             response = agent.run("What's happening in France?")
