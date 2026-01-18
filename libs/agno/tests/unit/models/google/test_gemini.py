@@ -91,19 +91,14 @@ def test_parallel_search_config():
     with patch("agno.models.google.gemini.genai.Client"):
         request_params = model.get_request_params()
 
-    # Verify config has tools
+    # Verify config has http_options with extra_body
     assert "config" in request_params
     config = request_params["config"]
 
-    # Verify tools are set
-    assert hasattr(config, "tools") and config.tools is not None
-    assert len(config.tools) == 1
-
-    # Verify the tool is configured with parallel_ai_search
-    tool = config.tools[0]
-    # The parallel_ai_search tool is passed as a dict with api_key
-    assert hasattr(tool, "parallel_ai_search") or tool.parallel_ai_search is not None
-    assert tool.parallel_ai_search == {"api_key": "test-parallel-key"}
+    # Verify http_options is set with extra_body containing the parallelAiSearch tool
+    # The SDK doesn't have ParallelAiSearch in Tool class, so we use extra_body
+    assert hasattr(config, "http_options") and config.http_options is not None
+    assert config.http_options.extra_body == {"tools": [{"parallelAiSearch": {"api_key": "test-parallel-key"}}]}
 
 
 def test_parallel_search_endpoint_warning():
@@ -124,10 +119,9 @@ def test_parallel_search_endpoint_warning():
             mock_warning.assert_called_once()
             assert "parallel_endpoint is ignored" in mock_warning.call_args[0][0]
 
-    # Should still create the tool correctly
+    # Should still create the tool correctly via extra_body
     config = request_params["config"]
-    tool = config.tools[0]
-    assert tool.parallel_ai_search == {"api_key": "test-parallel-key"}
+    assert config.http_options.extra_body == {"tools": [{"parallelAiSearch": {"api_key": "test-parallel-key"}}]}
 
 
 def test_parallel_search_with_env_var():
@@ -144,5 +138,4 @@ def test_parallel_search_with_env_var():
             request_params = model.get_request_params()
 
     config = request_params["config"]
-    tool = config.tools[0]
-    assert tool.parallel_ai_search == {"api_key": "env-parallel-key"}
+    assert config.http_options.extra_body == {"tools": [{"parallelAiSearch": {"api_key": "env-parallel-key"}}]}

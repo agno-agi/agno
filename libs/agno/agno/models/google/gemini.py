@@ -39,6 +39,7 @@ try:
         GoogleSearch,
         GoogleSearchRetrieval,
         GroundingMetadata,
+        HttpOptions,
         Operation,
         Part,
         Retrieval,
@@ -288,6 +289,8 @@ class Gemini(Model):
                 Tool(retrieval=Retrieval(vertex_ai_search=VertexAISearch(datastore=self.vertexai_search_datastore)))
             )
 
+        # Track if we need to use raw parallel tool (SDK doesn't support parallelAiSearch yet)
+        parallel_raw_tool: Optional[Dict[str, Any]] = None
         if self.parallel_search:
             log_debug("Gemini Parallel web search grounding enabled.")
             if not self.vertexai:
@@ -310,20 +313,27 @@ class Gemini(Model):
                 log_error("PARALLEL_API_KEY not set. Please set the PARALLEL_API_KEY environment variable.")
                 raise ValueError("parallel_api_key must be provided when parallel_search is enabled.")
             # Use the dedicated parallelAiSearch tool type (first-party Vertex AI integration)
-            # This is different from ExternalApi - Parallel has a native integration with Vertex AI
-            parallel_tool_config: Dict[str, Any] = {"api_key": parallel_key}
-            # Add optional custom configs if endpoint is customized (for future extensibility)
+            # Note: The Python SDK doesn't have ParallelAiSearch in the Tool class yet,
+            # so we pass it as a raw dict which will be merged into the request
             if self.parallel_endpoint:
                 log_warning(
                     "parallel_endpoint is ignored for Parallel grounding. "
                     "The native Vertex AI integration uses Parallel's default endpoint."
                 )
-            builtin_tools.append(Tool(parallel_ai_search=parallel_tool_config))  # type: ignore[arg-type]
+            parallel_raw_tool = {"parallelAiSearch": {"api_key": parallel_key}}
 
         self._append_file_search_tool(builtin_tools)
 
         # Set tools in config
-        if builtin_tools:
+        # Note: For parallel_search, we use http_options.extra_body since the SDK
+        # doesn't have ParallelAiSearch in the Tool class yet
+        if parallel_raw_tool:
+            # Use extra_body to inject the raw parallelAiSearch tool
+            # This bypasses SDK validation and sends the tool directly to the API
+            if tools:
+                log_info("Parallel search grounding enabled. External tools will be disabled.")
+            config["http_options"] = HttpOptions(extra_body={"tools": [parallel_raw_tool]})
+        elif builtin_tools:
             if tools:
                 log_info("Built-in tools enabled. External tools will be disabled.")
             config["tools"] = builtin_tools
