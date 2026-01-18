@@ -294,6 +294,18 @@ class Gemini(Model):
             if not self.vertexai:
                 log_error("Parallel search grounding is only available with Vertex AI. Set vertexai=True.")
                 raise ValueError("Parallel search grounding requires vertexai=True.")
+            # Verify Vertex AI credentials are configured
+            project_id = self.project_id or getenv("GOOGLE_CLOUD_PROJECT")
+            location = self.location or getenv("GOOGLE_CLOUD_LOCATION")
+            if not project_id or not location:
+                log_error(
+                    "Parallel search grounding requires Vertex AI with proper GCP credentials. "
+                    "Set GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION environment variables, "
+                    "and authenticate with: gcloud auth application-default login"
+                )
+                raise ValueError(
+                    "Parallel search grounding requires GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION to be set."
+                )
             parallel_key = self.parallel_api_key or getenv("PARALLEL_API_KEY")
             if not parallel_key:
                 log_error("PARALLEL_API_KEY not set. Please set the PARALLEL_API_KEY environment variable.")
