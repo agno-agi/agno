@@ -86,7 +86,6 @@ def test_parallel_search_config():
         location="test-location",
         parallel_search=True,
         parallel_api_key="test-parallel-key",
-        parallel_endpoint="https://custom.parallel.ai/search",
     )
 
     with patch("agno.models.google.gemini.genai.Client"):
@@ -100,31 +99,35 @@ def test_parallel_search_config():
     assert hasattr(config, "tools") and config.tools is not None
     assert len(config.tools) == 1
 
-    # Verify the tool is configured correctly
+    # Verify the tool is configured with parallel_ai_search
     tool = config.tools[0]
-    assert tool.retrieval is not None
-    assert tool.retrieval.external_api is not None
-    assert tool.retrieval.external_api.api_spec == "SIMPLE_SEARCH"
-    assert tool.retrieval.external_api.endpoint == "https://custom.parallel.ai/search"
-    assert tool.retrieval.external_api.api_auth == {"apiKeyConfig": {"apiKeyString": "test-parallel-key"}}
+    # The parallel_ai_search tool is passed as a dict with api_key
+    assert hasattr(tool, "parallel_ai_search") or tool.parallel_ai_search is not None
+    assert tool.parallel_ai_search == {"api_key": "test-parallel-key"}
 
 
-def test_parallel_search_default_endpoint():
-    """Test that parallel_search uses default endpoint when not specified."""
+def test_parallel_search_endpoint_warning():
+    """Test that parallel_endpoint shows a warning (native integration ignores custom endpoint)."""
     model = Gemini(
         vertexai=True,
         project_id="test-project",
         location="test-location",
         parallel_search=True,
         parallel_api_key="test-parallel-key",
+        parallel_endpoint="https://custom.parallel.ai/search",
     )
 
     with patch("agno.models.google.gemini.genai.Client"):
-        request_params = model.get_request_params()
+        with patch("agno.models.google.gemini.log_warning") as mock_warning:
+            request_params = model.get_request_params()
+            # Verify warning was logged about ignored endpoint
+            mock_warning.assert_called_once()
+            assert "parallel_endpoint is ignored" in mock_warning.call_args[0][0]
 
+    # Should still create the tool correctly
     config = request_params["config"]
     tool = config.tools[0]
-    assert tool.retrieval.external_api.endpoint == "https://api.parallel.ai/v1/search"
+    assert tool.parallel_ai_search == {"api_key": "test-parallel-key"}
 
 
 def test_parallel_search_with_env_var():
@@ -142,4 +145,4 @@ def test_parallel_search_with_env_var():
 
     config = request_params["config"]
     tool = config.tools[0]
-    assert tool.retrieval.external_api.api_auth == {"apiKeyConfig": {"apiKeyString": "env-parallel-key"}}
+    assert tool.parallel_ai_search == {"api_key": "env-parallel-key"}

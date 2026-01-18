@@ -31,7 +31,6 @@ try:
     from google.genai.types import (
         Content,
         DynamicRetrievalConfig,
-        ExternalApi,
         FileSearch,
         FunctionCallingConfigMode,
         GenerateContentConfig,
@@ -310,18 +309,16 @@ class Gemini(Model):
             if not parallel_key:
                 log_error("PARALLEL_API_KEY not set. Please set the PARALLEL_API_KEY environment variable.")
                 raise ValueError("parallel_api_key must be provided when parallel_search is enabled.")
-            parallel_endpoint = self.parallel_endpoint or "https://api.parallel.ai/v1/search"
-            builtin_tools.append(
-                Tool(
-                    retrieval=Retrieval(
-                        external_api=ExternalApi(
-                            api_spec="SIMPLE_SEARCH",
-                            endpoint=parallel_endpoint,
-                            api_auth={"apiKeyConfig": {"apiKeyString": parallel_key}},
-                        )
-                    )
+            # Use the dedicated parallelAiSearch tool type (first-party Vertex AI integration)
+            # This is different from ExternalApi - Parallel has a native integration with Vertex AI
+            parallel_tool_config: Dict[str, Any] = {"api_key": parallel_key}
+            # Add optional custom configs if endpoint is customized (for future extensibility)
+            if self.parallel_endpoint:
+                log_warning(
+                    "parallel_endpoint is ignored for Parallel grounding. "
+                    "The native Vertex AI integration uses Parallel's default endpoint."
                 )
-            )
+            builtin_tools.append(Tool(parallel_ai_search=parallel_tool_config))  # type: ignore[arg-type]
 
         self._append_file_search_tool(builtin_tools)
 
