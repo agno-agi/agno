@@ -1,12 +1,14 @@
 """Async router handling exposing an Agno Agent or Team in an A2A compatible format."""
 
-from typing import Optional, Union
+from typing import Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRouter
 from typing_extensions import List
+
+from agno.os.interfaces.a2a.schema import GetTaskEndpointResponse, ListTasksEndpointResponse
 
 try:
     from a2a.types import (
@@ -24,9 +26,11 @@ except ImportError as e:
 import warnings
 
 from agno.agent import Agent, RemoteAgent
+from agno.db.base import AsyncBaseDb, SessionType
 from agno.os.interfaces.a2a.utils import (
     map_a2a_request_to_run_input,
     map_run_output_to_a2a_task,
+    map_run_schema_to_a2a_task,
     stream_a2a_response_with_error_handling,
 )
 from agno.os.utils import get_agent_by_id, get_request_kwargs, get_team_by_id, get_workflow_by_id
@@ -44,8 +48,9 @@ def attach_routes(
         raise ValueError("Agents, Teams, or Workflows are required to setup the A2A interface.")
 
     # ============= AGENTS =============
+
     @router.get("/agents/{id}/.well-known/agent-card.json")
-    async def get_agent_card(request: Request, id: str):
+    async def get_agent_card(request: Request, id: str) -> AgentCard:
         agent = get_agent_by_id(id, agents)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -110,7 +115,7 @@ def attach_routes(
         },
         response_model=SendMessageSuccessResponse,
     )
-    async def a2a_run_agent(request: Request, id: str):
+    async def a2a_run_agent(request: Request, id: str) -> SendMessageSuccessResponse:
         if not agents:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -126,9 +131,10 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        task_id = request_body.get("id")
+        user_id = request.headers.get("X-User-ID") or request_body.get("params", {}).get("message", {}).get(
+            "metadata", {}
+        ).get("userId")
 
         # 3. Run the Agent
         try:
@@ -140,6 +146,7 @@ def attach_routes(
                 files=run_input.files,
                 session_id=context_id,
                 user_id=user_id,
+                run_id=task_id,
                 **kwargs,
             )
 
@@ -179,7 +186,7 @@ def attach_routes(
         name="stream_message_agent",
         description="Stream a message to an Agno Agent (streaming). The Agent is identified via the path parameter '{id}'. "
         "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata. "
-        "Returns real-time updates as newline-delimited JSON (NDJSON).",
+        "Returns real-time updates as Server-Sent Events (SSE).",
         response_model_exclude_none=True,
         responses={
             200: {
@@ -195,7 +202,7 @@ def attach_routes(
             404: {"description": "Agent not found"},
         },
     )
-    async def a2a_stream_agent(request: Request, id: str):
+    async def a2a_stream_agent(request: Request, id: str) -> StreamingResponse:
         if not agents:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -211,9 +218,10 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        task_id = request_body.get("id")
+        user_id = request.headers.get("X-User-ID") or request_body.get("params", {}).get("message", {}).get(
+            "metadata", {}
+        ).get("userId")
 
         # 3. Run the Agent and stream the response
         try:
@@ -225,6 +233,7 @@ def attach_routes(
                 files=run_input.files,
                 session_id=context_id,
                 user_id=user_id,
+                run_id=task_id,
                 stream=True,
                 stream_events=True,
                 **kwargs,
@@ -238,6 +247,238 @@ def attach_routes(
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
+
+    @router.get(
+        "/agents/{id}/v1/tasks",
+        operation_id="list_agent_tasks",
+        name="list_agent_tasks",
+        description="List all A2A Tasks for an Agent. If session_id is provided, returns tasks from that session only. Otherwise, returns tasks from all sessions for this agent.",
+        response_model_exclude_none=True,
+        responses={
+            200: {
+                "description": "Tasks retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "jsonrpc": "2.0",
+                            "id": "request-123",
+                            "result": [
+                                {
+                                    "id": "task-456",
+                                    "context_id": "context-789",
+                                    "status": {"state": "completed"},
+                                    "history": [
+                                        {
+                                            "message_id": "msg-1",
+                                            "role": "agent",
+                                            "parts": [{"kind": "text", "text": "Response from agent"}],
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    }
+                },
+            },
+            404: {"description": "Agent not found or no tasks found"},
+        },
+    )
+    async def list_agent_tasks(
+        request: Request,
+        id: str,
+        session_id: Optional[str] = None,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        pagesize: Optional[int] = None,
+        request_id: Optional[str] = None,
+    ) -> ListTasksEndpointResponse:
+        """List all tasks for an Agent. If session_id is provided, returns tasks from that session only."""
+
+        agent = get_agent_by_id(id, agents)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        db = agent.db
+        if not db:
+            raise HTTPException(status_code=404, detail="Database not configured")
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
+        if session_type is None:
+            session_type = SessionType.AGENT
+
+        a2a_tasks = []
+
+        if session_id:
+            # Load specific session
+            if isinstance(db, AsyncBaseDb):
+                session = await db.get_session(
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+            else:
+                session = db.get_session(  # type: ignore
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+
+            if not session:
+                raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+
+            session_dict = cast(dict, session)
+            runs = session_dict.get("runs", [])
+            # Apply pagesize within this session if provided
+            if pagesize is not None and pagesize > 0:
+                runs = runs[-pagesize:]
+            a2a_tasks.extend([map_run_schema_to_a2a_task(run) for run in runs])
+        else:
+            # Load all sessions for this agent
+            if isinstance(db, AsyncBaseDb):
+                sessions, _ = await db.get_sessions(
+                    session_type=session_type,
+                    component_id=id,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+            else:
+                sessions, _ = db.get_sessions(  # type: ignore
+                    session_type=session_type,
+                    component_id=id,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+
+            sessions_list = cast(list, sessions)
+            for session_dict in sessions_list:
+                runs = cast(dict, session_dict).get("runs", [])
+                a2a_tasks.extend([map_run_schema_to_a2a_task(run) for run in runs])
+
+            # Apply pagesize across all sessions if provided
+            if pagesize is not None and pagesize > 0:
+                a2a_tasks = a2a_tasks[-pagesize:]
+        return ListTasksEndpointResponse(id=request_id or None, result=a2a_tasks)
+
+    @router.get(
+        "/agents/{id}/v1/tasks/{task_id}",
+        operation_id="get_agent_task",
+        name="get_agent_task",
+        description="Retrieve a specific A2A Task by ID for an Agent. Requires session_id query parameter.",
+        response_model_exclude_none=True,
+        responses={
+            200: {
+                "description": "Task retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "jsonrpc": "2.0",
+                            "id": "request-123",
+                            "result": {
+                                "id": "task-456",
+                                "context_id": "context-789",
+                                "status": {"state": "completed"},
+                                "history": [
+                                    {
+                                        "message_id": "msg-1",
+                                        "role": "agent",
+                                        "parts": [{"kind": "text", "text": "Response from agent"}],
+                                    }
+                                ],
+                            },
+                        }
+                    }
+                },
+            },
+            404: {"description": "Task not found"},
+        },
+    )
+    async def get_agent_task(
+        request: Request,
+        id: str,
+        task_id: str,
+        session_id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> GetTaskEndpointResponse:
+        """
+        Retrieve an Agent Task in A2A format, based on the given filters.
+
+        Notice an Agent Task maps to an Agno Run in this context.
+        """
+        # 1. Ensure agent and agent.db are present
+        agent = get_agent_by_id(id, agents)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        db = agent.db
+        if not db:
+            raise HTTPException(status_code=404, detail="Database not configured")
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
+        if session_type is None:
+            session_type = SessionType.AGENT
+
+        # 2. Load the session from the database
+        if isinstance(db, AsyncBaseDb):
+            session = await db.get_session(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=user_id,
+                deserialize=False,
+            )
+        else:
+            session = db.get_session(  # type: ignore
+                session_id=session_id,
+                session_type=session_type,
+                user_id=user_id,
+                deserialize=False,
+            )
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+
+        # 3. Load the runs from the session
+        session_dict = cast(dict, session)
+        runs = session_dict.get("runs", [])
+        if not runs:
+            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
+
+        # 4. Find the target run
+        target_run = next((run for run in runs if run.get("run_id") == task_id), None)
+        if not target_run:
+            raise HTTPException(status_code=404, detail=f"Task with ID {task_id} not found in session {session_id}")
+
+        # 5. Map the Agno Run into an A2A Task, and return it
+        a2a_task = map_run_schema_to_a2a_task(target_run)
+        return GetTaskEndpointResponse(id=request_id or None, result=a2a_task)
+
+    @router.post(
+        "/agents/{id}/v1/tasks/{task_id}:cancel",
+        operation_id="cancel_agent_task",
+        name="cancel_agent_task",
+        description="Cancel a running task for an Agent.",
+    )
+    async def cancel_task_agent(request: Request, id: str, task_id: str) -> GetTaskEndpointResponse:
+        request_body = await request.json()
+        request_id = request_body.get("id", "unknown")
+
+        # 1. Ensure agent is present
+        agent = get_agent_by_id(id, agents)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        session_id = request_body.get("params", {}).get("session_id")
+
+        # 2. Cancel the run
+        if not agent.cancel_run(run_id=task_id): # type: ignore
+            raise HTTPException(status_code=500, detail=f"Failed to cancel run with ID {task_id}")
+
+        # 3. Build the canceled task response
+        a2a_task = Task(id=task_id, context_id=session_id or str(uuid4()), status=TaskStatus(state=TaskState.canceled))
+        return GetTaskEndpointResponse(id=request_id, result=a2a_task)
 
     # ============= TEAMS =============
     @router.get("/teams/{id}/.well-known/agent-card.json")
@@ -321,9 +562,10 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        task_id = request_body.get("id")
+        user_id = request.headers.get("X-User-ID") or request_body.get("params", {}).get("message", {}).get(
+            "metadata", {}
+        ).get("userId")
 
         # 3. Run the Team
         try:
@@ -335,6 +577,7 @@ def attach_routes(
                 files=run_input.files,
                 session_id=context_id,
                 user_id=user_id,
+                run_id=task_id,
                 **kwargs,
             )
 
@@ -374,7 +617,7 @@ def attach_routes(
         name="stream_message_team",
         description="Stream a message to an Agno Team (streaming). The Team is identified via the path parameter '{id}'. "
         "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata. "
-        "Returns real-time updates as newline-delimited JSON (NDJSON).",
+        "Returns real-time updates as Server-Sent Events (SSE).",
         response_model_exclude_none=True,
         responses={
             200: {
@@ -406,9 +649,10 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        task_id = request_body.get("id")
+        user_id = request.headers.get("X-User-ID") or request_body.get("params", {}).get("message", {}).get(
+            "metadata", {}
+        ).get("userId")
 
         # 3. Run the Team and stream the response
         try:
@@ -420,6 +664,7 @@ def attach_routes(
                 files=run_input.files,
                 session_id=context_id,
                 user_id=user_id,
+                run_id=task_id,
                 stream=True,
                 stream_events=True,
                 **kwargs,
@@ -433,6 +678,240 @@ def attach_routes(
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
+
+    @router.get(
+        "/teams/{id}/v1/tasks",
+        operation_id="list_team_tasks",
+        name="list_team_tasks",
+        description="List all A2A Tasks for a Team. If session_id is provided, returns tasks from that session only. Otherwise, returns tasks from all sessions for this team.",
+        response_model_exclude_none=True,
+        responses={
+            200: {
+                "description": "Tasks retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "jsonrpc": "2.0",
+                            "id": "request-123",
+                            "result": [
+                                {
+                                    "id": "task-456",
+                                    "context_id": "context-789",
+                                    "status": {"state": "completed"},
+                                    "history": [
+                                        {
+                                            "message_id": "msg-1",
+                                            "role": "agent",
+                                            "parts": [{"kind": "text", "text": "Response from team"}],
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    }
+                },
+            },
+            404: {"description": "Team not found or no tasks found"},
+        },
+    )
+    async def list_team_tasks(
+        request: Request,
+        id: str,
+        session_id: Optional[str] = None,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        pagesize: Optional[int] = None,
+        request_id: Optional[str] = None,
+    ) -> ListTasksEndpointResponse:
+        """List all tasks for a Team. If session_id is provided, returns tasks from that session only."""
+
+        team = get_team_by_id(id, teams)
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+        db = team.db
+        if not db:
+            raise HTTPException(status_code=404, detail="Database not configured")
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
+        if session_type is None:
+            session_type = SessionType.TEAM
+
+        a2a_tasks = []
+
+        if session_id:
+            # Load specific session
+            if isinstance(db, AsyncBaseDb):
+                session = await db.get_session(
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+            else:
+                session = db.get_session(  # type: ignore
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+
+            if not session:
+                raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+
+            session_dict = cast(dict, session)
+            runs = session_dict.get("runs", [])
+            # Apply pagesize within this session if provided
+            if pagesize is not None and pagesize > 0:
+                runs = runs[-pagesize:]
+            a2a_tasks.extend([map_run_schema_to_a2a_task(run) for run in runs])
+        else:
+            # Load all sessions for this team
+            if isinstance(db, AsyncBaseDb):
+                sessions, _ = await db.get_sessions(
+                    session_type=session_type,
+                    component_id=id,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+            else:
+                sessions, _ = db.get_sessions(  # type: ignore
+                    session_type=session_type,
+                    component_id=id,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+
+            sessions_list = cast(list, sessions)
+            for session_dict in sessions_list:
+                runs = cast(dict, session_dict).get("runs", [])
+                a2a_tasks.extend([map_run_schema_to_a2a_task(run) for run in runs])
+
+            # Apply pagesize across all sessions if provided
+            if pagesize is not None and pagesize > 0:
+                a2a_tasks = a2a_tasks[-pagesize:]
+
+        return ListTasksEndpointResponse(id=request_id or None, result=a2a_tasks)
+
+    @router.get(
+        "/teams/{id}/v1/tasks/{task_id}",
+        operation_id="get_team_task",
+        name="get_team_task",
+        description="Retrieve a specific A2A Task by ID for a Team. Requires session_id query parameter.",
+        response_model_exclude_none=True,
+        responses={
+            200: {
+                "description": "Task retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "jsonrpc": "2.0",
+                            "id": "request-123",
+                            "result": {
+                                "id": "task-456",
+                                "context_id": "context-789",
+                                "status": {"state": "completed"},
+                                "history": [
+                                    {
+                                        "message_id": "msg-1",
+                                        "role": "agent",
+                                        "parts": [{"kind": "text", "text": "Response from team"}],
+                                    }
+                                ],
+                            },
+                        }
+                    }
+                },
+            },
+            404: {"description": "Task not found"},
+        },
+    )
+    async def get_team_task(
+        request: Request,
+        id: str,
+        task_id: str,
+        session_id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> GetTaskEndpointResponse:
+        """
+        Retrieve a Team Task in A2A format, based on the given filters.
+
+        Notice a Team Task maps to an Agno Run in this context.
+        """
+        # 1. Ensure team and team.db are present
+        team = get_team_by_id(id, teams)
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+        db = team.db
+        if not db:
+            raise HTTPException(status_code=404, detail="Database not configured")
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
+        if session_type is None:
+            session_type = SessionType.TEAM
+
+        # 2. Load the session from the database
+        if isinstance(db, AsyncBaseDb):
+            session = await db.get_session(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=user_id,
+                deserialize=False,
+            )
+        else:
+            session = db.get_session(  # type: ignore
+                session_id=session_id,
+                session_type=session_type,
+                user_id=user_id,
+                deserialize=False,
+            )
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+
+        # 3. Load the runs from the session
+        session_dict = cast(dict, session)
+        runs = session_dict.get("runs", [])
+        if not runs:
+            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
+
+        # 4. Find the target run
+        target_run = next((run for run in runs if run.get("run_id") == task_id), None)
+        if not target_run:
+            raise HTTPException(status_code=404, detail=f"Task with ID {task_id} not found in session {session_id}")
+
+        # 5. Map the Agno Run into an A2A Task, and return it
+        a2a_task = map_run_schema_to_a2a_task(target_run)
+        return GetTaskEndpointResponse(id=request_id or None, result=a2a_task)
+
+    @router.post(
+        "/teams/{id}/v1/tasks/{task_id}:cancel",
+        operation_id="cancel_team_task",
+        name="cancel_team_task",
+        description="Cancel a running task for a Team.",
+    )
+    async def cancel_task_team(request: Request, id: str, task_id: str) -> GetTaskEndpointResponse:
+        request_body = await request.json()
+        request_id = request_body.get("id", "unknown")
+
+        # 1. Ensure team is present
+        team = get_team_by_id(id, teams)
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        session_id = request_body.get("params", {}).get("session_id")
+
+        # 2. Cancel the run
+        if not team.cancel_run(run_id=task_id): # type: ignore
+            raise HTTPException(status_code=500, detail=f"Failed to cancel run with ID {task_id}")
+
+        # 3. Build the canceled task response
+        a2a_task = Task(id=task_id, context_id=session_id or str(uuid4()), status=TaskStatus(state=TaskState.canceled))
+        return GetTaskEndpointResponse(id=request_id, result=a2a_task)
 
     # ============= WORKFLOWS =============
     @router.get("/workflows/{id}/.well-known/agent-card.json")
@@ -516,9 +995,10 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        task_id = request_body.get("id")
+        user_id = request.headers.get("X-User-ID") or request_body.get("params", {}).get("message", {}).get(
+            "metadata", {}
+        ).get("userId")
 
         # 3. Run the Workflow
         try:
@@ -529,6 +1009,7 @@ def attach_routes(
                 audio=list(run_input.audios) if run_input.audios else None,
                 files=list(run_input.files) if run_input.files else None,
                 session_id=context_id,
+                run_id=task_id,
                 user_id=user_id,
                 **kwargs,
             )
@@ -569,7 +1050,7 @@ def attach_routes(
         name="stream_message_workflow",
         description="Stream a message to an Agno Workflow (streaming). The Workflow is identified via the path parameter '{id}'. "
         "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata. "
-        "Returns real-time updates as newline-delimited JSON (NDJSON).",
+        "Returns real-time updates as Server-Sent Events (SSE).",
         response_model_exclude_none=True,
         responses={
             200: {
@@ -601,9 +1082,10 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        task_id = request_body.get("id")
+        user_id = request.headers.get("X-User-ID") or request_body.get("params", {}).get("message", {}).get(
+            "metadata", {}
+        ).get("userId")
 
         # 3. Run the Workflow and stream the response
         try:
@@ -614,6 +1096,7 @@ def attach_routes(
                 audio=list(run_input.audios) if run_input.audios else None,
                 files=list(run_input.files) if run_input.files else None,
                 session_id=context_id,
+                run_id=task_id,
                 user_id=user_id,
                 stream=True,
                 stream_events=True,
@@ -628,6 +1111,240 @@ def attach_routes(
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
+
+    @router.get(
+        "/workflows/{id}/v1/tasks",
+        operation_id="list_workflow_tasks",
+        name="list_workflow_tasks",
+        description="List all A2A Tasks for a Workflow. If session_id is provided, returns tasks from that session only. Otherwise, returns tasks from all sessions for this workflow.",
+        response_model_exclude_none=True,
+        responses={
+            200: {
+                "description": "Tasks retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "jsonrpc": "2.0",
+                            "id": "request-123",
+                            "result": [
+                                {
+                                    "id": "task-456",
+                                    "context_id": "context-789",
+                                    "status": {"state": "completed"},
+                                    "history": [
+                                        {
+                                            "message_id": "msg-1",
+                                            "role": "agent",
+                                            "parts": [{"kind": "text", "text": "Response from workflow"}],
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    }
+                },
+            },
+            404: {"description": "Workflow not found or no tasks found"},
+        },
+    )
+    async def list_workflow_tasks(
+        request: Request,
+        id: str,
+        session_id: Optional[str] = None,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        pagesize: Optional[int] = None,
+        request_id: Optional[str] = None,
+    ) -> ListTasksEndpointResponse:
+        """List all tasks for a Workflow. If session_id is provided, returns tasks from that session only."""
+
+        workflow = get_workflow_by_id(id, workflows)
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        db = workflow.db
+        if not db:
+            raise HTTPException(status_code=404, detail="Database not configured")
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
+        if session_type is None:
+            session_type = SessionType.WORKFLOW
+
+        a2a_tasks = []
+
+        if session_id:
+            # Load specific session
+            if isinstance(db, AsyncBaseDb):
+                session = await db.get_session(
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+            else:
+                session = db.get_session(  # type: ignore
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+
+            if not session:
+                raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+
+            session_dict = cast(dict, session)
+            runs = session_dict.get("runs", [])
+            # Apply pagesize within this session if provided
+            if pagesize is not None and pagesize > 0:
+                runs = runs[-pagesize:]
+            a2a_tasks.extend([map_run_schema_to_a2a_task(run) for run in runs])
+        else:
+            # Load all sessions for this workflow
+            if isinstance(db, AsyncBaseDb):
+                sessions, _ = await db.get_sessions(
+                    session_type=session_type,
+                    component_id=id,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+            else:
+                sessions, _ = db.get_sessions(  # type: ignore
+                    session_type=session_type,
+                    component_id=id,
+                    user_id=user_id,
+                    deserialize=False,
+                )
+
+            sessions_list = cast(list, sessions)
+            for session_dict in sessions_list:
+                runs = cast(dict, session_dict).get("runs", [])
+                a2a_tasks.extend([map_run_schema_to_a2a_task(run) for run in runs])
+
+            # Apply pagesize across all sessions if provided
+            if pagesize is not None and pagesize > 0:
+                a2a_tasks = a2a_tasks[-pagesize:]
+
+        return ListTasksEndpointResponse(id=request_id or None, result=a2a_tasks)
+
+    @router.get(
+        "/workflows/{id}/v1/tasks/{task_id}",
+        operation_id="get_workflow_task",
+        name="get_workflow_task",
+        description="Retrieve a specific A2A Task by ID for a Workflow. Requires session_id query parameter.",
+        response_model_exclude_none=True,
+        responses={
+            200: {
+                "description": "Task retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "jsonrpc": "2.0",
+                            "id": "request-123",
+                            "result": {
+                                "id": "task-456",
+                                "context_id": "context-789",
+                                "status": {"state": "completed"},
+                                "history": [
+                                    {
+                                        "message_id": "msg-1",
+                                        "role": "agent",
+                                        "parts": [{"kind": "text", "text": "Response from workflow"}],
+                                    }
+                                ],
+                            },
+                        }
+                    }
+                },
+            },
+            404: {"description": "Task not found"},
+        },
+    )
+    async def get_workflow_task(
+        request: Request,
+        id: str,
+        task_id: str,
+        session_id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> GetTaskEndpointResponse:
+        """
+        Retrieve a Workflow Task in A2A format, based on the given filters.
+
+        Notice a Workflow Task maps to an Agno Run in this context.
+        """
+        # 1. Ensure workflow and workflow.db are present
+        workflow = get_workflow_by_id(id, workflows)
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        db = workflow.db
+        if not db:
+            raise HTTPException(status_code=404, detail="Database not configured")
+
+        if hasattr(request.state, "user_id"):
+            user_id = request.state.user_id
+
+        if session_type is None:
+            session_type = SessionType.WORKFLOW
+
+        # 2. Load the session from the database
+        if isinstance(db, AsyncBaseDb):
+            session = await db.get_session(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=user_id,
+                deserialize=False,
+            )
+        else:
+            session = db.get_session(  # type: ignore
+                session_id=session_id,
+                session_type=session_type,
+                user_id=user_id,
+                deserialize=False,
+            )
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+
+        # 3. Load the runs from the session
+        session_dict = cast(dict, session)
+        runs = session_dict.get("runs", [])
+        if not runs:
+            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
+
+        # 4. Find the target run
+        target_run = next((run for run in runs if run.get("run_id") == task_id), None)
+        if not target_run:
+            raise HTTPException(status_code=404, detail=f"Task with ID {task_id} not found in session {session_id}")
+
+        # 5. Map the Agno Run into an A2A Task, and return it
+        a2a_task = map_run_schema_to_a2a_task(target_run)
+        return GetTaskEndpointResponse(id=request_id or None, result=a2a_task)
+
+    @router.post(
+        "/workflows/{id}/v1/tasks/{task_id}:cancel",
+        operation_id="cancel_workflow_task",
+        name="cancel_workflow_task",
+        description="Cancel a running task for a Workflow.",
+    )
+    async def cancel_task_workflow(request: Request, id: str, task_id: str) -> GetTaskEndpointResponse:
+        request_body = await request.json()
+        request_id = request_body.get("id", "unknown")
+
+        # 1. Ensure workflow is present
+        workflow = get_workflow_by_id(id, workflows)
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+
+        session_id = request_body.get("params", {}).get("session_id")
+
+        # 2. Cancel the run
+        if not workflow.cancel_run(run_id=task_id): # type: ignore
+            raise HTTPException(status_code=500, detail=f"Failed to cancel run with ID {task_id}")
+
+        # 3. Build the canceled task response
+        a2a_task = Task(id=task_id, context_id=session_id or str(uuid4()), status=TaskStatus(state=TaskState.canceled))
+        return GetTaskEndpointResponse(id=request_id, result=a2a_task)
 
     # ============= DEPRECATED ENDPOINTS =============
 
@@ -700,9 +1417,9 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = request.headers.get("X-User-ID") or request_body.get("params", {}).get("message", {}).get(
+            "metadata", {}
+        ).get("userId")
 
         # 3. Run the agent, team, or workflow
         try:
@@ -766,7 +1483,7 @@ def attach_routes(
         description="[DEPRECATED] Stream a message to an Agno Agent, Team, or Workflow. "
         "The Agent, Team or Workflow is identified via the 'agentId' field in params.message or X-Agent-ID header. "
         "Optional: Pass user ID via X-User-ID header (recommended) or 'userId' in params.message.metadata. "
-        "Returns real-time updates as newline-delimited JSON (NDJSON).",
+        "Returns real-time updates as Server-Sent Events (SSE).",
         response_model_exclude_none=True,
         responses={
             200: {
@@ -814,9 +1531,9 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = request.headers.get("X-User-ID") or request_body.get("params", {}).get("message", {}).get(
+            "metadata", {}
+        ).get("userId")
 
         # 3. Run the Agent, Team, or Workflow and stream the response
         try:
