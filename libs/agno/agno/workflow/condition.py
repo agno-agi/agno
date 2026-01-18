@@ -205,7 +205,8 @@ class Condition:
                 step_name=self.name,
                 step_id=conditional_step_id,
                 step_type=StepType.CONDITION,
-                content=f"Condition {self.name} not met - skipped {len(self.steps)} steps",
+                # Use None content to avoid polluting previous_step_content for subsequent steps
+                content=None,
                 success=True,
             )
 
@@ -498,7 +499,8 @@ class Condition:
                 step_name=self.name,
                 step_id=str(uuid4()),
                 step_type=StepType.CONDITION,
-                content=f"Condition {self.name} not met - skipped {len(self.steps)} steps",
+                # Use None content to avoid polluting previous_step_content for subsequent steps
+                content=None,
                 success=True,
             )
 
