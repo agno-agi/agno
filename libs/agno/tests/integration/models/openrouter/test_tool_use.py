@@ -3,15 +3,22 @@ from typing import Optional
 import pytest
 
 from agno.agent import Agent
-from agno.models.openrouter import OpenRouter
+from agno.models.openrouter import OpenRouter, ReasoningConfig
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 
+# Test both OpenAI and Gemini models to verify reasoning blocks preservation
+MODEL_CONFIGS = [
+    {"id": "gpt-4o", "reasoning": None},
+    {"id": "google/gemini-3-flash-preview", "reasoning": ReasoningConfig(enabled=True)},
+]
 
-def test_tool_use():
+
+@pytest.mark.parametrize("model_config", MODEL_CONFIGS)
+def test_tool_use(model_config):
     agent = Agent(
-        model=OpenRouter(id="gpt-4o"),
+        model=OpenRouter(id=model_config["id"], reasoning=model_config["reasoning"]),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -26,9 +33,10 @@ def test_tool_use():
     assert "TSLA" in response.content
 
 
-def test_tool_use_stream():
+@pytest.mark.parametrize("model_config", MODEL_CONFIGS)
+def test_tool_use_stream(model_config):
     agent = Agent(
-        model=OpenRouter(id="gpt-4o"),
+        model=OpenRouter(id=model_config["id"], reasoning=model_config["reasoning"]),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -51,9 +59,10 @@ def test_tool_use_stream():
 
 
 @pytest.mark.asyncio
-async def test_async_tool_use():
+@pytest.mark.parametrize("model_config", MODEL_CONFIGS)
+async def test_async_tool_use(model_config):
     agent = Agent(
-        model=OpenRouter(id="gpt-4o"),
+        model=OpenRouter(id=model_config["id"], reasoning=model_config["reasoning"]),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -69,9 +78,10 @@ async def test_async_tool_use():
 
 
 @pytest.mark.asyncio
-async def test_async_tool_use_stream():
+@pytest.mark.parametrize("model_config", MODEL_CONFIGS)
+async def test_async_tool_use_stream(model_config):
     agent = Agent(
-        model=OpenRouter(id="gpt-4o"),
+        model=OpenRouter(id=model_config["id"], reasoning=model_config["reasoning"]),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -93,9 +103,10 @@ async def test_async_tool_use_stream():
         full_content += r.content or "" or ""
 
 
-def test_multiple_tool_calls():
+@pytest.mark.parametrize("model_config", MODEL_CONFIGS)
+def test_multiple_tool_calls(model_config):
     agent = Agent(
-        model=OpenRouter(id="gpt-4o"),
+        model=OpenRouter(id=model_config["id"], reasoning=model_config["reasoning"]),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -114,7 +125,8 @@ def test_multiple_tool_calls():
     assert "TSLA" in response.content and "latest news" in response.content.lower()
 
 
-def test_tool_call_custom_tool_no_parameters():
+@pytest.mark.parametrize("model_config", MODEL_CONFIGS)
+def test_tool_call_custom_tool_no_parameters(model_config):
     def get_the_weather_in_tokyo():
         """
         Get the weather in Tokyo
@@ -122,7 +134,7 @@ def test_tool_call_custom_tool_no_parameters():
         return "It is currently 70 degrees and cloudy in Tokyo"
 
     agent = Agent(
-        model=OpenRouter(id="gpt-4o"),
+        model=OpenRouter(id=model_config["id"], reasoning=model_config["reasoning"]),
         tools=[get_the_weather_in_tokyo],
         markdown=True,
         telemetry=False,
@@ -137,7 +149,8 @@ def test_tool_call_custom_tool_no_parameters():
     assert "70" in response.content
 
 
-def test_tool_call_custom_tool_optional_parameters():
+@pytest.mark.parametrize("model_config", MODEL_CONFIGS)
+def test_tool_call_custom_tool_optional_parameters(model_config):
     def get_the_weather(city: Optional[str] = None):
         """
         Get the weather in a city
@@ -151,7 +164,7 @@ def test_tool_call_custom_tool_optional_parameters():
             return f"It is currently 70 degrees and cloudy in {city}"
 
     agent = Agent(
-        model=OpenRouter(id="gpt-4o"),
+        model=OpenRouter(id=model_config["id"], reasoning=model_config["reasoning"]),
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
