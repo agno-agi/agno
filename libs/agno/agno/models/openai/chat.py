@@ -88,6 +88,11 @@ class OpenAIChat(Model):
     client: Optional[OpenAIClient] = None
     async_client: Optional[AsyncOpenAIClient] = None
 
+    # When True, only collect metrics on the final chunk (when finish_reason is set).
+    # This is needed for providers like Perplexity that return cumulative token counts
+    # in each streaming chunk instead of incremental counts.
+    collect_metrics_on_completion: bool = False
+
     # The role to map the message role to.
     default_role_map = {
         "system": "developer",
@@ -913,8 +918,19 @@ class OpenAIChat(Model):
                         log_warning(f"Error processing audio: {e}")
 
         # Add usage metrics if present
+        # For providers like Perplexity that return cumulative token counts,
+        # only collect metrics on the final chunk (when finish_reason is set)
         if response_delta.usage is not None:
-            model_response.response_usage = self._get_metrics(response_delta.usage)
+            should_collect_metrics = True
+            if self.collect_metrics_on_completion:
+                # Only collect metrics if this is the final chunk
+                finish_reason = None
+                if response_delta.choices and len(response_delta.choices) > 0:
+                    finish_reason = response_delta.choices[0].finish_reason
+                should_collect_metrics = finish_reason is not None
+
+            if should_collect_metrics:
+                model_response.response_usage = self._get_metrics(response_delta.usage)
 
         return model_response
 
