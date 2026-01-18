@@ -47,6 +47,7 @@ class Ollama(Model):
     timeout: Optional[Any] = None
     api_key: Optional[str] = field(default_factory=lambda: getenv("OLLAMA_API_KEY"))
     client_params: Optional[Dict[str, Any]] = None
+    cloud_model: Optional[bool] = False
 
     # Ollama clients
     client: Optional[OllamaClient] = None
@@ -56,7 +57,7 @@ class Ollama(Model):
         host = self.host
         headers = {}
 
-        if self.api_key:
+        if self.api_key and self.cloud_model:
             if not host:
                 host = "https://ollama.com"
             headers["authorization"] = f"Bearer {self.api_key}"

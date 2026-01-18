@@ -106,3 +106,9 @@ python cookbook/models/ollama/demo_qwen.py
 ```shell
 python cookbook/models/ollama/demo_phi4.py
 ```
+## 14. Ollama cloud models
+
+
+```shell
+python cookbook/models/ollama/ollama_cloud.py
+```
