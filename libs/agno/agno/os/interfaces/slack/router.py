@@ -7,7 +7,7 @@ from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.slack.security import verify_slack_signature
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
-from agno.utils.log import log_info
+from agno.utils.log import log_info, log_error
 from agno.workflow import RemoteWorkflow, Workflow
 
 
@@ -112,6 +112,11 @@ def attach_routes(
             response = await workflow.arun(message_text, user_id=user, session_id=session_id)  # type: ignore
 
         if response:
+            if response.status == "ERROR":
+                log_error(f"Error processing message: {response.content}")
+                _send_slack_message(channel=channel_id, message="Sorry, there was an error processing your message. Please try again later.", thread_ts=ts)
+                return
+
             if hasattr(response, "reasoning_content") and response.reasoning_content:
                 _send_slack_message(
                     channel=channel_id,
