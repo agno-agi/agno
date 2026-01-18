@@ -137,8 +137,9 @@ class TeamResponse(BaseModel):
             "cache_session": team.cache_session,
         }
 
+        contents_db = getattr(team.knowledge, "contents_db", None) if team.knowledge else None
         knowledge_info = {
-            "db_id": team.knowledge.contents_db.id if team.knowledge and team.knowledge.contents_db else None,
+            "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": team.enable_agentic_knowledge_filters,
             "knowledge_filters": team.knowledge_filters,

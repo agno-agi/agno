@@ -146,6 +146,19 @@ class Function(BaseModel):
             include={"name", "description", "parameters", "strict", "requires_confirmation", "external_execution"},
         )
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Function":
+        """Reconstruct a Function from a dictionary."""
+
+        return cls(
+            name=data.get("name"),
+            description=data.get("description"),
+            parameters=data.get("parameters"),
+            strict=data.get("strict"),
+            requires_confirmation=data.get("requires_confirmation", False),
+            external_execution=data.get("external_execution", False),
+        )
+
     def model_copy(self, *, deep: bool = False) -> "Function":
         """
         Override model_copy to handle callable fields that can't be deep copied (pickled).
@@ -450,7 +463,7 @@ class Function(BaseModel):
     @staticmethod
     def _wrap_callable(func: Callable) -> Callable:
         """Wrap a callable with Pydantic's validate_call decorator, if relevant"""
-        from inspect import isasyncgenfunction, iscoroutinefunction
+        from inspect import isasyncgenfunction, iscoroutinefunction, signature
 
         pydantic_version = Version(version("pydantic"))
 
@@ -468,6 +481,15 @@ class Function(BaseModel):
         # Don't wrap callables that are already wrapped with validate_call
         elif getattr(func, "_wrapped_for_validation", False):
             return func
+
+        # Don't wrap functions with framework-injected parameters
+        # These parameters (agent, team) are
+        # injected by the framework at runtime and shouldn't be validated by Pydantic
+        sig = signature(func)
+        framework_params = {"agent", "team"}
+        if framework_params & set(sig.parameters.keys()):
+            return func
+
         # Wrap the callable with validate_call
         else:
             wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore

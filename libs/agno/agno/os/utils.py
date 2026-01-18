@@ -14,6 +14,7 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
+from agno.registry import Registry
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
@@ -430,6 +431,9 @@ def extract_format(file: UploadFile) -> Optional[str]:
 def get_agent_by_id(
     agent_id: str,
     agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    registry: Optional[Registry] = None,
+    version: Optional[int] = None,
     create_fresh: bool = False,
 ) -> Optional[Union[Agent, RemoteAgent]]:
     """Get an agent by ID, optionally creating a fresh instance for request isolation.
@@ -446,14 +450,28 @@ def get_agent_by_id(
     Returns:
         The agent instance (shared or fresh copy based on create_fresh)
     """
-    if agent_id is None or agents is None:
+    if agent_id is None:
         return None
 
-    for agent in agents:
-        if agent.id == agent_id:
-            if create_fresh and isinstance(agent, Agent):
-                return agent.deep_copy()
-            return agent
+    # Try to get the agent from the list of agents
+    if agents:
+        for agent in agents:
+            if agent.id == agent_id:
+                if create_fresh and isinstance(agent, Agent):
+                    return agent.deep_copy()
+                return agent
+
+    # Try to get the agent from the database
+    if db and isinstance(db, BaseDb):
+        from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
+
+        try:
+            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
+            return db_agent
+        except Exception as e:
+            logger.error(f"Error getting agent {agent_id} from database: {e}")
+            return None
+
     return None
 
 
@@ -461,6 +479,9 @@ def get_team_by_id(
     team_id: str,
     teams: Optional[List[Union[Team, RemoteTeam]]] = None,
     create_fresh: bool = False,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    version: Optional[int] = None,
+    registry: Optional[Registry] = None,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Get a team by ID, optionally creating a fresh instance for request isolation.
 
@@ -475,14 +496,26 @@ def get_team_by_id(
     Returns:
         The team instance (shared or fresh copy based on create_fresh)
     """
-    if team_id is None or teams is None:
+    if team_id is None:
         return None
 
-    for team in teams:
-        if team.id == team_id:
-            if create_fresh and isinstance(team, Team):
-                return team.deep_copy()
-            return team
+    if teams:
+        for team in teams:
+            if team.id == team_id:
+                if create_fresh and isinstance(team, Team):
+                    return team.deep_copy()
+                return team
+
+    if db and isinstance(db, BaseDb):
+        from agno.team.team import get_team_by_id as get_team_by_id_db
+
+        try:
+            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
+            return db_team
+        except Exception as e:
+            logger.error(f"Error getting team {team_id} from database: {e}")
+            return None
+
     return None
 
 
@@ -490,6 +523,9 @@ def get_workflow_by_id(
     workflow_id: str,
     workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
     create_fresh: bool = False,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    version: Optional[int] = None,
+    registry: Optional[Registry] = None,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Get a workflow by ID, optionally creating a fresh instance for request isolation.
 
@@ -500,18 +536,33 @@ def get_workflow_by_id(
         workflow_id: The workflow ID to look up
         workflows: List of workflows to search
         create_fresh: If True, creates a new instance using deep_copy()
+        db: Optional database interface
+        version: Workflow version, if needed
+        registry: Optional Registry instance
 
     Returns:
         The workflow instance (shared or fresh copy based on create_fresh)
     """
-    if workflow_id is None or workflows is None:
+    if workflow_id is None:
         return None
 
-    for workflow in workflows:
-        if workflow.id == workflow_id:
-            if create_fresh and isinstance(workflow, Workflow):
-                return workflow.deep_copy()
-            return workflow
+    if workflows:
+        for workflow in workflows:
+            if workflow.id == workflow_id:
+                if create_fresh and isinstance(workflow, Workflow):
+                    return workflow.deep_copy()
+                return workflow
+
+    if db and isinstance(db, BaseDb):
+        from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
+
+        try:
+            db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
+            return db_workflow
+        except Exception as e:
+            logger.error(f"Error getting workflow {workflow_id} from database: {e}")
+            return None
+
     return None
 
 

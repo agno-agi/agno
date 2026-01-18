@@ -23,6 +23,8 @@ knowledge = Knowledge(
     ),
 )
 
+knowledge.insert(path="cookbook/teams/coordinate/data", reader=PDFReader(chunk=True))
+
 
 support_channel = "testing"
 sales_channel = "sales"

@@ -141,10 +141,10 @@ async def async_reranking_rag_demo():
     query = "What's the best way to prepare authentic Tom Kha Gai? I want traditional methods and modern variations."
 
     # Add content to knowledge bases
-    await reranked_knowledge.add_contents_async(
+    await reranked_knowledge.ainsert_many(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
-    await validation_knowledge.add_contents_async(
+    await validation_knowledge.ainsert_many(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
 
@@ -160,10 +160,10 @@ def sync_reranking_rag_demo():
     query = "What's the best way to prepare authentic Tom Kha Gai? I want traditional methods and modern variations."
 
     # Add content to knowledge bases
-    reranked_knowledge.add_contents(
+    reranked_knowledge.insert_many(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
-    validation_knowledge.add_contents(
+    validation_knowledge.insert_many(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
 
@@ -184,10 +184,10 @@ def advanced_culinary_demo():
     - How to adapt recipes for different dietary needs"""
 
     # Add content to knowledge bases
-    reranked_knowledge.add_contents(
+    reranked_knowledge.insert_many(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
-    validation_knowledge.add_contents(
+    validation_knowledge.insert_many(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
 

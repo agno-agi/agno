@@ -9,7 +9,6 @@ from concurrent.futures import Future
 from copy import copy
 from dataclasses import dataclass
 from os import getenv
-from textwrap import dedent
 from typing import (
     Any,
     AsyncIterator,
@@ -34,7 +33,8 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
-from agno.db.base import AsyncBaseDb, BaseDb, SessionType, UserMemory
+from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType, UserMemory
+from agno.db.utils import db_from_dict
 from agno.eval.base import BaseEval
 from agno.exceptions import (
     InputCheckError,
@@ -43,7 +43,7 @@ from agno.exceptions import (
 )
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
-from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.protocol import KnowledgeProtocol
 from agno.knowledge.types import KnowledgeFilter
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
@@ -53,6 +53,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.models.utils import get_model
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
+from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from agno.run.cancel import (
@@ -319,7 +320,7 @@ class Team:
     add_dependencies_to_context: bool = False
 
     # --- Agent Knowledge ---
-    knowledge: Optional[Knowledge] = None
+    knowledge: Optional[KnowledgeProtocol] = None
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     # Let the agent choose the knowledge filters
@@ -434,6 +435,8 @@ class Team:
     # --- Team Storage ---
     # Metadata stored with this team
     metadata: Optional[Dict[str, Any]] = None
+    # Version of the team config (set when loaded from DB)
+    version: Optional[int] = None
 
     # --- Team Reasoning ---
     reasoning: bool = False
@@ -517,7 +520,7 @@ class Team:
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
-        knowledge: Optional[Knowledge] = None,
+        knowledge: Optional[KnowledgeProtocol] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         add_knowledge_to_context: bool = False,
         enable_agentic_knowledge_filters: Optional[bool] = False,
@@ -680,10 +683,6 @@ class Team:
         self.enable_agentic_memory = enable_agentic_memory
 
         if enable_user_memories is not None:
-            log_debug(
-                "The 'enable_user_memories' parameter is deprecated and will be removed in future versions. "
-                "Use 'update_memory_on_run' instead."
-            )
             self.update_memory_on_run = enable_user_memories
         else:
             self.update_memory_on_run = update_memory_on_run
@@ -933,6 +932,22 @@ class Team:
             user_id = self.user_id
 
         return session_id, user_id
+
+    def _initialize_session_state(
+        self,
+        session_state: Dict[str, Any],
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Initialize the session state for the team."""
+        if user_id:
+            session_state["current_user_id"] = user_id
+        if session_id is not None:
+            session_state["current_session_id"] = session_id
+        if run_id is not None:
+            session_state["current_run_id"] = run_id
+        return session_state
 
     def _has_async_db(self) -> bool:
         """Return True if the db the team is equipped with is an Async implementation"""
@@ -2170,11 +2185,15 @@ class Team:
         team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=team_session)
 
-        # Initialize session state. Get it from DB if relevant.
-        session_state = self._load_session_state(
-            session=team_session,
+        # Initialize session state
+        session_state = self._initialize_session_state(
             session_state=session_state if session_state is not None else {},
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_id,
         )
+        # Update session state from DB
+        session_state = self._load_session_state(session=team_session, session_state=session_state)
 
         # Determine runtime dependencies
         dependencies = dependencies if dependencies is not None else self.dependencies
@@ -2348,12 +2367,18 @@ class Team:
 
                     # 2. Update metadata and session state
                     self._update_metadata(session=team_session)
-
-                    # Initialize session state. Get it from DB if relevant.
-                    run_context.session_state = self._load_session_state(
-                        session=team_session,
+                    # Initialize session state
+                    run_context.session_state = self._initialize_session_state(
                         session_state=run_context.session_state if run_context.session_state is not None else {},
+                        user_id=user_id,
+                        session_id=session_id,
+                        run_id=run_response.run_id,
                     )
+                    # Update session state from DB
+                    if run_context.session_state is not None:
+                        run_context.session_state = self._load_session_state(
+                            session=team_session, session_state=run_context.session_state
+                        )
 
                     run_input = cast(TeamRunInput, run_response.input)
 
@@ -2649,12 +2674,18 @@ class Team:
 
                     # 3. Update metadata and session state
                     self._update_metadata(session=team_session)
-
-                    # Initialize session state. Get it from DB if relevant.
-                    run_context.session_state = self._load_session_state(
-                        session=team_session,
+                    # Initialize session state
+                    run_context.session_state = self._initialize_session_state(
                         session_state=run_context.session_state if run_context.session_state is not None else {},
+                        user_id=user_id,
+                        session_id=session_id,
+                        run_id=run_response.run_id,
                     )
+                    # Update session state from DB
+                    if run_context.session_state is not None:
+                        run_context.session_state = self._load_session_state(
+                            session=team_session, session_state=run_context.session_state
+                        )  # type: ignore
 
                     # 4. Execute pre-hooks
                     run_input = cast(TeamRunInput, run_response.input)
@@ -5315,36 +5346,20 @@ class Team:
                 )
             )
 
-        if self.knowledge is not None or self.knowledge_retriever is not None:
-            # Check if knowledge retriever is an async function but used in sync mode
-            from inspect import iscoroutinefunction
-
-            if self.knowledge_retriever is not None and iscoroutinefunction(self.knowledge_retriever):
-                log_warning(
-                    "Async knowledge retriever function is being used with synchronous agent.run() or agent.print_response(). "
-                    "It is recommended to use agent.arun() or agent.aprint_response() instead."
+        # Add tools for accessing knowledge
+        if self.knowledge is not None and self.search_knowledge:
+            # Use knowledge protocol's get_tools method
+            get_tools_fn = getattr(self.knowledge, "get_tools", None)
+            if callable(get_tools_fn):
+                knowledge_tools = get_tools_fn(
+                    run_response=run_response,
+                    run_context=run_context,
+                    knowledge_filters=run_context.knowledge_filters,
+                    async_mode=async_mode,
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
+                    agent=self,
                 )
-
-            if self.search_knowledge:
-                # Use async or sync search based on async_mode
-                if self.enable_agentic_knowledge_filters:
-                    _tools.append(
-                        self._get_search_knowledge_base_with_agentic_filters_function(
-                            run_response=run_response,
-                            knowledge_filters=run_context.knowledge_filters,
-                            async_mode=async_mode,
-                            run_context=run_context,
-                        )
-                    )
-                else:
-                    _tools.append(
-                        self._get_search_knowledge_base_function(
-                            run_response=run_response,
-                            knowledge_filters=run_context.knowledge_filters,
-                            async_mode=async_mode,
-                            run_context=run_context,
-                        )
-                    )
+                _tools.extend(knowledge_tools)
 
         if self.knowledge is not None and self.update_knowledge:
             _tools.append(self.add_to_knowledge)
@@ -5423,8 +5438,10 @@ class Team:
                     _func = _func.model_copy(deep=True)
 
                     _func._team = self
-                    _func.process_entrypoint(strict=strict)
-                    if strict:
+                    # Respect the function's explicit strict setting if set
+                    effective_strict = strict if _func.strict is None else _func.strict
+                    _func.process_entrypoint(strict=effective_strict)
+                    if strict and _func.strict is None:
                         _func.strict = True
                     if self.tool_hooks:
                         _func.tool_hooks = self.tool_hooks
@@ -5443,7 +5460,9 @@ class Team:
                 _function_names.append(tool.name)
                 tool = tool.model_copy(deep=True)
                 tool._team = self
-                tool.process_entrypoint(strict=strict)
+                # Respect the function's explicit strict setting if set
+                effective_strict = strict if tool.strict is None else tool.strict
+                tool.process_entrypoint(strict=effective_strict)
                 if strict and tool.strict is None:
                     tool.strict = True
                 if self.tool_hooks:
@@ -5656,26 +5675,15 @@ class Team:
         if self.name is not None and self.add_name_to_context:
             additional_information.append(f"Your name is: {self.name}.")
 
-        if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = self.knowledge.get_valid_filters()
-            if valid_filters:
-                valid_filters_str = ", ".join(valid_filters)
-                additional_information.append(
-                    dedent(f"""
-                    The knowledge base contains documents with these metadata filters: {valid_filters_str}.
-                    Always use filters when the user query indicates specific metadata.
-                    Examples:
-                    1. If the user asks about a specific person like "Jordan Mitchell", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like user_id>': '<valid value based on the user query>'}}.
-                    2. If the user asks about a specific document type like "contracts", you MUST use the search_knowledge_base tool with the filters parameter set to {{'document_type': 'contract'}}.
-                    4. If the user asks about a specific location like "documents from New York", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like location>': 'New York'}}.
-                    General Guidelines:
-                    - Always analyze the user query to identify relevant metadata.
-                    - Use the most specific filter(s) possible to narrow down results.
-                    - If multiple filters are relevant, combine them in the filters parameter (e.g., {{'name': 'Jordan Mitchell', 'document_type': 'contract'}}).
-                    - Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
-                    You can use the search_knowledge_base tool to search the knowledge base and get the most relevant documents. Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
-                """)
+        # Add knowledge context using protocol's build_context
+        if self.knowledge is not None:
+            build_context_fn = getattr(self.knowledge, "build_context", None)
+            if callable(build_context_fn):
+                knowledge_context = build_context_fn(
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
                 )
+                if knowledge_context:
+                    additional_information.append(knowledge_context)
 
         # 2 Build the default system message for the Agent.
         system_message_content: str = ""
@@ -5963,26 +5971,15 @@ class Team:
         if self.name is not None and self.add_name_to_context:
             additional_information.append(f"Your name is: {self.name}.")
 
-        if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = await self.knowledge.async_get_valid_filters()
-            if valid_filters:
-                valid_filters_str = ", ".join(valid_filters)
-                additional_information.append(
-                    dedent(f"""
-                    The knowledge base contains documents with these metadata filters: {valid_filters_str}.
-                    Always use filters when the user query indicates specific metadata.
-                    Examples:
-                    1. If the user asks about a specific person like "Jordan Mitchell", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like user_id>': '<valid value based on the user query>'}}.
-                    2. If the user asks about a specific document type like "contracts", you MUST use the search_knowledge_base tool with the filters parameter set to {{'document_type': 'contract'}}.
-                    4. If the user asks about a specific location like "documents from New York", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like location>': 'New York'}}.
-                    General Guidelines:
-                    - Always analyze the user query to identify relevant metadata.
-                    - Use the most specific filter(s) possible to narrow down results.
-                    - If multiple filters are relevant, combine them in the filters parameter (e.g., {{'name': 'Jordan Mitchell', 'document_type': 'contract'}}).
-                    - Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
-                    You can use the search_knowledge_base tool to search the knowledge base and get the most relevant documents. Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
-                """)
+        # Add knowledge context using protocol's build_context
+        if self.knowledge is not None:
+            build_context_fn = getattr(self.knowledge, "build_context", None)
+            if callable(build_context_fn):
+                knowledge_context = build_context_fn(
+                    enable_agentic_filters=self.enable_agentic_knowledge_filters,
                 )
+                if knowledge_context:
+                    additional_information.append(knowledge_context)
 
         # 2 Build the default system message for the Agent.
         system_message_content: str = ""
@@ -8228,6 +8225,708 @@ class Team:
             # Update the current metadata with the metadata from the database which is updated in place
             self.metadata = session.metadata
 
+    # -*- Serialization Functions
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the Team to a dictionary.
+
+        Returns:
+            Dict[str, Any]: Dictionary representation of the team configuration
+        """
+        config: Dict[str, Any] = {}
+
+        # --- Team Settings ---
+        if self.id is not None:
+            config["id"] = self.id
+        if self.name is not None:
+            config["name"] = self.name
+        if self.role is not None:
+            config["role"] = self.role
+        if self.description is not None:
+            config["description"] = self.description
+
+        # --- Model ---
+        if self.model is not None:
+            config["model"] = self.model.to_dict() if isinstance(self.model, Model) else str(self.model)
+
+        # --- Members ---
+        if self.members:
+            serialized_members = []
+            for member in self.members:
+                if isinstance(member, Agent):
+                    serialized_members.append({"type": "agent", "agent_id": member.id})
+                elif isinstance(member, Team):
+                    serialized_members.append({"type": "team", "team_id": member.id})
+            if serialized_members:
+                config["members"] = serialized_members
+
+        # --- Execution settings (only if non-default) ---
+        if self.respond_directly:
+            config["respond_directly"] = self.respond_directly
+        if self.delegate_to_all_members:
+            config["delegate_to_all_members"] = self.delegate_to_all_members
+        if not self.determine_input_for_members:  # default is True
+            config["determine_input_for_members"] = self.determine_input_for_members
+
+        # --- User settings ---
+        if self.user_id is not None:
+            config["user_id"] = self.user_id
+
+        # --- Session settings ---
+        if self.session_id is not None:
+            config["session_id"] = self.session_id
+        if self.session_state is not None:
+            config["session_state"] = self.session_state
+        if self.add_session_state_to_context:
+            config["add_session_state_to_context"] = self.add_session_state_to_context
+        if self.enable_agentic_state:
+            config["enable_agentic_state"] = self.enable_agentic_state
+        if self.overwrite_db_session_state:
+            config["overwrite_db_session_state"] = self.overwrite_db_session_state
+        if self.cache_session:
+            config["cache_session"] = self.cache_session
+
+        # --- Team history settings ---
+        if self.add_team_history_to_members:
+            config["add_team_history_to_members"] = self.add_team_history_to_members
+        if self.num_team_history_runs != 3:  # default is 3
+            config["num_team_history_runs"] = self.num_team_history_runs
+        if self.share_member_interactions:
+            config["share_member_interactions"] = self.share_member_interactions
+        if self.search_session_history:
+            config["search_session_history"] = self.search_session_history
+        if self.num_history_sessions is not None:
+            config["num_history_sessions"] = self.num_history_sessions
+        if self.read_chat_history:
+            config["read_chat_history"] = self.read_chat_history
+
+        # --- System message settings ---
+        if self.system_message is not None and isinstance(self.system_message, str):
+            config["system_message"] = self.system_message
+        if self.system_message_role != "system":  # default is "system"
+            config["system_message_role"] = self.system_message_role
+        if self.introduction is not None:
+            config["introduction"] = self.introduction
+        if self.instructions is not None and not callable(self.instructions):
+            config["instructions"] = self.instructions
+        if self.expected_output is not None:
+            config["expected_output"] = self.expected_output
+        if self.additional_context is not None:
+            config["additional_context"] = self.additional_context
+
+        # --- Context settings ---
+        if self.markdown:
+            config["markdown"] = self.markdown
+        if self.add_datetime_to_context:
+            config["add_datetime_to_context"] = self.add_datetime_to_context
+        if self.add_location_to_context:
+            config["add_location_to_context"] = self.add_location_to_context
+        if self.timezone_identifier is not None:
+            config["timezone_identifier"] = self.timezone_identifier
+        if self.add_name_to_context:
+            config["add_name_to_context"] = self.add_name_to_context
+        if self.add_member_tools_to_context:
+            config["add_member_tools_to_context"] = self.add_member_tools_to_context
+        if not self.resolve_in_context:  # default is True
+            config["resolve_in_context"] = self.resolve_in_context
+
+        # --- Database settings ---
+        if self.db is not None and hasattr(self.db, "to_dict"):
+            config["db"] = self.db.to_dict()
+
+        # --- Dependencies ---
+        if self.dependencies is not None:
+            config["dependencies"] = self.dependencies
+        if self.add_dependencies_to_context:
+            config["add_dependencies_to_context"] = self.add_dependencies_to_context
+
+        # --- Knowledge settings ---
+        # TODO: implement knowledge serialization
+        # if self.knowledge is not None:
+        #     config["knowledge"] = self.knowledge.to_dict()
+        if self.knowledge_filters is not None:
+            config["knowledge_filters"] = self.knowledge_filters
+        if self.enable_agentic_knowledge_filters:
+            config["enable_agentic_knowledge_filters"] = self.enable_agentic_knowledge_filters
+        if self.update_knowledge:
+            config["update_knowledge"] = self.update_knowledge
+        if self.add_knowledge_to_context:
+            config["add_knowledge_to_context"] = self.add_knowledge_to_context
+        if not self.search_knowledge:  # default is True
+            config["search_knowledge"] = self.search_knowledge
+        if self.references_format != "json":  # default is "json"
+            config["references_format"] = self.references_format
+
+        # --- Tools ---
+        if self.tools:
+            serialized_tools = []
+            for tool in self.tools:
+                try:
+                    if isinstance(tool, Function):
+                        serialized_tools.append(tool.to_dict())
+                    elif isinstance(tool, Toolkit):
+                        for func in tool.functions.values():
+                            serialized_tools.append(func.to_dict())
+                    elif callable(tool):
+                        func = Function.from_callable(tool)
+                        serialized_tools.append(func.to_dict())
+                except Exception as e:
+                    log_warning(f"Could not serialize tool {tool}: {e}")
+            if serialized_tools:
+                config["tools"] = serialized_tools
+        if self.tool_choice is not None:
+            config["tool_choice"] = self.tool_choice
+        if self.tool_call_limit is not None:
+            config["tool_call_limit"] = self.tool_call_limit
+        if self.get_member_information_tool:
+            config["get_member_information_tool"] = self.get_member_information_tool
+
+        # --- Schema settings ---
+        if self.input_schema is not None:
+            if issubclass(self.input_schema, BaseModel):
+                config["input_schema"] = self.input_schema.__name__
+            elif isinstance(self.input_schema, dict):
+                config["input_schema"] = self.input_schema
+        if self.output_schema is not None:
+            if isinstance(self.output_schema, type) and issubclass(self.output_schema, BaseModel):
+                config["output_schema"] = self.output_schema.__name__
+            elif isinstance(self.output_schema, dict):
+                config["output_schema"] = self.output_schema
+
+        # --- Parser and output settings ---
+        if self.parser_model is not None:
+            if isinstance(self.parser_model, Model):
+                config["parser_model"] = self.parser_model.to_dict()
+            else:
+                config["parser_model"] = str(self.parser_model)
+        if self.parser_model_prompt is not None:
+            config["parser_model_prompt"] = self.parser_model_prompt
+        if self.output_model is not None:
+            if isinstance(self.output_model, Model):
+                config["output_model"] = self.output_model.to_dict()
+            else:
+                config["output_model"] = str(self.output_model)
+        if self.output_model_prompt is not None:
+            config["output_model_prompt"] = self.output_model_prompt
+        if self.use_json_mode:
+            config["use_json_mode"] = self.use_json_mode
+        if not self.parse_response:  # default is True
+            config["parse_response"] = self.parse_response
+
+        # --- Memory settings ---
+        # TODO: implement memory manager serialization
+        # if self.memory_manager is not None:
+        #     config["memory_manager"] = self.memory_manager.to_dict()
+        if self.enable_agentic_memory:
+            config["enable_agentic_memory"] = self.enable_agentic_memory
+        if self.enable_user_memories:
+            config["enable_user_memories"] = self.enable_user_memories
+        if self.add_memories_to_context is not None:
+            config["add_memories_to_context"] = self.add_memories_to_context
+        if self.enable_session_summaries:
+            config["enable_session_summaries"] = self.enable_session_summaries
+        if self.add_session_summary_to_context is not None:
+            config["add_session_summary_to_context"] = self.add_session_summary_to_context
+        # TODO: implement session summary manager serialization
+        # if self.session_summary_manager is not None:
+        #     config["session_summary_manager"] = self.session_summary_manager.to_dict()
+
+        # --- History settings ---
+        if self.add_history_to_context:
+            config["add_history_to_context"] = self.add_history_to_context
+        if self.num_history_runs is not None:
+            config["num_history_runs"] = self.num_history_runs
+        if self.num_history_messages is not None:
+            config["num_history_messages"] = self.num_history_messages
+        if self.max_tool_calls_from_history is not None:
+            config["max_tool_calls_from_history"] = self.max_tool_calls_from_history
+
+        # --- Media/storage settings ---
+        if not self.send_media_to_model:  # default is True
+            config["send_media_to_model"] = self.send_media_to_model
+        if not self.store_media:  # default is True
+            config["store_media"] = self.store_media
+        if not self.store_tool_messages:  # default is True
+            config["store_tool_messages"] = self.store_tool_messages
+        if not self.store_history_messages:  # default is True
+            config["store_history_messages"] = self.store_history_messages
+
+        # --- Compression settings ---
+        if self.compress_tool_results:
+            config["compress_tool_results"] = self.compress_tool_results
+        # TODO: implement compression manager serialization
+        # if self.compression_manager is not None:
+        #     config["compression_manager"] = self.compression_manager.to_dict()
+
+        # --- Reasoning settings ---
+        if self.reasoning:
+            config["reasoning"] = self.reasoning
+        # TODO: implement reasoning model serialization
+        # if self.reasoning_model is not None:
+        #     config["reasoning_model"] = self.reasoning_model.to_dict() if isinstance(self.reasoning_model, Model) else str(self.reasoning_model)
+        if self.reasoning_min_steps != 1:  # default is 1
+            config["reasoning_min_steps"] = self.reasoning_min_steps
+        if self.reasoning_max_steps != 10:  # default is 10
+            config["reasoning_max_steps"] = self.reasoning_max_steps
+
+        # --- Streaming settings ---
+        if self.stream is not None:
+            config["stream"] = self.stream
+        if self.stream_events is not None:
+            config["stream_events"] = self.stream_events
+        if not self.stream_member_events:  # default is True
+            config["stream_member_events"] = self.stream_member_events
+        if self.store_events:
+            config["store_events"] = self.store_events
+        if self.store_member_responses:
+            config["store_member_responses"] = self.store_member_responses
+
+        # --- Retry settings ---
+        if self.retries > 0:
+            config["retries"] = self.retries
+        if self.delay_between_retries != 1:  # default is 1
+            config["delay_between_retries"] = self.delay_between_retries
+        if self.exponential_backoff:
+            config["exponential_backoff"] = self.exponential_backoff
+
+        # --- Metadata ---
+        if self.metadata is not None:
+            config["metadata"] = self.metadata
+
+        # --- Debug and telemetry settings ---
+        if self.debug_mode:
+            config["debug_mode"] = self.debug_mode
+        if self.debug_level != 1:  # default is 1
+            config["debug_level"] = self.debug_level
+        if self.show_members_responses:
+            config["show_members_responses"] = self.show_members_responses
+        if not self.telemetry:  # default is True
+            config["telemetry"] = self.telemetry
+
+        return config
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        db: Optional["BaseDb"] = None,
+        registry: Optional["Registry"] = None,
+    ) -> "Team":
+        """
+        Create a Team from a dictionary.
+
+        Args:
+            data: Dictionary containing team configuration
+            db: Optional database for loading agents in members
+            registry: Optional registry for rehydrating tools
+
+        Returns:
+            Team: Reconstructed team instance
+        """
+        config = data.copy()
+
+        # --- Handle Model reconstruction ---
+        if "model" in config:
+            model_data = config["model"]
+            if isinstance(model_data, dict) and "id" in model_data:
+                config["model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+            elif isinstance(model_data, str):
+                config["model"] = get_model(model_data)
+
+        # --- Handle Members reconstruction ---
+        members: Optional[List[Union[Agent, "Team"]]] = None
+        from agno.agent import get_agent_by_id
+
+        if "members" in config and config["members"]:
+            members = []
+            for member_data in config["members"]:
+                member_type = member_data.get("type")
+                if member_type == "agent":
+                    # TODO: Make sure to pass the correct version to get_agent_by_id. Right now its returning the latest version.
+                    if db is None:
+                        log_warning(f"Cannot load member agent {member_data['agent_id']}: db is None")
+                        continue
+                    agent = get_agent_by_id(id=member_data["agent_id"], db=db, registry=registry)
+                    if agent:
+                        members.append(agent)
+                    else:
+                        log_warning(f"Agent not found: {member_data['agent_id']}")
+
+        # --- Handle reasoning_model reconstruction ---
+        # TODO: implement reasoning model deserialization
+        # if "reasoning_model" in config:
+        #     model_data = config["reasoning_model"]
+        #     if isinstance(model_data, dict) and "id" in model_data:
+        #         config["reasoning_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+        #     elif isinstance(model_data, str):
+        #         config["reasoning_model"] = get_model(model_data)
+
+        # --- Handle parser_model reconstruction ---
+        # TODO: implement parser model deserialization
+        # if "parser_model" in config:
+        #     model_data = config["parser_model"]
+        #     if isinstance(model_data, dict) and "id" in model_data:
+        #         config["parser_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+        #     elif isinstance(model_data, str):
+        #         config["parser_model"] = get_model(model_data)
+
+        # --- Handle output_model reconstruction ---
+        # TODO: implement output model deserialization
+        # if "output_model" in config:
+        #     model_data = config["output_model"]
+        #     if isinstance(model_data, dict) and "id" in model_data:
+        #         config["output_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+        #     elif isinstance(model_data, str):
+        #         config["output_model"] = get_model(model_data)
+
+        # --- Handle tools reconstruction ---
+        if "tools" in config and config["tools"]:
+            if registry:
+                config["tools"] = [registry.rehydrate_function(t) for t in config["tools"]]
+            else:
+                log_warning("No registry provided, tools will not be rehydrated.")
+                del config["tools"]
+
+        # --- Handle DB reconstruction ---
+        if "db" in config and isinstance(config["db"], dict):
+            db_data = config["db"]
+            db_id = db_data.get("id")
+
+            # First try to get the db from the registry (preferred - reuses existing connection)
+            if registry and db_id:
+                registry_db = registry.get_db(db_id)
+                if registry_db is not None:
+                    config["db"] = registry_db
+                else:
+                    del config["db"]
+            else:
+                # No registry or no db_id, fall back to creating from dict
+                config["db"] = db_from_dict(db_data)
+                if config["db"] is None:
+                    del config["db"]
+
+        # --- Handle Schema reconstruction ---
+        if "input_schema" in config and isinstance(config["input_schema"], str):
+            schema_cls = registry.get_schema(config["input_schema"]) if registry else None
+            if schema_cls:
+                config["input_schema"] = schema_cls
+            else:
+                log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
+                del config["input_schema"]
+
+        if "output_schema" in config and isinstance(config["output_schema"], str):
+            schema_cls = registry.get_schema(config["output_schema"]) if registry else None
+            if schema_cls:
+                config["output_schema"] = schema_cls
+            else:
+                log_warning(f"Output schema {config['output_schema']} not found in registry, skipping.")
+                del config["output_schema"]
+
+        # --- Handle MemoryManager reconstruction ---
+        # TODO: implement memory manager deserialization
+        # if "memory_manager" in config and isinstance(config["memory_manager"], dict):
+        #     from agno.memory import MemoryManager
+        #     config["memory_manager"] = MemoryManager.from_dict(config["memory_manager"])
+
+        # --- Handle SessionSummaryManager reconstruction ---
+        # TODO: implement session summary manager deserialization
+        # if "session_summary_manager" in config and isinstance(config["session_summary_manager"], dict):
+        #     from agno.session import SessionSummaryManager
+        #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
+
+        # --- Handle Knowledge reconstruction ---
+        # TODO: implement knowledge deserialization
+        # if "knowledge" in config and isinstance(config["knowledge"], dict):
+        #     from agno.knowledge import Knowledge
+        #     config["knowledge"] = Knowledge.from_dict(config["knowledge"])
+
+        # --- Handle CompressionManager reconstruction ---
+        # TODO: implement compression manager deserialization
+        # if "compression_manager" in config and isinstance(config["compression_manager"], dict):
+        #     from agno.compression.manager import CompressionManager
+        #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
+
+        return cls(
+            # --- Team settings ---
+            id=config.get("id"),
+            name=config.get("name"),
+            role=config.get("role"),
+            description=config.get("description"),
+            # --- Model ---
+            model=config.get("model"),
+            # --- Members ---
+            members=members or [],
+            # --- Execution settings ---
+            respond_directly=config.get("respond_directly", False),
+            delegate_to_all_members=config.get("delegate_to_all_members", False),
+            determine_input_for_members=config.get("determine_input_for_members", True),
+            # --- User settings ---
+            user_id=config.get("user_id"),
+            # --- Session settings ---
+            session_id=config.get("session_id"),
+            session_state=config.get("session_state"),
+            add_session_state_to_context=config.get("add_session_state_to_context", False),
+            enable_agentic_state=config.get("enable_agentic_state", False),
+            overwrite_db_session_state=config.get("overwrite_db_session_state", False),
+            cache_session=config.get("cache_session", False),
+            add_team_history_to_members=config.get("add_team_history_to_members", False),
+            num_team_history_runs=config.get("num_team_history_runs", 3),
+            share_member_interactions=config.get("share_member_interactions", False),
+            search_session_history=config.get("search_session_history", False),
+            num_history_sessions=config.get("num_history_sessions"),
+            read_chat_history=config.get("read_chat_history", False),
+            # --- System message settings ---
+            system_message=config.get("system_message"),
+            system_message_role=config.get("system_message_role", "system"),
+            introduction=config.get("introduction"),
+            instructions=config.get("instructions"),
+            expected_output=config.get("expected_output"),
+            additional_context=config.get("additional_context"),
+            markdown=config.get("markdown", False),
+            add_datetime_to_context=config.get("add_datetime_to_context", False),
+            add_location_to_context=config.get("add_location_to_context", False),
+            timezone_identifier=config.get("timezone_identifier"),
+            add_name_to_context=config.get("add_name_to_context", False),
+            add_member_tools_to_context=config.get("add_member_tools_to_context", False),
+            resolve_in_context=config.get("resolve_in_context", True),
+            # --- Database settings ---
+            db=config.get("db"),
+            # --- Dependencies ---
+            dependencies=config.get("dependencies"),
+            add_dependencies_to_context=config.get("add_dependencies_to_context", False),
+            # --- Knowledge settings ---
+            # knowledge=config.get("knowledge"),  # TODO
+            knowledge_filters=config.get("knowledge_filters"),
+            enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
+            add_knowledge_to_context=config.get("add_knowledge_to_context", False),
+            update_knowledge=config.get("update_knowledge", False),
+            search_knowledge=config.get("search_knowledge", True),
+            references_format=config.get("references_format", "json"),
+            # --- Tools ---
+            tools=config.get("tools"),
+            tool_call_limit=config.get("tool_call_limit"),
+            tool_choice=config.get("tool_choice"),
+            get_member_information_tool=config.get("get_member_information_tool", False),
+            # --- Schema settings ---
+            # input_schema=config.get("input_schema"),  # TODO
+            # output_schema=config.get("output_schema"),  # TODO
+            # --- Parser and output settings ---
+            # parser_model=config.get("parser_model"),  # TODO
+            parser_model_prompt=config.get("parser_model_prompt"),
+            # output_model=config.get("output_model"),  # TODO
+            output_model_prompt=config.get("output_model_prompt"),
+            use_json_mode=config.get("use_json_mode", False),
+            parse_response=config.get("parse_response", True),
+            # --- Memory settings ---
+            # memory_manager=config.get("memory_manager"),  # TODO
+            enable_agentic_memory=config.get("enable_agentic_memory", False),
+            enable_user_memories=config.get("enable_user_memories", False),
+            add_memories_to_context=config.get("add_memories_to_context"),
+            enable_session_summaries=config.get("enable_session_summaries", False),
+            add_session_summary_to_context=config.get("add_session_summary_to_context"),
+            # session_summary_manager=config.get("session_summary_manager"),  # TODO
+            # --- History settings ---
+            add_history_to_context=config.get("add_history_to_context", False),
+            num_history_runs=config.get("num_history_runs"),
+            num_history_messages=config.get("num_history_messages"),
+            max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
+            # --- Compression settings ---
+            compress_tool_results=config.get("compress_tool_results", False),
+            # compression_manager=config.get("compression_manager"),  # TODO
+            # --- Reasoning settings ---
+            reasoning=config.get("reasoning", False),
+            # reasoning_model=config.get("reasoning_model"),  # TODO
+            reasoning_min_steps=config.get("reasoning_min_steps", 1),
+            reasoning_max_steps=config.get("reasoning_max_steps", 10),
+            # --- Streaming settings ---
+            stream=config.get("stream"),
+            stream_events=config.get("stream_events"),
+            stream_member_events=config.get("stream_member_events", True),
+            store_events=config.get("store_events", False),
+            store_member_responses=config.get("store_member_responses", False),
+            # --- Media settings ---
+            send_media_to_model=config.get("send_media_to_model", True),
+            store_media=config.get("store_media", True),
+            store_tool_messages=config.get("store_tool_messages", True),
+            store_history_messages=config.get("store_history_messages", True),
+            # --- Retry settings ---
+            retries=config.get("retries", 0),
+            delay_between_retries=config.get("delay_between_retries", 1),
+            exponential_backoff=config.get("exponential_backoff", False),
+            # --- Metadata ---
+            metadata=config.get("metadata"),
+            # --- Debug and telemetry settings ---
+            debug_mode=config.get("debug_mode", False),
+            debug_level=config.get("debug_level", 1),
+            show_members_responses=config.get("show_members_responses", False),
+            telemetry=config.get("telemetry", True),
+        )
+
+    def save(
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        stage: str = "published",
+        label: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Optional[int]:
+        """
+        Save the team component and config to the database, including member agents/teams.
+
+        Args:
+            db: The database to save the component and config to.
+            stage: The stage of the component. Defaults to "published".
+            label: The label of the component.
+            notes: The notes of the component.
+
+        Returns:
+            Optional[int]: The version number of the saved config.
+        """
+        from agno.agent.agent import Agent
+
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+        if not isinstance(db_, BaseDb):
+            raise ValueError("Async databases not yet supported for save(). Use a sync database.")
+        if self.id is None:
+            self.id = generate_id_from_name(self.name)
+
+        try:
+            # Collect all links for members
+            all_links: List[Dict[str, Any]] = []
+
+            # Save each member (Agent or nested Team) and collect links
+            for position, member in enumerate(self.members or []):
+                # Save member first - returns version
+                member_version = member.save(db=db_, stage=stage, label=label, notes=notes)
+
+                # Add link
+                all_links.append(
+                    {
+                        "link_kind": "member",
+                        "link_key": f"member_{position}",
+                        "child_component_id": member.id,
+                        "child_version": member_version,
+                        "position": position,
+                        "meta": {"type": "agent" if isinstance(member, Agent) else "team"},
+                    }
+                )
+
+            # Create or update component
+            db_.upsert_component(
+                component_id=self.id,
+                component_type=ComponentType.TEAM,
+                name=getattr(self, "name", self.id),
+                description=getattr(self, "description", None),
+                metadata=getattr(self, "metadata", None),
+            )
+
+            # Create or update config with links
+            config = db_.upsert_config(
+                component_id=self.id,
+                config=self.to_dict(),
+                links=all_links if all_links else None,
+                label=label,
+                stage=stage,
+                notes=notes,
+            )
+
+            return config["version"]
+
+        except Exception as e:
+            log_error(f"Error saving Team to database: {e}")
+            raise
+
+    @classmethod
+    def load(
+        cls,
+        id: str,
+        *,
+        db: "BaseDb",
+        registry: Optional["Registry"] = None,
+        label: Optional[str] = None,
+        version: Optional[int] = None,
+    ) -> Optional["Team"]:
+        """
+        Load a team by id, with hydrated members.
+
+        Args:
+            id: The id of the team to load.
+            db: The database to load the team from.
+            label: The label of the team to load.
+
+        Returns:
+            The team loaded from the database with hydrated members, or None if not found.
+        """
+        from agno.agent.agent import Agent
+
+        # Use graph to load team + all members
+        graph = db.load_component_graph(id, version=version, label=label)
+        if graph is None:
+            return None
+
+        config = graph["config"].get("config")
+        if config is None:
+            return None
+
+        team = cls.from_dict(config, db=db, registry=registry)
+        team.id = id
+        team.db = db
+
+        # Hydrate members from graph children
+        team.members = []
+        for child in graph.get("children", []):
+            child_graph = child.get("graph")
+            if child_graph is None:
+                continue
+
+            child_config = child_graph["config"].get("config")
+            if child_config is None:
+                continue
+
+            link_meta = child["link"].get("meta", {})
+            member_type = link_meta.get("type")
+
+            if member_type == "agent":
+                agent = Agent.from_dict(child_config)
+                agent.id = child_graph["component"]["component_id"]
+                agent.db = db
+                team.members.append(agent)
+            elif member_type == "team":
+                # Recursive load for nested teams
+                nested_team = cls.load(child_graph["component"]["component_id"], db=db)
+                if nested_team:
+                    team.members.append(nested_team)
+
+        return team
+
+    def delete(
+        self,
+        *,
+        db: Optional["BaseDb"] = None,
+        hard_delete: bool = False,
+    ) -> bool:
+        """
+        Delete the team component.
+
+        Args:
+            db: The database to delete the component from.
+            hard_delete: Whether to hard delete the component.
+
+        Returns:
+            True if the component was deleted, False otherwise.
+        """
+        db_ = db or self.db
+        if not db_:
+            raise ValueError("Db not initialized or provided")
+        if not isinstance(db_, BaseDb):
+            raise ValueError("Async databases not yet supported for delete(). Use a sync database.")
+        if self.id is None:
+            raise ValueError("Cannot delete team without an id")
+
+        return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
+
     # -*- Public convenience functions
     def get_run_output(
         self, run_id: str, session_id: Optional[str] = None
@@ -8875,6 +9574,7 @@ class Team:
                 title=title,
                 reasoning=thought,
                 action=action,
+                result=None,
                 next_action=NextAction.CONTINUE,
                 confidence=confidence,
             )
@@ -8910,6 +9610,7 @@ class Team:
             # Create a reasoning step
             reasoning_step = ReasoningStep(
                 title=title,
+                action=None,
                 result=result,
                 reasoning=analysis,
                 next_action=next_action_enum,
@@ -8938,7 +9639,10 @@ class Team:
             thought = tool_args["thought"]
             reasoning_step = ReasoningStep(
                 title="Thinking",
+                action=None,
+                result=None,
                 reasoning=thought,
+                next_action=None,
                 confidence=None,
             )
             formatted_content = f"## Thinking\n{thought}\n\n"
@@ -8966,16 +9670,17 @@ class Team:
             log_warning("Knowledge is not set, cannot add to knowledge")
             return "Knowledge is not set, cannot add to knowledge"
 
-        if self.knowledge.vector_db is None:
-            log_warning("Knowledge vector database is not set, cannot add to knowledge")
-            return "Knowledge vector database is not set, cannot add to knowledge"
+        insert_method = getattr(self.knowledge, "insert", None)
+        if not callable(insert_method):
+            log_warning("Knowledge base does not support adding content")
+            return "Knowledge base does not support adding content"
 
         document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
         from agno.knowledge.reader.text_reader import TextReader
 
-        self.knowledge.add_content(name=document_name, text_content=document_content, reader=TextReader())
+        insert_method(name=document_name, text_content=document_content, reader=TextReader())
         return "Successfully added to knowledge base"
 
     def get_relevant_docs_from_knowledge(
@@ -8993,25 +9698,26 @@ class Team:
         dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
-            num_documents = self.knowledge.max_results
+            num_documents = getattr(self.knowledge, "max_results", None)
 
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None:
-            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+        if self.knowledge is not None and filters is not None:
+            validate_filters_method = getattr(self.knowledge, "validate_filters", None)
+            if callable(validate_filters_method):
+                valid_filters, invalid_keys = validate_filters_method(filters)
 
-            # Warn about invalid filter keys
-            if invalid_keys:
-                # type: ignore
-                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+                # Warn about invalid filter keys
+                if invalid_keys:
+                    log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
 
-                # Only use valid filters
-                filters = valid_filters
-                if not filters:
-                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+                    # Only use valid filters
+                    filters = valid_filters
+                    if not filters:
+                        log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
-            if invalid_keys == [] and valid_filters == {}:
-                log_debug("No valid filters provided. Search will proceed without filters.")
-                filters = None
+                if invalid_keys == [] and valid_filters == {}:
+                    log_debug("No valid filters provided. Search will proceed without filters.")
+                    filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import signature
@@ -9033,17 +9739,22 @@ class Team:
             except Exception as e:
                 log_warning(f"Knowledge retriever failed: {e}")
                 raise e
+        # Use knowledge protocol's retrieve method
         try:
-            if self.knowledge is None or self.knowledge.vector_db is None:
+            if self.knowledge is None:
+                return None
+
+            # Use protocol retrieve() method if available
+            retrieve_fn = getattr(self.knowledge, "retrieve", None)
+            if not callable(retrieve_fn):
+                log_debug("Knowledge does not implement retrieve()")
                 return None
 
             if num_documents is None:
-                num_documents = self.knowledge.max_results
+                num_documents = getattr(self.knowledge, "max_results", 10)
 
-            log_debug(f"Searching knowledge base with filters: {filters}")
-            relevant_docs: List[Document] = self.knowledge.search(
-                query=query, max_results=num_documents, filters=filters
-            )
+            log_debug(f"Retrieving from knowledge base with filters: {filters}")
+            relevant_docs: List[Document] = retrieve_fn(query=query, max_results=num_documents, filters=filters)
 
             if not relevant_docs or len(relevant_docs) == 0:
                 log_debug("No relevant documents found for query")
@@ -9051,7 +9762,7 @@ class Team:
 
             return [doc.to_dict() for doc in relevant_docs]
         except Exception as e:
-            log_warning(f"Error searching knowledge base: {e}")
+            log_warning(f"Error retrieving from knowledge base: {e}")
             raise e
 
     async def aget_relevant_docs_from_knowledge(
@@ -9069,25 +9780,26 @@ class Team:
         dependencies = run_context.dependencies if run_context else None
 
         if num_documents is None and self.knowledge is not None:
-            num_documents = self.knowledge.max_results
+            num_documents = getattr(self.knowledge, "max_results", None)
 
         # Validate the filters against known valid filter keys
-        if self.knowledge is not None:
-            valid_filters, invalid_keys = await self.knowledge.async_validate_filters(filters)  # type: ignore
+        if self.knowledge is not None and filters is not None:
+            avalidate_filters_method = getattr(self.knowledge, "avalidate_filters", None)
+            if callable(avalidate_filters_method):
+                valid_filters, invalid_keys = await avalidate_filters_method(filters)
 
-            # Warn about invalid filter keys
-            if invalid_keys:
-                # type: ignore
-                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+                # Warn about invalid filter keys
+                if invalid_keys:
+                    log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
 
-                # Only use valid filters
-                filters = valid_filters
-                if not filters:
-                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+                    # Only use valid filters
+                    filters = valid_filters
+                    if not filters:
+                        log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
-            if invalid_keys == [] and valid_filters == {}:
-                log_debug("No valid filters provided. Search will proceed without filters.")
-                filters = None
+                if invalid_keys == [] and valid_filters == {}:
+                    log_debug("No valid filters provided. Search will proceed without filters.")
+                    filters = None
 
         if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import isawaitable, signature
@@ -9116,17 +9828,32 @@ class Team:
                 log_warning(f"Knowledge retriever failed: {e}")
                 raise e
 
+        # Use knowledge protocol's retrieve method
         try:
-            if self.knowledge is None or self.knowledge.vector_db is None:
+            if self.knowledge is None:
+                return None
+
+            # Use protocol aretrieve() or retrieve() method if available
+            aretrieve_fn = getattr(self.knowledge, "aretrieve", None)
+            retrieve_fn = getattr(self.knowledge, "retrieve", None)
+
+            if not callable(aretrieve_fn) and not callable(retrieve_fn):
+                log_debug("Knowledge does not implement retrieve()")
                 return None
 
             if num_documents is None:
-                num_documents = self.knowledge.max_results
+                num_documents = getattr(self.knowledge, "max_results", 10)
 
-            log_debug(f"Searching knowledge base with filters: {filters}")
-            relevant_docs: List[Document] = await self.knowledge.async_search(
-                query=query, max_results=num_documents, filters=filters
-            )
+            log_debug(f"Retrieving from knowledge base with filters: {filters}")
+
+            if callable(aretrieve_fn):
+                relevant_docs: List[Document] = await aretrieve_fn(
+                    query=query, max_results=num_documents, filters=filters
+                )
+            elif callable(retrieve_fn):
+                relevant_docs = retrieve_fn(query=query, max_results=num_documents, filters=filters)
+            else:
+                return None
 
             if not relevant_docs or len(relevant_docs) == 0:
                 log_debug("No relevant documents found for query")
@@ -9134,7 +9861,7 @@ class Team:
 
             return [doc.to_dict() for doc in relevant_docs]
         except Exception as e:
-            log_warning(f"Error searching knowledge base: {e}")
+            log_warning(f"Error retrieving from knowledge base: {e}")
             raise e
 
     def _convert_documents_to_string(self, docs: List[Union[Dict[str, Any], str]]) -> str:
@@ -9534,3 +10261,84 @@ class Team:
         except Exception:
             # If copy fails, return as is
             return field_value
+
+
+def get_team_by_id(
+    db: "BaseDb",
+    id: str,
+    version: Optional[int] = None,
+    label: Optional[str] = None,
+    registry: Optional["Registry"] = None,
+) -> Optional["Team"]:
+    """
+    Get a Team by id from the database.
+
+    Resolution order:
+    - if version is provided: load that version
+    - elif label is provided: load that labeled version
+    - else: load component.current_version
+
+    Args:
+        db: Database handle.
+        id: Team component_id.
+        version: Optional integer config version.
+        label: Optional version_label.
+        registry: Optional Registry for reconstructing unserializable components.
+
+    Returns:
+        Team instance or None.
+    """
+    try:
+        row = db.get_config(component_id=id, version=version, label=label)
+        if row is None:
+            return None
+
+        cfg = row.get("config") if isinstance(row, dict) else None
+        if cfg is None:
+            raise ValueError(f"Invalid config found for team {id}")
+
+        team = Team.from_dict(cfg, db=db, registry=registry)
+        # Ensure team.id is set to the component_id
+        team.id = id
+
+        return team
+
+    except Exception as e:
+        log_error(f"Error loading Team {id} from database: {e}")
+        return None
+
+
+def get_teams(
+    db: "BaseDb",
+    registry: Optional["Registry"] = None,
+) -> List["Team"]:
+    """
+    Get all teams from the database.
+
+    Args:
+        db: Database to load teams from
+        registry: Optional registry for rehydrating tools
+
+    Returns:
+        List of Team instances loaded from the database
+    """
+    teams: List[Team] = []
+    try:
+        components, _ = db.list_components(component_type=ComponentType.TEAM)
+        for component in components:
+            component_id = component["component_id"]
+            config = db.get_config(component_id=component_id)
+            if config is not None:
+                team_config = config.get("config")
+                if team_config is not None:
+                    if "id" not in team_config:
+                        team_config["id"] = component_id
+                    team = Team.from_dict(team_config, db=db, registry=registry)
+                    # Ensure team.id is set to the component_id
+                    team.id = component_id
+                    teams.append(team)
+        return teams
+
+    except Exception as e:
+        log_error(f"Error loading Teams from database: {e}")
+        return []

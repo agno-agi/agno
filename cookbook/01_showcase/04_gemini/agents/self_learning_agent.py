@@ -90,7 +90,7 @@ def save_learning(
 
     # Save to knowledge base
     try:
-        agent_knowledge.add_content(
+        agent_knowledge.insert(
             name=payload["title"],
             text_content=json.dumps(payload, ensure_ascii=False),
             reader=TextReader(),

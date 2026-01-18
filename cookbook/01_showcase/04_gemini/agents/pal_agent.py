@@ -528,7 +528,7 @@ def save_learning(
     logger.info(f"[PaL] Saving learning: {payload['title']}")
 
     try:
-        execution_knowledge.add_content(
+        execution_knowledge.insert(
             name=payload["title"],
             text_content=json.dumps(payload, ensure_ascii=False),
             reader=TextReader(),

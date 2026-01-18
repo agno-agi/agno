@@ -6,6 +6,8 @@ It is important to specify the reader for the content when using topics.
 2. Run: `python cookbook/agent_concepts/knowledge/03_from_topic.py` to run the cookbook
 """
 
+from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.arxiv_reader import ArxivReader
 from agno.knowledge.reader.wikipedia_reader import WikipediaReader
@@ -18,24 +20,41 @@ knowledge = Knowledge(
     vector_db=PgVector(
         table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
     ),
+    contents_db=PostgresDb(
+        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+        knowledge_table="knowledge_contents",
+    ),
 )
 
 # Add topics from Wikipedia
-knowledge.add_content(
+knowledge.insert(
     metadata={"user_tag": "Wikipedia content"},
     topics=["Manchester United"],
     reader=WikipediaReader(),
 )
 
 # Add topics from Arxiv
-knowledge.add_content(
+knowledge.insert(
     metadata={"user_tag": "Arxiv content"},
     topics=["Carbon Dioxide", "Oxygen"],
     reader=ArxivReader(),
 )
 
-# Using the add_contents method
-knowledge.add_contents(
+# Using the insert_many method
+knowledge.insert_many(
     topics=["Carbon Dioxide", "Nitrogen"],
     reader=ArxivReader(),
+    skip_if_exists=True,
+)
+
+agent = Agent(
+    name="My Agent",
+    description="Agno 2.0 Agent Implementation",
+    knowledge=knowledge,
+    search_knowledge=True,
+)
+
+agent.print_response(
+    "What can you tell me about Manchester United?",
+    markdown=True,
 )

@@ -25,7 +25,7 @@ knowledge = Knowledge(
     # contents_db=contents_db,
 )
 
-knowledge.add_content(
+knowledge.insert(
     name="CV",
     path="cookbook/07_knowledge/testing_resources/cv_1.pdf",
     metadata={"user_tag": "Engineering Candidates"},
