@@ -232,8 +232,9 @@ class BasePDFReader(Reader):
             return True
 
         # Use provided password or fall back to instance password
-        pdf_password = password or self.password
-        if not pdf_password:
+        # Note: Empty string "" is a valid password for PDFs with blank user password
+        pdf_password = self.password if password is None else password
+        if pdf_password is None:
             log_error(f'PDF file "{doc_name}" is password protected but no password provided')
             return False
 
