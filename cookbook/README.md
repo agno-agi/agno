@@ -42,27 +42,23 @@ Hundreds of examples. Copy, paste, run.
 ### Evals
 [09_evals](./09_evals) — Measure what matters: accuracy (LLM-as-judge), performance (latency, memory), reliability (expected tool calls), and agent-as-judge patterns.
 
+### Reasoning
+[10_reasoning](./10_reasoning) — Make agents think before they act. Three approaches:
+- **Reasoning models** — Use models pre-trained for reasoning (o1, o3, etc.)
+- **Reasoning tools** — Give the agent tools that enable reasoning (think, analyze)
+- **Reasoning harness** — Set `reasoning=True` for chain-of-thought with tool use
+
 ### Memory
 [80_memory](./80_memory) — Agents that remember. Store insights and facts about users across conversations for personalized responses.
 
-### Reasoning
-[81_reasoning](./81_reasoning) — Make agents think before they act. Three approaches:
-- **Reasoning models** — Use models pre-trained for reasoning (o1, o3, etc.)
-- **Reasoning tools** — Give any agent tools that enable reasoning
-- **Reasoning agents** — Set `reasoning=True` for chain-of-thought with tool use
-
 ### Models
-[92_models](./92_models) — 40+ model providers. Gemini, Claude, GPT, Llama, Mistral, DeepSeek, Groq, Ollama, vLLM — if it exists, we probably support it.
+[90_models](./90_models) — 40+ model providers. Gemini, Claude, GPT, Llama, Mistral, DeepSeek, Groq, Ollama, vLLM — if it exists, we probably support it.
 
 ### Tools
-[90_tools](./90_tools) — Extend what agents can do. Web search, SQL, email, APIs, MCP, Discord, Slack, Docker, and custom tools with the `@tool` decorator.
-
----
-
-## Production Ready
+[91_tools](./91_tools) — Extend what agents can do. Web search, SQL, email, APIs, MCP, Discord, Slack, Docker, and custom tools with the `@tool` decorator.
 
 ### Integrations
-[91_integrations](./91_integrations) — Connect to Discord, observability tools (Langfuse, Arize Phoenix, AgentOps, LangSmith), memory providers, and A2A protocol.
+[92_integrations](./92_integrations) — Connect to Discord, observability tools (Langfuse, Arize Phoenix, AgentOps, LangSmith), memory providers, and A2A protocol.
 
 ---
 
