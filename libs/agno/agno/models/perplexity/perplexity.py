@@ -50,6 +50,10 @@ class Perplexity(OpenAILike):
     supports_native_structured_outputs: bool = False
     supports_json_schema_outputs: bool = True
 
+    # Perplexity returns cumulative token counts in each streaming chunk,
+    # so we only collect metrics on the final chunk to avoid inflation
+    collect_metrics_on_completion: bool = True
+
     def _get_client_params(self) -> Dict[str, Any]:
         """
         Returns client parameters for API requests, checking for PERPLEXITY_API_KEY.
@@ -175,8 +179,17 @@ class Perplexity(OpenAILike):
             )
 
         # Add usage metrics if present
+        # Perplexity returns cumulative token counts, so only collect on final chunk
         if response_delta.usage is not None:
-            model_response.response_usage = self._get_metrics(response_delta.usage)
+            should_collect_metrics = True
+            if self.collect_metrics_on_completion:
+                finish_reason = None
+                if response_delta.choices and len(response_delta.choices) > 0:
+                    finish_reason = response_delta.choices[0].finish_reason
+                should_collect_metrics = finish_reason is not None
+
+            if should_collect_metrics:
+                model_response.response_usage = self._get_metrics(response_delta.usage)
 
         return model_response
 
