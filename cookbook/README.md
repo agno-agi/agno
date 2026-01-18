@@ -1,6 +1,6 @@
 # Agno Cookbooks
 
-Hundreds of examples. Copy, paste, run. Build agents that actually work.
+Hundreds of examples. Copy, paste, run.
 
 ## Where to Start
 
@@ -8,7 +8,7 @@ Hundreds of examples. Copy, paste, run. Build agents that actually work.
 
 **Want to see something real?** Jump to [01_showcase](./01_showcase) — advanced use cases. Run the examples, break them, learn from them.
 
-**Know what you're building?** Find your use case below.
+**Want to explore a particular topic?** Find your use case below.
 
 ---
 
@@ -30,8 +30,17 @@ Hundreds of examples. Copy, paste, run. Build agents that actually work.
 
 ## Deep Dives
 
+### Storage
+[06_storage](./06_storage) — Give your agents persistent storage. Postgres and SQLite recommended. Also supports DynamoDB, Firestore, MongoDB, Redis, SingleStore, SurrealDB, and more.
+
 ### Knowledge & RAG
 [07_knowledge](./07_knowledge) — Give your agents information to search at runtime. Covers chunking strategies (semantic, recursive, agentic), embedders, vector databases, hybrid search, and loading from URLs, S3, GCS, YouTube, PDFs, and more.
+
+### Learning
+[08_learning](./08_learning) — Unified learning system for agents. Decision logging, preference tracking, and continuous improvement.
+
+### Evals
+[09_evals](./09_evals) — Measure what matters: accuracy (LLM-as-judge), performance (latency, memory), reliability (expected tool calls), and agent-as-judge patterns.
 
 ### Memory
 [80_memory](./80_memory) — Agents that remember. Store insights and facts about users across conversations for personalized responses.
@@ -42,12 +51,6 @@ Hundreds of examples. Copy, paste, run. Build agents that actually work.
 - **Reasoning tools** — Give any agent tools that enable reasoning
 - **Reasoning agents** — Set `reasoning=True` for chain-of-thought with tool use
 
-### Learning
-[08_learning](./08_learning) — Unified learning system for agents. Decision logging, preference tracking, and continuous improvement.
-
-### Storage
-[06_storage](./06_storage) — Postgres and SQLite recommended. Also supports DynamoDB, Firestore, MongoDB, Redis, SingleStore, SurrealDB, and more.
-
 ### Models
 [92_models](./92_models) — 40+ model providers. Gemini, Claude, GPT, Llama, Mistral, DeepSeek, Groq, Ollama, vLLM — if it exists, we probably support it.
 
@@ -57,9 +60,6 @@ Hundreds of examples. Copy, paste, run. Build agents that actually work.
 ---
 
 ## Production Ready
-
-### Evals
-[09_evals](./09_evals) — Measure what matters: accuracy (LLM-as-judge), performance (latency, memory), reliability (expected tool calls), and agent-as-judge patterns.
 
 ### Integrations
 [91_integrations](./91_integrations) — Connect to Discord, observability tools (Langfuse, Arize Phoenix, AgentOps, LangSmith), memory providers, and A2A protocol.

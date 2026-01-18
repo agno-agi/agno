@@ -362,7 +362,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         table_name: str,
         table_type: str,
         create_table_if_not_found: Optional[bool] = False,
-    ) -> Table:
+    ) -> Optional[Table]:
         """
         Check if the table exists and is valid, else create it.
 

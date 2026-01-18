@@ -8,6 +8,7 @@
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.exa import ExaTools
