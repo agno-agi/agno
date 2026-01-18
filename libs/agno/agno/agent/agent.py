@@ -6798,6 +6798,9 @@ class Agent:
         _functions: List[Union[Function, dict]] = []
         self._tool_instructions = []
 
+        # Collect discoverable tools to create a DiscoverableTools instance
+        _discoverable_tools: List[Function] = []
+
         # Get Agent tools
         if processed_tools is not None and len(processed_tools) > 0:
             log_debug("Processing tools for model")
@@ -6827,6 +6830,14 @@ class Agent:
                     for name, _func in toolkit_functions.items():
                         if name in _function_names:
                             continue
+                        # Collect discoverable tools - they are searchable via DiscoverableTools
+                        if _func.discoverable:
+                            log_debug(f"Collecting discoverable tool {name} from {tool.name}")
+                            _func_copy = _func.model_copy(deep=True)
+                            _func_copy._agent = self
+                            _func_copy.process_entrypoint(strict=strict)
+                            _discoverable_tools.append(_func_copy)
+                            continue
                         _function_names.append(name)
                         _func = _func.model_copy(deep=True)
                         _func._agent = self
@@ -6844,6 +6855,14 @@ class Agent:
 
                 elif isinstance(tool, Function):
                     if tool.name in _function_names:
+                        continue
+                    # Collect discoverable tools - they are searchable via DiscoverableTools
+                    if tool.discoverable:
+                        log_debug(f"Collecting discoverable tool {tool.name}")
+                        tool_copy = tool.model_copy(deep=True)
+                        tool_copy._agent = self
+                        tool_copy.process_entrypoint(strict=strict)
+                        _discoverable_tools.append(tool_copy)
                         continue
                     _function_names.append(tool.name)
 
@@ -6881,6 +6900,28 @@ class Agent:
                         log_debug(f"Added tool {_func.name}")
                     except Exception as e:
                         log_warning(f"Could not add tool {tool}: {e}")
+
+            # If there are discoverable tools, create a DiscoverableTools instance and add it
+            if _discoverable_tools:
+                from agno.tools.discoverable_tools import DiscoverableTools
+
+                discoverable_toolkit = DiscoverableTools(discoverable_tools=_discoverable_tools)
+                # Process the DiscoverableTools toolkit and add its functions
+                for name, _func in discoverable_toolkit.functions.items():
+                    if name in _function_names:
+                        continue
+                    _function_names.append(name)
+                    _func = _func.model_copy(deep=True)
+                    _func._agent = self
+                    _func.process_entrypoint(strict=strict)
+                    if strict and _func.strict is None:
+                        _func.strict = True
+                    if self.tool_hooks is not None:
+                        _func.tool_hooks = self.tool_hooks
+                    _functions.append(_func)
+                    log_debug(f"Added discoverable toolkit tool {name}")
+
+                log_debug(f"Created DiscoverableTools with {len(_discoverable_tools)} tools")
 
         # Update the session state for the functions
         if _functions:
