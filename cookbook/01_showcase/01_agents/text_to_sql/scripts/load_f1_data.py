@@ -21,18 +21,11 @@ Prerequisites:
 
 import sys
 from io import StringIO
-from pathlib import Path
 
 import pandas as pd
 import requests
-from sqlalchemy import create_engine
-
-# Add parent directory to path for imports
-_this_dir = Path(__file__).parent.parent
-if str(_this_dir) not in sys.path:
-    sys.path.insert(0, str(_this_dir))
-
-from agno.utils.log import logger  # noqa: E402
+from agno.utils.log import logger
+from sqlalchemy import create_engine, text
 
 # ============================================================================
 # Configuration
@@ -51,30 +44,74 @@ FILES_TO_TABLES = {
 
 
 # ============================================================================
+# Connection Test
+# ============================================================================
+def test_connection() -> bool:
+    """Test database connection before loading data."""
+    try:
+        engine = create_engine(DB_URL)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception as e:
+        logger.error(f"Cannot connect to database: {e}")
+        logger.error("")
+        logger.error("Make sure PostgreSQL is running:")
+        logger.error("  ./cookbook/scripts/run_pgvector.sh")
+        return False
+
+
+# ============================================================================
 # Data Loading
 # ============================================================================
-def load_f1_data() -> None:
-    """Load F1 data from S3 into PostgreSQL tables."""
+def load_f1_data() -> bool:
+    """Load F1 data from S3 into PostgreSQL tables.
+
+    Returns:
+        bool: True if all tables loaded successfully, False otherwise.
+    """
+    # Test connection first
+    if not test_connection():
+        return False
+
     db_engine = create_engine(DB_URL)
 
     logger.info("Starting F1 data load...")
     logger.info(f"Database: {DB_URL}")
 
+    success_count = 0
     for file_path, table_name in FILES_TO_TABLES.items():
         logger.info(f"Loading {table_name}...")
 
-        # Download CSV from S3
-        response = requests.get(file_path, verify=False)
-        response.raise_for_status()
+        try:
+            # Download CSV from S3
+            response = requests.get(file_path, verify=False, timeout=30)
+            response.raise_for_status()
 
-        # Parse CSV and load to database
-        csv_data = StringIO(response.text)
-        df = pd.read_csv(csv_data)
+            # Parse CSV and load to database
+            csv_data = StringIO(response.text)
+            df = pd.read_csv(csv_data)
 
-        df.to_sql(table_name, db_engine, if_exists="replace", index=False)
-        logger.info(f"  Loaded {len(df)} rows into {table_name}")
+            df.to_sql(table_name, db_engine, if_exists="replace", index=False)
+            logger.info(f"  ✓ Loaded {len(df):,} rows into {table_name}")
+            success_count += 1
 
-    logger.info("F1 data load complete.")
+        except requests.RequestException as e:
+            logger.error(f"  ✗ Failed to download {table_name}: {e}")
+        except Exception as e:
+            logger.error(f"  ✗ Failed to load {table_name}: {e}")
+
+    logger.info("")
+    if success_count == len(FILES_TO_TABLES):
+        logger.info(
+            f"F1 data load complete. {success_count}/{len(FILES_TO_TABLES)} tables loaded."
+        )
+        return True
+    else:
+        logger.error(
+            f"F1 data load incomplete. {success_count}/{len(FILES_TO_TABLES)} tables loaded."
+        )
+        return False
 
 
 # ============================================================================
@@ -86,4 +123,5 @@ if __name__ == "__main__":
 
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    load_f1_data()
+    success = load_f1_data()
+    sys.exit(0 if success else 1)
