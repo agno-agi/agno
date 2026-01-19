@@ -23,12 +23,12 @@ Usage:
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.knowledge.embedder.cohere import CohereEmbedder
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
 from agno.tools.openai import OpenAITools
 from agno.tools.reasoning import ReasoningTools
-from agno.vectordb.pgvector import PgVector
+from agno.vectordb.pgvector import PgVector, SearchType
 
 # ============================================================================
 # Database Configuration
@@ -43,7 +43,8 @@ recipe_knowledge = Knowledge(
     vector_db=PgVector(
         db_url=DB_URL,
         table_name="recipe_documents",
-        embedder=CohereEmbedder(id="embed-v4.0"),
+        search_type=SearchType.hybrid,
+        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
     max_results=5,
 )
