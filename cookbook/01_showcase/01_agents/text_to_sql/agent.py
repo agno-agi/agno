@@ -22,9 +22,9 @@ from tools.save_query import save_validated_query, set_knowledge
 
 DB_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-db = PostgresDb(id="f1-db", db_url=DB_URL)
+sql_agent_db = PostgresDb(db_url=DB_URL)
 
-knowledge = Knowledge(
+sql_agent_knowledge = Knowledge(
     name="SQL Agent Knowledge",
     vector_db=PgVector(
         db_url=DB_URL,
@@ -33,10 +33,10 @@ knowledge = Knowledge(
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
     max_results=5,
-    contents_db=db,
+    contents_db=sql_agent_db,
 )
 
-set_knowledge(knowledge)
+set_knowledge(sql_agent_knowledge)
 
 system_message = f"""\
 You are a Text-to-SQL agent with access to a PostgreSQL database containing Formula 1 data (1950-2020).
@@ -73,8 +73,8 @@ SQL RULES
 sql_agent = Agent(
     name="SQL Agent",
     model=OpenAIResponses(id="gpt-4.1"),
-    db=db,
-    knowledge=knowledge,
+    db=sql_agent_db,
+    knowledge=sql_agent_knowledge,
     system_message=system_message,
     tools=[
         SQLTools(db_url=DB_URL),

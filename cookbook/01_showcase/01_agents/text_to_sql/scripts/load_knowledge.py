@@ -19,10 +19,10 @@ KNOWLEDGE_DIR = _parent / "knowledge"
 
 def load_knowledge() -> bool:
     """Load knowledge files into the SQL agent's knowledge base."""
-    from agent import knowledge
+    from agent import sql_agent_knowledge
 
     try:
-        knowledge.add_content(path=str(KNOWLEDGE_DIR))
+        sql_agent_knowledge.insert(name="SQL Agent Knowledge", path=str(KNOWLEDGE_DIR))
         print("Knowledge loaded successfully")
         return True
     except Exception as e:
