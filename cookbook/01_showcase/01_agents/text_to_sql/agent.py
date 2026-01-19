@@ -72,7 +72,7 @@ SQL RULES
 
 sql_agent = Agent(
     name="SQL Agent",
-    model=OpenAIResponses(id="gpt-4.1"),
+    model=OpenAIResponses(id="gpt-5.2"),
     db=sql_agent_db,
     knowledge=sql_agent_knowledge,
     system_message=system_message,
