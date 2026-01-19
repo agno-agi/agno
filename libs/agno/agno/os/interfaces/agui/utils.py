@@ -463,12 +463,13 @@ def _create_completion_events(
                 )
                 events_to_emit.append(end_event)
 
-    # Always emit StateSnapshotEvent for full state
-    state_snapshot_event = StateSnapshotEvent(
-        type=EventType.STATE_SNAPSHOT,
-        snapshot=chunk.session_state if hasattr(chunk, "session_state") else None,
-    )
-    events_to_emit.append(state_snapshot_event)
+    # Always emit StateSnapshotEvent for full state if exists.
+    if event_buffer.current_session_state:
+        state_snapshot_event = StateSnapshotEvent(
+            type=EventType.STATE_SNAPSHOT,
+            snapshot=event_buffer.current_session_state,
+        )
+        events_to_emit.append(state_snapshot_event)
 
     run_finished_event = RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
     events_to_emit.append(run_finished_event)
