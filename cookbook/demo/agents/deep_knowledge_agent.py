@@ -1,4 +1,3 @@
-import sys
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -86,37 +85,7 @@ deep_knowledge_agent = Agent(
     db=demo_db,
 )
 
-# ============================================================================
-# Demo Tests
-# ============================================================================
 if __name__ == "__main__":
-    print("=" * 60)
-    print("Deep Knowledge Agent")
-    print("   RAG with iterative reasoning")
-    print("=" * 60)
-
-    # Load knowledge base if not already loaded
-    print("\n--- Loading knowledge base ---")
     knowledge.insert(
-        name="Agno docs for deep knowledge",
-        url="https://docs.agno.com/llms-full.txt",
-        skip_if_exists=True,
+        name="Agno docs for deep knowledge", url="https://docs.agno.com/llms-full.txt"
     )
-
-    if len(sys.argv) > 1:
-        # Run with command line argument
-        message = " ".join(sys.argv[1:])
-        deep_knowledge_agent.print_response(message, stream=True)
-    else:
-        # Run demo tests
-        print("\n--- Demo 1: Simple Question ---")
-        deep_knowledge_agent.print_response(
-            "What is Agno and what are its main features?",
-            stream=True,
-        )
-
-        print("\n--- Demo 2: Code Generation ---")
-        deep_knowledge_agent.print_response(
-            "Show me how to create an agent with tools in Agno",
-            stream=True,
-        )

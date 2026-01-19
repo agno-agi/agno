@@ -2,15 +2,15 @@
 Use JSON files as the database for a Workflow.
 Useful for simple demos where performance is not critical.
 
-Run `uv pip install ddgs openai` to install dependencies.
+Run `pip install ddgs openai` to install dependencies.
 """
 
 from agno.agent import Agent
 from agno.db.json import JsonDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
@@ -20,14 +20,14 @@ db = JsonDb(db_path="tmp/json_db")
 # Define agents
 hackernews_agent = Agent(
     name="Hackernews Agent",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     tools=[HackerNewsTools()],
     role="Extract key insights and content from Hackernews posts",
 )
 web_agent = Agent(
     name="Web Agent",
-    model=OpenAIChat(id="gpt-5.2"),
-    tools=[DuckDuckGoTools()],
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[WebSearchTools()],
     role="Search the web for the latest news and trends",
 )
 

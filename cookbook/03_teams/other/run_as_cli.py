@@ -1,8 +1,8 @@
-"""Interactive Writing Team - CLI App Example
+"""✍️ Interactive Writing Team - CLI App Example
 
 This example shows how to create an interactive CLI app with a collaborative writing team.
 
-Run `uv pip install openai agno duckduckgo-search` to install dependencies.
+Run `pip install openai agno duckduckgo-search` to install dependencies.
 """
 
 from textwrap import dedent
@@ -10,13 +10,13 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 research_agent = Agent(
     name="Research Specialist",
     role="Information Research and Fact Verification",
-    model=OpenAIChat(id="gpt-5.2"),
-    tools=[DuckDuckGoTools()],
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[WebSearchTools()],
     instructions=dedent("""\
         You are an expert research specialist! 
         
@@ -37,7 +37,7 @@ research_agent = Agent(
 brainstorm_agent = Agent(
     name="Creative Brainstormer",
     role="Idea Generation and Creative Concepts",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     instructions=dedent("""\
         You are a creative brainstorming expert! 
         
@@ -58,7 +58,7 @@ brainstorm_agent = Agent(
 writer_agent = Agent(
     name="Content Writer",
     role="Content Creation and Storytelling",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     instructions=dedent("""\
         You are a skilled content writer! 
         
@@ -79,7 +79,7 @@ writer_agent = Agent(
 editor_agent = Agent(
     name="Editor",
     role="Content Editing and Quality Assurance",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     instructions=dedent("""\
         You are a meticulous editor! 
         
@@ -100,7 +100,7 @@ editor_agent = Agent(
 writing_team = Team(
     name="Writing Team",
     members=[research_agent, brainstorm_agent, writer_agent, editor_agent],
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     instructions=dedent("""\
         You are a collaborative writing team that excels at creating high-quality content!
         
@@ -124,12 +124,13 @@ writing_team = Team(
 )
 
 if __name__ == "__main__":
-    print("Tell us about your writing project and watch the team collaborate!")
-    print("Type 'exit', 'quit', or 'bye' to end our session.\n")
+    print("💡 Tell us about your writing project and watch the team collaborate!")
+    print("✏️ Type 'exit', 'quit', or 'bye' to end our session.\n")
 
     writing_team.cli_app(
         input="Hello! We're excited to work on your writing project. What would you like us to help you create today? Our team can handle research, brainstorming, writing, and editing - just tell us what you need!",
         user="Client",
+        emoji="👥",
         stream=True,
     )
 

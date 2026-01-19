@@ -47,7 +47,7 @@ def load_knowledge_base():
 
     # Load all documents at once
     print("Loading all documents...")
-    company_knowledge.add_content(path=str(KNOWLEDGE_DIR))
+    company_knowledge.insert(path=str(KNOWLEDGE_DIR))
     print("  Loaded all documents")
 
     print()

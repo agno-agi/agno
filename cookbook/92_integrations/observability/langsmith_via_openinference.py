@@ -7,14 +7,14 @@ This example shows how to instrument your agno agent with OpenInference and send
   - export LANGSMITH_TRACING=true
   - export LANGSMITH_ENDPOINT=https://eu.api.smith.langchain.com or https://api.smith.langchain.com
   - export LANGSMITH_PROJECT=<your-project-name>
-3. Install dependencies: uv pip install openai openinference-instrumentation-agno opentelemetry-sdk opentelemetry-exporter-otlp
+3. Install dependencies: pip install openai openinference-instrumentation-agno opentelemetry-sdk opentelemetry-exporter-otlp
 """
 
 import os
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from openinference.instrumentation.agno import AgnoInstrumentor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace import TracerProvider
@@ -37,8 +37,8 @@ AgnoInstrumentor().instrument(tracer_provider=tracer_provider)
 
 agent = Agent(
     name="Stock Market Agent",
-    model=OpenAIChat(id="gpt-5.2"),
-    tools=[DuckDuckGoTools()],
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[WebSearchTools()],
     markdown=True,
     debug_mode=True,
 )

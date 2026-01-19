@@ -6,8 +6,8 @@ from agno.models.openai.chat import OpenAIChat
 
 # Import the workflows
 from agno.os import AgentOS
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.loop import Loop
 from agno.workflow.step import Step
 from agno.workflow.types import StepOutput
@@ -16,15 +16,15 @@ from agno.workflow.workflow import Workflow
 research_agent = Agent(
     name="Research Agent",
     role="Research specialist",
-    model=OpenAIChat(id="gpt-5.2"),
-    tools=[HackerNewsTools(), DuckDuckGoTools()],
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[HackerNewsTools(), WebSearchTools()],
     instructions="You are a research specialist. Research the given topic thoroughly.",
     markdown=True,
 )
 
 content_agent = Agent(
     name="Content Agent",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     role="Content creator",
     instructions="You are a content creator. Create engaging content based on research.",
     markdown=True,
@@ -65,11 +65,11 @@ def research_evaluator(outputs: List[StepOutput]) -> bool:
     for output in outputs:
         if output.content and len(output.content) > 200:
             print(
-                f"[OK] Research evaluation passed - found substantial content ({len(output.content)} chars)"
+                f"✅ Research evaluation passed - found substantial content ({len(output.content)} chars)"
             )
             return True
 
-    print("[FAIL] Research evaluation failed - need more substantial research")
+    print("❌ Research evaluation failed - need more substantial research")
     return False
 
 

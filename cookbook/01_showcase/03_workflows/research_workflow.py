@@ -2,11 +2,11 @@ from textwrap import dedent
 from typing import Dict, List, Optional
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.models.openai import OpenAIChat
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.parallel import ParallelTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow import Step, Workflow
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import StepInput, StepOutput
@@ -18,7 +18,7 @@ from db import demo_db
 hn_researcher = Agent(
     name="HN Researcher",
     role="Research trending topics and discussions on Hacker News",
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-5-mini"),
     tools=[HackerNewsTools()],
     description=dedent("""\
         You are the HN Researcher — an agent that searches Hacker News for relevant discussions,
@@ -38,8 +38,8 @@ hn_researcher = Agent(
 web_researcher = Agent(
     name="Web Researcher",
     role="Search the web for current information and sources",
-    model=OpenAIResponses(id="gpt-5.2"),
-    tools=[DuckDuckGoTools()],
+    model=OpenAIChat(id="gpt-5-mini"),
+    tools=[WebSearchTools()],
     description=dedent("""\
         You are the Web Researcher — an agent that searches the web for up-to-date information,
         news articles, and credible sources on any topic.
@@ -58,7 +58,7 @@ web_researcher = Agent(
 parallel_researcher = Agent(
     name="Parallel Researcher",
     role="Perform deep semantic search for high-quality content",
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-5-mini"),
     tools=[ParallelTools(enable_search=True, enable_extract=True)],
     description=dedent("""\
         You are the Parallel Researcher — an agent that uses semantic search to find
@@ -81,7 +81,7 @@ parallel_researcher = Agent(
 writer = Agent(
     name="Writer",
     role="Synthesize research into compelling content",
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-5-mini"),
     tools=[ReasoningTools()],
     description=dedent("""\
         You are the Writer — an agent that synthesizes research findings into clear,
@@ -176,17 +176,3 @@ research_workflow = Workflow(
     ],
     db=demo_db,
 )
-
-
-if __name__ == "__main__":
-    import asyncio
-
-    from agno.utils.pprint import pprint_run_response
-
-    async def main():
-        result = await research_workflow.arun(
-            input="Research the latest developments in AI agents and autonomous systems"
-        )
-        pprint_run_response(result, markdown=True)
-
-    asyncio.run(main())

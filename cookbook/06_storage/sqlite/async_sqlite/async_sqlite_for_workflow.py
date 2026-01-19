@@ -1,5 +1,5 @@
 """
-Run: `uv pip install openai ddgs sqlalchemy aiosqlite` to install dependencies
+Run: `pip install openai ddgs sqlalchemy aiosqlite` to install dependencies
 Run: `python cookbook/db/async_sqlite/async_sqlite_for_workflow.py` to run the workflow
 """
 
@@ -9,8 +9,8 @@ from agno.agent import Agent
 from agno.db.sqlite import AsyncSqliteDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
@@ -19,14 +19,14 @@ db = AsyncSqliteDb(db_file="workflow_storage.db")
 
 hackernews_agent = Agent(
     name="Hackernews Agent",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     tools=[HackerNewsTools()],
     role="Extract key insights and content from Hackernews posts",
 )
 web_agent = Agent(
     name="Web Agent",
-    model=OpenAIChat(id="gpt-5.2"),
-    tools=[DuckDuckGoTools()],
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[WebSearchTools()],
     role="Search the web for the latest news and trends",
 )
 content_planner = Agent(

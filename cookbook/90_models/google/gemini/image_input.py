@@ -1,11 +1,11 @@
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.google import Gemini
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
-    model=Gemini(id="gemini-3-flash-preview"),
-    tools=[DuckDuckGoTools()],
+    model=Gemini(id="gemini-2.0-flash-exp"),
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

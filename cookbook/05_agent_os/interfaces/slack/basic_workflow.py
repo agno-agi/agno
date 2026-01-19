@@ -3,15 +3,15 @@ from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.interfaces.slack import Slack
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
 # Define agents for the workflow
 researcher_agent = Agent(
     name="Research Agent",
-    model=OpenAIChat(id="gpt-5.2"),
-    tools=[DuckDuckGoTools()],
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[WebSearchTools()],
     role="Search the web and gather comprehensive research on the given topic",
     instructions=[
         "Search for the most recent and relevant information",
@@ -22,7 +22,7 @@ researcher_agent = Agent(
 
 writer_agent = Agent(
     name="Content Writer",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     role="Create engaging content based on research findings",
     instructions=[
         "Write in a clear, engaging, and professional tone",

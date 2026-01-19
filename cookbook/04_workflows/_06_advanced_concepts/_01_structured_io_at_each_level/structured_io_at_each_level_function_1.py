@@ -2,8 +2,8 @@ from typing import List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 from pydantic import BaseModel, Field
@@ -66,47 +66,47 @@ def data_analysis_function(step_input: StepInput) -> StepOutput:
     previous_step_content = step_input.previous_step_content
 
     print("\n" + "=" * 60)
-    print("CUSTOM FUNCTION DATA ANALYSIS")
+    print("🔍 CUSTOM FUNCTION DATA ANALYSIS")
     print("=" * 60)
 
-    print(f"\nInput Message Type: {type(message)}")
-    print(f"Input Message Value: {message}")
+    print(f"\n📝 Input Message Type: {type(message)}")
+    print(f"📝 Input Message Value: {message}")
 
-    print(f"\nPrevious Step Content Type: {type(previous_step_content)}")
+    print(f"\n📊 Previous Step Content Type: {type(previous_step_content)}")
 
     # Try to parse if it's structured data
     analysis_results = []
 
     if previous_step_content:
-        print("\nPrevious Step Content Preview:")
+        print("\n🔍 Previous Step Content Preview:")
         print("Topic: ", previous_step_content.topic, "\n")
         print("Key Insights: ", previous_step_content.key_insights, "\n")
         print(
             "Trending Technologies: ", previous_step_content.trending_technologies, "\n"
         )
 
-        analysis_results.append("[OK] Received structured data (BaseModel)")
+        analysis_results.append("✅ Received structured data (BaseModel)")
 
         # If it's a BaseModel, try to access its fields
         analysis_results.append(
-            f"[OK] BaseModel type: {type(previous_step_content).__name__}"
+            f"✅ BaseModel type: {type(previous_step_content).__name__}"
         )
         try:
             model_dict = previous_step_content.model_dump()
-            analysis_results.append(f"[OK] Model fields: {list(model_dict.keys())}")
+            analysis_results.append(f"✅ Model fields: {list(model_dict.keys())}")
 
             # If it's ResearchFindings, extract specific data
             if hasattr(previous_step_content, "topic"):
                 analysis_results.append(
-                    f"[OK] Research Topic: {previous_step_content.topic}"
+                    f"✅ Research Topic: {previous_step_content.topic}"
                 )
             if hasattr(previous_step_content, "confidence_score"):
                 analysis_results.append(
-                    f"[OK] Confidence Score: {previous_step_content.confidence_score}"
+                    f"✅ Confidence Score: {previous_step_content.confidence_score}"
                 )
 
         except Exception as e:
-            analysis_results.append(f"[ERROR] Error accessing BaseModel: {e}")
+            analysis_results.append(f"❌ Error accessing BaseModel: {e}")
 
     # Create enhanced analysis
     enhanced_analysis = f"""
@@ -123,7 +123,7 @@ def data_analysis_function(step_input: StepInput) -> StepOutput:
         Based on the data analysis, the content planning step should receive this processed information.
     """.strip()
 
-    print("\nAnalysis Results:")
+    print("\n📋 Analysis Results:")
     for result in analysis_results:
         print(f"   {result}")
 
@@ -135,8 +135,8 @@ def data_analysis_function(step_input: StepInput) -> StepOutput:
 # Define agents with response models
 research_agent = Agent(
     name="AI Research Specialist",
-    model=OpenAIChat(id="gpt-5.2"),
-    tools=[HackerNewsTools(), DuckDuckGoTools()],
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[HackerNewsTools(), WebSearchTools()],
     role="Research AI trends and extract structured insights",
     output_schema=ResearchFindings,
     instructions=[
@@ -149,7 +149,7 @@ research_agent = Agent(
 
 strategy_agent = Agent(
     name="Content Strategy Expert",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     role="Create content strategies based on research findings",
     output_schema=ContentStrategy,
     instructions=[

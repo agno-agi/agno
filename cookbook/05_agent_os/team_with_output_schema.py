@@ -29,7 +29,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel, Field
 
 
@@ -44,14 +44,14 @@ class ResearchReport(BaseModel):
 
 researcher = Agent(
     name="Researcher",
-    model=OpenAIChat(id="gpt-5.2"),
-    tools=[DuckDuckGoTools()],
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[WebSearchTools()],
     role="Conduct thorough research on assigned topics",
 )
 
 analyst = Agent(
     name="Analyst",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     role="Analyze research findings and provide recommendations",
 )
 
@@ -59,7 +59,7 @@ analyst = Agent(
 research_team = Team(
     name="Research Team",
     id="research-team",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     members=[researcher, analyst],
     output_schema=ResearchReport,
     markdown=False,

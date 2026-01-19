@@ -1,6 +1,11 @@
 """
-Self-Learning Text-to-SQL Agent
-===============================
+Text-to-SQL Agent
+=================
+
+A self-learning SQL agent that queries Formula 1 data (1950-2020).
+
+Run:
+    python agent.py
 """
 
 from agno.agent import Agent
@@ -11,6 +16,7 @@ from agno.models.openai import OpenAIResponses
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.sql import SQLTools
 from agno.vectordb.pgvector import PgVector, SearchType
+
 from semantic_model import SEMANTIC_MODEL_STR
 from tools.save_query import save_validated_query, set_knowledge
 
@@ -66,7 +72,7 @@ SQL RULES
 
 sql_agent = Agent(
     name="SQL Agent",
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-4.1"),
     db=db,
     knowledge=knowledge,
     system_message=system_message,

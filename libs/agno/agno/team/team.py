@@ -195,10 +195,6 @@ from agno.utils.team import (
 )
 from agno.utils.timer import Timer
 
-# Tool name constants for delegation functions
-DELEGATE_TASK_TO_MEMBER = "delegate_task_to_member"
-DELEGATE_TASK_TO_MEMBERS = "delegate_task_to_members"
-
 
 @dataclass(init=False)
 class Team:
@@ -260,13 +256,6 @@ class Team:
     num_team_history_runs: int = 3
     # If True, send all member interactions (request/response) during the current run to members that have been delegated a task to
     share_member_interactions: bool = False
-    # Maximum number of recent member interactions to share with subsequent members.
-    # None means share all interactions (default). Set to a positive integer to limit context size.
-    # Only used when share_member_interactions=True.
-    max_interactions_to_share: Optional[int] = None
-    # Timeout in seconds for member delegations. If a member takes longer than this, the delegation will fail.
-    # Set to None for no timeout (default).
-    member_timeout: Optional[float] = None
 
     # If True, adds a tool to allow searching through previous sessions
     search_session_history: Optional[bool] = False
@@ -539,8 +528,6 @@ class Team:
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         share_member_interactions: bool = False,
-        max_interactions_to_share: Optional[int] = None,
-        member_timeout: Optional[float] = None,
         get_member_information_tool: bool = False,
         search_knowledge: bool = True,
         read_chat_history: bool = False,
@@ -609,14 +596,6 @@ class Team:
         self.determine_input_for_members = determine_input_for_members
         self.delegate_to_all_members = delegate_to_all_members
 
-        # Validate incompatible configuration
-        if self.delegate_to_all_members and self.respond_directly:
-            raise ValueError(
-                "Incompatible configuration: `delegate_to_all_members=True` and `respond_directly=True` cannot be used together. "
-                "`delegate_to_all_members` broadcasts to all members and synthesizes responses, while `respond_directly` "
-                "passes through a single member's response. Choose one mode or the other."
-            )
-
         self.user_id = user_id
         self.session_id = session_id
         self.session_state = session_state
@@ -672,8 +651,6 @@ class Team:
         self.references_format = references_format
 
         self.share_member_interactions = share_member_interactions
-        self.max_interactions_to_share = max_interactions_to_share
-        self.member_timeout = member_timeout
         self.get_member_information_tool = get_member_information_tool
         self.search_knowledge = search_knowledge
         self.read_chat_history = read_chat_history
@@ -990,6 +967,12 @@ class Team:
     def initialize_team(self, debug_mode: Optional[bool] = None) -> None:
         # Make sure for the team, we are using the team logger
         use_team_logger()
+
+        if self.delegate_to_all_members and self.respond_directly:
+            log_warning(
+                "`delegate_to_all_members` and `respond_directly` are both enabled. The task will be delegated to all members, but `respond_directly` will be disabled."
+            )
+            self.respond_directly = False
 
         self._set_default_model()
 
@@ -2885,7 +2868,7 @@ class Team:
                         stream_events=stream_events,
                         events_to_skip=self.events_to_skip,  # type: ignore
                         store_events=self.store_events,
-                        get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
+                        get_memories_callback=lambda: self.aget_user_memories(user_id=user_id),
                     ):
                         yield event
 
@@ -5719,63 +5702,25 @@ class Team:
 
             if self.delegate_to_all_members:
                 system_message_content += (
-                    "- You can either respond directly or use the `delegate_task_to_members` tool to delegate tasks to all members for a collaborative response.\n"
-                    "- Call `delegate_task_to_members` ONLY once per request. This broadcasts the task to all members simultaneously.\n"
-                    "\n"
-                    "## Evaluating Member Responses\n"
-                    "After receiving responses from all members, evaluate each for:\n"
-                    "- Completeness: Did the member fully address the task?\n"
-                    "- Accuracy: Is the information correct and relevant?\n"
-                    "- Quality: Is the response well-structured and useful?\n"
-                    "\n"
-                    "## Synthesizing the Final Response\n"
-                    "- Combine the best insights from all member responses.\n"
-                    "- Resolve any conflicting information by using the most authoritative or well-supported response.\n"
-                    "- If all members failed or provided inadequate responses, explain what went wrong and what additional information might be needed.\n"
+                    "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
+                    "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
+                    "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
+                    "- If you feel the task has been completed, you can stop and respond to the user.\n"
                 )
             else:
                 system_message_content += (
-                    "## Your Role\n"
-                    "You coordinate a team of specialized agents. Your job is to understand user requests, delegate tasks to the right members, and synthesize their responses.\n"
-                    "\n"
-                    "## When to Respond Directly (No Delegation)\n"
-                    "- Simple greetings, thanks, or acknowledgments\n"
-                    "- Questions about the team itself or its capabilities\n"
-                    "- Requests for clarification before you can delegate\n"
-                    "- When you already have sufficient information to answer\n"
-                    "\n"
-                    "## When to Delegate\n"
-                    "- Tasks requiring specialized tools or knowledge\n"
-                    "- Research, analysis, or content creation tasks\n"
-                    "- Any work that matches a member's specific role\n"
-                    "\n"
-                    "## How to Delegate Effectively\n"
-                    "1. **Analyze the request**: Break complex requests into discrete subtasks if needed.\n"
-                    "2. **Select the right member**: Match each subtask to the member whose role and tools are best suited.\n"
-                    "3. **Write clear task descriptions**: Include:\n"
-                    "   - What needs to be done (the goal)\n"
-                    "   - Any specific requirements or constraints\n"
-                    "   - The expected format of the response\n"
-                    "4. **Delegate using the tool**:\n"
-                    "   - member_id (str): The ID of the member (not prefixed with team ID)\n"
-                    "   - task (str): Clear description of what the member should do\n"
-                    "\n"
-                    "## Evaluating Member Responses\n"
-                    "After each delegation, evaluate the response for:\n"
-                    "- **Completeness**: Did the member fully address the task?\n"
-                    "- **Accuracy**: Is the information correct and relevant?\n"
-                    "- **Usefulness**: Does this help fulfill the user's original request?\n"
-                    "\n"
-                    "## Handling Problems\n"
-                    "- **Incomplete response**: Re-delegate with more specific instructions, or ask a different member.\n"
-                    "- **Member cannot help**: Try another member with relevant capabilities.\n"
-                    "- **Conflicting responses**: Use the most authoritative source or ask for clarification.\n"
-                    "- **All members fail**: Explain to the user what was attempted and what additional information might help.\n"
-                    "\n"
-                    "## Important Rules\n"
-                    "- You cannot use member tools directly; you must delegate tasks to members.\n"
-                    "- Always analyze member responses before responding to the user.\n"
-                    "- You may delegate to multiple members for different subtasks.\n"
+                    "- Your role is to delegate tasks to members in your team with the highest likelihood of completing the user's request.\n"
+                    "- Carefully analyze the tools available to the members and their roles before delegating tasks.\n"
+                    "- You cannot use a member tool directly. You can only delegate tasks to members.\n"
+                    "- When you delegate a task to another member, make sure to include:\n"
+                    "  - member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
+                    "  - task (str): A clear description of the task. Determine the best way to describe the task to the member.\n"
+                    "- You can delegate tasks to multiple members at once.\n"
+                    "- You must always analyze the responses from members before responding to the user.\n"
+                    "- After analyzing the responses from the members, if you feel the task has been completed, you can stop and respond to the user.\n"
+                    "- If you are NOT satisfied with the responses from the members, you should re-assign the task to a different member.\n"
+                    "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
+                    "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
                 )
             system_message_content += "</how_to_respond>\n\n"
 
@@ -6052,63 +5997,26 @@ class Team:
 
         if self.delegate_to_all_members:
             system_message_content += (
-                "- You can either respond directly or use the `delegate_task_to_members` tool to delegate tasks to all members for a collaborative response.\n"
-                "- Call `delegate_task_to_members` ONLY once per request. This broadcasts the task to all members simultaneously.\n"
-                "\n"
-                "## Evaluating Member Responses\n"
-                "After receiving responses from all members, evaluate each for:\n"
-                "- Completeness: Did the member fully address the task?\n"
-                "- Accuracy: Is the information correct and relevant?\n"
-                "- Quality: Is the response well-structured and useful?\n"
-                "\n"
-                "## Synthesizing the Final Response\n"
-                "- Combine the best insights from all member responses.\n"
-                "- Resolve any conflicting information by using the most authoritative or well-supported response.\n"
-                "- If all members failed or provided inadequate responses, explain what went wrong and what additional information might be needed.\n"
+                "- Your role is to forward tasks to members in your team with the highest likelihood of completing the user's request.\n"
+                "- You can either respond directly or use the `delegate_task_to_members` tool to delegate a task to all members in your team to get a collaborative response.\n"
+                "- To delegate a task to all members in your team, call `delegate_task_to_members` ONLY once. This will delegate a task to all members in your team.\n"
+                "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
+                "- If you feel the task has been completed, you can stop and respond to the user.\n"
             )
         else:
             system_message_content += (
-                "## Your Role\n"
-                "You coordinate a team of specialized agents. Your job is to understand user requests, delegate tasks to the right members, and synthesize their responses.\n"
-                "\n"
-                "## When to Respond Directly (No Delegation)\n"
-                "- Simple greetings, thanks, or acknowledgments\n"
-                "- Questions about the team itself or its capabilities\n"
-                "- Requests for clarification before you can delegate\n"
-                "- When you already have sufficient information to answer\n"
-                "\n"
-                "## When to Delegate\n"
-                "- Tasks requiring specialized tools or knowledge\n"
-                "- Research, analysis, or content creation tasks\n"
-                "- Any work that matches a member's specific role\n"
-                "\n"
-                "## How to Delegate Effectively\n"
-                "1. **Analyze the request**: Break complex requests into discrete subtasks if needed.\n"
-                "2. **Select the right member**: Match each subtask to the member whose role and tools are best suited.\n"
-                "3. **Write clear task descriptions**: Include:\n"
-                "   - What needs to be done (the goal)\n"
-                "   - Any specific requirements or constraints\n"
-                "   - The expected format of the response\n"
-                "4. **Delegate using the tool**:\n"
-                "   - member_id (str): The ID of the member (not prefixed with team ID)\n"
-                "   - task (str): Clear description of what the member should do\n"
-                "\n"
-                "## Evaluating Member Responses\n"
-                "After each delegation, evaluate the response for:\n"
-                "- **Completeness**: Did the member fully address the task?\n"
-                "- **Accuracy**: Is the information correct and relevant?\n"
-                "- **Usefulness**: Does this help fulfill the user's original request?\n"
-                "\n"
-                "## Handling Problems\n"
-                "- **Incomplete response**: Re-delegate with more specific instructions, or ask a different member.\n"
-                "- **Member cannot help**: Try another member with relevant capabilities.\n"
-                "- **Conflicting responses**: Use the most authoritative source or ask for clarification.\n"
-                "- **All members fail**: Explain to the user what was attempted and what additional information might help.\n"
-                "\n"
-                "## Important Rules\n"
-                "- You cannot use member tools directly; you must delegate tasks to members.\n"
-                "- Always analyze member responses before responding to the user.\n"
-                "- You may delegate to multiple members for different subtasks.\n"
+                "- Your role is to delegate tasks to members in your team with the highest likelihood of completing the user's request.\n"
+                "- Carefully analyze the tools available to the members and their roles before delegating tasks.\n"
+                "- You cannot use a member tool directly. You can only delegate tasks to members.\n"
+                "- When you delegate a task to another member, make sure to include:\n"
+                "  - member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
+                "  - task (str): A clear description of the task.\n"
+                "- You can delegate tasks to multiple members at once.\n"
+                "- You must always analyze the responses from members before responding to the user.\n"
+                "- After analyzing the responses from the members, if you feel the task has been completed, you can stop and respond to the user.\n"
+                "- If you are not satisfied with the responses from the members, you should re-assign the task.\n"
+                "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
+                "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
             )
         system_message_content += "</how_to_respond>\n\n"
 
@@ -7372,29 +7280,14 @@ class Team:
     ) -> Optional[str]:
         team_member_interactions_str = None
         if self.share_member_interactions:
-            team_member_interactions_str = get_team_member_interactions_str(
-                team_run_context=team_run_context,  # type: ignore
-                max_interactions=self.max_interactions_to_share,
-            )
-            if context_images := get_team_run_context_images(
-                team_run_context=team_run_context,  # type: ignore
-                max_interactions=self.max_interactions_to_share,
-            ):
+            team_member_interactions_str = get_team_member_interactions_str(team_run_context=team_run_context)  # type: ignore
+            if context_images := get_team_run_context_images(team_run_context=team_run_context):  # type: ignore
                 images.extend(context_images)
-            if context_videos := get_team_run_context_videos(
-                team_run_context=team_run_context,  # type: ignore
-                max_interactions=self.max_interactions_to_share,
-            ):
+            if context_videos := get_team_run_context_videos(team_run_context=team_run_context):  # type: ignore
                 videos.extend(context_videos)
-            if context_audio := get_team_run_context_audio(
-                team_run_context=team_run_context,  # type: ignore
-                max_interactions=self.max_interactions_to_share,
-            ):
+            if context_audio := get_team_run_context_audio(team_run_context=team_run_context):  # type: ignore
                 audio.extend(context_audio)
-            if context_files := get_team_run_context_files(
-                team_run_context=team_run_context,  # type: ignore
-                max_interactions=self.max_interactions_to_share,
-            ):
+            if context_files := get_team_run_context_files(team_run_context=team_run_context):  # type: ignore
                 files.extend(context_files)
         return team_member_interactions_str
 
@@ -7525,7 +7418,7 @@ class Team:
             # Update the top-level team run_response tool call to have the run_id of the member run
             if run_response.tools is not None and member_agent_run_response is not None:
                 for tool in run_response.tools:
-                    if tool.tool_name and tool.tool_name.lower() == DELEGATE_TASK_TO_MEMBER:
+                    if tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member":
                         tool.child_run_id = member_agent_run_response.run_id  # type: ignore
 
             # Update the team run context
@@ -7758,37 +7651,26 @@ class Team:
                     ) or (run_response.run_id if run_response is not None else None)
                     yield member_agent_run_response_event  # type: ignore
             else:
-                try:
-                    member_coro = member_agent.arun(  # type: ignore
-                        input=member_agent_task if not history else history,
-                        user_id=user_id,
-                        # All members have the same session_id
-                        session_id=session.session_id,
-                        session_state=member_session_state_copy,  # Send a copy to the agent
-                        images=images,
-                        videos=videos,
-                        audio=audio,
-                        files=files,
-                        stream=False,
-                        debug_mode=debug_mode,
-                        dependencies=run_context.dependencies,
-                        add_dependencies_to_context=add_dependencies_to_context,
-                        add_session_state_to_context=add_session_state_to_context,
-                        metadata=run_context.metadata,
-                        knowledge_filters=run_context.knowledge_filters
-                        if not member_agent.knowledge_filters and member_agent.knowledge
-                        else None,
-                    )
-                    if self.member_timeout is not None:
-                        member_agent_run_response = await asyncio.wait_for(member_coro, timeout=self.member_timeout)  # type: ignore[arg-type]
-                    else:
-                        member_agent_run_response = await member_coro  # type: ignore[assignment]
-                except asyncio.TimeoutError:
-                    member_name = member_agent.name or member_id
-                    yield f"Member '{member_name}' timed out after {self.member_timeout} seconds. The task may be too complex or the member may be unresponsive."
-                    use_team_logger()
-                    return
-
+                member_agent_run_response = await member_agent.arun(  # type: ignore
+                    input=member_agent_task if not history else history,
+                    user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session.session_id,
+                    session_state=member_session_state_copy,  # Send a copy to the agent
+                    images=images,
+                    videos=videos,
+                    audio=audio,
+                    files=files,
+                    stream=False,
+                    debug_mode=debug_mode,
+                    dependencies=run_context.dependencies,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    metadata=run_context.metadata,
+                    knowledge_filters=run_context.knowledge_filters
+                    if not member_agent.knowledge_filters and member_agent.knowledge
+                    else None,
+                )
                 check_if_run_cancelled(member_agent_run_response)  # type: ignore
 
                 try:
@@ -8033,41 +7915,30 @@ class Team:
                     current_agent = member_agent
                     member_agent_task, history = _setup_delegate_task_to_member(member_agent=current_agent, task=task)
 
-                    async def run_member_agent(agent=current_agent, agent_index=member_agent_index) -> str:
+                    async def run_member_agent(agent=current_agent) -> str:
                         member_session_state_copy = copy(run_context.session_state)
-                        member_name = agent.name if agent.name else f"agent_{agent_index}"
 
-                        try:
-                            member_coro = agent.arun(
-                                input=member_agent_task if not history else history,
-                                user_id=user_id,
-                                # All members have the same session_id
-                                session_id=session.session_id,
-                                session_state=member_session_state_copy,  # Send a copy to the agent
-                                images=images,
-                                videos=videos,
-                                audio=audio,
-                                files=files,
-                                stream=False,
-                                stream_events=stream_events,
-                                debug_mode=debug_mode,
-                                knowledge_filters=run_context.knowledge_filters
-                                if not member_agent.knowledge_filters and member_agent.knowledge
-                                else None,
-                                dependencies=run_context.dependencies,
-                                add_dependencies_to_context=add_dependencies_to_context,
-                                add_session_state_to_context=add_session_state_to_context,
-                                metadata=run_context.metadata,
-                            )
-                            if self.member_timeout is not None:
-                                member_agent_run_response = await asyncio.wait_for(
-                                    member_coro, timeout=self.member_timeout
-                                )
-                            else:
-                                member_agent_run_response = await member_coro
-                        except asyncio.TimeoutError:
-                            return f"Agent {member_name}: Timed out after {self.member_timeout} seconds."
-
+                        member_agent_run_response = await agent.arun(
+                            input=member_agent_task if not history else history,
+                            user_id=user_id,
+                            # All members have the same session_id
+                            session_id=session.session_id,
+                            session_state=member_session_state_copy,  # Send a copy to the agent
+                            images=images,
+                            videos=videos,
+                            audio=audio,
+                            files=files,
+                            stream=False,
+                            stream_events=stream_events,
+                            debug_mode=debug_mode,
+                            knowledge_filters=run_context.knowledge_filters
+                            if not member_agent.knowledge_filters and member_agent.knowledge
+                            else None,
+                            dependencies=run_context.dependencies,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
+                            metadata=run_context.metadata,
+                        )
                         check_if_run_cancelled(member_agent_run_response)
 
                         _process_delegate_task_to_member(
@@ -8077,6 +7948,7 @@ class Team:
                             member_session_state_copy,  # type: ignore
                         )
 
+                        member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
                         try:
                             if member_agent_run_response.content is None and (
                                 member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
@@ -8116,14 +7988,14 @@ class Team:
             else:
                 delegate_function = delegate_task_to_members  # type: ignore
 
-            delegate_func = Function.from_callable(delegate_function, name=DELEGATE_TASK_TO_MEMBERS)
+            delegate_func = Function.from_callable(delegate_function, name="delegate_task_to_members")
         else:
             if async_mode:
                 delegate_function = adelegate_task_to_member  # type: ignore
             else:
                 delegate_function = delegate_task_to_member  # type: ignore
 
-            delegate_func = Function.from_callable(delegate_function, name=DELEGATE_TASK_TO_MEMBER)
+            delegate_func = Function.from_callable(delegate_function, name="delegate_task_to_member")
 
         if self.respond_directly:
             delegate_func.stop_after_tool_call = True

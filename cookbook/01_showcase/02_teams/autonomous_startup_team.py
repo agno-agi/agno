@@ -1,6 +1,6 @@
 """Example of a Team using the `coordinate` mode to play the role of a CEO of a Startup.
 
-1. Run: `uv pip install agno exa_py slack_sdk pgvector psycopg` to install the dependencies
+1. Run: `pip install agno exa_py slack_sdk pgvector psycopg` to install the dependencies
 2. Add the following environment variables:
 - `EXA_API_KEY`
 - `SLACK_TOKEN`
@@ -9,7 +9,7 @@
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.pdf_reader import PDFReader
-from agno.models.openai import OpenAIResponses
+from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.exa import ExaTools
 from agno.tools.slack import SlackTools
@@ -34,7 +34,7 @@ sales_channel = "sales"
 legal_compliance_agent = Agent(
     name="Legal Compliance Agent",
     role="Legal Compliance",
-    model=OpenAIResponses("gpt-5.2"),
+    model=OpenAIChat("gpt-4o"),
     tools=[ExaTools()],
     knowledge=knowledge,
     instructions=[
@@ -56,7 +56,7 @@ legal_compliance_agent = Agent(
 product_manager_agent = Agent(
     name="Product Manager Agent",
     role="Product Manager",
-    model=OpenAIResponses("gpt-5.2"),
+    model=OpenAIChat("gpt-4o"),
     knowledge=knowledge,
     instructions=[
         "You are the Product Manager of a startup, responsible for product strategy and execution.",
@@ -79,7 +79,7 @@ product_manager_agent = Agent(
 market_research_agent = Agent(
     name="Market Research Agent",
     role="Market Research",
-    model=OpenAIResponses("gpt-5.2"),
+    model=OpenAIChat("gpt-4o"),
     tools=[WebSearchTools(), ExaTools()],
     knowledge=knowledge,
     instructions=[
@@ -101,7 +101,7 @@ market_research_agent = Agent(
 sales_agent = Agent(
     name="Sales Agent",
     role="Sales",
-    model=OpenAIResponses("gpt-5.2"),
+    model=OpenAIChat("gpt-4o"),
     tools=[SlackTools()],
     knowledge=knowledge,
     instructions=[
@@ -129,7 +129,7 @@ sales_agent = Agent(
 financial_analyst_agent = Agent(
     name="Financial Analyst Agent",
     role="Financial Analyst",
-    model=OpenAIResponses("gpt-5.2"),
+    model=OpenAIChat("gpt-4o"),
     knowledge=knowledge,
     tools=[YFinanceTools()],
     instructions=[
@@ -152,7 +152,7 @@ financial_analyst_agent = Agent(
 customer_support_agent = Agent(
     name="Customer Support Agent",
     role="Customer Support",
-    model=OpenAIResponses("gpt-5.2"),
+    model=OpenAIChat("gpt-4o"),
     knowledge=knowledge,
     tools=[SlackTools()],
     instructions=[
@@ -167,7 +167,7 @@ customer_support_agent = Agent(
 
 autonomous_startup_team = Team(
     name="CEO Agent",
-    model=OpenAIResponses("gpt-5.2"),
+    model=OpenAIChat("gpt-4o"),
     instructions=[
         "You are the CEO of a startup, responsible for overall leadership and success.",
         " Always delegate task to product manager agent so it can search the knowledge base.",
@@ -217,8 +217,23 @@ autonomous_startup_team = Team(
     show_members_responses=True,
 )
 
-if __name__ == "__main__":
-    autonomous_startup_team.print_response(
-        input="I want to start a startup that sells AI agents to businesses. What is the best way to do this?",
-        stream=True,
-    )
+autonomous_startup_team.print_response(
+    input="I want to start a startup that sells AI agents to businesses. What is the best way to do this?",
+    stream=True,
+)
+
+
+autonomous_startup_team.print_response(
+    input="Give me good marketing campaign for buzzai?",
+    stream=True,
+)
+
+autonomous_startup_team.print_response(
+    input="What is my company and what are the monetization strategies?",
+    stream=True,
+)
+
+# autonomous_startup_team.print_response(
+#     input="Read the partnership details and give me details about the partnership with InnovateAI",
+#     stream=True,
+# )

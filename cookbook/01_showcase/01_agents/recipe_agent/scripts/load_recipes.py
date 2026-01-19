@@ -27,7 +27,7 @@ def load_recipes():
     print("Loading recipes into knowledge base...")
     print(f"Source: {recipe_url}")
 
-    recipe_knowledge.add_content(
+    recipe_knowledge.insert(
         name="Thai Recipes Collection",
         url=recipe_url,
     )

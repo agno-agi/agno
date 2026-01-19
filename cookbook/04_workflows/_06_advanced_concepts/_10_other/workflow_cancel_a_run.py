@@ -15,7 +15,7 @@ from agno.models.openai import OpenAIChat
 from agno.run.agent import RunEvent
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowRunEvent
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
@@ -43,14 +43,14 @@ def long_running_task(workflow: Workflow, run_id_container: dict):
             stream=True,
         ):
             if "run_id" not in run_id_container and chunk.run_id:
-                print(f"Workflow run started: {chunk.run_id}")
+                print(f"🚀 Workflow run started: {chunk.run_id}")
                 run_id_container["run_id"] = chunk.run_id
 
             if chunk.event in [RunEvent.run_content]:
                 print(chunk.content, end="", flush=True)
                 content_pieces.append(chunk.content)
             elif chunk.event == RunEvent.run_cancelled:
-                print(f"\n[CANCELLED] Workflow run was cancelled: {chunk.run_id}")
+                print(f"\n🚫 Workflow run was cancelled: {chunk.run_id}")
                 run_id_container["result"] = {
                     "status": "cancelled",
                     "run_id": chunk.run_id,
@@ -61,7 +61,7 @@ def long_running_task(workflow: Workflow, run_id_container: dict):
                 }
                 return
             elif chunk.event == WorkflowRunEvent.workflow_cancelled:
-                print(f"\n[CANCELLED] Workflow run was cancelled: {chunk.run_id}")
+                print(f"\n🚫 Workflow run was cancelled: {chunk.run_id}")
                 run_id_container["result"] = {
                     "status": "cancelled",
                     "run_id": chunk.run_id,
@@ -97,7 +97,7 @@ def long_running_task(workflow: Workflow, run_id_container: dict):
             }
 
     except Exception as e:
-        print(f"\n[ERROR] Exception in run: {str(e)}")
+        print(f"\n❌ Exception in run: {str(e)}")
         run_id_container["result"] = {
             "status": "error",
             "error": str(e),
@@ -118,21 +118,21 @@ def cancel_after_delay(
         run_id_container: Dictionary containing the run_id to cancel
         delay_seconds: How long to wait before cancelling
     """
-    print(f"Will cancel workflow run in {delay_seconds} seconds...")
+    print(f"⏰ Will cancel workflow run in {delay_seconds} seconds...")
     time.sleep(delay_seconds)
 
     run_id = run_id_container.get("run_id")
     if run_id:
-        print(f"Cancelling workflow run: {run_id}")
+        print(f"🚫 Cancelling workflow run: {run_id}")
         success = workflow.cancel_run(run_id)
         if success:
-            print(f"[OK] Workflow run {run_id} marked for cancellation")
+            print(f"✅ Workflow run {run_id} marked for cancellation")
         else:
             print(
-                f"[ERROR] Failed to cancel workflow run {run_id} (may not exist or already completed)"
+                f"❌ Failed to cancel workflow run {run_id} (may not exist or already completed)"
             )
     else:
-        print("[WARN] No run_id found to cancel")
+        print("⚠️  No run_id found to cancel")
 
 
 def main():
@@ -141,8 +141,8 @@ def main():
     # Create workflow agents
     researcher = Agent(
         name="Research Agent",
-        model=OpenAIChat(id="gpt-5.2"),
-        tools=[DuckDuckGoTools()],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[WebSearchTools()],
         instructions="Research the given topic and provide key facts and insights.",
     )
 
@@ -170,7 +170,7 @@ def main():
         debug_mode=True,
     )
 
-    print("Starting workflow run cancellation example...")
+    print("🚀 Starting workflow run cancellation example...")
     print("=" * 50)
 
     # Container to share run_id between threads
@@ -190,20 +190,20 @@ def main():
     )
 
     # Start both threads
-    print("Starting workflow run thread...")
+    print("🏃 Starting workflow run thread...")
     workflow_thread.start()
 
-    print("Starting cancellation thread...")
+    print("🏃 Starting cancellation thread...")
     cancel_thread.start()
 
     # Wait for both threads to complete
-    print("Waiting for threads to complete...")
+    print("⌛ Waiting for threads to complete...")
     workflow_thread.join()
     cancel_thread.join()
 
     # Print the results
     print("\n" + "=" * 50)
-    print("RESULTS:")
+    print("📊 RESULTS:")
     print("=" * 50)
 
     result = run_id_container.get("result")
@@ -218,15 +218,13 @@ def main():
             print(f"Content Preview: {result['content']}")
 
         if result["cancelled"]:
-            print("\n[OK] SUCCESS: Workflow run was successfully cancelled!")
+            print("\n✅ SUCCESS: Workflow run was successfully cancelled!")
         else:
-            print("\n[WARN] Workflow run completed before cancellation")
+            print("\n⚠️  WARNING: Workflow run completed before cancellation")
     else:
-        print(
-            "[ERROR] No result obtained - check if cancellation happened during streaming"
-        )
+        print("❌ No result obtained - check if cancellation happened during streaming")
 
-    print("\nWorkflow cancellation example completed!")
+    print("\n🏁 Workflow cancellation example completed!")
 
 
 if __name__ == "__main__":

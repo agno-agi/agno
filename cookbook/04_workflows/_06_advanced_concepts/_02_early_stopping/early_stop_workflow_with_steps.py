@@ -1,6 +1,6 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
 from agno.workflow.types import StepInput, StepOutput
@@ -9,26 +9,26 @@ from agno.workflow.workflow import Workflow
 # Create agents
 content_creator = Agent(
     name="Content Creator",
-    model=OpenAIChat(id="gpt-5.2"),
-    tools=[DuckDuckGoTools()],
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[WebSearchTools()],
     instructions="Create engaging content on the given topic. Research and write comprehensive articles.",
 )
 
 fact_checker = Agent(
     name="Fact Checker",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     instructions="Verify facts and check accuracy of content. Flag any misinformation.",
 )
 
 editor = Agent(
     name="Editor",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     instructions="Edit and polish content for publication. Ensure clarity and flow.",
 )
 
 publisher = Agent(
     name="Publisher",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     instructions="Prepare content for publication and handle final formatting.",
 )
 
