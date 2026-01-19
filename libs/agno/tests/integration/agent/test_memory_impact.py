@@ -104,7 +104,7 @@ def test_agent_memory_impact_with_gc_monitoring(shared_db):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
     )
 
     # Initialize memory monitor
@@ -211,7 +211,7 @@ def test_agent_memory_cleanup_after_session_switch(shared_db):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
     )
 
     monitor = MemoryMonitor()
