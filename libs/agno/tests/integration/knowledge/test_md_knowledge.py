@@ -131,7 +131,7 @@ def test_text_knowledge_base_with_metadata_path(setup_vector_db):
     assert (
         "entry" in response.content.lower()  # type: ignore
         or "junior" in response.content.lower()  # type: ignore
-        or "Jordan" in response.content.lower()  # type: ignore
+        or "jordan" in response.content.lower()  # type: ignore
     )
     assert "senior developer" not in response.content.lower()  # type: ignore
 

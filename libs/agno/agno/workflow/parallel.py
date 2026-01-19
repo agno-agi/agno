@@ -1,6 +1,7 @@
 import asyncio
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
@@ -101,7 +102,7 @@ class Parallel:
                 step_name=self.name or "Parallel",
                 step_id=str(uuid4()),
                 step_type=StepType.PARALLEL,
-                content=f"Parallel {self.name or 'execution'} completed with 1 result",
+                content=self._build_aggregated_content(step_outputs),
                 executor_name=self.name or "Parallel",
                 images=single_result.images,
                 videos=single_result.videos,
@@ -115,8 +116,8 @@ class Parallel:
 
         early_termination_requested = any(output.stop for output in step_outputs if hasattr(output, "stop"))
 
-        # Multiple results - aggregate them
-        aggregated_content = f"Parallel {self.name or 'execution'} completed with {len(step_outputs)} results"
+        # Multiple results - aggregate them with actual content from all steps
+        aggregated_content = self._build_aggregated_content(step_outputs)
 
         # Combine all media from parallel steps
         all_images = []
@@ -207,6 +208,7 @@ class Parallel:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute all steps in parallel and return aggregated result"""
         # Use workflow logger for parallel orchestration
@@ -244,6 +246,7 @@ class Parallel:
                     num_history_runs=num_history_runs,
                     run_context=run_context,
                     session_state=step_session_state,
+                    background_tasks=background_tasks,
                 )  # type: ignore[union-attr]
                 return idx, step_result, step_session_state
             except Exception as exc:
@@ -265,8 +268,9 @@ class Parallel:
 
         with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
             # Submit all tasks with their original indices
+            # Use copy_context().run to propagate context variables to child threads
             future_to_index = {
-                executor.submit(execute_step_with_index, indexed_step): indexed_step[0]
+                executor.submit(copy_context().run, execute_step_with_index, indexed_step): indexed_step[0]
                 for indexed_step in indexed_steps
             }
 
@@ -336,6 +340,7 @@ class Parallel:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -414,10 +419,12 @@ class Parallel:
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
                     session_state=step_session_state,
+                    run_context=run_context,
                     parent_step_id=parallel_step_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 ):
                     # Put event immediately in queue
                     event_queue.put(("event", idx, event))
@@ -445,7 +452,11 @@ class Parallel:
 
         with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
             # Submit all tasks
-            futures = [executor.submit(execute_step_stream_with_index, indexed_step) for indexed_step in indexed_steps]
+            # Use copy_context().run to propagate context variables to child threads
+            futures = [
+                executor.submit(copy_context().run, execute_step_stream_with_index, indexed_step)
+                for indexed_step in indexed_steps
+            ]
 
             # Process events from queue as they arrive
             completed_steps = 0
@@ -533,6 +544,7 @@ class Parallel:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute all steps in parallel using asyncio and return aggregated result"""
         # Use workflow logger for async parallel orchestration
@@ -569,6 +581,8 @@ class Parallel:
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
                     session_state=step_session_state,
+                    run_context=run_context,
+                    background_tasks=background_tasks,
                 )  # type: ignore[union-attr]
                 return idx, inner_step_result, step_session_state
             except Exception as exc:
@@ -662,6 +676,7 @@ class Parallel:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with async streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -745,6 +760,7 @@ class Parallel:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
                 ):  # type: ignore[union-attr]
                     # Yield events immediately to the queue
                     await event_queue.put(("event", idx, event))

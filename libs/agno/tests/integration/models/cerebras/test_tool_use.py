@@ -7,7 +7,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 
 def test_tool_use():
     agent = Agent(
-        model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
+        model=Cerebras(id="gpt-oss-120b"),
         tools=[DuckDuckGoTools(cache_results=True)],
         telemetry=False,
     )
@@ -23,7 +23,7 @@ def test_tool_use():
 
 def test_tool_use_stream():
     agent = Agent(
-        model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
+        model=Cerebras(id="gpt-oss-120b"),
         tools=[DuckDuckGoTools(cache_results=True)],
         telemetry=False,
     )
@@ -48,7 +48,7 @@ def test_tool_use_stream():
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
-        model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
+        model=Cerebras(id="gpt-oss-120b"),
         tools=[DuckDuckGoTools(cache_results=True)],
         telemetry=False,
     )
@@ -65,7 +65,7 @@ async def test_async_tool_use():
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
     agent = Agent(
-        model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
+        model=Cerebras(id="gpt-oss-120b"),
         tools=[DuckDuckGoTools(cache_results=True)],
         telemetry=False,
     )
@@ -90,7 +90,7 @@ async def test_async_tool_use_stream():
 
 def test_tool_use_with_content():
     agent = Agent(
-        model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
+        model=Cerebras(id="gpt-oss-120b"),
         tools=[DuckDuckGoTools(cache_results=True)],
         telemetry=False,
     )

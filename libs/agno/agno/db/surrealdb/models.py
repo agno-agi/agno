@@ -25,7 +25,9 @@ TableType = Literal[
     "memories",
     "metrics",
     "sessions",
+    "spans",
     "teams",
+    "traces",
     "users",
     "workflows",
 ]
@@ -337,6 +339,29 @@ def get_schema(table_type: TableType, table_name: str) -> str:
             {define_table}
             DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
+            """)
+    elif table_type == "traces":
+        return dedent(f"""
+            {define_table}
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE INDEX idx_trace_id ON {table_name} FIELDS trace_id UNIQUE;
+            DEFINE INDEX idx_run_id ON {table_name} FIELDS run_id;
+            DEFINE INDEX idx_session_id ON {table_name} FIELDS session_id;
+            DEFINE INDEX idx_user_id ON {table_name} FIELDS user_id;
+            DEFINE INDEX idx_agent_id ON {table_name} FIELDS agent_id;
+            DEFINE INDEX idx_team_id ON {table_name} FIELDS team_id;
+            DEFINE INDEX idx_workflow_id ON {table_name} FIELDS workflow_id;
+            DEFINE INDEX idx_status ON {table_name} FIELDS status;
+            DEFINE INDEX idx_start_time ON {table_name} FIELDS start_time;
+            """)
+    elif table_type == "spans":
+        return dedent(f"""
+            {define_table}
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE INDEX idx_span_id ON {table_name} FIELDS span_id UNIQUE;
+            DEFINE INDEX idx_trace_id ON {table_name} FIELDS trace_id;
+            DEFINE INDEX idx_parent_span_id ON {table_name} FIELDS parent_span_id;
+            DEFINE INDEX idx_start_time ON {table_name} FIELDS start_time;
             """)
     else:
         return define_table

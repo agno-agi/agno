@@ -7,7 +7,7 @@ from uuid import uuid4
 import httpx
 from pydantic import BaseModel
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.message import Message
@@ -102,7 +102,10 @@ class OpenAIChat(Model):
         if not self.api_key:
             self.api_key = getenv("OPENAI_API_KEY")
             if not self.api_key:
-                log_error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
+                raise ModelAuthenticationError(
+                    message="OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.",
+                    model_name=self.name,
+                )
 
         # Define base client params
         base_params = {
@@ -245,7 +248,7 @@ class OpenAIChat(Model):
         # Add tools
         if tools is not None and len(tools) > 0:
             # Remove unsupported fields for OpenAILike models
-            if self.provider in ["AIMLAPI", "Fireworks", "Nvidia"]:
+            if self.provider in ["AIMLAPI", "Fireworks", "Nvidia", "VLLM"]:
                 for tool in tools:
                     if tool.get("type") == "function":
                         if tool["function"].get("requires_confirmation") is not None:
@@ -302,19 +305,22 @@ class OpenAIChat(Model):
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
-    def _format_message(self, message: Message) -> Dict[str, Any]:
+    def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
         Format a message into the format expected by OpenAI.
 
         Args:
             message (Message): The message to format.
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             Dict[str, Any]: The formatted message.
         """
+        tool_result = message.get_content(use_compressed_content=compress_tool_results)
+
         message_dict: Dict[str, Any] = {
             "role": self.role_map[message.role] if self.role_map else self.default_role_map[message.role],
-            "content": message.content,
+            "content": tool_result,
             "name": message.name,
             "tool_call_id": message.tool_call_id,
             "tool_calls": message.tool_calls,
@@ -374,6 +380,7 @@ class OpenAIChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a chat completion request to the OpenAI API and parse the response.
@@ -384,6 +391,7 @@ class OpenAIChat(Model):
             response_format (Optional[Union[Dict, Type[BaseModel]]]): The response format to use.
             tools (Optional[List[Dict[str, Any]]]): The tools to use.
             tool_choice (Optional[Union[str, Dict[str, Any]]]): The tool choice to use.
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             ModelResponse: The chat completion response from the API.
@@ -396,7 +404,7 @@ class OpenAIChat(Model):
 
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
                 **self.get_request_params(
                     response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
                 ),
@@ -442,6 +450,9 @@ class OpenAIChat(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except ModelAuthenticationError as e:
+            log_error(f"Model authentication error from OpenAI API: {e}")
+            raise e
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -454,6 +465,7 @@ class OpenAIChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the OpenAI API.
@@ -464,6 +476,7 @@ class OpenAIChat(Model):
             response_format (Optional[Union[Dict, Type[BaseModel]]]): The response format to use.
             tools (Optional[List[Dict[str, Any]]]): The tools to use.
             tool_choice (Optional[Union[str, Dict[str, Any]]]): The tool choice to use.
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             ModelResponse: The chat completion response from the API.
@@ -475,7 +488,7 @@ class OpenAIChat(Model):
             assistant_message.metrics.start_timer()
             response = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
                 **self.get_request_params(
                     response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
                 ),
@@ -521,6 +534,9 @@ class OpenAIChat(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except ModelAuthenticationError as e:
+            log_error(f"Model authentication error from OpenAI API: {e}")
+            raise e
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -533,12 +549,14 @@ class OpenAIChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the OpenAI API.
 
         Args:
             messages (List[Message]): A list of messages to send to the model.
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             Iterator[ModelResponse]: An iterator of model responses.
@@ -552,7 +570,7 @@ class OpenAIChat(Model):
 
             for chunk in self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(
@@ -597,6 +615,9 @@ class OpenAIChat(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except ModelAuthenticationError as e:
+            log_error(f"Model authentication error from OpenAI API: {e}")
+            raise e
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -609,12 +630,14 @@ class OpenAIChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the OpenAI API.
 
         Args:
             messages (List[Message]): A list of messages to send to the model.
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             Any: An asynchronous iterator of model responses.
@@ -628,7 +651,7 @@ class OpenAIChat(Model):
 
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(
@@ -675,6 +698,9 @@ class OpenAIChat(Model):
                 model_name=self.name,
                 model_id=self.id,
             ) from e
+        except ModelAuthenticationError as e:
+            log_error(f"Model authentication error from OpenAI API: {e}")
+            raise e
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -742,7 +768,6 @@ class OpenAIChat(Model):
         # Add role
         if response_message.role is not None:
             model_response.role = response_message.role
-
         # Add content
         if response_message.content is not None:
             model_response.content = response_message.content
@@ -788,9 +813,21 @@ class OpenAIChat(Model):
 
         if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:  # type: ignore
             model_response.reasoning_content = response_message.reasoning_content  # type: ignore
+        elif hasattr(response_message, "reasoning") and response_message.reasoning is not None:  # type: ignore
+            model_response.reasoning_content = response_message.reasoning  # type: ignore
 
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
+
+        if model_response.provider_data is None:
+            model_response.provider_data = {}
+
+        if response.id:
+            model_response.provider_data["id"] = response.id
+        if response.system_fingerprint:
+            model_response.provider_data["system_fingerprint"] = response.system_fingerprint
+        if response.model_extra:
+            model_response.provider_data["model_extra"] = response.model_extra
 
         return model_response
 
@@ -808,11 +845,21 @@ class OpenAIChat(Model):
 
         if response_delta.choices and len(response_delta.choices) > 0:
             choice_delta: ChoiceDelta = response_delta.choices[0].delta
-
             if choice_delta:
                 # Add content
                 if choice_delta.content is not None:
                     model_response.content = choice_delta.content
+
+                    # We only want to handle these if content is present
+                    if model_response.provider_data is None:
+                        model_response.provider_data = {}
+
+                    if response_delta.id:
+                        model_response.provider_data["id"] = response_delta.id
+                    if response_delta.system_fingerprint:
+                        model_response.provider_data["system_fingerprint"] = response_delta.system_fingerprint
+                    if response_delta.model_extra:
+                        model_response.provider_data["model_extra"] = response_delta.model_extra
 
                 # Add tool calls
                 if choice_delta.tool_calls is not None:
@@ -820,6 +867,8 @@ class OpenAIChat(Model):
 
                 if hasattr(choice_delta, "reasoning_content") and choice_delta.reasoning_content is not None:
                     model_response.reasoning_content = choice_delta.reasoning_content
+                elif hasattr(choice_delta, "reasoning") and choice_delta.reasoning is not None:
+                    model_response.reasoning_content = choice_delta.reasoning
 
                 # Add audio if present
                 if hasattr(choice_delta, "audio") and choice_delta.audio is not None:
@@ -895,5 +944,7 @@ class OpenAIChat(Model):
         if completion_tokens_details := response_usage.completion_tokens_details:
             metrics.audio_output_tokens = completion_tokens_details.audio_tokens or 0
             metrics.reasoning_tokens = completion_tokens_details.reasoning_tokens or 0
+
+        metrics.cost = getattr(response_usage, "cost", None)
 
         return metrics

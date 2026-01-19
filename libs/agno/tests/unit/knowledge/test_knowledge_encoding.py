@@ -7,7 +7,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.base import VectorDb
 
 
-class FakeVectorDb(VectorDb):
+class MockVectorDb(VectorDb):
     """Minimal in-memory VectorDb stub to capture inserts for assertions."""
 
     def __init__(self) -> None:
@@ -122,7 +122,7 @@ UTF8_SAMPLES = [
 ]
 
 
-def _assert_insert_contains_text(fake_db: FakeVectorDb, expected: str) -> None:
+def _assert_insert_contains_text(fake_db: MockVectorDb, expected: str) -> None:
     docs = fake_db.get_all_inserted_documents()
     assert len(docs) >= 1
     contents = "\n".join([getattr(d, "content", "") for d in docs])
@@ -131,7 +131,7 @@ def _assert_insert_contains_text(fake_db: FakeVectorDb, expected: str) -> None:
 
 @pytest.mark.parametrize("text", UTF8_SAMPLES)
 def test_add_content_sync_handles_utf8_samples(text: str) -> None:
-    fake_db = FakeVectorDb()
+    fake_db = MockVectorDb()
     kb = Knowledge(vector_db=fake_db)
     kb.add_content(text_content=text)
     _assert_insert_contains_text(fake_db, text)
@@ -140,7 +140,7 @@ def test_add_content_sync_handles_utf8_samples(text: str) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("text", UTF8_SAMPLES)
 async def test_add_content_async_handles_utf8_samples(text: str) -> None:
-    fake_db = FakeVectorDb()
+    fake_db = MockVectorDb()
     kb = Knowledge(vector_db=fake_db)
     await kb.add_content_async(text_content=text)
     _assert_insert_contains_text(fake_db, text)
@@ -149,7 +149,7 @@ async def test_add_content_async_handles_utf8_samples(text: str) -> None:
 def test_add_content_sync_replaces_invalid_surrogates() -> None:
     # Lone surrogate characters are not valid in UTF-8; they should be replaced with U+FFFD
     bad_text = "bad\udffftext"
-    fake_db = FakeVectorDb()
+    fake_db = MockVectorDb()
     kb = Knowledge(vector_db=fake_db)
     kb.add_content(text_content=bad_text)
     docs = fake_db.get_all_inserted_documents()
@@ -161,7 +161,7 @@ def test_add_content_sync_replaces_invalid_surrogates() -> None:
 @pytest.mark.asyncio
 async def test_add_content_async_replaces_invalid_surrogates() -> None:
     bad_text = "\ud800orphan"
-    fake_db = FakeVectorDb()
+    fake_db = MockVectorDb()
     kb = Knowledge(vector_db=fake_db)
     await kb.add_content_async(text_content=bad_text)
     docs = fake_db.get_all_inserted_documents()

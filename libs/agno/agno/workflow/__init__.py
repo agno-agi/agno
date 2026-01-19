@@ -2,6 +2,7 @@ from agno.workflow.agent import WorkflowAgent
 from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
+from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
@@ -11,6 +12,7 @@ from agno.workflow.workflow import Workflow
 __all__ = [
     "Workflow",
     "WorkflowAgent",
+    "RemoteWorkflow",
     "Steps",
     "Step",
     "Loop",

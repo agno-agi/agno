@@ -1,33 +1,190 @@
-from typing import Any, Callable, Dict, List, Optional, Set, Union
+import json
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Optional, Set, Type, Union
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.routing import APIRoute, APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 from starlette.middleware.cors import CORSMiddleware
 
-from agno.agent.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
-from agno.team.team import Team
-from agno.tools import Toolkit
-from agno.tools.function import Function
-from agno.utils.log import logger
-from agno.workflow.workflow import Workflow
+from agno.remote.base import RemoteDb, RemoteKnowledge
+from agno.run.agent import RunOutputEvent
+from agno.run.team import TeamRunOutputEvent
+from agno.run.workflow import WorkflowRunOutputEvent
+from agno.team import RemoteTeam, Team
+from agno.tools import Function, Toolkit
+from agno.utils.log import log_warning, logger
+from agno.workflow import RemoteWorkflow, Workflow
+
+
+async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
+    """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
+
+    Args:
+        request: The FastAPI Request object
+        endpoint_func: The function exposing the endpoint that received the request
+
+    Supported form parameters:
+        - session_state: JSON string of session state dict
+        - dependencies: JSON string of dependencies dict
+        - metadata: JSON string of metadata dict
+        - knowledge_filters: JSON string of knowledge filters
+        - output_schema: JSON schema string (converted to Pydantic model by default)
+        - use_json_schema: If "true", keeps output_schema as dict instead of converting to Pydantic model
+
+    Returns:
+        A dictionary of kwargs to pass to Agent/Team run methods
+    """
+    import inspect
+
+    form_data = await request.form()
+    sig = inspect.signature(endpoint_func)
+    known_fields = set(sig.parameters.keys())
+    kwargs: Dict[str, Any] = {key: value for key, value in form_data.items() if key not in known_fields}
+
+    # Handle JSON parameters. They are passed as strings and need to be deserialized.
+    if session_state := kwargs.get("session_state"):
+        try:
+            if isinstance(session_state, str):
+                session_state_dict = json.loads(session_state)  # type: ignore
+                kwargs["session_state"] = session_state_dict
+        except json.JSONDecodeError:
+            kwargs.pop("session_state")
+            log_warning(f"Invalid session_state parameter couldn't be loaded: {session_state}")
+
+    if dependencies := kwargs.get("dependencies"):
+        try:
+            if isinstance(dependencies, str):
+                dependencies_dict = json.loads(dependencies)  # type: ignore
+                kwargs["dependencies"] = dependencies_dict
+        except json.JSONDecodeError:
+            kwargs.pop("dependencies")
+            log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}")
+
+    if metadata := kwargs.get("metadata"):
+        try:
+            if isinstance(metadata, str):
+                metadata_dict = json.loads(metadata)  # type: ignore
+                kwargs["metadata"] = metadata_dict
+        except json.JSONDecodeError:
+            kwargs.pop("metadata")
+            log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}")
+
+    if knowledge_filters := kwargs.get("knowledge_filters"):
+        try:
+            if isinstance(knowledge_filters, str):
+                knowledge_filters_dict = json.loads(knowledge_filters)  # type: ignore
+
+                # Try to deserialize FilterExpr objects
+                from agno.filters import from_dict
+
+                # Check if it's a single FilterExpr dict or a list of FilterExpr dicts
+                if isinstance(knowledge_filters_dict, dict) and "op" in knowledge_filters_dict:
+                    # Single FilterExpr - convert to list format
+                    kwargs["knowledge_filters"] = [from_dict(knowledge_filters_dict)]
+                elif isinstance(knowledge_filters_dict, list):
+                    # List of FilterExprs or mixed content
+                    deserialized = []
+                    for item in knowledge_filters_dict:
+                        if isinstance(item, dict) and "op" in item:
+                            deserialized.append(from_dict(item))
+                        else:
+                            # Keep non-FilterExpr items as-is
+                            deserialized.append(item)
+                    kwargs["knowledge_filters"] = deserialized
+                else:
+                    # Regular dict filter
+                    kwargs["knowledge_filters"] = knowledge_filters_dict
+        except json.JSONDecodeError:
+            kwargs.pop("knowledge_filters")
+            log_warning(f"Invalid knowledge_filters parameter couldn't be loaded: {knowledge_filters}")
+        except ValueError as e:
+            # Filter deserialization failed
+            kwargs.pop("knowledge_filters")
+            log_warning(f"Invalid FilterExpr in knowledge_filters: {e}")
+
+    # Handle output_schema - convert JSON schema to Pydantic model or keep as dict
+    # use_json_schema is a control flag consumed here (not passed to Agent/Team)
+    # When true, output_schema stays as dict for direct JSON output
+    use_json_schema = kwargs.pop("use_json_schema", False)
+    if isinstance(use_json_schema, str):
+        use_json_schema = use_json_schema.lower() == "true"
+
+    if output_schema := kwargs.get("output_schema"):
+        try:
+            if isinstance(output_schema, str):
+                schema_dict = json.loads(output_schema)
+
+                if use_json_schema:
+                    # Keep as dict schema for direct JSON output
+                    kwargs["output_schema"] = schema_dict
+                else:
+                    # Convert to Pydantic model (default behavior)
+                    dynamic_model = json_schema_to_pydantic_model(schema_dict)
+                    kwargs["output_schema"] = dynamic_model
+        except json.JSONDecodeError:
+            kwargs.pop("output_schema")
+            log_warning(f"Invalid output_schema JSON: {output_schema}")
+        except Exception as e:
+            kwargs.pop("output_schema")
+            log_warning(f"Failed to create output_schema model: {e}")
+
+    # Parse boolean and null values
+    for key, value in kwargs.items():
+        if isinstance(value, str) and value.lower() in ["true", "false"]:
+            kwargs[key] = value.lower() == "true"
+        elif isinstance(value, str) and value.lower() in ["null", "none"]:
+            kwargs[key] = None
+
+    return kwargs
+
+
+def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent]) -> str:
+    """Parse JSON data into SSE-compliant format.
+
+    Args:
+        event_dict: Dictionary containing the event data
+
+    Returns:
+        SSE-formatted response:
+
+        ```
+        event: EventName
+        data: { ... }
+
+        event: AnotherEventName
+        data: { ... }
+        ```
+    """
+    try:
+        # Parse the JSON to extract the event type
+        event_type = event.event or "message"
+
+        # Serialize to valid JSON with double quotes and no newlines
+        clean_json = event.to_json(separators=(",", ":"), indent=None)
+
+        return f"event: {event_type}\ndata: {clean_json}\n\n"
+    except json.JSONDecodeError:
+        clean_json = event.to_json(separators=(",", ":"), indent=None)
+        return f"event: message\ndata: {clean_json}\n\n"
 
 
 async def get_db(
-    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb]]], db_id: Optional[str] = None, table: Optional[str] = None
-) -> Union[BaseDb, AsyncBaseDb]:
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], db_id: Optional[str] = None, table: Optional[str] = None
+) -> Union[BaseDb, AsyncBaseDb, RemoteDb]:
     """Return the database with the given ID and/or table, or the first database if no ID/table is provided."""
 
     if table and not db_id:
         raise HTTPException(status_code=400, detail="The db_id query parameter is required when passing a table")
 
-    async def _has_table(db: Union[BaseDb, AsyncBaseDb], table_name: str) -> bool:
+    async def _has_table(db: Union[BaseDb, AsyncBaseDb, RemoteDb], table_name: str) -> bool:
         """Check if this database has the specified table (configured and actually exists)."""
         # First check if table name is configured
         is_configured = (
@@ -45,6 +202,10 @@ async def get_db(
 
         if not is_configured:
             return False
+
+        if isinstance(db, RemoteDb):
+            # We have to assume remote DBs are always configured and exist
+            return True
 
         # Then check if table actually exists in the database
         try:
@@ -84,7 +245,9 @@ async def get_db(
     return next(db for dbs in dbs.values() for db in dbs)
 
 
-def get_knowledge_instance_by_db_id(knowledge_instances: List[Knowledge], db_id: Optional[str] = None) -> Knowledge:
+def get_knowledge_instance_by_db_id(
+    knowledge_instances: List[Union[Knowledge, RemoteKnowledge]], db_id: Optional[str] = None
+) -> Union[Knowledge, RemoteKnowledge]:
     """Return the knowledge instance with the given ID, or the first knowledge instance if no ID is provided."""
     if not db_id and len(knowledge_instances) == 1:
         return next(iter(knowledge_instances))
@@ -143,56 +306,45 @@ def get_session_name(session: Dict[str, Any]) -> str:
     if session_data is not None and session_data.get("session_name") is not None:
         return session_data["session_name"]
 
-    # Otherwise use the original user message
-    else:
-        runs = session.get("runs", []) or []
+    runs = session.get("runs", []) or []
+    session_type = session.get("session_type")
 
-        # For teams, identify the first Team run and avoid using the first member's run
-        if session.get("session_type") == "team":
-            run = None
-            for r in runs:
-                # If agent_id is not present, it's a team run
-                if not r.get("agent_id"):
-                    run = r
-                    break
-
-            # Fallback to first run if no team run found
-            if run is None and runs:
-                run = runs[0]
-
-        elif session.get("session_type") == "workflow":
-            try:
-                workflow_run = runs[0]
-                workflow_input = workflow_run.get("input")
-                if isinstance(workflow_input, str):
-                    return workflow_input
-                elif isinstance(workflow_input, dict):
-                    try:
-                        import json
-
-                        return json.dumps(workflow_input)
-                    except (TypeError, ValueError):
-                        pass
-
-                workflow_name = session.get("workflow_data", {}).get("name")
-                return f"New {workflow_name} Session" if workflow_name else ""
-            except (KeyError, IndexError, TypeError):
-                return ""
-
-        # For agents, use the first run
-        else:
-            run = runs[0] if runs else None
-
-        if run is None:
+    # Handle workflows separately
+    if session_type == "workflow":
+        if not runs:
             return ""
+        workflow_run = runs[0]
+        workflow_input = workflow_run.get("input")
+        if isinstance(workflow_input, str):
+            return workflow_input
+        elif isinstance(workflow_input, dict):
+            try:
+                return json.dumps(workflow_input)
+            except (TypeError, ValueError):
+                pass
+        workflow_name = session.get("workflow_data", {}).get("name")
+        return f"New {workflow_name} Session" if workflow_name else ""
 
-        if not isinstance(run, dict):
-            run = run.to_dict()
+    # For team, filter to team runs (runs without agent_id); for agents, use all runs
+    if session_type == "team":
+        runs_to_check = [r for r in runs if not r.get("agent_id")]
+    else:
+        runs_to_check = runs
 
-        if run and run.get("messages"):
-            for message in run["messages"]:
-                if message["role"] == "user":
-                    return message["content"]
+    # Find the first user message across runs
+    for r in runs_to_check:
+        if r is None:
+            continue
+        run_dict = r if isinstance(r, dict) else r.to_dict()
+
+        for message in run_dict.get("messages") or []:
+            if message.get("role") == "user" and message.get("content"):
+                return message["content"]
+
+        run_input = r.get("input")
+        if run_input is not None:
+            return stringify_input_content(run_input)
+
     return ""
 
 
@@ -204,11 +356,12 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
         "files": [],
     }
 
-    input = run_dict.get("input", {})
-    input_media["images"].extend(input.get("images", []))
-    input_media["videos"].extend(input.get("videos", []))
-    input_media["audios"].extend(input.get("audios", []))
-    input_media["files"].extend(input.get("files", []))
+    input_data = run_dict.get("input", {})
+    if isinstance(input_data, dict):
+        input_media["images"].extend(input_data.get("images", []))
+        input_media["videos"].extend(input_data.get("videos", []))
+        input_media["audios"].extend(input_data.get("audios", []))
+        input_media["files"].extend(input_data.get("files", []))
 
     return input_media
 
@@ -260,156 +413,117 @@ def extract_format(file: UploadFile) -> Optional[str]:
     return None
 
 
-def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):
-    formatted_tools: List[Dict] = []
-    if agent_tools is not None:
-        for tool in agent_tools:
-            if isinstance(tool, dict):
-                formatted_tools.append(tool)
-            elif isinstance(tool, Toolkit):
-                for _, f in tool.functions.items():
-                    formatted_tools.append(f.to_dict())
-            elif isinstance(tool, Function):
-                formatted_tools.append(tool.to_dict())
-            elif callable(tool):
-                func = Function.from_callable(tool)
-                formatted_tools.append(func.to_dict())
-            else:
-                logger.warning(f"Unknown tool type: {type(tool)}")
-    return formatted_tools
+def get_agent_by_id(
+    agent_id: str,
+    agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    create_fresh: bool = False,
+) -> Optional[Union[Agent, RemoteAgent]]:
+    """Get an agent by ID, optionally creating a fresh instance for request isolation.
 
+    When create_fresh=True, creates a new agent instance using deep_copy() to prevent
+    state contamination between concurrent requests. The new instance shares heavy
+    resources (db, model, MCP tools) but has isolated mutable state.
 
-def format_team_tools(team_tools: List[Union[Function, dict]]):
-    formatted_tools: List[Dict] = []
-    if team_tools is not None:
-        for tool in team_tools:
-            if isinstance(tool, dict):
-                formatted_tools.append(tool)
-            elif isinstance(tool, Function):
-                formatted_tools.append(tool.to_dict())
-    return formatted_tools
+    Args:
+        agent_id: The agent ID to look up
+        agents: List of agents to search
+        create_fresh: If True, creates a new instance using deep_copy()
 
-
-def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Optional[Agent]:
+    Returns:
+        The agent instance (shared or fresh copy based on create_fresh)
+    """
     if agent_id is None or agents is None:
         return None
 
     for agent in agents:
         if agent.id == agent_id:
+            if create_fresh and isinstance(agent, Agent):
+                return agent.deep_copy()
             return agent
     return None
 
 
-def get_team_by_id(team_id: str, teams: Optional[List[Team]] = None) -> Optional[Team]:
+def get_team_by_id(
+    team_id: str,
+    teams: Optional[List[Union[Team, RemoteTeam]]] = None,
+    create_fresh: bool = False,
+) -> Optional[Union[Team, RemoteTeam]]:
+    """Get a team by ID, optionally creating a fresh instance for request isolation.
+
+    When create_fresh=True, creates a new team instance using deep_copy() to prevent
+    state contamination between concurrent requests. Member agents are also deep copied.
+
+    Args:
+        team_id: The team ID to look up
+        teams: List of teams to search
+        create_fresh: If True, creates a new instance using deep_copy()
+
+    Returns:
+        The team instance (shared or fresh copy based on create_fresh)
+    """
     if team_id is None or teams is None:
         return None
 
     for team in teams:
         if team.id == team_id:
+            if create_fresh and isinstance(team, Team):
+                return team.deep_copy()
             return team
     return None
 
 
-def get_workflow_by_id(workflow_id: str, workflows: Optional[List[Workflow]] = None) -> Optional[Workflow]:
+def get_workflow_by_id(
+    workflow_id: str,
+    workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
+    create_fresh: bool = False,
+) -> Optional[Union[Workflow, RemoteWorkflow]]:
+    """Get a workflow by ID, optionally creating a fresh instance for request isolation.
+
+    When create_fresh=True, creates a new workflow instance using deep_copy() to prevent
+    state contamination between concurrent requests. Steps containing agents/teams are also deep copied.
+
+    Args:
+        workflow_id: The workflow ID to look up
+        workflows: List of workflows to search
+        create_fresh: If True, creates a new instance using deep_copy()
+
+    Returns:
+        The workflow instance (shared or fresh copy based on create_fresh)
+    """
     if workflow_id is None or workflows is None:
         return None
 
     for workflow in workflows:
         if workflow.id == workflow_id:
+            if create_fresh and isinstance(workflow, Workflow):
+                return workflow.deep_copy()
             return workflow
     return None
 
 
-#  INPUT SCHEMA VALIDATIONS
+def resolve_origins(user_origins: Optional[List[str]] = None, default_origins: Optional[List[str]] = None) -> List[str]:
+    """
+    Get CORS origins - user-provided origins override defaults.
 
+    Args:
+        user_origins: Optional list of user-provided CORS origins
 
-def get_agent_input_schema_dict(agent: Agent) -> Optional[Dict[str, Any]]:
-    """Get input schema as dictionary for API responses"""
+    Returns:
+        List of allowed CORS origins (user-provided if set, otherwise defaults)
+    """
+    # User-provided origins override defaults
+    if user_origins:
+        return user_origins
 
-    if agent.input_schema is not None:
-        try:
-            return agent.input_schema.model_json_schema()
-        except Exception:
-            return None
-
-    return None
-
-
-def get_team_input_schema_dict(team: Team) -> Optional[Dict[str, Any]]:
-    """Get input schema as dictionary for API responses"""
-
-    if team.input_schema is not None:
-        try:
-            return team.input_schema.model_json_schema()
-        except Exception:
-            return None
-
-    return None
-
-
-def get_workflow_input_schema_dict(workflow: Workflow) -> Optional[Dict[str, Any]]:
-    """Get input schema as dictionary for API responses"""
-
-    # Priority 1: Explicit input_schema (Pydantic model)
-    if workflow.input_schema is not None:
-        try:
-            return workflow.input_schema.model_json_schema()
-        except Exception:
-            return None
-
-    # Priority 2: Auto-generate from custom kwargs
-    if workflow.steps and callable(workflow.steps):
-        custom_params = workflow.run_parameters
-        if custom_params and len(custom_params) > 1:  # More than just 'message'
-            return _generate_schema_from_params(custom_params)
-
-    # Priority 3: No schema (expects string message)
-    return None
-
-
-def _generate_schema_from_params(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert function parameters to JSON schema"""
-    properties: Dict[str, Any] = {}
-    required: List[str] = []
-
-    for param_name, param_info in params.items():
-        # Skip the default 'message' parameter for custom kwargs workflows
-        if param_name == "message":
-            continue
-
-        # Map Python types to JSON schema types
-        param_type = param_info.get("annotation", "str")
-        default_value = param_info.get("default")
-        is_required = param_info.get("required", False)
-
-        # Convert Python type annotations to JSON schema types
-        if param_type == "str":
-            properties[param_name] = {"type": "string"}
-        elif param_type == "bool":
-            properties[param_name] = {"type": "boolean"}
-        elif param_type == "int":
-            properties[param_name] = {"type": "integer"}
-        elif param_type == "float":
-            properties[param_name] = {"type": "number"}
-        elif "List" in str(param_type):
-            properties[param_name] = {"type": "array", "items": {"type": "string"}}
-        else:
-            properties[param_name] = {"type": "string"}  # fallback
-
-        # Add default value if present
-        if default_value is not None:
-            properties[param_name]["default"] = default_value
-
-        # Add to required if no default value
-        if is_required and default_value is None:
-            required.append(param_name)
-
-    schema = {"type": "object", "properties": properties}
-
-    if required:
-        schema["required"] = required
-
-    return schema
+    # Default Agno domains
+    return default_origins or [
+        "http://localhost:3000",
+        "https://agno.com",
+        "https://www.agno.com",
+        "https://app.agno.com",
+        "https://os-stg.agno.com",
+        "https://os.agno.com",
+    ]
 
 
 def update_cors_middleware(app: FastAPI, new_origins: list):
@@ -511,8 +625,10 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
     # Check the team tools
     if team.tools:
         for tool in team.tools:
-            type_name = type(tool).__name__
-            if type_name in ("MCPTools", "MultiMCPTools"):
+            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+            if hasattr(type(tool), "__mro__") and any(
+                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+            ):
                 if tool not in mcp_tools:
                     mcp_tools.append(tool)
 
@@ -522,8 +638,10 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
             if isinstance(member, Agent):
                 if member.tools:
                     for tool in member.tools:
-                        type_name = type(tool).__name__
-                        if type_name in ("MCPTools", "MultiMCPTools"):
+                        # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                        if hasattr(type(tool), "__mro__") and any(
+                            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                        ):
                             if tool not in mcp_tools:
                                 mcp_tools.append(tool)
 
@@ -567,8 +685,10 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         if step.agent:
             if step.agent.tools:
                 for tool in step.agent.tools:
-                    type_name = type(tool).__name__
-                    if type_name in ("MCPTools", "MultiMCPTools"):
+                    # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                    if hasattr(type(tool), "__mro__") and any(
+                        c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                    ):
                         if tool not in mcp_tools:
                             mcp_tools.append(tool)
         # Check step's team
@@ -590,8 +710,10 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         # Direct agent in workflow steps
         if step.tools:
             for tool in step.tools:
-                type_name = type(tool).__name__
-                if type_name in ("MCPTools", "MultiMCPTools"):
+                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(
+                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                ):
                     if tool not in mcp_tools:
                         mcp_tools.append(tool)
 
@@ -602,6 +724,208 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
     elif isinstance(step, Workflow):
         # Nested workflow
         collect_mcp_tools_from_workflow(step, mcp_tools)
+
+
+def _get_python_type_from_json_schema(field_schema: Dict[str, Any], field_name: str = "NestedModel") -> Type:
+    """Map JSON schema type to Python type with recursive handling.
+
+    Args:
+        field_schema: JSON schema dictionary for a single field
+        field_name: Name of the field (used for nested model naming)
+
+    Returns:
+        Python type corresponding to the JSON schema type
+    """
+    if not isinstance(field_schema, dict):
+        return Any
+
+    json_type = field_schema.get("type")
+
+    # Handle basic types
+    if json_type == "string":
+        return str
+    elif json_type == "integer":
+        return int
+    elif json_type == "number":
+        return float
+    elif json_type == "boolean":
+        return bool
+    elif json_type == "null":
+        return type(None)
+    elif json_type == "array":
+        # Handle arrays with item type specification
+        items_schema = field_schema.get("items")
+        if items_schema and isinstance(items_schema, dict):
+            item_type = _get_python_type_from_json_schema(items_schema, f"{field_name}Item")
+            return List[item_type]  # type: ignore
+        else:
+            # No item type specified - use generic list
+            return List[Any]
+    elif json_type == "object":
+        # Recursively create nested Pydantic model
+        nested_properties = field_schema.get("properties", {})
+        nested_required = field_schema.get("required", [])
+        nested_title = field_schema.get("title", field_name)
+
+        # Build field definitions for nested model
+        nested_fields = {}
+        for nested_field_name, nested_field_schema in nested_properties.items():
+            nested_field_type = _get_python_type_from_json_schema(nested_field_schema, nested_field_name)
+
+            if nested_field_name in nested_required:
+                nested_fields[nested_field_name] = (nested_field_type, ...)
+            else:
+                nested_fields[nested_field_name] = (Optional[nested_field_type], None)  # type: ignore[assignment]
+
+        # Create nested model if it has fields
+        if nested_fields:
+            return create_model(nested_title, **nested_fields)  # type: ignore
+        else:
+            # Empty object schema - use generic dict
+            return Dict[str, Any]
+    else:
+        # Unknown or unspecified type - fallback to Any
+        if json_type:
+            logger.warning(f"Unknown JSON schema type '{json_type}' for field '{field_name}', using Any")
+        return Any  # type: ignore
+
+
+def json_schema_to_pydantic_model(schema: Dict[str, Any]) -> Type[BaseModel]:
+    """Convert a JSON schema dictionary to a Pydantic BaseModel class.
+
+    This function dynamically creates a Pydantic model from a JSON schema specification,
+    handling nested objects, arrays, and optional fields.
+
+    Args:
+        schema: JSON schema dictionary with 'properties', 'required', 'type', etc.
+
+    Returns:
+        Dynamically created Pydantic BaseModel class
+    """
+    import copy
+
+    # Deep copy to avoid modifying the original schema
+    schema = copy.deepcopy(schema)
+
+    # Extract schema components
+    model_name = schema.get("title", "DynamicModel")
+    properties = schema.get("properties", {})
+    required_fields = schema.get("required", [])
+
+    # Validate schema has properties
+    if not properties:
+        logger.warning(f"JSON schema '{model_name}' has no properties, creating empty model")
+
+    # Build field definitions for create_model
+    field_definitions = {}
+    for field_name, field_schema in properties.items():
+        try:
+            field_type = _get_python_type_from_json_schema(field_schema, field_name)
+
+            if field_name in required_fields:
+                # Required field: (type, ...)
+                field_definitions[field_name] = (field_type, ...)
+            else:
+                # Optional field: (Optional[type], None)
+                field_definitions[field_name] = (Optional[field_type], None)  # type: ignore[assignment]
+        except Exception as e:
+            logger.warning(f"Failed to process field '{field_name}' in schema '{model_name}': {e}")
+            # Skip problematic fields rather than failing entirely
+            continue
+
+    # Create and return the dynamic model
+    try:
+        return create_model(model_name, **field_definitions)  # type: ignore
+    except Exception as e:
+        logger.error(f"Failed to create dynamic model '{model_name}': {e}")
+        # Return a minimal model as fallback
+        return create_model(model_name)
+
+
+def setup_tracing_for_os(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> None:
+    """Set up OpenTelemetry tracing for this agent/team/workflow."""
+    try:
+        from agno.tracing import setup_tracing
+
+        setup_tracing(db=db)
+    except ImportError:
+        logger.warning(
+            "tracing=True but OpenTelemetry packages not installed. "
+            "Install with: pip install opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to enable tracing: {e}")
+
+
+def format_duration_ms(duration_ms: Optional[int]) -> str:
+    """Format a duration in milliseconds to a human-readable string.
+
+    Args:
+        duration_ms: Duration in milliseconds
+
+    Returns:
+        Formatted string like "150ms" or "1.50s"
+    """
+    if duration_ms is None or duration_ms < 1000:
+        return f"{duration_ms or 0}ms"
+    return f"{duration_ms / 1000:.2f}s"
+
+
+def parse_datetime_to_utc(datetime_str: str, param_name: str = "datetime") -> "datetime":
+    """Parse an ISO 8601 datetime string and convert to UTC.
+
+    Args:
+        datetime_str: ISO 8601 formatted datetime string (e.g., '2025-11-19T10:00:00Z' or '2025-11-19T15:30:00+05:30')
+        param_name: Name of the parameter for error messages
+
+    Returns:
+        datetime object in UTC timezone
+
+    Raises:
+        HTTPException: If the datetime string is invalid
+    """
+    try:
+        dt = datetime.fromisoformat(datetime_str.replace("Z", "+00:00"))
+        # Convert to UTC if timezone-aware, otherwise assume UTC
+        if dt.tzinfo is not None:
+            return dt.astimezone(timezone.utc)
+        else:
+            return dt.replace(tzinfo=timezone.utc)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {param_name} format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z' or '2025-11-19T10:00:00+05:30'): {e}",
+        )
+
+
+def format_team_tools(team_tools: List[Union[Function, dict]]):
+    formatted_tools: List[Dict] = []
+    if team_tools is not None:
+        for tool in team_tools:
+            if isinstance(tool, dict):
+                formatted_tools.append(tool)
+            elif isinstance(tool, Function):
+                formatted_tools.append(tool.to_dict())
+    return formatted_tools
+
+
+def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):
+    formatted_tools: List[Dict] = []
+    if agent_tools is not None:
+        for tool in agent_tools:
+            if isinstance(tool, dict):
+                formatted_tools.append(tool)
+            elif isinstance(tool, Toolkit):
+                for _, f in tool.functions.items():
+                    formatted_tools.append(f.to_dict())
+            elif isinstance(tool, Function):
+                formatted_tools.append(tool.to_dict())
+            elif callable(tool):
+                func = Function.from_callable(tool)
+                formatted_tools.append(func.to_dict())
+            else:
+                logger.warning(f"Unknown tool type: {type(tool)}")
+    return formatted_tools
 
 
 def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any], BaseModel]) -> str:

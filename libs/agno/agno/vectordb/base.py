@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 from agno.knowledge.document import Document
+from agno.utils.log import log_warning
 from agno.utils.string import generate_id
 
 
@@ -114,9 +115,21 @@ class VectorDb(ABC):
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
         raise NotImplementedError
 
-    @abstractmethod
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
-        raise NotImplementedError
+        """
+        Update the metadata for documents with the given content_id.
+
+        Default implementation logs a warning. Subclasses should override this method
+        to provide their specific implementation.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        log_warning(
+            f"{self.__class__.__name__}.update_metadata() is not implemented. "
+            f"Metadata update for content_id '{content_id}' was skipped."
+        )
 
     @abstractmethod
     def delete_by_content_id(self, content_id: str) -> bool:

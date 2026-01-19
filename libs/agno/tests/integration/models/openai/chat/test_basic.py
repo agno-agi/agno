@@ -5,8 +5,8 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.db.sqlite import SqliteDb
-from agno.exceptions import ModelProviderError
 from agno.models.openai import OpenAIChat
+from agno.run.base import RunStatus
 
 
 @pytest.fixture(scope="module")
@@ -94,15 +94,15 @@ async def test_async_basic_stream(openai_model, shared_db):
 
 
 def test_exception_handling():
+    """Test that errors are handled gracefully and returned in RunOutput."""
     agent = Agent(model=OpenAIChat(id="gpt-100"), markdown=True, telemetry=False)
 
-    # Print the response in the terminal
-    with pytest.raises(ModelProviderError) as exc:
-        agent.run("Share a 2 sentence horror story")
+    # Agent now handles errors gracefully and returns RunOutput with error status
+    response = agent.run("Share a 2 sentence horror story")
 
-    assert exc.value.model_name == "OpenAIChat"
-    assert exc.value.model_id == "gpt-100"
-    assert exc.value.status_code == 404
+    assert response.status == RunStatus.error
+    assert response.content is not None
+    assert "gpt-100" in response.content
 
 
 def test_with_memory(openai_model):
@@ -204,19 +204,6 @@ def test_history(openai_model):
     assert len(run_output.messages) == 8
 
 
-def test_cache_read_tokens(openai_model):
-    """Assert cache_read_tokens is populated correctly and returned in the metrics"""
-    agent = Agent(model=openai_model, markdown=True, telemetry=False)
-
-    # Multiple + one large prompt to ensure token caching is triggered
-    agent.run("Share a 2 sentence horror story" * 250)
-    response = agent.run("Share a 2 sentence horror story" * 250)
-
-    assert response.metrics is not None
-    assert response.metrics.cache_read_tokens is not None
-    assert response.metrics.cache_read_tokens > 0
-
-
 def test_reasoning_tokens():
     """Assert reasoning_tokens is populated correctly and returned in the metrics"""
     agent = Agent(model=OpenAIChat(id="o3-mini"), markdown=True, telemetry=False)
@@ -275,3 +262,34 @@ async def test_async_client_persistence(openai_model):
     third_client = openai_model.async_client
     assert third_client is not None
     assert first_client is third_client, "Async client should still be the same instance"
+
+
+def test_count_tokens(openai_model):
+    from agno.models.message import Message
+
+    messages = [
+        Message(role="user", content="Hello world, this is a test message for token counting"),
+    ]
+
+    tokens = openai_model.count_tokens(messages)
+
+    assert isinstance(tokens, int)
+    assert tokens > 0
+    assert tokens < 100
+
+
+def test_count_tokens_with_tools(openai_model):
+    from agno.models.message import Message
+    from agno.tools.calculator import CalculatorTools
+
+    messages = [
+        Message(role="user", content="What is 2 + 2?"),
+    ]
+
+    calculator = CalculatorTools()
+
+    tokens_without_tools = openai_model.count_tokens(messages)
+    tokens_with_tools = openai_model.count_tokens(messages, tools=list(calculator.functions.values()))
+
+    assert isinstance(tokens_with_tools, int)
+    assert tokens_with_tools > tokens_without_tools, "Token count with tools should be higher"

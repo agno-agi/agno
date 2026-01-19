@@ -89,7 +89,7 @@ class Milvus(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -229,7 +229,9 @@ class Milvus(VectorDb):
         """
 
         cleaned_content = document.content.replace("\x00", "\ufffd")
-        doc_id = md5(cleaned_content.encode()).hexdigest()
+        # Include content_hash in ID to ensure uniqueness across different content hashes
+        base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+        doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
         # Convert dictionary fields to JSON strings
         meta_data_str = json.dumps(document.meta_data) if document.meta_data else "{}"
@@ -316,36 +318,6 @@ class Milvus(VectorDb):
                     id_type="string",
                     max_length=65_535,
                 )
-
-    def doc_exists(self, document: Document) -> bool:
-        """
-        Validating if the document exists or not
-
-        Args:
-            document (Document): Document to validate
-        """
-        if self.client:
-            cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
-            collection_points = self.client.get(
-                collection_name=self.collection,
-                ids=[doc_id],
-            )
-            return len(collection_points) > 0
-        return False
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """
-        Check if document exists asynchronously.
-        AsyncMilvusClient supports get().
-        """
-        cleaned_content = document.content.replace("\x00", "\ufffd")
-        doc_id = md5(cleaned_content.encode()).hexdigest()
-        collection_points = await self.async_client.get(
-            collection_name=self.collection,
-            ids=[doc_id],
-        )
-        return len(collection_points) > 0
 
     def name_exists(self, name: str) -> bool:
         """
@@ -528,7 +500,9 @@ class Milvus(VectorDb):
                     log_debug(f"Skipping document without embedding: {document.name} ({document.meta_data})")
                     return None
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                doc_id = md5(cleaned_content.encode()).hexdigest()
+                # Include content_hash in ID to ensure uniqueness across different content hashes
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
                 meta_data = document.meta_data or {}
                 if filters:
@@ -677,7 +651,11 @@ class Milvus(VectorDb):
         return MILVUS_DISTANCE_MAP.get(self.distance, "COSINE")
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        search_params: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
         """
         Search for documents matching the query.
@@ -686,6 +664,10 @@ class Milvus(VectorDb):
             query (str): Query string to search for
             limit (int): Maximum number of results to return
             filters (Optional[Dict[str, Any]]): Filters to apply to the search
+            search_params (Optional[Dict[str, Any]]): Milvus search parameters including:
+                - radius (float): Minimum similarity threshold for range search
+                - range_filter (float): Maximum similarity threshold for range search
+                - params (dict): Index-specific search params (e.g., nprobe, ef)
 
         Returns:
             List[Document]: List of matching documents
@@ -707,6 +689,7 @@ class Milvus(VectorDb):
             filter=self._build_expr(filters),
             output_fields=["*"],
             limit=limit,
+            search_params=search_params,
         )
 
         # Build search results
@@ -734,8 +717,27 @@ class Milvus(VectorDb):
         return search_results
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        search_params: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
+        """
+        Asynchronously search for documents matching the query.
+
+        Args:
+            query (str): Query string to search for
+            limit (int): Maximum number of results to return
+            filters (Optional[Dict[str, Any]]): Filters to apply to the search
+            search_params (Optional[Dict[str, Any]]): Milvus search parameters including:
+                - radius (float): Minimum similarity threshold for range search
+                - range_filter (float): Maximum similarity threshold for range search
+                - params (dict): Index-specific search params (e.g., nprobe, ef)
+
+        Returns:
+            List[Document]: List of matching documents
+        """
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in Milvus. No filters will be applied.")
             filters = None
@@ -753,6 +755,7 @@ class Milvus(VectorDb):
             filter=self._build_expr(filters),
             output_fields=["*"],
             limit=limit,
+            search_params=search_params,
         )
 
         # Build search results
@@ -1099,7 +1102,7 @@ class Milvus(VectorDb):
             if isinstance(v, (list, tuple)):
                 # For array values, use json_contains_any
                 values_str = json.dumps(v)
-                expr = f'json_contains_any(meta_data, {values_str}, "{k}")'
+                expr = f'json_contains_any(meta_data["{k}"], {values_str})'
             elif isinstance(v, str):
                 # For string values
                 expr = f'meta_data["{k}"] == "{v}"'

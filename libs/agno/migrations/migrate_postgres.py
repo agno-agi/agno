@@ -20,7 +20,11 @@ async_db = AsyncPostgresDb(
 # Upgrade your DB to the latest version
 async def run_migration():
     await MigrationManager(async_db).up()
-    # await MigrationManager(async_db).down(target_version="2.0.0")
+    # Optionally force the migration if necessary
+    # await MigrationManager(db).up(force=True)
+
+    # Downgrade your DB to a specific version
+    # await MigrationManager(db).down(target_version="2.0.0")
 
 
 if __name__ == "__main__":

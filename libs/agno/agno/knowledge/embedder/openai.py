@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from typing_extensions import Literal
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import logger
+from agno.utils.log import log_info, log_warning
 
 try:
     from openai import AsyncOpenAI
@@ -82,7 +82,7 @@ class OpenAIEmbedder(Embedder):
             response: CreateEmbeddingResponse = self.response(text=text)
             return response.data[0].embedding
         except Exception as e:
-            logger.warning(e)
+            log_warning(e)
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -95,7 +95,7 @@ class OpenAIEmbedder(Embedder):
                 return embedding, usage.model_dump()
             return embedding, None
         except Exception as e:
-            logger.warning(e)
+            log_warning(e)
             return [], None
 
     async def async_get_embedding(self, text: str) -> List[float]:
@@ -115,7 +115,7 @@ class OpenAIEmbedder(Embedder):
             response: CreateEmbeddingResponse = await self.aclient.embeddings.create(**req)
             return response.data[0].embedding
         except Exception as e:
-            logger.warning(e)
+            log_warning(e)
             return []
 
     async def async_get_embedding_and_usage(self, text: str):
@@ -137,7 +137,7 @@ class OpenAIEmbedder(Embedder):
             usage = response.usage
             return embedding, usage.model_dump() if usage else None
         except Exception as e:
-            logger.warning(e)
+            log_warning(f"Error getting embedding: {e}")
             return [], None
 
     async def async_get_embeddings_batch_and_usage(
@@ -154,7 +154,7 @@ class OpenAIEmbedder(Embedder):
         """
         all_embeddings = []
         all_usage = []
-        logger.info(f"Getting embeddings and usage for {len(texts)} texts in batches of {self.batch_size} (async)")
+        log_info(f"Getting embeddings and usage for {len(texts)} texts in batches of {self.batch_size} (async)")
 
         for i in range(0, len(texts), self.batch_size):
             batch_texts = texts[i : i + self.batch_size]
@@ -180,7 +180,7 @@ class OpenAIEmbedder(Embedder):
                 usage_dict = response.usage.model_dump() if response.usage else None
                 all_usage.extend([usage_dict] * len(batch_embeddings))
             except Exception as e:
-                logger.warning(f"Error in async batch embedding: {e}")
+                log_warning(f"Error in async batch embedding: {e}")
                 # Fallback to individual calls for this batch
                 for text in batch_texts:
                     try:
@@ -188,7 +188,7 @@ class OpenAIEmbedder(Embedder):
                         all_embeddings.append(embedding)
                         all_usage.append(usage)
                     except Exception as e2:
-                        logger.warning(f"Error in individual async embedding fallback: {e2}")
+                        log_warning(f"Error in individual async embedding fallback: {e2}")
                         all_embeddings.append([])
                         all_usage.append(None)
 

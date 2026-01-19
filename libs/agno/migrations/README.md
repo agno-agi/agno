@@ -38,6 +38,13 @@ from agno.db.migrations.manager import MigrationManager
 MigrationManager(db).up("v2.3.0")
 ```
 
+To force the migration if necessary (perhaps there is a version mismatch in your `agno_schema_versions` table), you can use the following code:
+```python
+from agno.db.migrations.manager import MigrationManager
+
+MigrationManager(db).up(force=True)
+```
+
 To downgrade your database to a specific version, you can use the following code:
 ```python
 from agno.db.migrations.manager import MigrationManager

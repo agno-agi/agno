@@ -34,7 +34,14 @@ class KnowledgeContentOrigin(Enum):
 
 @dataclass
 class Knowledge:
-    """Knowledge class"""
+    """Knowledge class
+
+    Args:
+        vector_db: Vector database for storing and searching embeddings (required)
+        contents_db: Optional contents database for metadata tracking and filter validation.
+                     When configured, enables validation of agentic filter keys.
+                     When not configured, filters are passed directly to vector_db.
+    """
 
     name: Optional[str] = None
     description: Optional[str] = None
@@ -198,8 +205,6 @@ class Knowledge:
         """
         Synchronously add multiple content items to the knowledge base.
 
-        This method wraps the asynchronous add_contents method
-
         Supports two usage patterns:
         1. Pass a list of content dictionaries as first argument
         2. Pass keyword arguments with paths, urls, metadata, etc.
@@ -214,11 +219,109 @@ class Knowledge:
             reader: Optional reader to use for processing content
             include: Optional list of file patterns to include
             exclude: Optional list of file patterns to exclude
-            upsert: Whether to update existing content if it already exists
-            skip_if_exists: Whether to skip adding content if it already exists
+            upsert: Whether to update existing content if it already exists (only used when skip_if_exists=False)
+            skip_if_exists: Whether to skip adding content if it already exists (default: True)
             remote_content: Optional remote content (S3, GCS, etc.) to add
         """
-        asyncio.run(self.add_contents_async(*args, **kwargs))
+        if args and isinstance(args[0], list):
+            arguments = args[0]
+            upsert = kwargs.get("upsert", True)
+            skip_if_exists = kwargs.get("skip_if_exists", False)
+            for argument in arguments:
+                self.add_content(
+                    name=argument.get("name"),
+                    description=argument.get("description"),
+                    path=argument.get("path"),
+                    url=argument.get("url"),
+                    metadata=argument.get("metadata"),
+                    topics=argument.get("topics"),
+                    text_content=argument.get("text_content"),
+                    reader=argument.get("reader"),
+                    include=argument.get("include"),
+                    exclude=argument.get("exclude"),
+                    upsert=argument.get("upsert", upsert),
+                    skip_if_exists=argument.get("skip_if_exists", skip_if_exists),
+                    remote_content=argument.get("remote_content", None),
+                )
+
+        elif kwargs:
+            name = kwargs.get("name", [])
+            metadata = kwargs.get("metadata", {})
+            description = kwargs.get("description", [])
+            topics = kwargs.get("topics", [])
+            reader = kwargs.get("reader", None)
+            paths = kwargs.get("paths", [])
+            urls = kwargs.get("urls", [])
+            text_contents = kwargs.get("text_contents", [])
+            include = kwargs.get("include")
+            exclude = kwargs.get("exclude")
+            upsert = kwargs.get("upsert", True)
+            skip_if_exists = kwargs.get("skip_if_exists", False)
+            remote_content = kwargs.get("remote_content", None)
+            for path in paths:
+                self.add_content(
+                    name=name,
+                    description=description,
+                    path=path,
+                    metadata=metadata,
+                    include=include,
+                    exclude=exclude,
+                    upsert=upsert,
+                    skip_if_exists=skip_if_exists,
+                    reader=reader,
+                )
+            for url in urls:
+                self.add_content(
+                    name=name,
+                    description=description,
+                    url=url,
+                    metadata=metadata,
+                    include=include,
+                    exclude=exclude,
+                    upsert=upsert,
+                    skip_if_exists=skip_if_exists,
+                    reader=reader,
+                )
+            for i, text_content in enumerate(text_contents):
+                content_name = f"{name}_{i}" if name else f"text_content_{i}"
+                log_debug(f"Adding text content: {content_name}")
+                self.add_content(
+                    name=content_name,
+                    description=description,
+                    text_content=text_content,
+                    metadata=metadata,
+                    include=include,
+                    exclude=exclude,
+                    upsert=upsert,
+                    skip_if_exists=skip_if_exists,
+                    reader=reader,
+                )
+            if topics:
+                self.add_content(
+                    name=name,
+                    description=description,
+                    topics=topics,
+                    metadata=metadata,
+                    include=include,
+                    exclude=exclude,
+                    upsert=upsert,
+                    skip_if_exists=skip_if_exists,
+                    reader=reader,
+                )
+
+            if remote_content:
+                self.add_content(
+                    name=name,
+                    metadata=metadata,
+                    description=description,
+                    remote_content=remote_content,
+                    upsert=upsert,
+                    skip_if_exists=skip_if_exists,
+                    reader=reader,
+                )
+
+        else:
+            raise ValueError("Invalid usage of add_contents.")
 
     # --- Add Content ---
 
@@ -255,7 +358,7 @@ class Knowledge:
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
-        skip_if_exists: bool = True,
+        skip_if_exists: bool = False,
         auth: Optional[ContentAuth] = None,
     ) -> None:
         # Validation: At least one of the parameters must be provided
@@ -264,10 +367,6 @@ class Knowledge:
                 "At least one of 'path', 'url', 'text_content', 'topics', or 'remote_content' must be provided."
             )
             return
-
-        if not skip_if_exists:
-            log_debug("skip_if_exists is disabled, disabling upsert")
-            upsert = False
 
         content = None
         file_data = None
@@ -289,7 +388,7 @@ class Knowledge:
         content.content_hash = self._build_content_hash(content)
         content.id = generate_id(content.content_hash)
 
-        await self._load_content(content, upsert, skip_if_exists, include, exclude)
+        await self._load_content_async(content, upsert, skip_if_exists, include, exclude)
 
     @overload
     def add_content(
@@ -342,27 +441,37 @@ class Knowledge:
             reader: Optional custom reader for processing the content
             include: Optional list of file patterns to include
             exclude: Optional list of file patterns to exclude
-            upsert: Whether to update existing content if it already exists
-            skip_if_exists: Whether to skip adding content if it already exists
+            upsert: Whether to update existing content if it already exists (only used when skip_if_exists=False)
+            skip_if_exists: Whether to skip adding content if it already exists (default: False)
         """
-        asyncio.run(
-            self.add_content_async(
-                name=name,
-                description=description,
-                path=path,
-                url=url,
-                text_content=text_content,
-                metadata=metadata,
-                topics=topics,
-                remote_content=remote_content,
-                reader=reader,
-                include=include,
-                exclude=exclude,
-                upsert=upsert,
-                skip_if_exists=skip_if_exists,
-                auth=auth,
+        # Validation: At least one of the parameters must be provided
+        if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
+            log_warning(
+                "At least one of 'path', 'url', 'text_content', 'topics', or 'remote_content' must be provided."
             )
+            return
+
+        content = None
+        file_data = None
+        if text_content:
+            file_data = FileData(content=text_content, type="Text")
+
+        content = Content(
+            name=name,
+            description=description,
+            path=path,
+            url=url,
+            file_data=file_data if file_data else None,
+            metadata=metadata,
+            topics=topics,
+            remote_content=remote_content,
+            reader=reader,
+            auth=auth,
         )
+        content.content_hash = self._build_content_hash(content)
+        content.id = generate_id(content.content_hash)
+
+        self._load_content(content, upsert, skip_if_exists, include, exclude)
 
     def _should_skip(self, content_hash: str, skip_if_exists: bool) -> bool:
         """
@@ -384,7 +493,178 @@ class Knowledge:
 
         return False
 
-    async def _load_from_path(
+    def _select_reader_by_extension(
+        self, file_extension: str, provided_reader: Optional[Reader] = None
+    ) -> Tuple[Optional[Reader], str]:
+        """
+        Select a reader based on file extension.
+
+        Args:
+            file_extension: File extension (e.g., '.pdf', '.csv')
+            provided_reader: Optional reader already provided
+
+        Returns:
+            Tuple of (reader, name) where name may be adjusted based on extension
+        """
+        if provided_reader:
+            return provided_reader, ""
+
+        file_extension = file_extension.lower()
+        if file_extension == ".csv":
+            return self.csv_reader, "data.csv"
+        elif file_extension == ".pdf":
+            return self.pdf_reader, ""
+        elif file_extension == ".docx":
+            return self.docx_reader, ""
+        elif file_extension == ".pptx":
+            return self.pptx_reader, ""
+        elif file_extension == ".json":
+            return self.json_reader, ""
+        elif file_extension == ".markdown":
+            return self.markdown_reader, ""
+        else:
+            return self.text_reader, ""
+
+    def _select_reader_by_uri(self, uri: str, provided_reader: Optional[Reader] = None) -> Optional[Reader]:
+        """
+        Select a reader based on URI/file path extension.
+
+        Args:
+            uri: URI or file path
+            provided_reader: Optional reader already provided
+
+        Returns:
+            Selected reader or None
+        """
+        if provided_reader:
+            return provided_reader
+
+        uri_lower = uri.lower()
+        if uri_lower.endswith(".pdf"):
+            return self.pdf_reader
+        elif uri_lower.endswith(".csv"):
+            return self.csv_reader
+        elif uri_lower.endswith(".docx"):
+            return self.docx_reader
+        elif uri_lower.endswith(".pptx"):
+            return self.pptx_reader
+        elif uri_lower.endswith(".json"):
+            return self.json_reader
+        elif uri_lower.endswith(".markdown"):
+            return self.markdown_reader
+        else:
+            return self.text_reader
+
+    def _read(
+        self,
+        reader: Reader,
+        source: Union[Path, str, BytesIO],
+        name: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> List[Document]:
+        """
+        Read content using a reader with optional password handling.
+
+        Args:
+            reader: Reader to use
+            source: Source to read from (Path, URL string, or BytesIO)
+            name: Optional name for the document
+            password: Optional password for protected files
+
+        Returns:
+            List of documents read
+        """
+        import inspect
+
+        read_signature = inspect.signature(reader.read)
+        if password and "password" in read_signature.parameters:
+            if isinstance(source, BytesIO):
+                return reader.read(source, name=name, password=password)
+            else:
+                return reader.read(source, name=name, password=password)
+        else:
+            if isinstance(source, BytesIO):
+                return reader.read(source, name=name)
+            else:
+                return reader.read(source, name=name)
+
+    async def _read_async(
+        self,
+        reader: Reader,
+        source: Union[Path, str, BytesIO],
+        name: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> List[Document]:
+        """
+        Read content using a reader's async_read method with optional password handling.
+
+        Args:
+            reader: Reader to use
+            source: Source to read from (Path, URL string, or BytesIO)
+            name: Optional name for the document
+            password: Optional password for protected files
+
+        Returns:
+            List of documents read
+        """
+        import inspect
+
+        read_signature = inspect.signature(reader.async_read)
+        if password and "password" in read_signature.parameters:
+            return await reader.async_read(source, name=name, password=password)
+        else:
+            if isinstance(source, BytesIO):
+                return await reader.async_read(source, name=name)
+            else:
+                return await reader.async_read(source, name=name)
+
+    def _prepare_documents_for_insert(
+        self,
+        documents: List[Document],
+        content_id: str,
+        calculate_sizes: bool = False,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[Document]:
+        """
+        Prepare documents for insertion by assigning content_id and optionally calculating sizes and updating metadata.
+
+        Args:
+            documents: List of documents to prepare
+            content_id: Content ID to assign to documents
+            calculate_sizes: Whether to calculate document sizes
+            metadata: Optional metadata to merge into document metadata
+
+        Returns:
+            List of prepared documents
+        """
+        for document in documents:
+            document.content_id = content_id
+            if calculate_sizes and document.content and not document.size:
+                document.size = len(document.content.encode("utf-8"))
+            if metadata:
+                document.meta_data.update(metadata)
+        return documents
+
+    def _chunk_documents_sync(self, reader: Reader, documents: List[Document]) -> List[Document]:
+        """
+        Chunk documents synchronously.
+
+        Args:
+            reader: Reader with chunking strategy
+            documents: Documents to chunk
+
+        Returns:
+            List of chunked documents
+        """
+        if not reader or reader.chunk:
+            return documents
+
+        chunked_documents = []
+        for doc in documents:
+            chunked_documents.extend(reader.chunk_document(doc))
+        return chunked_documents
+
+    async def _load_from_path_async(
         self,
         content: Content,
         upsert: bool,
@@ -403,7 +683,7 @@ class Knowledge:
             if self._should_include_file(str(path), include, exclude):
                 log_debug(f"Adding file {path} due to include/exclude filters")
 
-                await self._add_to_contents_db(content)
+                await self._add_to_contents_db_async(content)
                 if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
                     content.status = ContentStatus.COMPLETED
                     await self._aupdate_content(content)
@@ -411,7 +691,90 @@ class Knowledge:
 
                 # Handle LightRAG special case - read file and upload directly
                 if self.vector_db.__class__.__name__ == "LightRag":
-                    await self._process_lightrag_content(content, KnowledgeContentOrigin.PATH)
+                    await self._process_lightrag_content_async(content, KnowledgeContentOrigin.PATH)
+                    return
+
+                if content.reader:
+                    reader = content.reader
+                else:
+                    reader = ReaderFactory.get_reader_for_extension(path.suffix)
+                    log_debug(f"Using Reader: {reader.__class__.__name__}")
+
+                if reader:
+                    password = content.auth.password if content.auth and content.auth.password else None
+                    read_documents = await self._read_async(
+                        reader, path, name=content.name or path.name, password=password
+                    )
+                else:
+                    read_documents = []
+
+                if not content.file_type:
+                    content.file_type = path.suffix
+
+                if not content.size and content.file_data:
+                    content.size = len(content.file_data.content)  # type: ignore
+                if not content.size:
+                    try:
+                        content.size = path.stat().st_size
+                    except (OSError, IOError) as e:
+                        log_warning(f"Could not get file size for {path}: {e}")
+                        content.size = 0
+
+                if not content.id:
+                    content.id = generate_id(content.content_hash or "")
+                self._prepare_documents_for_insert(read_documents, content.id)
+
+                await self._handle_vector_db_insert_async(content, read_documents, upsert)
+
+        elif path.is_dir():
+            for file_path in path.iterdir():
+                # Apply include/exclude filtering
+                if not self._should_include_file(str(file_path), include, exclude):
+                    log_debug(f"Skipping file {file_path} due to include/exclude filters")
+                    continue
+
+                file_content = Content(
+                    name=content.name,
+                    path=str(file_path),
+                    metadata=content.metadata,
+                    description=content.description,
+                    reader=content.reader,
+                )
+                file_content.content_hash = self._build_content_hash(file_content)
+                file_content.id = generate_id(file_content.content_hash)
+
+                await self._load_from_path_async(file_content, upsert, skip_if_exists, include, exclude)
+        else:
+            log_warning(f"Invalid path: {path}")
+
+    def _load_from_path(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+        include: Optional[List[str]] = None,
+        exclude: Optional[List[str]] = None,
+    ):
+        from agno.vectordb import VectorDb
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+
+        log_info(f"Adding content from path, {content.id}, {content.name}, {content.path}, {content.description}")
+        path = Path(content.path)  # type: ignore
+
+        if path.is_file():
+            if self._should_include_file(str(path), include, exclude):
+                log_debug(f"Adding file {path} due to include/exclude filters")
+
+                self._add_to_contents_db(content)
+                if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
+                    content.status = ContentStatus.COMPLETED
+                    self._update_content(content)
+                    return
+
+                # Handle LightRAG special case - read file and upload directly
+                if self.vector_db.__class__.__name__ == "LightRag":
+                    self._process_lightrag_content(content, KnowledgeContentOrigin.PATH)
                     return
 
                 if content.reader:
@@ -453,10 +816,11 @@ class Knowledge:
                         log_warning(f"Could not get file size for {path}: {e}")
                         content.size = 0
 
-                for read_document in read_documents:
-                    read_document.content_id = content.id
+                if not content.id:
+                    content.id = generate_id(content.content_hash or "")
+                self._prepare_documents_for_insert(read_documents, content.id)
 
-                await self._handle_vector_db_insert(content, read_documents, upsert)
+                self._handle_vector_db_insert(content, read_documents, upsert)
 
         elif path.is_dir():
             for file_path in path.iterdir():
@@ -475,11 +839,11 @@ class Knowledge:
                 file_content.content_hash = self._build_content_hash(file_content)
                 file_content.id = generate_id(file_content.content_hash)
 
-                await self._load_from_path(file_content, upsert, skip_if_exists, include, exclude)
+                self._load_from_path(file_content, upsert, skip_if_exists, include, exclude)
         else:
             log_warning(f"Invalid path: {path}")
 
-    async def _load_from_url(
+    async def _load_from_url_async(
         self,
         content: Content,
         upsert: bool,
@@ -503,14 +867,14 @@ class Knowledge:
             raise ValueError("No url provided")
 
         # 1. Add content to contents database
-        await self._add_to_contents_db(content)
+        await self._add_to_contents_db_async(content)
         if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             await self._aupdate_content(content)
             return
 
         if self.vector_db.__class__.__name__ == "LightRag":
-            await self._process_lightrag_content(content, KnowledgeContentOrigin.URL)
+            await self._process_lightrag_content_async(content, KnowledgeContentOrigin.URL)
             return
 
         # 2. Validate URL
@@ -528,7 +892,6 @@ class Knowledge:
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             await self._aupdate_content(content)
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
-
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
@@ -540,47 +903,24 @@ class Knowledge:
             bytes_content = BytesIO(response.content)
 
         # 4. Select reader
-        # If a reader was provided by the user, use it
-        reader = content.reader
         name = content.name if content.name else content.url
-        # Else select based on file extension
-        if reader is None:
-            if file_extension == ".csv":
-                name = basename(parsed_url.path) or "data.csv"
-                reader = self.csv_reader
-            elif file_extension == ".pdf":
-                reader = self.pdf_reader
-            elif file_extension == ".docx":
-                reader = self.docx_reader
-            elif file_extension == ".pptx":
-                reader = self.pptx_reader
-            elif file_extension == ".json":
-                reader = self.json_reader
-            elif file_extension == ".markdown":
-                reader = self.markdown_reader
-            else:
-                reader = self.text_reader
-
+        if file_extension:
+            reader, default_name = self._select_reader_by_extension(file_extension, content.reader)
+            if default_name and file_extension == ".csv":
+                name = basename(parsed_url.path) or default_name
+        else:
+            reader = content.reader or self.website_reader
         # 5. Read content
         try:
             read_documents = []
             if reader is not None:
-                # TODO: We will refactor this to eventually pass authorization to all readers
-                import inspect
-
-                read_signature = inspect.signature(reader.read)
+                # Special handling for YouTubeReader
                 if reader.__class__.__name__ == "YouTubeReader":
-                    read_documents = reader.read(content.url, name=name)
-                elif "password" in read_signature.parameters and content.auth and content.auth.password:
-                    if bytes_content:
-                        read_documents = reader.read(bytes_content, name=name, password=content.auth.password)
-                    else:
-                        read_documents = reader.read(content.url, name=name, password=content.auth.password)
+                    read_documents = await reader.async_read(content.url, name=name)
                 else:
-                    if bytes_content:
-                        read_documents = reader.read(bytes_content, name=name)
-                    else:
-                        read_documents = reader.read(content.url, name=name)
+                    password = content.auth.password if content.auth and content.auth.password else None
+                    source = bytes_content if bytes_content else content.url
+                    read_documents = await self._read_async(reader, source, name=name, password=password)
 
         except Exception as e:
             log_error(f"Error reading URL: {content.url} - {str(e)}")
@@ -593,15 +933,111 @@ class Knowledge:
         if reader and not reader.chunk:
             read_documents = await reader.chunk_documents_async(read_documents)
         # 7. Prepare and insert the content in the vector database
-        file_size = 0
-        if read_documents:
-            for read_document in read_documents:
-                if read_document.size:
-                    file_size += read_document.size
-                read_document.content_id = content.id
-        await self._handle_vector_db_insert(content, read_documents, upsert)
+        if not content.id:
+            content.id = generate_id(content.content_hash or "")
+        self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
+        await self._handle_vector_db_insert_async(content, read_documents, upsert)
 
-    async def _load_from_content(
+    def _load_from_url(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+    ):
+        """Synchronous version of _load_from_url.
+
+        Load the content from a URL:
+        1. Set content hash
+        2. Validate the URL
+        3. Read the content
+        4. Prepare and insert the content in the vector database
+        """
+        from agno.utils.http import fetch_with_retry
+        from agno.vectordb import VectorDb
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+
+        log_info(f"Adding content from URL {content.url}")
+        content.file_type = "url"
+
+        if not content.url:
+            raise ValueError("No url provided")
+
+        # 1. Add content to contents database
+        self._add_to_contents_db(content)
+        if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
+            content.status = ContentStatus.COMPLETED
+            self._update_content(content)
+            return
+
+        if self.vector_db.__class__.__name__ == "LightRag":
+            self._process_lightrag_content(content, KnowledgeContentOrigin.URL)
+            return
+
+        # 2. Validate URL
+        try:
+            from urllib.parse import urlparse
+
+            parsed_url = urlparse(content.url)
+            if not all([parsed_url.scheme, parsed_url.netloc]):
+                content.status = ContentStatus.FAILED
+                content.status_message = f"Invalid URL format: {content.url}"
+                self._update_content(content)
+                log_warning(f"Invalid URL format: {content.url}")
+        except Exception as e:
+            content.status = ContentStatus.FAILED
+            content.status_message = f"Invalid URL: {content.url} - {str(e)}"
+            self._update_content(content)
+            log_warning(f"Invalid URL: {content.url} - {str(e)}")
+
+        # 3. Fetch and load content if file has an extension
+        url_path = Path(parsed_url.path)
+        file_extension = url_path.suffix.lower()
+
+        bytes_content = None
+        if file_extension:
+            response = fetch_with_retry(content.url)
+            bytes_content = BytesIO(response.content)
+
+        # 4. Select reader
+        name = content.name if content.name else content.url
+        if file_extension:
+            reader, default_name = self._select_reader_by_extension(file_extension, content.reader)
+            if default_name and file_extension == ".csv":
+                name = basename(parsed_url.path) or default_name
+        else:
+            reader = content.reader or self.website_reader
+
+        # 5. Read content
+        try:
+            read_documents = []
+            if reader is not None:
+                # Special handling for YouTubeReader
+                if reader.__class__.__name__ == "YouTubeReader":
+                    read_documents = reader.read(content.url, name=name)
+                else:
+                    password = content.auth.password if content.auth and content.auth.password else None
+                    source = bytes_content if bytes_content else content.url
+                    read_documents = self._read(reader, source, name=name, password=password)
+
+        except Exception as e:
+            log_error(f"Error reading URL: {content.url} - {str(e)}")
+            content.status = ContentStatus.FAILED
+            content.status_message = f"Error reading URL: {content.url} - {str(e)}"
+            self._update_content(content)
+            return
+
+        # 6. Chunk documents if needed (sync version)
+        if reader:
+            read_documents = self._chunk_documents_sync(reader, read_documents)
+
+        # 7. Prepare and insert the content in the vector database
+        if not content.id:
+            content.id = generate_id(content.content_hash or "")
+        self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
+        self._handle_vector_db_insert(content, read_documents, upsert)
+
+    async def _load_from_content_async(
         self,
         content: Content,
         upsert: bool = True,
@@ -632,14 +1068,14 @@ class Knowledge:
 
         log_info(f"Adding content from {content.name}")
 
-        await self._add_to_contents_db(content)
+        await self._add_to_contents_db_async(content)
         if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             await self._aupdate_content(content)
             return
 
         if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
-            await self._process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
+            await self._process_lightrag_content_async(content, KnowledgeContentOrigin.CONTENT)
             return
 
         read_documents = []
@@ -650,11 +1086,11 @@ class Knowledge:
 
             if content.reader:
                 log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
-                read_documents = content.reader.read(content_io, name=name)
+                read_documents = await content.reader.async_read(content_io, name=name)
             else:
                 text_reader = self.text_reader
                 if text_reader:
-                    read_documents = text_reader.read(content_io, name=name)
+                    read_documents = await text_reader.async_read(content_io, name=name)
                 else:
                     content.status = ContentStatus.FAILED
                     content.status_message = "Text reader not available"
@@ -678,11 +1114,10 @@ class Knowledge:
                 else:
                     reader = self._select_reader(content.file_data.type)
                 name = content.name if content.name else f"content_{content.file_data.type}"
-                read_documents = reader.read(content_io, name=name)
-                for read_document in read_documents:
-                    if content.metadata:
-                        read_document.meta_data.update(content.metadata)
-                    read_document.content_id = content.id
+                read_documents = await reader.async_read(content_io, name=name)
+                if not content.id:
+                    content.id = generate_id(content.content_hash or "")
+                self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
 
                 if len(read_documents) == 0:
                     content.status = ContentStatus.FAILED
@@ -696,9 +1131,106 @@ class Knowledge:
             await self._aupdate_content(content)
             return
 
-        await self._handle_vector_db_insert(content, read_documents, upsert)
+        await self._handle_vector_db_insert_async(content, read_documents, upsert)
 
-    async def _load_from_topics(
+    def _load_from_content(
+        self,
+        content: Content,
+        upsert: bool = True,
+        skip_if_exists: bool = False,
+    ):
+        """Synchronous version of _load_from_content."""
+        from agno.vectordb import VectorDb
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+
+        if content.name:
+            name = content.name
+        elif content.file_data and content.file_data.content:
+            if isinstance(content.file_data.content, bytes):
+                name = content.file_data.content[:10].decode("utf-8", errors="ignore")
+            elif isinstance(content.file_data.content, str):
+                name = (
+                    content.file_data.content[:10]
+                    if len(content.file_data.content) >= 10
+                    else content.file_data.content
+                )
+            else:
+                name = str(content.file_data.content)[:10]
+        else:
+            name = None
+
+        if name is not None:
+            content.name = name
+
+        log_info(f"Adding content from {content.name}")
+
+        self._add_to_contents_db(content)
+        if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
+            content.status = ContentStatus.COMPLETED
+            self._update_content(content)
+            return
+
+        if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
+            self._process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
+            return
+
+        read_documents = []
+
+        if isinstance(content.file_data, str):
+            content_bytes = content.file_data.encode("utf-8", errors="replace")
+            content_io = io.BytesIO(content_bytes)
+
+            if content.reader:
+                log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
+                read_documents = content.reader.read(content_io, name=name)
+            else:
+                text_reader = self.text_reader
+                if text_reader:
+                    read_documents = text_reader.read(content_io, name=name)
+                else:
+                    content.status = ContentStatus.FAILED
+                    content.status_message = "Text reader not available"
+                    self._update_content(content)
+                    return
+
+        elif isinstance(content.file_data, FileData):
+            if content.file_data.type:
+                if isinstance(content.file_data.content, bytes):
+                    content_io = io.BytesIO(content.file_data.content)
+                elif isinstance(content.file_data.content, str):
+                    content_bytes = content.file_data.content.encode("utf-8", errors="replace")
+                    content_io = io.BytesIO(content_bytes)
+                else:
+                    content_io = content.file_data.content  # type: ignore
+
+                # Respect an explicitly provided reader; otherwise select based on file type
+                if content.reader:
+                    log_debug(f"Using reader: {content.reader.__class__.__name__} to read content")
+                    reader = content.reader
+                else:
+                    reader = self._select_reader(content.file_data.type)
+                name = content.name if content.name else f"content_{content.file_data.type}"
+                read_documents = reader.read(content_io, name=name)
+                if not content.id:
+                    content.id = generate_id(content.content_hash or "")
+                self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
+
+                if len(read_documents) == 0:
+                    content.status = ContentStatus.FAILED
+                    content.status_message = "Content could not be read"
+                    self._update_content(content)
+                    return
+
+        else:
+            content.status = ContentStatus.FAILED
+            content.status_message = "No content provided"
+            self._update_content(content)
+            return
+
+        self._handle_vector_db_insert(content, read_documents, upsert)
+
+    async def _load_from_topics_async(
         self,
         content: Content,
         upsert: bool,
@@ -727,21 +1259,21 @@ class Knowledge:
             content.content_hash = self._build_content_hash(content)
             content.id = generate_id(content.content_hash)
 
-            await self._add_to_contents_db(content)
+            await self._add_to_contents_db_async(content)
             if self._should_skip(content.content_hash, skip_if_exists):
                 content.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content)
                 return
 
             if self.vector_db.__class__.__name__ == "LightRag":
-                await self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
+                await self._process_lightrag_content_async(content, KnowledgeContentOrigin.TOPIC)
                 return
 
             if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
                 log_info(f"Content {content.content_hash} already exists, skipping")
                 continue
 
-            await self._add_to_contents_db(content)
+            await self._add_to_contents_db_async(content)
             if content.reader is None:
                 log_error(f"No reader available for topic: {topic}")
                 content.status = ContentStatus.FAILED
@@ -749,20 +1281,79 @@ class Knowledge:
                 await self._aupdate_content(content)
                 continue
 
-            read_documents = content.reader.read(topic)
+            read_documents = await content.reader.async_read(topic)
             if len(read_documents) > 0:
-                for read_document in read_documents:
-                    read_document.content_id = content.id
-                    if read_document.content:
-                        read_document.size = len(read_document.content.encode("utf-8"))
+                self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
             else:
                 content.status = ContentStatus.FAILED
                 content.status_message = "No content found for topic"
                 await self._aupdate_content(content)
 
-            await self._handle_vector_db_insert(content, read_documents, upsert)
+            await self._handle_vector_db_insert_async(content, read_documents, upsert)
 
-    async def _load_from_remote_content(
+    def _load_from_topics(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+    ):
+        """Synchronous version of _load_from_topics."""
+        from agno.vectordb import VectorDb
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+        log_info(f"Adding content from topics: {content.topics}")
+
+        if content.topics is None:
+            log_warning("No topics provided for content")
+            return
+
+        for topic in content.topics:
+            content = Content(
+                name=topic,
+                metadata=content.metadata,
+                reader=content.reader,
+                status=ContentStatus.PROCESSING if content.reader else ContentStatus.FAILED,
+                file_data=FileData(
+                    type="Topic",
+                ),
+                topics=[topic],
+            )
+            content.content_hash = self._build_content_hash(content)
+            content.id = generate_id(content.content_hash)
+
+            self._add_to_contents_db(content)
+            if self._should_skip(content.content_hash, skip_if_exists):
+                content.status = ContentStatus.COMPLETED
+                self._update_content(content)
+                return
+
+            if self.vector_db.__class__.__name__ == "LightRag":
+                self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
+                return
+
+            if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
+                log_info(f"Content {content.content_hash} already exists, skipping")
+                continue
+
+            self._add_to_contents_db(content)
+            if content.reader is None:
+                log_error(f"No reader available for topic: {topic}")
+                content.status = ContentStatus.FAILED
+                content.status_message = "No reader available for topic"
+                self._update_content(content)
+                continue
+
+            read_documents = content.reader.read(topic)
+            if len(read_documents) > 0:
+                self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
+            else:
+                content.status = ContentStatus.FAILED
+                content.status_message = "No content found for topic"
+                self._update_content(content)
+
+            self._handle_vector_db_insert(content, read_documents, upsert)
+
+    async def _load_from_remote_content_async(
         self,
         content: Content,
         upsert: bool,
@@ -775,15 +1366,15 @@ class Knowledge:
         remote_content = content.remote_content
 
         if isinstance(remote_content, S3Content):
-            await self._load_from_s3(content, upsert, skip_if_exists)
+            await self._load_from_s3_async(content, upsert, skip_if_exists)
 
         elif isinstance(remote_content, GCSContent):
-            await self._load_from_gcs(content, upsert, skip_if_exists)
+            await self._load_from_gcs_async(content, upsert, skip_if_exists)
 
         else:
             log_warning(f"Unsupported remote content type: {type(remote_content)}")
 
-    async def _load_from_s3(self, content: Content, upsert: bool, skip_if_exists: bool):
+    async def _load_from_s3_async(self, content: Content, upsert: bool, skip_if_exists: bool):
         """Load the contextual S3 content.
 
         1. Identify objects to read
@@ -827,29 +1418,14 @@ class Knowledge:
             # 3. Hash content and add it to the contents database
             content_entry.content_hash = self._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
-            await self._add_to_contents_db(content_entry)
+            await self._add_to_contents_db_async(content_entry)
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content_entry)
                 return
 
             # 4. Select reader
-            reader = content.reader
-            if reader is None:
-                if s3_object.uri.endswith(".pdf"):
-                    reader = self.pdf_reader
-                elif s3_object.uri.endswith(".csv"):
-                    reader = self.csv_reader
-                elif s3_object.uri.endswith(".docx"):
-                    reader = self.docx_reader
-                elif s3_object.uri.endswith(".pptx"):
-                    reader = self.pptx_reader
-                elif s3_object.uri.endswith(".json"):
-                    reader = self.json_reader
-                elif s3_object.uri.endswith(".markdown"):
-                    reader = self.markdown_reader
-                else:
-                    reader = self.text_reader
+            reader = self._select_reader_by_uri(s3_object.uri, content.reader)
             reader = cast(Reader, reader)
 
             # 5. Fetch and load the content
@@ -864,18 +1440,19 @@ class Knowledge:
                 s3_object.download(readable_content)  # type: ignore
 
             # 6. Read the content
-            read_documents = reader.read(readable_content, name=obj_name)
+            read_documents = await reader.async_read(readable_content, name=obj_name)
 
             # 7. Prepare and insert the content in the vector database
-            for read_document in read_documents:
-                read_document.content_id = content.id
-            await self._handle_vector_db_insert(content_entry, read_documents, upsert)
+            if not content.id:
+                content.id = generate_id(content.content_hash or "")
+            self._prepare_documents_for_insert(read_documents, content.id)
+            await self._handle_vector_db_insert_async(content_entry, read_documents, upsert)
 
             # 8. Remove temporary file if needed
             if temporary_file:
                 temporary_file.unlink()
 
-    async def _load_from_gcs(self, content: Content, upsert: bool, skip_if_exists: bool):
+    async def _load_from_gcs_async(self, content: Content, upsert: bool, skip_if_exists: bool):
         """Load the contextual GCS content.
 
         1. Identify objects to read
@@ -911,29 +1488,174 @@ class Knowledge:
             # 3. Hash content and add it to the contents database
             content_entry.content_hash = self._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
-            await self._add_to_contents_db(content_entry)
+            await self._add_to_contents_db_async(content_entry)
             if self._should_skip(content_entry.content_hash, skip_if_exists):
                 content_entry.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content_entry)
                 return
 
             # 4. Select reader
-            reader = content.reader
-            if reader is None:
-                if gcs_object.name.endswith(".pdf"):
-                    reader = self.pdf_reader
-                elif gcs_object.name.endswith(".csv"):
-                    reader = self.csv_reader
-                elif gcs_object.name.endswith(".docx"):
-                    reader = self.docx_reader
-                elif gcs_object.name.endswith(".pptx"):
-                    reader = self.pptx_reader
-                elif gcs_object.name.endswith(".json"):
-                    reader = self.json_reader
-                elif gcs_object.name.endswith(".markdown"):
-                    reader = self.markdown_reader
-                else:
-                    reader = self.text_reader
+            reader = self._select_reader_by_uri(gcs_object.name, content.reader)
+            reader = cast(Reader, reader)
+
+            # 5. Fetch and load the content
+            readable_content = BytesIO(gcs_object.download_as_bytes())
+
+            # 6. Read the content
+            read_documents = await reader.async_read(readable_content, name=name)
+
+            # 7. Prepare and insert the content in the vector database
+            if not content.id:
+                content.id = generate_id(content.content_hash or "")
+            self._prepare_documents_for_insert(read_documents, content.id)
+            await self._handle_vector_db_insert_async(content_entry, read_documents, upsert)
+
+    def _load_from_remote_content(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+    ):
+        """Synchronous version of _load_from_remote_content."""
+        if content.remote_content is None:
+            log_warning("No remote content provided for content")
+            return
+
+        remote_content = content.remote_content
+
+        if isinstance(remote_content, S3Content):
+            self._load_from_s3(content, upsert, skip_if_exists)
+
+        elif isinstance(remote_content, GCSContent):
+            self._load_from_gcs(content, upsert, skip_if_exists)
+
+        else:
+            log_warning(f"Unsupported remote content type: {type(remote_content)}")
+
+    def _load_from_s3(self, content: Content, upsert: bool, skip_if_exists: bool):
+        """Synchronous version of _load_from_s3.
+
+        Load the contextual S3 content:
+        1. Identify objects to read
+        2. Setup Content object
+        3. Hash content and add it to the contents database
+        4. Select reader
+        5. Fetch and load the content
+        6. Read the content
+        7. Prepare and insert the content in the vector database
+        8. Remove temporary file if needed
+        """
+        from agno.cloud.aws.s3.object import S3Object
+
+        remote_content: S3Content = cast(S3Content, content.remote_content)
+
+        # 1. Identify objects to read
+        objects_to_read: List[S3Object] = []
+        if remote_content.bucket is not None:
+            if remote_content.key is not None:
+                _object = S3Object(bucket_name=remote_content.bucket.name, name=remote_content.key)
+                objects_to_read.append(_object)
+            elif remote_content.object is not None:
+                objects_to_read.append(remote_content.object)
+            elif remote_content.prefix is not None:
+                objects_to_read.extend(remote_content.bucket.get_objects(prefix=remote_content.prefix))
+            else:
+                objects_to_read.extend(remote_content.bucket.get_objects())
+
+        for s3_object in objects_to_read:
+            # 2. Setup Content object
+            content_name = content.name or ""
+            content_name += "_" + (s3_object.name or "")
+            content_entry = Content(
+                name=content_name,
+                description=content.description,
+                status=ContentStatus.PROCESSING,
+                metadata=content.metadata,
+                file_type="s3",
+            )
+
+            # 3. Hash content and add it to the contents database
+            content_entry.content_hash = self._build_content_hash(content_entry)
+            content_entry.id = generate_id(content_entry.content_hash)
+            self._add_to_contents_db(content_entry)
+            if self._should_skip(content_entry.content_hash, skip_if_exists):
+                content_entry.status = ContentStatus.COMPLETED
+                self._update_content(content_entry)
+                return
+
+            # 4. Select reader
+            reader = self._select_reader_by_uri(s3_object.uri, content.reader)
+            reader = cast(Reader, reader)
+
+            # 5. Fetch and load the content
+            temporary_file = None
+            obj_name = content_name or s3_object.name.split("/")[-1]
+            readable_content: Optional[Union[BytesIO, Path]] = None
+            if s3_object.uri.endswith(".pdf"):
+                readable_content = BytesIO(s3_object.get_resource().get()["Body"].read())
+            else:
+                temporary_file = Path("storage").joinpath(obj_name)
+                readable_content = temporary_file
+                s3_object.download(readable_content)  # type: ignore
+
+            # 6. Read the content
+            read_documents = reader.read(readable_content, name=obj_name)
+
+            # 7. Prepare and insert the content in the vector database
+            if not content.id:
+                content.id = generate_id(content.content_hash or "")
+            self._prepare_documents_for_insert(read_documents, content.id)
+            self._handle_vector_db_insert(content_entry, read_documents, upsert)
+
+            # 8. Remove temporary file if needed
+            if temporary_file:
+                temporary_file.unlink()
+
+    def _load_from_gcs(self, content: Content, upsert: bool, skip_if_exists: bool):
+        """Synchronous version of _load_from_gcs.
+
+        Load the contextual GCS content:
+        1. Identify objects to read
+        2. Setup Content object
+        3. Hash content and add it to the contents database
+        4. Select reader
+        5. Fetch and load the content
+        6. Read the content
+        7. Prepare and insert the content in the vector database
+        """
+        remote_content: GCSContent = cast(GCSContent, content.remote_content)
+
+        # 1. Identify objects to read
+        objects_to_read = []
+        if remote_content.blob_name is not None:
+            objects_to_read.append(remote_content.bucket.blob(remote_content.blob_name))  # type: ignore
+        elif remote_content.prefix is not None:
+            objects_to_read.extend(remote_content.bucket.list_blobs(prefix=remote_content.prefix))  # type: ignore
+        else:
+            objects_to_read.extend(remote_content.bucket.list_blobs())  # type: ignore
+
+        for gcs_object in objects_to_read:
+            # 2. Setup Content object
+            name = (content.name or "content") + "_" + gcs_object.name
+            content_entry = Content(
+                name=name,
+                description=content.description,
+                status=ContentStatus.PROCESSING,
+                metadata=content.metadata,
+                file_type="gcs",
+            )
+
+            # 3. Hash content and add it to the contents database
+            content_entry.content_hash = self._build_content_hash(content_entry)
+            content_entry.id = generate_id(content_entry.content_hash)
+            self._add_to_contents_db(content_entry)
+            if self._should_skip(content_entry.content_hash, skip_if_exists):
+                content_entry.status = ContentStatus.COMPLETED
+                self._update_content(content_entry)
+                return
+
+            # 4. Select reader
+            reader = self._select_reader_by_uri(gcs_object.name, content.reader)
             reader = cast(Reader, reader)
 
             # 5. Fetch and load the content
@@ -943,11 +1665,12 @@ class Knowledge:
             read_documents = reader.read(readable_content, name=name)
 
             # 7. Prepare and insert the content in the vector database
-            for read_document in read_documents:
-                read_document.content_id = content.id
-            await self._handle_vector_db_insert(content_entry, read_documents, upsert)
+            if not content.id:
+                content.id = generate_id(content.content_hash or "")
+            self._prepare_documents_for_insert(read_documents, content.id)
+            self._handle_vector_db_insert(content_entry, read_documents, upsert)
 
-    async def _handle_vector_db_insert(self, content: Content, read_documents, upsert):
+    async def _handle_vector_db_insert_async(self, content: Content, read_documents, upsert):
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
@@ -985,7 +1708,70 @@ class Knowledge:
         content.status = ContentStatus.COMPLETED
         await self._aupdate_content(content)
 
-    async def _load_content(
+    def _handle_vector_db_insert(self, content: Content, read_documents, upsert):
+        """Synchronously handle vector database insertion."""
+        from agno.vectordb import VectorDb
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+
+        if not self.vector_db:
+            log_error("No vector database configured")
+            content.status = ContentStatus.FAILED
+            content.status_message = "No vector database configured"
+            self._update_content(content)
+            return
+
+        if self.vector_db.upsert_available() and upsert:
+            try:
+                self.vector_db.upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
+            except Exception as e:
+                log_error(f"Error upserting document: {e}")
+                content.status = ContentStatus.FAILED
+                content.status_message = "Could not upsert embedding"
+                self._update_content(content)
+                return
+        else:
+            try:
+                self.vector_db.insert(
+                    content.content_hash,  # type: ignore[arg-type]
+                    documents=read_documents,
+                    filters=content.metadata,  # type: ignore[arg-type]
+                )
+            except Exception as e:
+                log_error(f"Error inserting document: {e}")
+                content.status = ContentStatus.FAILED
+                content.status_message = "Could not insert embedding"
+                self._update_content(content)
+                return
+
+        content.status = ContentStatus.COMPLETED
+        self._update_content(content)
+
+    def _load_content(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+        include: Optional[List[str]] = None,
+        exclude: Optional[List[str]] = None,
+    ) -> None:
+        """Synchronously load content."""
+        if content.path:
+            self._load_from_path(content, upsert, skip_if_exists, include, exclude)
+
+        if content.url:
+            self._load_from_url(content, upsert, skip_if_exists)
+
+        if content.file_data:
+            self._load_from_content(content, upsert, skip_if_exists)
+
+        if content.topics:
+            self._load_from_topics(content, upsert, skip_if_exists)
+
+        if content.remote_content:
+            self._load_from_remote_content(content, upsert, skip_if_exists)
+
+    async def _load_content_async(
         self,
         content: Content,
         upsert: bool,
@@ -994,36 +1780,68 @@ class Knowledge:
         exclude: Optional[List[str]] = None,
     ) -> None:
         if content.path:
-            await self._load_from_path(content, upsert, skip_if_exists, include, exclude)
+            await self._load_from_path_async(content, upsert, skip_if_exists, include, exclude)
 
         if content.url:
-            await self._load_from_url(content, upsert, skip_if_exists)
+            await self._load_from_url_async(content, upsert, skip_if_exists)
 
         if content.file_data:
-            await self._load_from_content(content, upsert, skip_if_exists)
+            await self._load_from_content_async(content, upsert, skip_if_exists)
 
         if content.topics:
-            await self._load_from_topics(content, upsert, skip_if_exists)
+            await self._load_from_topics_async(content, upsert, skip_if_exists)
 
         if content.remote_content:
-            await self._load_from_remote_content(content, upsert, skip_if_exists)
+            await self._load_from_remote_content_async(content, upsert, skip_if_exists)
 
     def _build_content_hash(self, content: Content) -> str:
         """
         Build the content hash from the content.
+
+        For URLs and paths, includes the name and description in the hash if provided
+        to ensure unique content with the same URL/path but different names/descriptions
+        get different hashes.
+
+        Hash format:
+        - URL with name and description: hash("{name}:{description}:{url}")
+        - URL with name only: hash("{name}:{url}")
+        - URL with description only: hash("{description}:{url}")
+        - URL without name/description: hash("{url}") (backward compatible)
+        - Same logic applies to paths
         """
+        hash_parts = []
+        if content.name:
+            hash_parts.append(content.name)
+        if content.description:
+            hash_parts.append(content.description)
+
         if content.path:
-            return hashlib.sha256(str(content.path).encode()).hexdigest()
+            hash_parts.append(str(content.path))
         elif content.url:
-            hash = hashlib.sha256(content.url.encode()).hexdigest()
-            return hash
+            hash_parts.append(content.url)
         elif content.file_data and content.file_data.content:
-            name = content.name or "content"
-            return hashlib.sha256(name.encode()).hexdigest()
+            # For file_data, always add filename, type, size, or content for uniqueness
+            if content.file_data.filename:
+                hash_parts.append(content.file_data.filename)
+            elif content.file_data.type:
+                hash_parts.append(content.file_data.type)
+            elif content.file_data.size is not None:
+                hash_parts.append(str(content.file_data.size))
+            else:
+                # Fallback: use the content for uniqueness
+                # Include type information to distinguish str vs bytes
+                content_type = "str" if isinstance(content.file_data.content, str) else "bytes"
+                content_bytes = (
+                    content.file_data.content.encode()
+                    if isinstance(content.file_data.content, str)
+                    else content.file_data.content
+                )
+                content_hash = hashlib.sha256(content_bytes).hexdigest()[:16]  # Use first 16 chars
+                hash_parts.append(f"{content_type}:{content_hash}")
         elif content.topics and len(content.topics) > 0:
             topic = content.topics[0]
             reader = type(content.reader).__name__ if content.reader else "unknown"
-            return hashlib.sha256(f"{topic}-{reader}".encode()).hexdigest()
+            hash_parts.append(f"{topic}-{reader}")
         else:
             # Fallback for edge cases
             import random
@@ -1034,7 +1852,10 @@ class Knowledge:
                 or content.id
                 or ("unknown_content" + "".join(random.choices(string.ascii_lowercase + string.digits, k=6)))
             )
-            return hashlib.sha256(fallback.encode()).hexdigest()
+            hash_parts.append(fallback)
+
+        hash_input = ":".join(hash_parts)
+        return hashlib.sha256(hash_input.encode()).hexdigest()
 
     def _ensure_string_field(self, value: Any, field_name: str, default: str = "") -> str:
         """
@@ -1078,7 +1899,7 @@ class Knowledge:
         # Already a string, return as-is
         return value
 
-    async def _add_to_contents_db(self, content: Content):
+    async def _add_to_contents_db_async(self, content: Content):
         if self.contents_db:
             created_at = content.created_at if content.created_at else int(time.time())
             updated_at = content.updated_at if content.updated_at else int(time.time())
@@ -1120,6 +1941,52 @@ class Knowledge:
                 await self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
             else:
                 self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
+
+    def _add_to_contents_db(self, content: Content):
+        """Synchronously add content to contents database."""
+        if self.contents_db:
+            if isinstance(self.contents_db, AsyncBaseDb):
+                raise ValueError(
+                    "_add_to_contents_db() is not supported with an async DB. Please use add_content_async with AsyncDb."
+                )
+
+            created_at = content.created_at if content.created_at else int(time.time())
+            updated_at = content.updated_at if content.updated_at else int(time.time())
+
+            file_type = (
+                content.file_type
+                if content.file_type
+                else content.file_data.type
+                if content.file_data and content.file_data.type
+                else None
+            )
+            # Safely handle string fields with proper type checking
+            safe_name = self._ensure_string_field(content.name, "content.name", default="")
+            safe_description = self._ensure_string_field(content.description, "content.description", default="")
+            safe_linked_to = self._ensure_string_field(self.name, "knowledge.name", default="")
+            safe_status_message = self._ensure_string_field(
+                content.status_message, "content.status_message", default=""
+            )
+
+            content_row = KnowledgeRow(
+                id=content.id,
+                name=safe_name,
+                description=safe_description,
+                metadata=content.metadata,
+                type=file_type,
+                size=content.size
+                if content.size
+                else len(content.file_data.content)
+                if content.file_data and content.file_data.content
+                else None,
+                linked_to=safe_linked_to,
+                access_count=0,
+                status=content.status if content.status else ContentStatus.PROCESSING,
+                status_message=safe_status_message,
+                created_at=created_at,
+                updated_at=updated_at,
+            )
+            self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
     def _update_content(self, content: Content) -> Optional[Dict[str, Any]]:
         from agno.vectordb import VectorDb
@@ -1163,16 +2030,16 @@ class Knowledge:
             content_row.updated_at = int(time.time())
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
-            if self.vector_db and content.metadata:
-                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata)
+            if self.vector_db:
+                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
 
             return content_row.to_dict()
 
         else:
             if self.name:
-                log_warning(f"Contents DB not found for knowledge base: {self.name}")
+                log_debug(f"Contents DB not found for knowledge base: {self.name}")
             else:
-                log_warning("Contents DB not found for knowledge base")
+                log_debug("Contents DB not found for knowledge base")
             return None
 
     async def _aupdate_content(self, content: Content) -> Optional[Dict[str, Any]]:
@@ -1209,95 +2076,149 @@ class Knowledge:
             else:
                 self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
-            if self.vector_db and content.metadata:
-                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata)
+            if self.vector_db:
+                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata or {})
 
             return content_row.to_dict()
+        return None
 
-        else:
-            if self.name:
-                log_warning(f"Contents DB not found for knowledge base: {self.name}")
-            else:
-                log_warning("Contents DB not found for knowledge base")
+    def _prepare_lightrag_path_data(self, content: Content) -> Optional[Tuple[bytes, str, str]]:
+        """Prepare file data from a path for LightRAG upload.
+
+        Returns:
+            Tuple of (file_content, filename, file_type) or None if preparation fails.
+        """
+        if content.file_data is None:
+            log_warning("No file data provided")
+
+        if content.path is None:
+            log_error("No path provided for content")
             return None
 
-    async def _process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
+        path = Path(content.path)
+        log_info(f"Uploading file to LightRAG from path: {path}")
+
+        with open(path, "rb") as f:
+            file_content = f.read()
+
+        file_type = content.file_type or path.suffix
+        return (file_content, path.name, file_type)
+
+    def _prepare_lightrag_url_data(self, content: Content) -> Optional[Tuple[str, str]]:
+        """Prepare text data from a URL for LightRAG upload.
+
+        Returns:
+            Tuple of (file_source, text) or None if preparation fails.
+        """
+        log_info(f"Uploading file to LightRAG from URL: {content.url}")
+
+        reader = content.reader or self.website_reader
+        if reader is None:
+            log_error("No URL reader available")
+            return None
+
+        reader.chunk = False
+        read_documents = reader.read(content.url, name=content.name)
+        if not content.id:
+            content.id = generate_id(content.content_hash or "")
+        self._prepare_documents_for_insert(read_documents, content.id)
+
+        if not read_documents:
+            log_error("No documents read from URL")
+            return None
+
+        return (content.url or "", read_documents[0].content)
+
+    def _prepare_lightrag_topic_data(self, content: Content) -> Optional[Tuple[str, str]]:
+        """Prepare text data from topics for LightRAG upload.
+
+        Returns:
+            Tuple of (file_source, text) or None if preparation fails.
+        """
+        log_info(f"Uploading file to LightRAG: {content.name}")
+
+        if content.reader is None:
+            log_error("No reader available for topic content")
+            return None
+
+        if not content.topics:
+            log_error("No topics available for content")
+            return None
+
+        read_documents = content.reader.read(content.topics)
+        if not read_documents:
+            log_warning(f"No documents found for LightRAG upload: {content.name}")
+            return None
+
+        return (content.topics[0], read_documents[0].content)
+
+    def _prepare_lightrag_file_data(self, content: Content) -> Optional[Tuple[Union[str, bytes], str, Optional[str]]]:
+        """Prepare file data from file_data content for LightRAG upload.
+
+        Returns:
+            Tuple of (file_content, filename, content_type) or None if preparation fails.
+        """
+        filename = content.file_data.filename if content.file_data and content.file_data.filename else "uploaded_file"
+        log_info(f"Uploading file to LightRAG: {filename}")
+
+        if not (content.file_data and content.file_data.content):
+            log_warning(f"No file data available for LightRAG upload: {content.name}")
+            return None
+
+        return (content.file_data.content, filename, content.file_data.type)
+
+    async def _process_lightrag_content_async(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
 
-        await self._add_to_contents_db(content)
+        await self._add_to_contents_db_async(content)
+
         if content_type == KnowledgeContentOrigin.PATH:
-            if content.file_data is None:
-                log_warning("No file data provided")
-
-            if content.path is None:
-                log_error("No path provided for content")
-                return
-
-            path = Path(content.path)
-
-            log_info(f"Uploading file to LightRAG from path: {path}")
             try:
-                # Read the file content from path
-                with open(path, "rb") as f:
-                    file_content = f.read()
+                path_data = self._prepare_lightrag_path_data(content)
+                if path_data is None:
+                    content.status = ContentStatus.FAILED
+                    await self._aupdate_content(content)
+                    return
 
-                # Get file type from extension or content.file_type
-                file_type = content.file_type or path.suffix
+                file_content, filename, file_type = path_data
 
                 if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
                     result = await self.vector_db.insert_file_bytes(
                         file_content=file_content,
-                        filename=path.name,  # Use the original filename with extension
+                        filename=filename,
                         content_type=file_type,
-                        send_metadata=True,  # Enable metadata so server knows the file type
+                        send_metadata=True,
                     )
-
                 else:
                     log_error("Vector database does not support file insertion")
                     content.status = ContentStatus.FAILED
                     await self._aupdate_content(content)
                     return
+
                 content.external_id = result
                 content.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content)
-                return
 
             except Exception as e:
                 log_error(f"Error uploading file to LightRAG: {e}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 await self._aupdate_content(content)
-                return
 
         elif content_type == KnowledgeContentOrigin.URL:
-            log_info(f"Uploading file to LightRAG from URL: {content.url}")
             try:
-                reader = content.reader or self.website_reader
-                if reader is None:
-                    log_error("No URL reader available")
+                url_data = self._prepare_lightrag_url_data(content)
+                if url_data is None:
                     content.status = ContentStatus.FAILED
                     await self._aupdate_content(content)
                     return
 
-                reader.chunk = False
-                read_documents = reader.read(content.url, name=content.name)
-
-                for read_document in read_documents:
-                    read_document.content_id = content.id
-
-                if not read_documents:
-                    log_error("No documents read from URL")
-                    content.status = ContentStatus.FAILED
-                    await self._aupdate_content(content)
-                    return
+                file_source, text = url_data
 
                 if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    result = await self.vector_db.insert_text(
-                        file_source=content.url,
-                        text=read_documents[0].content,
-                    )
+                    result = await self.vector_db.insert_text(file_source=file_source, text=text)
                 else:
                     log_error("Vector database does not support text insertion")
                     content.status = ContentStatus.FAILED
@@ -1307,76 +2228,175 @@ class Knowledge:
                 content.external_id = result
                 content.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content)
-                return
 
             except Exception as e:
                 log_error(f"Error uploading file to LightRAG: {e}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 await self._aupdate_content(content)
-                return
 
         elif content_type == KnowledgeContentOrigin.CONTENT:
-            filename = (
-                content.file_data.filename if content.file_data and content.file_data.filename else "uploaded_file"
-            )
-            log_info(f"Uploading file to LightRAG: {filename}")
+            file_data = self._prepare_lightrag_file_data(content)
+            if file_data is None:
+                return
 
-            # Use the content from file_data
-            if content.file_data and content.file_data.content:
+            file_content_data, filename_data, content_type_str = file_data
+
+            if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
+                result = await self.vector_db.insert_file_bytes(
+                    file_content=file_content_data,
+                    filename=filename_data,
+                    content_type=content_type_str,
+                    send_metadata=True,
+                )
+            else:
+                log_error("Vector database does not support file insertion")
+                content.status = ContentStatus.FAILED
+                await self._aupdate_content(content)
+                return
+
+            content.external_id = result
+            content.status = ContentStatus.COMPLETED
+            await self._aupdate_content(content)
+
+        elif content_type == KnowledgeContentOrigin.TOPIC:
+            topic_data = self._prepare_lightrag_topic_data(content)
+            if topic_data is None:
+                content.status = ContentStatus.FAILED
+                await self._aupdate_content(content)
+                return
+
+            file_source, text = topic_data
+
+            if self.vector_db and hasattr(self.vector_db, "insert_text"):
+                result = await self.vector_db.insert_text(file_source=file_source, text=text)
+            else:
+                log_error("Vector database does not support text insertion")
+                content.status = ContentStatus.FAILED
+                await self._aupdate_content(content)
+                return
+
+            content.external_id = result
+            content.status = ContentStatus.COMPLETED
+            await self._aupdate_content(content)
+
+    def _process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
+        """Synchronously process LightRAG content. Uses asyncio.run() only for LightRAG-specific async methods."""
+        from agno.vectordb import VectorDb
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+
+        self._add_to_contents_db(content)
+
+        if content_type == KnowledgeContentOrigin.PATH:
+            try:
+                path_data = self._prepare_lightrag_path_data(content)
+                if path_data is None:
+                    content.status = ContentStatus.FAILED
+                    self._update_content(content)
+                    return
+
+                file_content, filename, file_type = path_data
+
                 if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
-                    result = await self.vector_db.insert_file_bytes(
-                        file_content=content.file_data.content,
-                        filename=filename,
-                        content_type=content.file_data.type,
-                        send_metadata=True,  # Enable metadata so server knows the file type
+                    result = asyncio.run(
+                        self.vector_db.insert_file_bytes(
+                            file_content=file_content,
+                            filename=filename,
+                            content_type=file_type,
+                            send_metadata=True,
+                        )
                     )
                 else:
                     log_error("Vector database does not support file insertion")
                     content.status = ContentStatus.FAILED
-                    await self._aupdate_content(content)
+                    self._update_content(content)
                     return
+
                 content.external_id = result
                 content.status = ContentStatus.COMPLETED
-                await self._aupdate_content(content)
-            else:
-                log_warning(f"No file data available for LightRAG upload: {content.name}")
-            return
+                self._update_content(content)
 
-        elif content_type == KnowledgeContentOrigin.TOPIC:
-            log_info(f"Uploading file to LightRAG: {content.name}")
-
-            if content.reader is None:
-                log_error("No reader available for topic content")
+            except Exception as e:
+                log_error(f"Error uploading file to LightRAG: {e}")
                 content.status = ContentStatus.FAILED
-                await self._aupdate_content(content)
-                return
+                content.status_message = f"Could not upload to LightRAG: {str(e)}"
+                self._update_content(content)
 
-            if not content.topics:
-                log_error("No topics available for content")
-                content.status = ContentStatus.FAILED
-                await self._aupdate_content(content)
-                return
+        elif content_type == KnowledgeContentOrigin.URL:
+            try:
+                url_data = self._prepare_lightrag_url_data(content)
+                if url_data is None:
+                    content.status = ContentStatus.FAILED
+                    self._update_content(content)
+                    return
 
-            read_documents = content.reader.read(content.topics)
-            if len(read_documents) > 0:
+                file_source, text = url_data
+
                 if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    result = await self.vector_db.insert_text(
-                        file_source=content.topics[0],
-                        text=read_documents[0].content,
-                    )
+                    result = asyncio.run(self.vector_db.insert_text(file_source=file_source, text=text))
                 else:
                     log_error("Vector database does not support text insertion")
                     content.status = ContentStatus.FAILED
-                    await self._aupdate_content(content)
+                    self._update_content(content)
                     return
+
                 content.external_id = result
                 content.status = ContentStatus.COMPLETED
-                await self._aupdate_content(content)
+                self._update_content(content)
+
+            except Exception as e:
+                log_error(f"Error uploading file to LightRAG: {e}")
+                content.status = ContentStatus.FAILED
+                content.status_message = f"Could not upload to LightRAG: {str(e)}"
+                self._update_content(content)
+
+        elif content_type == KnowledgeContentOrigin.CONTENT:
+            file_data = self._prepare_lightrag_file_data(content)
+            if file_data is None:
                 return
+
+            file_content_data, filename_data, content_type_str = file_data
+
+            if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
+                result = asyncio.run(
+                    self.vector_db.insert_file_bytes(
+                        file_content=file_content_data,
+                        filename=filename_data,
+                        content_type=content_type_str,
+                        send_metadata=True,
+                    )
+                )
             else:
-                log_warning(f"No documents found for LightRAG upload: {content.name}")
+                log_error("Vector database does not support file insertion")
+                content.status = ContentStatus.FAILED
+                self._update_content(content)
                 return
+
+            content.external_id = result
+            content.status = ContentStatus.COMPLETED
+            self._update_content(content)
+
+        elif content_type == KnowledgeContentOrigin.TOPIC:
+            topic_data = self._prepare_lightrag_topic_data(content)
+            if topic_data is None:
+                content.status = ContentStatus.FAILED
+                self._update_content(content)
+                return
+
+            file_source, text = topic_data
+
+            if self.vector_db and hasattr(self.vector_db, "insert_text"):
+                result = asyncio.run(self.vector_db.insert_text(file_source=file_source, text=text))
+            else:
+                log_error("Vector database does not support text insertion")
+                content.status = ContentStatus.FAILED
+                self._update_content(content)
+                return
+
+            content.external_id = result
+            content.status = ContentStatus.COMPLETED
+            self._update_content(content)
 
     def search(
         self,
@@ -1444,8 +2464,16 @@ class Knowledge:
             return []
 
     def get_valid_filters(self) -> Set[str]:
+        """Get set of valid filter keys from ContentsDB metadata.
+
+        Returns:
+            Set of metadata keys available for filtering. Empty set if ContentsDB not configured.
+
+        Note:
+            When ContentsDB is not configured, filtering still works - filters are passed
+            directly to the vector database without validation.
+        """
         if self.contents_db is None:
-            log_warning("No contents db provided. This is required for filtering.")
             return set()
         contents, _ = self.get_content()
         valid_filters: Set[str] = set()
@@ -1457,7 +2485,9 @@ class Knowledge:
 
     async def async_get_valid_filters(self) -> Set[str]:
         if self.contents_db is None:
-            log_warning("No contents db provided. This is required for filtering.")
+            log_info(
+                "ContentsDB not configured. For improved filter validation and reliability, consider adding a ContentsDB."
+            )
             return set()
         contents, _ = await self.aget_content()
         valid_filters: Set[str] = set()
@@ -1477,13 +2507,10 @@ class Knowledge:
         invalid_keys = []
 
         if isinstance(filters, dict):
-            # If no metadata filters tracked yet, all keys are considered invalid
+            # If no metadata filters tracked yet, pass all filters through without validation
             if valid_metadata_filters is None or not valid_metadata_filters:
-                invalid_keys = list(filters.keys())
-                log_warning(
-                    f"No valid metadata filters tracked yet. All filter keys considered invalid: {invalid_keys}"
-                )
-                return {}, invalid_keys
+                log_debug("No metadata filter validation available. Passing filters to vector DB without validation.")
+                return filters, []
 
             for key, value in filters.items():
                 # Handle both normal keys and prefixed keys like meta_data.key
@@ -1513,10 +2540,26 @@ class Knowledge:
     def validate_filters(
         self, filters: Union[Dict[str, Any], List[FilterExpr]]
     ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
+        """Validate filters against known metadata keys from ContentsDB.
+
+        Args:
+            filters: Filters to validate
+
+        Returns:
+            Tuple of (valid_filters, invalid_keys)
+
+        Note:
+            When ContentsDB is not configured, returns (filters, []) - all filters
+            are considered valid and passed through without validation.
+        """
+        if self.contents_db is None:
+            log_info(
+                "ContentsDB not configured. For improved filter validation and reliability, consider adding a ContentsDB."
+            )
+            return filters, []
         valid_filters_from_db = self.get_valid_filters()
 
         valid_filters, invalid_keys = self._validate_filters(filters, valid_filters_from_db)
-
         return valid_filters, invalid_keys
 
     async def async_validate_filters(
@@ -1817,6 +2860,24 @@ class Knowledge:
         """Get all currently loaded readers (only returns readers that have been used)."""
         if self.readers is None:
             self.readers = {}
+        elif not isinstance(self.readers, dict):
+            # Defensive check: if readers is not a dict (e.g., was set to a list), convert it
+            if isinstance(self.readers, list):
+                readers_dict: Dict[str, Reader] = {}
+                for reader in self.readers:
+                    if isinstance(reader, Reader):
+                        reader_key = self._generate_reader_key(reader)
+                        # Handle potential duplicate keys by appending index if needed
+                        original_key = reader_key
+                        counter = 1
+                        while reader_key in readers_dict:
+                            reader_key = f"{original_key}_{counter}"
+                            counter += 1
+                        readers_dict[reader_key] = reader
+                self.readers = readers_dict
+            else:
+                # For any other unexpected type, reset to empty dict
+                self.readers = {}
 
         return self.readers
 

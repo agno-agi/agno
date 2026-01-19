@@ -1,14 +1,18 @@
 from asyncio import Future, Task
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Sequence, Type, Union
+
+from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
+from agno.run import RunContext
 from agno.run.agent import RunEvent, RunInput, RunOutput, RunOutputEvent
 from agno.run.team import RunOutputEvent as TeamRunOutputEvent
 from agno.run.team import TeamRunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
+from agno.utils.common import is_typed_dict, validate_typed_dict
 from agno.utils.events import (
     create_memory_update_completed_event,
     create_memory_update_started_event,
@@ -23,9 +27,10 @@ if TYPE_CHECKING:
     from agno.team.team import Team
 
 
-async def await_for_background_tasks(
+async def await_for_open_threads(
     memory_task: Optional[Task] = None,
     cultural_knowledge_task: Optional[Task] = None,
+    learning_task: Optional[Task] = None,
 ) -> None:
     if memory_task is not None:
         try:
@@ -39,9 +44,17 @@ async def await_for_background_tasks(
         except Exception as e:
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
+    if learning_task is not None:
+        try:
+            await learning_task
+        except Exception as e:
+            log_warning(f"Error in learning extraction: {str(e)}")
 
-def wait_for_background_tasks(
-    memory_future: Optional[Future] = None, cultural_knowledge_future: Optional[Future] = None
+
+def wait_for_open_threads(
+    memory_future: Optional[Future] = None,
+    cultural_knowledge_future: Optional[Future] = None,
+    learning_future: Optional[Future] = None,
 ) -> None:
     if memory_future is not None:
         try:
@@ -56,11 +69,18 @@ def wait_for_background_tasks(
         except Exception as e:
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
+    if learning_future is not None:
+        try:
+            learning_future.result()
+        except Exception as e:
+            log_warning(f"Error in learning extraction: {str(e)}")
 
-async def await_for_background_tasks_stream(
+
+async def await_for_thread_tasks_stream(
     run_response: Union[RunOutput, TeamRunOutput],
     memory_task: Optional[Task] = None,
     cultural_knowledge_task: Optional[Task] = None,
+    learning_task: Optional[Task] = None,
     stream_events: bool = False,
     events_to_skip: Optional[List[RunEvent]] = None,
     store_events: bool = False,
@@ -107,11 +127,18 @@ async def await_for_background_tasks_stream(
         except Exception as e:
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
+    if learning_task is not None:
+        try:
+            await learning_task
+        except Exception as e:
+            log_warning(f"Error in learning extraction: {str(e)}")
 
-def wait_for_background_tasks_stream(
+
+def wait_for_thread_tasks_stream(
     run_response: Union[TeamRunOutput, RunOutput],
     memory_future: Optional[Future] = None,
     cultural_knowledge_future: Optional[Future] = None,
+    learning_future: Optional[Future] = None,
     stream_events: bool = False,
     events_to_skip: Optional[List[RunEvent]] = None,
     store_events: bool = False,
@@ -159,6 +186,12 @@ def wait_for_background_tasks_stream(
             cultural_knowledge_future.result()
         except Exception as e:
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
+
+    if learning_future is not None:
+        try:
+            learning_future.result()
+        except Exception as e:
+            log_warning(f"Error in learning extraction: {str(e)}")
 
 
 def collect_joint_images(
@@ -818,3 +851,174 @@ async def aget_chat_history_util(entity: Union["Agent", "Team"], session_id: str
         raise Exception("Session not found")
 
     return session.get_chat_history()  # type: ignore
+
+
+def execute_instructions(
+    instructions: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Union[str, List[str]]:
+    """Execute the instructions function."""
+    import inspect
+
+    signature = inspect.signature(instructions)
+    instruction_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        instruction_args["agent"] = agent
+
+    if "team" in signature.parameters:
+        instruction_args["team"] = team
+
+    # Check for session_state parameter
+    if "session_state" in signature.parameters:
+        instruction_args["session_state"] = session_state if session_state is not None else {}
+
+    # Check for run_context parameter
+    if "run_context" in signature.parameters:
+        instruction_args["run_context"] = run_context or None
+
+    # Run the instructions function, await if it's awaitable, otherwise run directly (in thread)
+    if inspect.iscoroutinefunction(instructions):
+        raise Exception("Instructions function is async, use `agent.arun()` instead")
+
+    # Run the instructions function
+    return instructions(**instruction_args)
+
+
+def execute_system_message(
+    system_message: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> str:
+    """Execute the system message function."""
+    import inspect
+
+    signature = inspect.signature(system_message)
+    system_message_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        system_message_args["agent"] = agent
+    if "team" in signature.parameters:
+        system_message_args["team"] = team
+    if inspect.iscoroutinefunction(system_message):
+        raise ValueError("System message function is async, use `agent.arun()` instead")
+
+    return system_message(**system_message_args)
+
+
+async def aexecute_instructions(
+    instructions: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Union[str, List[str]]:
+    """Execute the instructions function."""
+    import inspect
+
+    signature = inspect.signature(instructions)
+    instruction_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        instruction_args["agent"] = agent
+    if "team" in signature.parameters:
+        instruction_args["team"] = team
+
+    # Check for session_state parameter
+    if "session_state" in signature.parameters:
+        instruction_args["session_state"] = session_state if session_state is not None else {}
+
+    # Check for run_context parameter
+    if "run_context" in signature.parameters:
+        instruction_args["run_context"] = run_context or None
+
+    if inspect.iscoroutinefunction(instructions):
+        return await instructions(**instruction_args)
+    else:
+        return instructions(**instruction_args)
+
+
+async def aexecute_system_message(
+    system_message: Callable,
+    agent: Optional[Union["Agent", "Team"]] = None,
+    team: Optional["Team"] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> str:
+    import inspect
+
+    signature = inspect.signature(system_message)
+    system_message_args: Dict[str, Any] = {}
+
+    # Check for agent parameter
+    if "agent" in signature.parameters:
+        system_message_args["agent"] = agent
+    if "team" in signature.parameters:
+        system_message_args["team"] = team
+
+    if inspect.iscoroutinefunction(system_message):
+        return await system_message(**system_message_args)
+    else:
+        return system_message(**system_message_args)
+
+
+def validate_input(
+    input: Union[str, List, Dict, Message, BaseModel], input_schema: Optional[Type[BaseModel]] = None
+) -> Union[str, List, Dict, Message, BaseModel]:
+    """Parse and validate input against input_schema if provided, otherwise return input as-is"""
+    if input_schema is None:
+        return input  # Return input unchanged if no schema is set
+
+    if input is None:
+        raise ValueError("Input required when input_schema is set")
+
+    # Handle Message objects - extract content
+    if isinstance(input, Message):
+        input = input.content  # type: ignore
+
+    # If input is a string, convert it to a dict
+    if isinstance(input, str):
+        import json
+
+        try:
+            input = json.loads(input)
+        except Exception as e:
+            raise ValueError(f"Failed to parse input. Is it a valid JSON string?: {e}")
+
+    # Case 1: Message is already a BaseModel instance
+    if isinstance(input, BaseModel):
+        if isinstance(input, input_schema):
+            try:
+                return input
+            except Exception as e:
+                raise ValueError(f"BaseModel validation failed: {str(e)}")
+        else:
+            # Different BaseModel types
+            raise ValueError(f"Expected {input_schema.__name__} but got {type(input).__name__}")
+
+    # Case 2: Message is a dict
+    elif isinstance(input, dict):
+        try:
+            # Check if the schema is a TypedDict
+            if is_typed_dict(input_schema):
+                validated_dict = validate_typed_dict(input, input_schema)
+                return validated_dict
+            else:
+                validated_model = input_schema(**input)
+                return validated_model
+        except Exception as e:
+            raise ValueError(f"Failed to parse dict into {input_schema.__name__}: {str(e)}")
+
+    # Case 3: Other types not supported for structured input
+    else:
+        raise ValueError(
+            f"Cannot validate {type(input)} against input_schema. Expected dict or {input_schema.__name__} instance."
+        )

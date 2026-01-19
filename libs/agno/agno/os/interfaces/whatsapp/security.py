@@ -3,6 +3,8 @@ import hmac
 import os
 from typing import Optional
 
+from agno.utils.log import log_warning
+
 
 def is_development_mode() -> bool:
     """Check if the application is running in development mode."""
@@ -36,7 +38,7 @@ def validate_webhook_signature(payload: bytes, signature_header: Optional[str]) 
     """
     # In development mode, we can bypass signature validation
     if is_development_mode():
-        print("WARNING: Bypassing signature validation in development mode")
+        log_warning("Bypassing signature validation in development mode")
         return True
 
     if not signature_header or not signature_header.startswith("sha256="):

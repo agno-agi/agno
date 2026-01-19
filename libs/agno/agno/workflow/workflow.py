@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from os import getenv
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Awaitable,
@@ -24,6 +25,9 @@ from uuid import uuid4
 from fastapi import WebSocket
 from pydantic import BaseModel
 
+if TYPE_CHECKING:
+    from agno.os.managers import WebSocketHandler
+
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
@@ -33,12 +37,18 @@ from agno.models.metrics import Metrics
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunContentEvent, RunEvent, RunOutput
 from agno.run.cancel import (
-    cancel_run as cancel_run_global,
+    acancel_run as acancel_run_global,
 )
 from agno.run.cancel import (
+    acleanup_run,
+    araise_if_cancelled,
+    aregister_run,
     cleanup_run,
     raise_if_cancelled,
     register_run,
+)
+from agno.run.cancel import (
+    cancel_run as cancel_run_global,
 )
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
@@ -53,7 +63,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowChatInteraction, WorkflowSession
 from agno.team.team import Team
-from agno.utils.common import is_typed_dict, validate_typed_dict
+from agno.utils.agent import validate_input
 from agno.utils.log import (
     log_debug,
     log_error,
@@ -69,7 +79,7 @@ from agno.utils.print_response.workflow import (
     print_response,
     print_response_stream,
 )
-from agno.workflow import WorkflowAgent
+from agno.workflow.agent import WorkflowAgent
 from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
@@ -81,7 +91,6 @@ from agno.workflow.types import (
     StepMetrics,
     StepOutput,
     StepType,
-    WebSocketHandler,
     WorkflowExecutionInput,
     WorkflowMetrics,
 )
@@ -165,7 +174,7 @@ class Workflow:
     # Control whether to store executor responses (agent/team responses) in flattened runs
     store_executor_outputs: bool = True
 
-    websocket_handler: Optional[WebSocketHandler] = None
+    websocket_handler: Optional["WebSocketHandler"] = None
 
     # Input schema to validate the input to the workflow
     input_schema: Optional[Type[BaseModel]] = None
@@ -186,6 +195,9 @@ class Workflow:
     # Deprecated. Use stream_events instead.
     stream_intermediate_steps: bool = False
 
+    # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
+    _run_hooks_in_background: bool = False
+
     def __init__(
         self,
         id: Optional[str] = None,
@@ -198,6 +210,7 @@ class Workflow:
         session_state: Optional[Dict[str, Any]] = None,
         overwrite_db_session_state: bool = False,
         user_id: Optional[str] = None,
+        debug_level: Literal[1, 2] = 1,
         debug_mode: Optional[bool] = False,
         stream: Optional[bool] = None,
         stream_events: bool = False,
@@ -223,6 +236,7 @@ class Workflow:
         self.overwrite_db_session_state = overwrite_db_session_state
         self.user_id = user_id
         self.debug_mode = debug_mode
+        self.debug_level = debug_level
         self.store_events = store_events
         self.events_to_skip = events_to_skip or []
         self.stream = stream
@@ -261,59 +275,6 @@ class Workflow:
 
     def _has_async_db(self) -> bool:
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
-
-    def _validate_input(
-        self, input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]]
-    ) -> Optional[Union[str, List, Dict, Message, BaseModel]]:
-        """Parse and validate input against input_schema if provided"""
-        if self.input_schema is None:
-            return input  # Return input unchanged if no schema is set
-
-        if input is None:
-            raise ValueError("Input required when input_schema is set")
-
-        # Handle Message objects - extract content
-        if isinstance(input, Message):
-            input = input.content  # type: ignore
-
-        # If input is a string, convert it to a dict
-        if isinstance(input, str):
-            import json
-
-            try:
-                input = json.loads(input)
-            except Exception as e:
-                raise ValueError(f"Failed to parse input. Is it a valid JSON string?: {e}")
-
-        # Case 1: Message is already a BaseModel instance
-        if isinstance(input, BaseModel):
-            if isinstance(input, self.input_schema):
-                try:
-                    return input
-                except Exception as e:
-                    raise ValueError(f"BaseModel validation failed: {str(e)}")
-            else:
-                # Different BaseModel types
-                raise ValueError(f"Expected {self.input_schema.__name__} but got {type(input).__name__}")
-
-        # Case 2: Message is a dict
-        elif isinstance(input, dict):
-            try:
-                # Check if the schema is a TypedDict
-                if is_typed_dict(self.input_schema):
-                    validated_dict = validate_typed_dict(input, self.input_schema)
-                    return validated_dict
-                else:
-                    validated_model = self.input_schema(**input)
-                    return validated_model
-            except Exception as e:
-                raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
-
-        # Case 3: Other types not supported for structured input
-        else:
-            raise ValueError(
-                f"Cannot validate {type(input)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
-            )
 
     @property
     def run_parameters(self) -> Dict[str, Any]:
@@ -1011,7 +972,7 @@ class Workflow:
     def _broadcast_to_websocket(
         self,
         event: Any,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
     ) -> None:
         """Broadcast events to WebSocket if available (async context only)"""
         if websocket_handler:
@@ -1026,7 +987,7 @@ class Workflow:
         self,
         event: "WorkflowRunOutputEvent",
         workflow_run_response: WorkflowRunOutput,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
     ) -> "WorkflowRunOutputEvent":
         """Handle workflow events for storage - similar to Team._handle_event"""
         from agno.run.agent import RunOutput
@@ -1054,8 +1015,71 @@ class Workflow:
                     workflow_run_response.events = []
                 workflow_run_response.events.append(event)
 
+        # Add to event buffer for reconnection support
+        # Use workflow_run_id for agent/team events, run_id for workflow events
+        buffer_run_id = None
+        event_index = None
+        if hasattr(event, "workflow_run_id") and event.workflow_run_id:
+            # Agent/Team event - use workflow_run_id
+            buffer_run_id = event.workflow_run_id
+        elif hasattr(event, "run_id") and event.run_id:
+            # Workflow event - use run_id
+            buffer_run_id = event.run_id
+
+        if buffer_run_id:
+            try:
+                from agno.os.managers import event_buffer
+
+                # add_event now returns the event_index
+                event_index = event_buffer.add_event(buffer_run_id, event)  # type: ignore
+            except Exception as e:
+                # Don't fail workflow execution if buffering fails
+                log_debug(f"Failed to add event to buffer: {e}")
+
         # Broadcast to WebSocket if available (async context only)
-        self._broadcast_to_websocket(event, websocket_handler)
+        # Include event_index for frontend reconnection support
+        if websocket_handler:
+            import asyncio
+
+            try:
+                loop = asyncio.get_running_loop()
+                if loop:
+                    # Pass event_index and run_id to websocket handler
+                    asyncio.create_task(
+                        websocket_handler.handle_event(event, event_index=event_index, run_id=buffer_run_id)
+                    )
+            except RuntimeError:
+                pass
+
+        # ALSO broadcast through websocket manager for reconnected clients
+        # This ensures clients who reconnect after workflow started still receive events
+        if buffer_run_id:
+            try:
+                import asyncio
+
+                from agno.os.managers import websocket_manager
+
+                loop = asyncio.get_running_loop()
+                if loop:
+                    # Format the event for broadcast
+                    event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
+                    if event_index is not None:
+                        event_dict["event_index"] = event_index
+                    if "run_id" not in event_dict:
+                        event_dict["run_id"] = buffer_run_id
+
+                    # Broadcast to registered websocket (if different from original)
+                    import json
+
+                    from agno.utils.serialize import json_serializer
+
+                    asyncio.create_task(
+                        websocket_manager.broadcast_to_run(
+                            buffer_run_id, json.dumps(event_dict, default=json_serializer)
+                        )
+                    )
+            except Exception as e:
+                log_debug(f"Failed to broadcast through manager: {e}")
 
         return event
 
@@ -1105,9 +1129,12 @@ class Workflow:
         """Set debug mode and configure logging"""
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             use_workflow_logger()
+            debug_level: Literal[1, 2] = (
+                cast(Literal[1, 2], int(env)) if (env := getenv("AGNO_DEBUG_LEVEL")) in ("1", "2") else self.debug_level
+            )
 
             self.debug_mode = True
-            set_log_level_to_debug(source_type="workflow")
+            set_log_level_to_debug(source_type="workflow", level=debug_level)
 
             # Propagate to steps - only if steps is iterable (not callable)
             if self.steps and not callable(self.steps):
@@ -1282,14 +1309,13 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute a specific pipeline by name synchronously"""
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
-        if workflow_run_response.run_id:
-            register_run(workflow_run_response.run_id)  # type: ignore
 
         if callable(self.steps):
             if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
@@ -1355,6 +1381,7 @@ class Workflow:
                         if self.add_workflow_history_to_steps
                         else None,
                         num_history_runs=self.num_history_runs,
+                        background_tasks=background_tasks,
                     )
 
                     # Check for cancellation after step execution
@@ -1455,16 +1482,13 @@ class Workflow:
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
         stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
-
-        # Register run for cancellation tracking
-        if workflow_run_response.run_id:
-            register_run(workflow_run_response.run_id)
 
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
@@ -1552,6 +1576,7 @@ class Workflow:
                         if self.add_workflow_history_to_steps
                         else None,
                         num_history_runs=self.num_history_runs,
+                        background_tasks=background_tasks,
                     ):
                         raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -1749,6 +1774,17 @@ class Workflow:
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
+        # Mark run as completed in event buffer
+        try:
+            from agno.os.managers import event_buffer
+
+            event_buffer.set_run_completed(
+                workflow_run_response.run_id,  # type: ignore
+                workflow_run_response.status or RunStatus.completed,
+            )
+        except Exception as e:
+            log_debug(f"Failed to mark run as completed in buffer: {e}")
+
         # Stop timer on error
         if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
@@ -1831,7 +1867,7 @@ class Workflow:
         self._update_metadata(session=workflow_session)
 
         # Update session state from DB
-        _session_state = session_state or {}
+        _session_state = session_state if session_state is not None else {}
         _session_state = self._load_session_state(session=workflow_session, session_state=_session_state)
 
         return workflow_session, _session_state
@@ -1843,21 +1879,19 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute a specific pipeline by name asynchronously"""
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
+        await aregister_run(run_context.run_id)
         # Read existing session from database
         workflow_session, run_context.session_state = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=run_context.session_state
         )
 
         workflow_run_response.status = RunStatus.running
-
-        # Register run for cancellation tracking
-        if workflow_run_response.run_id:
-            register_run(workflow_run_response.run_id)  # type: ignore
 
         if callable(self.steps):
             # Execute the workflow with the custom executor
@@ -1875,14 +1909,14 @@ class Workflow:
             elif isasyncgenfunction(self.steps):  # type: ignore
                 async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
                 async for chunk in async_gen:
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                     else:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
-                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                 workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
             workflow_run_response.status = RunStatus.completed
 
@@ -1902,7 +1936,7 @@ class Workflow:
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Async Executing step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -1917,7 +1951,7 @@ class Workflow:
                     )
 
                     # Check for cancellation before executing step
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     step_output = await step.aexecute(  # type: ignore[union-attr]
                         step_input,
@@ -1931,10 +1965,11 @@ class Workflow:
                         if self.add_workflow_history_to_steps
                         else None,
                         num_history_runs=self.num_history_runs,
+                        background_tasks=background_tasks,
                     )
 
                     # Check for cancellation after step execution
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
@@ -2014,7 +2049,7 @@ class Workflow:
         else:
             self.save_session(session=workflow_session)
         # Always clean up the run tracking
-        cleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_run(workflow_run_response.run_id)  # type: ignore
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -2030,11 +2065,14 @@ class Workflow:
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
         stream_events: bool = False,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """Execute a specific pipeline by name with event streaming"""
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
+
+        await aregister_run(run_context.run_id)
 
         # Read existing session from database
         workflow_session, run_context.session_state = await self._aload_or_create_session(
@@ -2042,10 +2080,6 @@ class Workflow:
         )
 
         workflow_run_response.status = RunStatus.running
-
-        # Register run for cancellation tracking
-        if workflow_run_response.run_id:
-            register_run(workflow_run_response.run_id)
 
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
@@ -2071,7 +2105,7 @@ class Workflow:
                 content = ""
                 async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
                 async for chunk in async_gen:
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                         yield chunk
@@ -2106,7 +2140,7 @@ class Workflow:
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     if workflow_run_response.run_id:
-                        raise_if_cancelled(workflow_run_response.run_id)
+                        await araise_if_cancelled(workflow_run_response.run_id)
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Async streaming step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -2141,9 +2175,10 @@ class Workflow:
                         if self.add_workflow_history_to_steps
                         else None,
                         num_history_runs=self.num_history_runs,
+                        background_tasks=background_tasks,
                     ):
                         if workflow_run_response.run_id:
-                            raise_if_cancelled(workflow_run_response.run_id)
+                            await araise_if_cancelled(workflow_run_response.run_id)
 
                         # Accumulate partial data from streaming events
                         partial_step_content = self._accumulate_partial_step_data(event, partial_step_content)  # type: ignore
@@ -2345,6 +2380,17 @@ class Workflow:
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
 
+        # Mark run as completed in event buffer
+        try:
+            from agno.os.managers import event_buffer
+
+            event_buffer.set_run_completed(
+                workflow_run_response.run_id,  # type: ignore
+                workflow_run_response.status or RunStatus.completed,
+            )
+        except Exception as e:
+            log_debug(f"Failed to mark run as completed in buffer: {e}")
+
         # Stop timer on error
         if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
@@ -2362,7 +2408,7 @@ class Workflow:
             await self._alog_workflow_telemetry(session_id=session_id, run_id=workflow_run_response.run_id)
 
         # Always clean up the run tracking
-        cleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_run(workflow_run_response.run_id)  # type: ignore
 
     async def _arun_background(
         self,
@@ -2404,6 +2450,7 @@ class Workflow:
             run_id=run_id,
             input=input,
             session_id=session_id,
+            user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
@@ -2492,7 +2539,7 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         files: Optional[List[File]] = None,
         stream_events: bool = False,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute workflow in background with streaming and WebSocket broadcasting"""
@@ -2522,6 +2569,7 @@ class Workflow:
             run_id=run_id,
             input=input,
             session_id=session_id,
+            user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
@@ -2567,6 +2615,8 @@ class Workflow:
                 else:
                     # Update status to RUNNING and save
                     workflow_run_response.status = RunStatus.running
+
+                    workflow_session.upsert_run(run=workflow_run_response)
                     if self._has_async_db():
                         await self.asave_session(session=workflow_session)
                     else:
@@ -2775,6 +2825,7 @@ class Workflow:
             run_id=run_id,
             input=execution_input.input,
             session_id=session.session_id,
+            user_id=session.user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
@@ -2956,6 +3007,7 @@ class Workflow:
                 run_id=run_id,
                 input=execution_input.input,
                 session_id=session.session_id,
+                user_id=session.user_id,
                 workflow_id=self.id,
                 workflow_name=self.name,
                 created_at=int(datetime.now().timestamp()),
@@ -3004,6 +3056,7 @@ class Workflow:
                     run_id=str(uuid4()),
                     input=execution_input.input,
                     session_id=session.session_id,
+                    user_id=session.user_id,
                     workflow_id=self.id,
                     workflow_name=self.name,
                     created_at=int(datetime.now().timestamp()),
@@ -3016,7 +3069,7 @@ class Workflow:
         session: WorkflowSession,
         execution_input: WorkflowExecutionInput,
         run_context: RunContext,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
         stream: bool = False,
     ) -> None:
         """Initialize the workflow agent with async tools (but NOT context - that's passed per-run)"""
@@ -3052,7 +3105,7 @@ class Workflow:
         run_context: RunContext,
         execution_input: WorkflowExecutionInput,
         stream: bool = False,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
         **kwargs: Any,
     ):
         """
@@ -3075,7 +3128,8 @@ class Workflow:
         if stream:
 
             async def _stream():
-                session, session_state_loaded = await self._aload_session_for_workflow_agent(
+                await aregister_run(run_context.run_id)
+                session, _ = await self._aload_session_for_workflow_agent(
                     run_context.session_id, run_context.user_id, run_context.session_state
                 )
                 async for event in self._arun_workflow_agent_stream(
@@ -3093,7 +3147,8 @@ class Workflow:
         else:
 
             async def _execute():
-                session, session_state_loaded = await self._aload_session_for_workflow_agent(
+                await aregister_run(run_context.run_id)
+                session, _ = await self._aload_session_for_workflow_agent(
                     run_context.session_id, run_context.user_id, run_context.session_state
                 )
                 return await self._arun_workflow_agent(
@@ -3113,7 +3168,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         run_context: RunContext,
         stream: bool = False,
-        websocket_handler: Optional[WebSocketHandler] = None,
+        websocket_handler: Optional["WebSocketHandler"] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """
@@ -3158,6 +3213,7 @@ class Workflow:
             run_id=run_id,
             input=execution_input.input,
             session_id=session.session_id,
+            user_id=session.user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
@@ -3356,6 +3412,7 @@ class Workflow:
                 run_id=run_id,
                 input=execution_input.input,
                 session_id=session.session_id,
+                user_id=session.user_id,
                 workflow_id=self.id,
                 workflow_name=self.name,
                 created_at=int(datetime.now().timestamp()),
@@ -3423,6 +3480,7 @@ class Workflow:
                     run_id=str(uuid4()),
                     input=execution_input.input,
                     session_id=session.session_id,
+                    user_id=session.user_id,
                     workflow_id=self.id,
                     workflow_name=self.name,
                     created_at=int(datetime.now().timestamp()),
@@ -3441,12 +3499,24 @@ class Workflow:
         """
         return cancel_run_global(run_id)
 
+    async def acancel_run(self, run_id: str) -> bool:
+        """Cancel a running workflow execution (async version).
+
+        Args:
+            run_id (str): The run_id to cancel.
+
+        Returns:
+            bool: True if the run was found and marked for cancellation, False otherwise.
+        """
+        return await acancel_run_global(run_id)
+
     @overload
     def run(
         self,
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         audio: Optional[List[Audio]] = None,
@@ -3457,6 +3527,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
+        background_tasks: Optional[Any] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -3465,6 +3536,7 @@ class Workflow:
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         audio: Optional[List[Audio]] = None,
@@ -3475,6 +3547,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
+        background_tasks: Optional[Any] = None,
     ) -> Iterator[WorkflowRunOutputEvent]: ...
 
     def run(
@@ -3482,6 +3555,7 @@ class Workflow:
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         audio: Optional[List[Audio]] = None,
@@ -3492,19 +3566,25 @@ class Workflow:
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, Iterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
         if self._has_async_db():
             raise Exception("`run()` is not supported with an async DB. Please use `arun()`.")
 
-        input = self._validate_input(input)
+        # Set the id for the run and register it immediately for cancellation tracking
+        run_id = run_id or str(uuid4())
+        register_run(run_id)
+
+        if input is None and self.input_schema is not None:
+            raise ValueError("Input is required when input_schema is provided")
+        if input is not None and self.input_schema is not None:
+            input = validate_input(input, self.input_schema)
         if background:
             raise RuntimeError("Background execution is not supported for sync run()")
 
         self._set_debug()
-
-        run_id = str(uuid4())
 
         self.initialize_workflow()
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -3515,7 +3595,10 @@ class Workflow:
 
         # Initialize session state
         session_state = self._initialize_session_state(
-            session_state=session_state or {}, user_id=user_id, session_id=session_id, run_id=run_id
+            session_state=session_state if session_state is not None else {},
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_id,
         )
         # Update session state from DB
         session_state = self._load_session_state(session=workflow_session, session_state=session_state)
@@ -3576,6 +3659,7 @@ class Workflow:
             run_id=run_id,
             input=input,
             session_id=session_id,
+            user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
@@ -3592,6 +3676,7 @@ class Workflow:
                 workflow_run_response=workflow_run_response,
                 stream_events=stream_events,
                 run_context=run_context,
+                background_tasks=background_tasks,
                 **kwargs,
             )
         else:
@@ -3600,6 +3685,7 @@ class Workflow:
                 execution_input=inputs,  # type: ignore[arg-type]
                 workflow_run_response=workflow_run_response,
                 run_context=run_context,
+                background_tasks=background_tasks,
                 **kwargs,
             )
 
@@ -3609,6 +3695,7 @@ class Workflow:
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         audio: Optional[List[Audio]] = None,
@@ -3620,6 +3707,7 @@ class Workflow:
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
     ) -> WorkflowRunOutput: ...
 
     @overload
@@ -3628,6 +3716,7 @@ class Workflow:
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         audio: Optional[List[Audio]] = None,
@@ -3639,6 +3728,7 @@ class Workflow:
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
     def arun(  # type: ignore
@@ -3646,6 +3736,7 @@ class Workflow:
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         audio: Optional[List[Audio]] = None,
@@ -3657,15 +3748,19 @@ class Workflow:
         stream_intermediate_steps: Optional[bool] = False,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
+        background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
 
-        input = self._validate_input(input)
+        if input is None and self.input_schema is not None:
+            raise ValueError("Input is required when input_schema is provided")
+        if input is not None and self.input_schema is not None:
+            input = validate_input(input, self.input_schema)
 
         websocket_handler = None
         if websocket:
-            from agno.workflow.types import WebSocketHandler
+            from agno.os.managers import WebSocketHandler
 
             websocket_handler = WebSocketHandler(websocket=websocket)
 
@@ -3715,7 +3810,8 @@ class Workflow:
 
         self._set_debug()
 
-        run_id = str(uuid4())
+        # Set the id for the run and register it immediately for cancellation tracking
+        run_id = run_id or str(uuid4())
 
         self.initialize_workflow()
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
@@ -3773,6 +3869,7 @@ class Workflow:
             run_id=run_id,
             input=input,
             session_id=session_id,
+            user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
@@ -3793,6 +3890,7 @@ class Workflow:
                 files=files,
                 session_state=session_state,
                 run_context=run_context,
+                background_tasks=background_tasks,
                 **kwargs,
             )
         else:
@@ -3805,6 +3903,7 @@ class Workflow:
                 files=files,
                 session_state=session_state,
                 run_context=run_context,
+                background_tasks=background_tasks,
                 **kwargs,
             )
 
@@ -4153,6 +4252,56 @@ class Workflow:
                             if hasattr(member, "workflow_id"):
                                 member.workflow_id = self.id
 
+    def propagate_run_hooks_in_background(self, run_in_background: bool = True) -> None:
+        """
+        Propagate _run_hooks_in_background setting to this workflow and all agents/teams in steps.
+
+        This method sets _run_hooks_in_background on the workflow and all agents/teams
+        within its steps, including nested teams and their members.
+
+        Args:
+            run_in_background: Whether hooks should run in background. Defaults to True.
+        """
+        self._run_hooks_in_background = run_in_background
+
+        if not self.steps or callable(self.steps):
+            return
+
+        steps_list = self.steps.steps if isinstance(self.steps, Steps) else self.steps
+
+        for step in steps_list:
+            self._propagate_hooks_to_step(step, run_in_background)
+
+    def _propagate_hooks_to_step(self, step: Any, run_in_background: bool) -> None:
+        """Recursively propagate _run_hooks_in_background to a step and its nested content."""
+        # Handle Step objects with active executor
+        if hasattr(step, "active_executor") and step.active_executor:
+            executor = step.active_executor
+            # If it's a team, use its propagation method
+            if hasattr(executor, "propagate_run_hooks_in_background"):
+                executor.propagate_run_hooks_in_background(run_in_background)
+            elif hasattr(executor, "_run_hooks_in_background"):
+                executor._run_hooks_in_background = run_in_background
+
+        # Handle agent/team directly on step
+        if hasattr(step, "agent") and step.agent:
+            if hasattr(step.agent, "_run_hooks_in_background"):
+                step.agent._run_hooks_in_background = run_in_background
+        if hasattr(step, "team") and step.team:
+            # Use team's method to propagate to all nested members
+            if hasattr(step.team, "propagate_run_hooks_in_background"):
+                step.team.propagate_run_hooks_in_background(run_in_background)
+            elif hasattr(step.team, "_run_hooks_in_background"):
+                step.team._run_hooks_in_background = run_in_background
+
+        # Handle nested primitives - check 'steps' and 'choices' attributes
+        for attr_name in ["steps", "choices"]:
+            if hasattr(step, attr_name):
+                attr_value = getattr(step, attr_name)
+                if attr_value and isinstance(attr_value, list):
+                    for nested_step in attr_value:
+                        self._propagate_hooks_to_step(nested_step, run_in_background)
+
     ###########################################################################
     # Telemetry functions
     ###########################################################################
@@ -4332,3 +4481,202 @@ class Workflow:
                 session_id=session_id,
                 **kwargs,
             )
+
+    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> "Workflow":
+        """Create and return a deep copy of this Workflow, optionally updating fields.
+
+        This creates a fresh Workflow instance with isolated mutable state while sharing
+        heavy resources like database connections. Steps containing agents/teams are also
+        deep copied to ensure complete isolation.
+
+        Args:
+            update: Optional dictionary of fields to override in the new Workflow.
+
+        Returns:
+            Workflow: A new Workflow instance with copied state.
+        """
+        from copy import copy, deepcopy
+        from dataclasses import fields
+
+        from agno.utils.log import log_debug, log_warning
+
+        # Extract the fields to set for the new Workflow
+        fields_for_new_workflow: Dict[str, Any] = {}
+
+        for f in fields(self):
+            # Skip private fields (not part of __init__ signature)
+            if f.name.startswith("_"):
+                continue
+
+            field_value = getattr(self, f.name)
+            if field_value is not None:
+                # Special handling for steps that may contain agents/teams
+                if f.name == "steps" and field_value is not None:
+                    fields_for_new_workflow[f.name] = self._deep_copy_steps(field_value)
+                # Special handling for workflow agent
+                elif f.name == "agent" and field_value is not None:
+                    if hasattr(field_value, "deep_copy"):
+                        fields_for_new_workflow[f.name] = field_value.deep_copy()
+                    else:
+                        fields_for_new_workflow[f.name] = field_value
+                # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
+                elif f.name == "db":
+                    fields_for_new_workflow[f.name] = field_value
+                # For compound types, attempt a deep copy
+                elif isinstance(field_value, (list, dict, set)):
+                    try:
+                        fields_for_new_workflow[f.name] = deepcopy(field_value)
+                    except Exception:
+                        try:
+                            fields_for_new_workflow[f.name] = copy(field_value)
+                        except Exception as e:
+                            log_warning(f"Failed to copy field: {f.name} - {e}")
+                            fields_for_new_workflow[f.name] = field_value
+                # For pydantic models, attempt a model_copy
+                elif isinstance(field_value, BaseModel):
+                    try:
+                        fields_for_new_workflow[f.name] = field_value.model_copy(deep=True)
+                    except Exception:
+                        try:
+                            fields_for_new_workflow[f.name] = field_value.model_copy(deep=False)
+                        except Exception:
+                            fields_for_new_workflow[f.name] = field_value
+                # For other types, attempt a shallow copy
+                else:
+                    try:
+                        fields_for_new_workflow[f.name] = copy(field_value)
+                    except Exception:
+                        fields_for_new_workflow[f.name] = field_value
+
+        # Update fields if provided
+        if update:
+            fields_for_new_workflow.update(update)
+
+        # Create a new Workflow
+        try:
+            new_workflow = self.__class__(**fields_for_new_workflow)
+            log_debug(f"Created new {self.__class__.__name__}")
+            return new_workflow
+        except Exception as e:
+            from agno.utils.log import log_error
+
+            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
+            raise
+
+    def _deep_copy_steps(self, steps: Any) -> Any:
+        """Deep copy workflow steps, handling nested agents and teams."""
+        from agno.workflow.steps import Steps
+
+        if steps is None:
+            return None
+
+        # Handle Steps container
+        if isinstance(steps, Steps):
+            copied_steps = []
+            if steps.steps:
+                for step in steps.steps:
+                    copied_steps.append(self._deep_copy_single_step(step))
+            return Steps(steps=copied_steps)
+
+        # Handle list of steps
+        if isinstance(steps, list):
+            return [self._deep_copy_single_step(step) for step in steps]
+
+        # Handle callable steps
+        if callable(steps):
+            return steps
+
+        # Handle single step
+        return self._deep_copy_single_step(steps)
+
+    def _deep_copy_single_step(self, step: Any) -> Any:
+        """Deep copy a single step, handling nested agents and teams."""
+        from copy import copy, deepcopy
+
+        from agno.agent import Agent
+        from agno.team import Team
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.router import Router
+        from agno.workflow.step import Step
+        from agno.workflow.steps import Steps
+
+        # Handle Step with agent or team
+        if isinstance(step, Step):
+            step_kwargs: Dict[str, Any] = {}
+            if step.name:
+                step_kwargs["name"] = step.name
+            if step.description:
+                step_kwargs["description"] = step.description
+            if step.executor:
+                step_kwargs["executor"] = step.executor
+            if step.agent:
+                step_kwargs["agent"] = step.agent.deep_copy() if hasattr(step.agent, "deep_copy") else step.agent
+            if step.team:
+                step_kwargs["team"] = step.team.deep_copy() if hasattr(step.team, "deep_copy") else step.team
+            # Copy Step configuration attributes
+            for attr in [
+                "max_retries",
+                "timeout_seconds",
+                "skip_on_failure",
+                "strict_input_validation",
+                "add_workflow_history",
+                "num_history_runs",
+            ]:
+                if hasattr(step, attr):
+                    value = getattr(step, attr)
+                    # Only include non-default values to avoid overriding defaults
+                    if value is not None:
+                        step_kwargs[attr] = value
+            return Step(**step_kwargs)
+
+        # Handle direct Agent
+        if isinstance(step, Agent):
+            return step.deep_copy() if hasattr(step, "deep_copy") else step
+
+        # Handle direct Team
+        if isinstance(step, Team):
+            return step.deep_copy() if hasattr(step, "deep_copy") else step
+
+        # Handle Parallel steps
+        if isinstance(step, Parallel):
+            copied_parallel_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            return Parallel(*copied_parallel_steps, name=step.name, description=step.description)
+
+        # Handle Loop steps
+        if isinstance(step, Loop):
+            copied_loop_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            return Loop(
+                steps=copied_loop_steps,
+                name=step.name,
+                description=step.description,
+                max_iterations=step.max_iterations,
+                end_condition=step.end_condition,
+            )
+
+        # Handle Condition steps
+        if isinstance(step, Condition):
+            copied_condition_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            return Condition(
+                evaluator=step.evaluator, steps=copied_condition_steps, name=step.name, description=step.description
+            )
+
+        # Handle Router steps
+        if isinstance(step, Router):
+            copied_choices = [self._deep_copy_single_step(s) for s in step.choices] if step.choices else []
+            return Router(choices=copied_choices, name=step.name, description=step.description, selector=step.selector)
+
+        # Handle Steps container
+        if isinstance(step, Steps):
+            copied_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            return Steps(name=step.name, description=step.description, steps=copied_steps)
+
+        # For other types, attempt deep copy
+        try:
+            return deepcopy(step)
+        except Exception:
+            try:
+                return copy(step)
+            except Exception:
+                return step

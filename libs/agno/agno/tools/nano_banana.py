@@ -79,7 +79,7 @@ class NanoBananaTools(Toolkit):
 
             response = client.models.generate_content(
                 model=self.model,
-                contents=[prompt],
+                contents=[prompt],  # type: ignore
                 config=cfg,
             )
 

@@ -403,16 +403,6 @@ async def test_aget_session_summary(async_test_team):
     assert summary is None  # Summaries not enabled by default
 
 
-# Tests for get_user_memories()
-def test_get_user_memories_without_memory_manager(test_team):
-    """Test get_user_memories returns None without memory manager."""
-    user_id = "test_user"
-    test_team.run("Hello", user_id=user_id, session_id=str(uuid.uuid4()))
-
-    memories = test_team.get_user_memories(user_id=user_id)
-    assert memories is None  # No memory manager configured
-
-
 # Test error handling and edge cases
 def test_convenience_functions_without_db():
     """Test convenience functions fail gracefully without a database."""

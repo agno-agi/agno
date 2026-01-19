@@ -229,6 +229,7 @@ class Step:
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
@@ -347,6 +348,10 @@ class Step:
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
+
+                        # Forward background_tasks if provided
+                        if background_tasks is not None:
+                            kwargs["background_tasks"] = background_tasks
 
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
@@ -470,6 +475,7 @@ class Step:
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -609,6 +615,10 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        # Forward background_tasks if provided
+                        if background_tasks is not None:
+                            kwargs["background_tasks"] = background_tasks
+
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
                         use_history = (
@@ -634,7 +644,7 @@ class Step:
                             session_state=session_state_copy,  # Send a copy to the executor
                             stream=True,
                             stream_events=stream_events,
-                            yield_run_response=True,
+                            yield_run_output=True,
                             run_context=run_context,
                             **kwargs,
                         )
@@ -643,7 +653,7 @@ class Step:
                         for event in response_stream:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
-                                break
+                                continue
                             # Only yield executor events if stream_executor_events is True
                             if stream_executor_events:
                                 enriched_event = self._enrich_event_with_context(
@@ -720,6 +730,7 @@ class Step:
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         logger.info(f"Executing async step (non-streaming): {self.name}")
@@ -870,6 +881,10 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        # Forward background_tasks if provided
+                        if background_tasks is not None:
+                            kwargs["background_tasks"] = background_tasks
+
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
                         use_history = (
@@ -945,6 +960,7 @@ class Step:
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -1128,6 +1144,10 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        # Forward background_tasks if provided
+                        if background_tasks is not None:
+                            kwargs["background_tasks"] = background_tasks
+
                         num_history_runs = self.num_history_runs if self.num_history_runs else num_history_runs
 
                         use_history = (
@@ -1154,7 +1174,7 @@ class Step:
                             stream=True,
                             stream_events=stream_events,
                             run_context=run_context,
-                            yield_run_response=True,
+                            yield_run_output=True,
                             **kwargs,
                         )
 
@@ -1343,10 +1363,22 @@ class Step:
 
         For container steps (Steps, Router, Loop, etc.), this will recursively find the content from the
         last actual step rather than using the generic container message.
+
+        For Parallel steps, aggregates content from ALL inner steps (not just the last one).
         """
-        # If this step has nested steps (like Steps, Condition, Router, Loop, etc.)
+        # If this step has nested steps (like Steps, Condition, Router, Loop, Parallel, etc.)
         if hasattr(step_output, "steps") and step_output.steps and len(step_output.steps) > 0:
-            # Recursively get content from the last nested step
+            # For Parallel steps, aggregate content from ALL inner steps
+            if step_output.step_type == StepType.PARALLEL:
+                aggregated_parts = []
+                for i, inner_step in enumerate(step_output.steps):
+                    inner_content = self._get_deepest_content_from_step_output(inner_step)
+                    if inner_content:
+                        step_name = inner_step.step_name or f"Step {i + 1}"
+                        aggregated_parts.append(f"=== {step_name} ===\n{inner_content}")
+                return "\n\n".join(aggregated_parts) if aggregated_parts else step_output.content  # type: ignore
+
+            # For other nested step types, recursively get content from the last nested step
             return self._get_deepest_content_from_step_output(step_output.steps[-1])
 
         # For regular steps, return their content

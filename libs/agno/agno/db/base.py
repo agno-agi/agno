@@ -1,8 +1,11 @@
 from abc import ABC, abstractmethod
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 from agno.db.schemas import UserMemory
 from agno.db.schemas.context import ContextItem
@@ -33,7 +36,10 @@ class BaseDb(ABC):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        traces_table: Optional[str] = None,
+        spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        learnings_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -44,7 +50,10 @@ class BaseDb(ABC):
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
+        self.trace_table_name = traces_table or "agno_traces"
+        self.span_table_name = spans_table or "agno_spans"
         self.versions_table_name = versions_table or "agno_schema_versions"
+        self.learnings_table_name = learnings_table or "agno_learnings"
 
     @abstractmethod
     def table_exists(self, table_name: str) -> bool:
@@ -52,6 +61,14 @@ class BaseDb(ABC):
 
     def _create_all_tables(self) -> None:
         """Create all tables for this database."""
+        pass
+
+    def close(self) -> None:
+        """Close database connections and release resources.
+
+        Override in subclasses to properly dispose of connection pools.
+        Should be called during application shutdown.
+        """
         pass
 
     # --- Schema Version ---
@@ -302,6 +319,159 @@ class BaseDb(ABC):
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         raise NotImplementedError
 
+    # --- Traces ---
+    @abstractmethod
+    def upsert_trace(self, trace: "Trace") -> None:
+        """Create or update a single trace record in the database.
+
+        Args:
+            trace: The Trace object to store (one per trace_id).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_trace(
+        self,
+        trace_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ):
+        """Get a single trace by trace_id or other filters.
+
+        Args:
+            trace_id: The unique trace identifier.
+            run_id: Filter by run ID (returns first match).
+            session_id: Filter by session ID (returns first match).
+            user_id: Filter by user ID (returns first match).
+            agent_id: Filter by agent ID (returns first match).
+
+        Returns:
+            Optional[Trace]: The trace if found, None otherwise.
+
+        Note:
+            If multiple filters are provided, trace_id takes precedence.
+            For other filters, the most recent trace is returned.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_traces(
+        self,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List, int]:
+        """Get traces matching the provided filters with pagination.
+
+        Args:
+            run_id: Filter by run ID.
+            session_id: Filter by session ID.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            status: Filter by status (OK, ERROR).
+            start_time: Filter traces starting after this datetime.
+            end_time: Filter traces ending before this datetime.
+            limit: Maximum number of traces to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Trace], int]: Tuple of (list of matching traces with datetime fields, total count).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_trace_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Get trace statistics grouped by session.
+
+        Args:
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            start_time: Filter sessions with traces created after this datetime.
+            end_time: Filter sessions with traces created before this datetime.
+            limit: Maximum number of sessions to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
+                Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
+                first_trace_at (datetime), last_trace_at (datetime).
+        """
+        raise NotImplementedError
+
+    # --- Spans ---
+    @abstractmethod
+    def create_span(self, span: "Span") -> None:
+        """Create a single span in the database.
+
+        Args:
+            span: The Span object to store.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_spans(self, spans: List) -> None:
+        """Create multiple spans in the database as a batch.
+
+        Args:
+            spans: List of Span objects to store.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_span(self, span_id: str):
+        """Get a single span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[Span]: The span if found, None otherwise.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        """Get spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            parent_span_id: Filter by parent span ID.
+            limit: Maximum number of spans to return.
+
+        Returns:
+            List[Span]: List of matching spans.
+        """
+        raise NotImplementedError
+
     # --- Cultural Knowledge ---
     @abstractmethod
     def clear_cultural_knowledge(self) -> None:
@@ -330,6 +500,111 @@ class BaseDb(ABC):
 
     @abstractmethod
     def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
+        raise NotImplementedError
+
+    # --- Learnings ---
+    @abstractmethod
+    def get_learning(
+        self,
+        learning_type: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve a learning record.
+
+        Args:
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
+
+        Returns:
+            Dict with 'content' key containing the learning data, or None.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_learning(
+        self,
+        id: str,
+        learning_type: str,
+        content: Dict[str, Any],
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Insert or update a learning record.
+
+        Args:
+            id: Unique identifier for the learning.
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            content: The learning content as a dict.
+            user_id: Associated user ID.
+            agent_id: Associated agent ID.
+            team_id: Associated team ID.
+            session_id: Associated session ID.
+            namespace: Namespace for scoping ('user', 'global', or custom).
+            entity_id: Associated entity ID (for entity-specific learnings).
+            entity_type: Entity type ('person', 'company', etc.).
+            metadata: Optional metadata.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_learning(self, id: str) -> bool:
+        """Delete a learning record.
+
+        Args:
+            id: The learning ID to delete.
+
+        Returns:
+            True if deleted, False otherwise.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get multiple learning records.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of learning records.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -368,8 +643,11 @@ class AsyncBaseDb(ABC):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        traces_table: Optional[str] = None,
+        spans_table: Optional[str] = None,
         culture_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        learnings_table: Optional[str] = None,
         context_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -378,8 +656,23 @@ class AsyncBaseDb(ABC):
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
+        self.trace_table_name = traces_table or "agno_traces"
+        self.span_table_name = spans_table or "agno_spans"
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
+        self.learnings_table_name = learnings_table or "agno_learnings"
+
+    async def _create_all_tables(self) -> None:
+        """Create all tables for this database. Override in subclasses."""
+        pass
+
+    async def close(self) -> None:
+        """Close database connections and release resources.
+
+        Override in subclasses to properly dispose of connection pools.
+        Should be called during application shutdown.
+        """
+        pass
         self.context_table_name = context_table or "agno_context"
 
     @abstractmethod
@@ -428,7 +721,7 @@ class AsyncBaseDb(ABC):
     @abstractmethod
     async def get_sessions(
         self,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -622,6 +915,159 @@ class AsyncBaseDb(ABC):
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         raise NotImplementedError
 
+    # --- Traces ---
+    @abstractmethod
+    async def upsert_trace(self, trace) -> None:
+        """Create or update a single trace record in the database.
+
+        Args:
+            trace: The Trace object to update (one per trace_id).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_trace(
+        self,
+        trace_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ):
+        """Get a single trace by trace_id or other filters.
+
+        Args:
+            trace_id: The unique trace identifier.
+            run_id: Filter by run ID (returns first match).
+            session_id: Filter by session ID (returns first match).
+            user_id: Filter by user ID (returns first match).
+            agent_id: Filter by agent ID (returns first match).
+
+        Returns:
+            Optional[Trace]: The trace if found, None otherwise.
+
+        Note:
+            If multiple filters are provided, trace_id takes precedence.
+            For other filters, the most recent trace is returned.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_traces(
+        self,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List, int]:
+        """Get traces matching the provided filters with pagination.
+
+        Args:
+            run_id: Filter by run ID.
+            session_id: Filter by session ID.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            status: Filter by status (OK, ERROR).
+            start_time: Filter traces starting after this datetime.
+            end_time: Filter traces ending before this datetime.
+            limit: Maximum number of traces to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Trace], int]: Tuple of (list of matching traces with datetime fields, total count).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_trace_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Get trace statistics grouped by session.
+
+        Args:
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            start_time: Filter sessions with traces created after this datetime.
+            end_time: Filter sessions with traces created before this datetime.
+            limit: Maximum number of sessions to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
+                Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
+                first_trace_at (datetime), last_trace_at (datetime).
+        """
+        raise NotImplementedError
+
+    # --- Spans ---
+    @abstractmethod
+    async def create_span(self, span) -> None:
+        """Create a single span in the database.
+
+        Args:
+            span: The Span object to store.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def create_spans(self, spans: List) -> None:
+        """Create multiple spans in the database as a batch.
+
+        Args:
+            spans: List of Span objects to store.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_span(self, span_id: str):
+        """Get a single span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[Span]: The span if found, None otherwise.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        """Get spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            parent_span_id: Filter by parent span ID.
+            limit: Maximum number of spans to return.
+
+        Returns:
+            List[Span]: List of matching spans.
+        """
+        raise NotImplementedError
+
     # --- Cultural Notions ---
     @abstractmethod
     async def clear_cultural_knowledge(self) -> None:
@@ -632,24 +1078,158 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_cultural_knowledge(self, id: str) -> Optional[CulturalKnowledge]:
+    async def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
         raise NotImplementedError
 
     @abstractmethod
     async def get_all_cultural_knowledge(
         self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         name: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-    ) -> Optional[List[CulturalKnowledge]]:
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
     @abstractmethod
-    async def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
+    async def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        raise NotImplementedError
+
+    # --- Learnings ---
+    @abstractmethod
+    async def get_learning(
+        self,
+        learning_type: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Async retrieve a learning record.
+
+        Args:
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
+
+        Returns:
+            Dict with 'content' key containing the learning data, or None.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    Just one conflict is remaining in my base, I don't know how to solve that. There is nothing except combination there async def upsert_learning(
+        self,
+        id: str,
+        learning_type: str,
+        content: Dict[str, Any],
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Async insert or update a learning record.
+
+        Args:
+            id: Unique identifier for the learning.
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            content: The learning content as a dict.
+            user_id: Associated user ID.
+            agent_id: Associated agent ID.
+            team_id: Associated team ID.
+            session_id: Associated session ID.
+            namespace: Namespace for scoping ('user', 'global', or custom).
+            entity_id: Associated entity ID (for entity-specific learnings).
+            entity_type: Entity type ('person', 'company', etc.).
+            metadata: Optional metadata.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_learning(self, id: str) -> bool:
+        """Async delete a learning record.
+
+        Args:
+            id: The learning ID to delete.
+
+        Returns:
+            True if deleted, False otherwise.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Async get multiple learning records.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of learning records.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def clear_context_items(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_context_item(self, id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_context_item(self, id: str) -> Optional["ContextItem"]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[List["ContextItem"]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def upsert_context_item(self, context_item: "ContextItem") -> Optional["ContextItem"]:
         raise NotImplementedError
 
     @abstractmethod

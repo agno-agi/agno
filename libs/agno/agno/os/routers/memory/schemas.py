@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -25,12 +26,24 @@ class UserMemorySchema(BaseModel):
         if memory_dict["memory"] == "":
             return None
 
+        # Handle nested memory content (relevant for some memories migrated from v1)
+        if isinstance(memory_dict["memory"], dict):
+            if memory_dict["memory"].get("memory") is not None:
+                memory = str(memory_dict["memory"]["memory"])
+            else:
+                try:
+                    memory = json.dumps(memory_dict["memory"])
+                except json.JSONDecodeError:
+                    memory = str(memory_dict["memory"])
+        else:
+            memory = memory_dict["memory"]
+
         return cls(
             memory_id=memory_dict["memory_id"],
             user_id=str(memory_dict["user_id"]),
             agent_id=memory_dict.get("agent_id"),
             team_id=memory_dict.get("team_id"),
-            memory=memory_dict["memory"],
+            memory=memory,
             topics=memory_dict.get("topics", []),
             updated_at=memory_dict["updated_at"],
         )
@@ -60,3 +73,29 @@ class UserStatsSchema(BaseModel):
             total_memories=user_stats_dict["total_memories"],
             last_memory_updated_at=datetime.fromtimestamp(updated_at, tz=timezone.utc) if updated_at else None,
         )
+
+
+class OptimizeMemoriesRequest(BaseModel):
+    """Schema for memory optimization request"""
+
+    user_id: str = Field(..., description="User ID to optimize memories for")
+    model: Optional[str] = Field(
+        default=None,
+        description="Model to use for optimization in format 'provider:model_id' (e.g., 'openai:gpt-4o-mini', 'anthropic:claude-3-5-sonnet-20241022', 'google:gemini-2.0-flash-exp'). If not specified, uses MemoryManager's default model (gpt-4o).",
+    )
+    apply: bool = Field(
+        default=True,
+        description="If True, apply optimization changes to database. If False, return preview only without saving.",
+    )
+
+
+class OptimizeMemoriesResponse(BaseModel):
+    """Schema for memory optimization response"""
+
+    memories: List[UserMemorySchema] = Field(..., description="List of optimized memory objects")
+    memories_before: int = Field(..., description="Number of memories before optimization", ge=0)
+    memories_after: int = Field(..., description="Number of memories after optimization", ge=0)
+    tokens_before: int = Field(..., description="Token count before optimization", ge=0)
+    tokens_after: int = Field(..., description="Token count after optimization", ge=0)
+    tokens_saved: int = Field(..., description="Number of tokens saved through optimization", ge=0)
+    reduction_percentage: float = Field(..., description="Percentage of token reduction achieved", ge=0.0, le=100.0)

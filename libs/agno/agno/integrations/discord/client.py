@@ -14,7 +14,7 @@ try:
     import discord
 
 except (ImportError, ModuleNotFoundError):
-    print("`discord.py` not installed. Please install using `pip install discord.py`")
+    raise ImportError("`discord.py` not installed. Please install using `pip install discord.py`")
 
 
 class RequiresConfirmationView(discord.ui.View):

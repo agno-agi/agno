@@ -500,6 +500,7 @@ class WorkflowRunOutput:
 
     run_id: Optional[str] = None
     session_id: Optional[str] = None
+    user_id: Optional[str] = None
 
     # Media content fields
     images: Optional[List[Image]] = None
@@ -597,7 +598,7 @@ class WorkflowRunOutput:
                 _dict["input"] = self.input
 
         if self.content and isinstance(self.content, BaseModel):
-            _dict["content"] = self.content.model_dump(exclude_none=True)
+            _dict["content"] = self.content.model_dump(exclude_none=True, mode="json")
 
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]
