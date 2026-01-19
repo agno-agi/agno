@@ -6,8 +6,8 @@ when using path in add_content_async/ainsert.
 
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from unittest.mock import MagicMock, patch
+from typing import Any, Dict, List
+from unittest.mock import patch
 
 import pytest
 
@@ -203,9 +203,6 @@ async def test_aload_from_path_propagates_metadata(temp_text_file, mock_vector_d
         metadata={"document_id": "123", "knowledge_base_id": "456", "filename": "test.txt"},
     )
     content.content_hash = knowledge._build_content_hash(content)
-
-    # Mock the reader to return test documents
-    mock_reader = MockReader()
 
     with patch.object(knowledge, "_aread", return_value=[Document(name="test", content="Test content")]):
         await knowledge._aload_from_path(content, upsert=False, skip_if_exists=False)

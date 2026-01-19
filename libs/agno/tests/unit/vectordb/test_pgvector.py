@@ -700,10 +700,6 @@ def test_delete_by_metadata_complex(mock_pgvector):
 
 def test_get_document_record_merges_filters_into_metadata(mock_pgvector, mock_embedder):
     """Test that _get_document_record correctly merges filters into meta_data.
-
-    This is a regression test for issue #6077 where the local meta_data variable
-    was not being used in the returned record, causing filters to not be included
-    in the stored metadata.
     """
     doc = Document(
         id="test-id",
