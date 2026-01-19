@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from functools import partial
 from importlib.metadata import version
+from inspect import signature
 from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, TypeVar, get_type_hints
 
 from docstring_parser import parse
