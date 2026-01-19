@@ -1,43 +1,35 @@
 # Agno AgentOS Demo
 
-This demo showcases the power of **Agno AgentOS** - a high-performance runtime for multi-agent systems. Experience autonomous planning agents, multi-modal analysis, intelligent teams, and sophisticated workflows.
+This demo showcases what's possible with **Agno AgentOS** - a high-performance runtime for multi-agent systems.
 
 ## What's Inside
 
-### Agents (14 total)
+### Agents
 
-| Category | Agent | Description |
-|----------|-------|-------------|
-| **Flagship** | Planning Agent | Autonomous goal decomposition and execution |
-| **Flagship** | Image Analyst Agent | Multi-modal image and chart analysis |
-| **Flagship** | Web Intelligence Agent | Website analysis and competitive intelligence |
-| **Research** | Research Agent | Web research with Parallel tools |
-| **Research** | Deep Knowledge Agent | RAG with iterative reasoning |
-| **Research** | Self-Learning Research Agent | Tracks consensus over time |
-| **Knowledge** | Agno Knowledge Agent | RAG with Agno documentation |
-| **Knowledge** | Agno MCP Agent | MCP integration for Agno docs |
-| **Data** | Code Executor Agent | Generate and run Python code |
-| **Data** | Data Analyst Agent | Statistics and visualizations |
-| **Finance** | Finance Agent | Financial data with YFinance |
-| **Finance** | Report Writer Agent | Professional report generation |
-| **Learning** | Self-Learning Agent | Learns and saves insights |
-| **SQL** | SQL Agent | Text-to-SQL with F1 data |
+| Agent | Description |
+|-------|-------------|
+| **PaL Agent** | Plan and Learn - stateful planning with session state and learning capture |
+| **Research Agent** | Professional research with rigorous methodology and source verification |
+| **Finance Agent** | Financial data retrieval and analysis with YFinance |
+| **Deep Knowledge Agent** | RAG with iterative reasoning and knowledge base search |
+| **Web Intelligence Agent** | Website analysis and competitive intelligence |
+| **Report Writer Agent** | Professional report generation and synthesis |
+| **Knowledge Agent** | General RAG agent with knowledge base (uses docs.agno.com as example) |
+| **MCP Agent** | General MCP integration (uses docs.agno.com/mcp as example) |
 
-### Teams (3 total)
+### Teams (2 total)
 
 | Team | Members | Use Case |
 |------|---------|----------|
 | **Investment Team** | Finance + Research + Report Writer | Wall Street quality investment research |
-| **Research Report Team** | Research + Deep Knowledge + Report Writer | Comprehensive research reports |
-| **Finance Team** | Finance + Research | Financial analysis with context |
+| **Due Diligence Team** | Research + Web Intel + Finance + Devil's Advocate + Report Writer | Rigorous due diligence with debate |
 
-### Workflows (3 total)
+### Workflows (2 total)
 
 | Workflow | Phases | Use Case |
 |----------|--------|----------|
 | **Deep Research Workflow** | Decomposition -> Parallel Research -> Verification -> Synthesis | Professional research reports |
-| **Data Analysis Workflow** | Ingestion -> Analysis -> Visualization -> Report | End-to-end data analysis |
-| **Research Workflow** | Parallel research from multiple sources | Quick research synthesis |
+| **Startup Analyst Workflow** | Snapshot -> Deep Analysis -> Critical Review -> Report | VC-style due diligence |
 
 ---
 
@@ -88,7 +80,6 @@ docker run -d \
 ### 5. Export API Keys
 
 ```shell
-export ANTHROPIC_API_KEY=***
 export OPENAI_API_KEY=***
 export PARALLEL_API_KEY=***
 ```
@@ -106,21 +97,44 @@ python cookbook/demo/run.py
 
 ---
 
+## Running Individual Agents
+
+Every agent can be run directly with demo tests:
+
+```shell
+# Run PaL Agent with demo tests
+python cookbook/demo/agents/pal_agent.py
+
+# Run with a specific query
+python cookbook/demo/agents/pal_agent.py "Help me compare cloud providers"
+
+# Run other agents
+python cookbook/demo/agents/research_agent.py
+python cookbook/demo/agents/finance_agent.py
+python cookbook/demo/agents/web_intelligence_agent.py
+python cookbook/demo/agents/report_writer_agent.py
+python cookbook/demo/agents/deep_knowledge_agent.py
+python cookbook/demo/agents/knowledge_agent.py
+python cookbook/demo/agents/mcp_agent.py
+```
+
+---
+
 ## Showcase Demos
 
-### Planning Agent (Autonomous)
+### PaL Agent (Plan and Learn)
 
-Ask it to build something complex and watch it plan and execute:
+Ask it to build something complex and watch it plan, execute, and learn:
 
 ```
-"Build a complete market analysis of the electric vehicle industry"
+"Help me decide between Supabase, Firebase, and PlanetScale for my startup"
 ```
 
 The agent will:
-1. Decompose the goal into steps
-2. Research each aspect
-3. Analyze the data
-4. Produce a comprehensive report
+1. Create a structured plan with success criteria
+2. Research each option
+3. Compare and analyze
+4. Save learnings for future tasks
 
 ### Investment Team
 
@@ -134,6 +148,19 @@ The team coordinates:
 - Finance Agent gets quantitative data
 - Research Agent gets qualitative insights
 - Report Writer synthesizes into a professional report
+
+### Due Diligence Team
+
+Rigorous analysis with debate:
+
+```
+"Due diligence on Anthropic - should we invest?"
+```
+
+The team includes:
+- Research, Web Intel, and Finance gather evidence
+- Devil's Advocate challenges findings
+- Report Writer synthesizes with disagreements noted
 
 ### Deep Research Workflow
 
@@ -149,26 +176,30 @@ Professional-grade research:
 3. Fact verification
 4. Report synthesis
 
-### Image Analyst Agent
+### Startup Analyst Workflow
 
-Multi-modal analysis:
+VC-style due diligence:
 
 ```
-"Analyze this chart: [image_url]"
+"Analyze this startup: Anthropic"
 ```
 
-Extracts data, identifies trends, provides insights.
+4-phase process:
+1. Quick snapshot (profile, market, news)
+2. Deep strategic analysis
+3. Critical review (challenge findings)
+4. Final report with verdict
 
 ---
 
 ## Loading Knowledge Bases
 
-### Agno Knowledge Agent
+### Knowledge Agent
 
-Load the Agno documentation:
+Load the knowledge base (runs automatically on first use):
 
 ```shell
-python cookbook/demo/agents/agno_knowledge_agent.py
+python cookbook/demo/agents/knowledge_agent.py
 ```
 
 ### Deep Knowledge Agent
@@ -179,14 +210,13 @@ Load knowledge for deep reasoning:
 python cookbook/demo/agents/deep_knowledge_agent.py
 ```
 
-### SQL Agent
+---
 
-Load F1 data and knowledge:
+## Technical Details
 
-```shell
-python cookbook/demo/agents/sql/load_f1_data.py
-python cookbook/demo/agents/sql/load_sql_knowledge.py
-```
+- **Model**: All agents use GPT-5.2
+- **Database**: PostgreSQL with PgVector on localhost:5532
+- **Persistence**: All agents have database integration for session persistence
 
 ---
 

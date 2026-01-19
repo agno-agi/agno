@@ -1,7 +1,8 @@
+import sys
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.yfinance import YFinanceTools
 from db import demo_db
 
@@ -46,7 +47,7 @@ instructions = dedent("""\
 finance_agent = Agent(
     name="Finance Agent",
     role="Handle financial data requests and market analysis",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[YFinanceTools()],
     description=description,
     instructions=instructions,
@@ -57,25 +58,29 @@ finance_agent = Agent(
     db=demo_db,
 )
 
-# ************* Demo Scenarios (concise) *************
-"""
-1) Investment Brief — Apple (AAPL)
-   - Fetch price + fundamentals; compute P/E, revenue growth, EV/EBITDA (if available).
-   - 1 table + 5-bullet insights + short outlook (horizon, thesis, risks, confidence).
+# ============================================================================
+# Demo Tests
+# ============================================================================
+if __name__ == "__main__":
+    print("=" * 60)
+    print("Finance Agent")
+    print("   Financial data and market analysis")
+    print("=" * 60)
 
-2) Sector Compare — AAPL vs GOOGL vs MSFT
-   - Pull the same metrics for each; produce a comparison table.
-   - Summarize relative strengths and a simple allocation sketch (e.g., 40/30/30) with rationale.
+    if len(sys.argv) > 1:
+        # Run with command line argument
+        message = " ".join(sys.argv[1:])
+        finance_agent.print_response(message, stream=True)
+    else:
+        # Run demo tests
+        print("\n--- Demo 1: Single Stock Analysis ---")
+        finance_agent.print_response(
+            "Give me a quick investment brief on NVDA - just key metrics and 3 insights.",
+            stream=True,
+        )
 
-3) Risk Profile — Tesla (TSLA)
-   - Highlight volatility proxies (beta if available), drawdown range (52w), and balance-sheet notes.
-   - Risks vs. catalysts; brief risk-adjusted view.
-
-4) AI Basket Sentiment — NVDA, GOOGL, MSFT, AMD
-   - Fetch core metrics and recent performance; 1 comparison table.
-   - 4–6 bullets on drivers/risks; short sector outlook.
-
-5) Earnings Prep — Microsoft (MSFT)
-   - Current metrics + recent trend context (as available from YFinance data).
-   - Short playbook: what to watch (revenue lines, margins), typical post-earnings pattern (if inferable).
-"""
+        print("\n--- Demo 2: Stock Comparison ---")
+        finance_agent.print_response(
+            "Compare AAPL, MSFT, and GOOGL - show me a metrics table.",
+            stream=True,
+        )

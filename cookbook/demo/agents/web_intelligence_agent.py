@@ -15,10 +15,11 @@ Example queries:
 - "What are the main products on tesla.com?"
 """
 
+import sys
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIResponses
 from agno.tools.parallel import ParallelTools
 from agno.tools.reasoning import ReasoningTools
 from db import demo_db
@@ -115,7 +116,7 @@ instructions = dedent("""\
 web_intelligence_agent = Agent(
     name="Web Intelligence Agent",
     role="Analyze websites and extract structured intelligence",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[
         ParallelTools(enable_search=True, enable_extract=True),
         ReasoningTools(add_instructions=True),
@@ -130,31 +131,28 @@ web_intelligence_agent = Agent(
 )
 
 # ============================================================================
-# Demo Scenarios
+# Demo Tests
 # ============================================================================
-"""
-1) Company Analysis
-   - "Analyze openai.com and summarize their product offerings"
-   - "What products does anthropic.com offer?"
-   - "Analyze tesla.com and extract their vehicle lineup"
+if __name__ == "__main__":
+    print("=" * 60)
+    print("Web Intelligence Agent")
+    print("   Website analysis and competitive intelligence")
+    print("=" * 60)
 
-2) Pricing Intelligence
-   - "Extract pricing information from anthropic.com"
-   - "What are the pricing tiers on github.com?"
-   - "Compare pricing between Notion and Coda"
+    if len(sys.argv) > 1:
+        # Run with command line argument
+        message = " ".join(sys.argv[1:])
+        web_intelligence_agent.print_response(message, stream=True)
+    else:
+        # Run demo tests
+        print("\n--- Demo 1: Company Analysis ---")
+        web_intelligence_agent.print_response(
+            "Analyze anthropic.com - give me a quick summary of what they do and their main products.",
+            stream=True,
+        )
 
-3) Competitive Intelligence
-   - "Compare the websites of Stripe and Square"
-   - "Compare OpenAI and Anthropic's product offerings"
-   - "Analyze how Uber and Lyft position themselves differently"
-
-4) Feature Comparison
-   - "Compare features of Vercel vs Netlify"
-   - "What's the difference between AWS and GCP offerings?"
-   - "Compare Linear and Jira based on their websites"
-
-5) Website Audit
-   - "What does this startup do? Analyze their website: [url]"
-   - "Summarize the key offerings on this website"
-   - "What's the value proposition of this product?"
-"""
+        print("\n--- Demo 2: Competitive Intel ---")
+        web_intelligence_agent.print_response(
+            "Compare OpenAI and Anthropic based on their websites - key differences only.",
+            stream=True,
+        )

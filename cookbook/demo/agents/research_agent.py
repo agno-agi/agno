@@ -15,10 +15,11 @@ Example queries:
 - "Research: Is AI in a bubble? Present both sides."
 """
 
+import sys
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIResponses
 from agno.tools.parallel import ParallelTools
 from agno.tools.reasoning import ReasoningTools
 from db import demo_db
@@ -157,7 +158,7 @@ instructions = dedent("""\
 research_agent = Agent(
     name="Research Agent",
     role="Professional research with rigorous methodology and source verification",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[
         ReasoningTools(add_instructions=True),
         ParallelTools(enable_search=True, enable_extract=True),
@@ -172,31 +173,28 @@ research_agent = Agent(
 )
 
 # ============================================================================
-# Demo Scenarios
+# Demo Tests
 # ============================================================================
-"""
-1) Industry Research
-   - "Research the competitive landscape for vector databases"
-   - "What's the current state of the AI chip market?"
-   - "Research enterprise adoption of AI agents"
+if __name__ == "__main__":
+    print("=" * 60)
+    print("Research Agent")
+    print("   Professional research with rigorous methodology")
+    print("=" * 60)
 
-2) Trend Analysis
-   - "What are the latest breakthroughs in small language models?"
-   - "Research the evolution of RAG architectures"
-   - "What's happening in the AI regulation space?"
+    if len(sys.argv) > 1:
+        # Run with command line argument
+        message = " ".join(sys.argv[1:])
+        research_agent.print_response(message, stream=True)
+    else:
+        # Run demo tests
+        print("\n--- Demo 1: Industry Research ---")
+        research_agent.print_response(
+            "Research the current state of AI agents in enterprise. Keep it brief.",
+            stream=True,
+        )
 
-3) Balanced Investigation
-   - "Research: Is AI in a bubble? Present both sides."
-   - "Investigate the debate around AI safety vs acceleration"
-   - "Research the controversy around AI in education"
-
-4) Competitive Intelligence
-   - "Research how OpenAI, Anthropic, and Google position their AI offerings"
-   - "What are the key differences between cloud providers' AI strategies?"
-   - "Research the competitive dynamics in the LLM space"
-
-5) Deep Dives
-   - "Research the technical architecture of modern AI agents"
-   - "Investigate the economics of training large language models"
-   - "Research the role of synthetic data in AI development"
-"""
+        print("\n--- Demo 2: Competitive Intelligence ---")
+        research_agent.print_response(
+            "Compare the AI strategies of OpenAI, Anthropic, and Google in 3 bullet points each.",
+            stream=True,
+        )

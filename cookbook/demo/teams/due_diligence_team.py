@@ -15,14 +15,19 @@ Example queries:
 - "Analyze NVIDIA as an investment opportunity"
 """
 
+import sys
+from pathlib import Path
 from textwrap import dedent
+
+# Ensure module can be run from any directory
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from agents.devil_advocate_agent import devil_advocate_agent
 from agents.finance_agent import finance_agent
 from agents.report_writer_agent import report_writer_agent
 from agents.research_agent import research_agent
 from agents.web_intelligence_agent import web_intelligence_agent
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIResponses
 from agno.team.team import Team
 from agno.tools.reasoning import ReasoningTools
 from db import demo_db
@@ -140,7 +145,7 @@ instructions = dedent("""\
 # ============================================================================
 due_diligence_team = Team(
     name="Due Diligence Team",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[
         research_agent,
         web_intelligence_agent,
@@ -159,31 +164,28 @@ due_diligence_team = Team(
 )
 
 # ============================================================================
-# Demo Scenarios
+# Demo Tests
 # ============================================================================
-"""
-1) Investment Due Diligence
-   - "Due diligence on Anthropic - should we invest?"
-   - "Evaluate OpenAI as an investment"
-   - "Analyze NVIDIA - is it overvalued?"
+if __name__ == "__main__":
+    print("=" * 60)
+    print("Due Diligence Team")
+    print("   Research + Web Intel + Finance + Devil's Advocate + Report Writer")
+    print("=" * 60)
 
-2) Partnership Evaluation
-   - "Should we partner with AWS for our AI infrastructure?"
-   - "Evaluate Stripe as a payment processor partner"
-   - "Due diligence on integrating with Salesforce"
+    if len(sys.argv) > 1:
+        # Run with command line argument
+        message = " ".join(sys.argv[1:])
+        due_diligence_team.print_response(message, stream=True)
+    else:
+        # Run demo tests
+        print("\n--- Demo 1: Company Due Diligence ---")
+        due_diligence_team.print_response(
+            "Quick due diligence on Anthropic - give me a verdict with key risks.",
+            stream=True,
+        )
 
-3) Competitive Analysis
-   - "Due diligence on our competitor: [competitor name]"
-   - "Evaluate the threat from Microsoft's AI strategy"
-   - "Analyze Google's position in the AI market"
-
-4) M&A Targets
-   - "Evaluate Linear as an acquisition target"
-   - "Due diligence on acquiring Notion"
-   - "Should we acquire this startup: [startup]"
-
-5) Market Entry
-   - "Due diligence on entering the Japanese market"
-   - "Evaluate the opportunity in enterprise AI"
-   - "Should we expand into healthcare AI?"
-"""
+        print("\n--- Demo 2: Investment Evaluation ---")
+        due_diligence_team.print_response(
+            "Evaluate NVIDIA as an investment - is it overvalued? Give me bull and bear cases.",
+            stream=True,
+        )

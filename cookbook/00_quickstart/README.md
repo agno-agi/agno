@@ -179,4 +179,3 @@ All examples in this Quick Start use synchronous code for simplicity. For async/
 - [Agno Documentation](https://docs.agno.com)
 - [Agent OS Overview](https://docs.agno.com/agent-os/overview)
 
-Built with love by the Agno team

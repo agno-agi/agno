@@ -17,10 +17,11 @@ Example queries:
 - "Play devil's advocate on: [topic]"
 """
 
+import sys
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIResponses
 from agno.tools.parallel import ParallelTools
 from agno.tools.reasoning import ReasoningTools
 from db import demo_db
@@ -124,7 +125,7 @@ instructions = dedent("""\
 devil_advocate_agent = Agent(
     name="Devil's Advocate Agent",
     role="Challenge findings, expose weaknesses, and stress-test analysis",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[
         ReasoningTools(add_instructions=True),
         ParallelTools(enable_search=True, enable_extract=True),
@@ -139,31 +140,28 @@ devil_advocate_agent = Agent(
 )
 
 # ============================================================================
-# Demo Scenarios
+# Demo Tests
 # ============================================================================
-"""
-1) Investment Thesis Challenge
-   - "Challenge this thesis: NVIDIA will dominate AI infrastructure for the next decade"
-   - "Find the flaws in this investment case for Tesla"
-   - "What could go wrong with betting on AI stocks?"
+if __name__ == "__main__":
+    print("=" * 60)
+    print("Devil's Advocate Agent")
+    print("   Challenge findings and stress-test analysis")
+    print("=" * 60)
 
-2) Strategy Review
-   - "Play devil's advocate on this product strategy: [strategy]"
-   - "What are the risks in this go-to-market approach?"
-   - "Challenge our assumption that customers want this feature"
+    if len(sys.argv) > 1:
+        # Run with command line argument
+        message = " ".join(sys.argv[1:])
+        devil_advocate_agent.print_response(message, stream=True)
+    else:
+        # Run demo tests
+        print("\n--- Demo 1: Investment Thesis Challenge ---")
+        devil_advocate_agent.print_response(
+            "Challenge this thesis: NVIDIA will dominate AI infrastructure for the next decade. Give me the top 3 risks.",
+            stream=True,
+        )
 
-3) Analysis Quality Check
-   - "Review this market analysis and find the weaknesses: [analysis]"
-   - "What's wrong with this competitive assessment?"
-   - "Stress-test these revenue projections"
-
-4) Decision Validation
-   - "We're deciding to expand into Europe. What could go wrong?"
-   - "Challenge our decision to use this technology stack"
-   - "Find the risks in this acquisition target"
-
-5) Assumption Testing
-   - "What assumptions are we making about AI adoption rates?"
-   - "Challenge the assumption that remote work will continue"
-   - "What if the market doesn't grow as projected?"
-"""
+        print("\n--- Demo 2: Strategy Review ---")
+        devil_advocate_agent.print_response(
+            "What could go wrong with betting heavily on AI stocks right now?",
+            stream=True,
+        )

@@ -13,12 +13,16 @@ Example queries:
 - "In-depth analysis of the LLM landscape in 2025"
 """
 
+import sys
+from pathlib import Path
 from textwrap import dedent
 from typing import Dict, List, Optional
 
+# Ensure module can be run from any directory
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from agno.agent import Agent
-from agno.models.anthropic import Claude
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.parallel import ParallelTools
@@ -34,7 +38,7 @@ from db import demo_db
 decomposition_agent = Agent(
     name="Topic Decomposer",
     role="Break down research topics into sub-questions",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[ReasoningTools(add_instructions=True)],
     description=dedent("""\
         You are a research strategist who breaks down complex topics into
@@ -76,7 +80,7 @@ decomposition_agent = Agent(
 hn_researcher = Agent(
     name="HN Researcher",
     role="Research trending topics and discussions on Hacker News",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[HackerNewsTools()],
     description=dedent("""\
         You search Hacker News for relevant discussions, expert opinions,
@@ -103,7 +107,7 @@ hn_researcher = Agent(
 web_researcher = Agent(
     name="Web Researcher",
     role="Search the web for current information and sources",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[DuckDuckGoTools()],
     description=dedent("""\
         You search the web for up-to-date information, news articles,
@@ -130,7 +134,7 @@ web_researcher = Agent(
 parallel_researcher = Agent(
     name="Deep Researcher",
     role="Perform deep semantic search for high-quality content",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[ParallelTools(enable_search=True, enable_extract=True)],
     description=dedent("""\
         You use semantic search to find high-quality, in-depth content
@@ -161,7 +165,7 @@ parallel_researcher = Agent(
 verification_agent = Agent(
     name="Fact Verifier",
     role="Cross-reference and validate research findings",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[ReasoningTools(add_instructions=True)],
     description=dedent("""\
         You analyze research findings to identify consensus, contradictions,
@@ -200,7 +204,7 @@ verification_agent = Agent(
 synthesis_agent = Agent(
     name="Report Synthesizer",
     role="Create comprehensive research reports",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[ReasoningTools(add_instructions=True)],
     description=dedent("""\
         You synthesize research findings into clear, comprehensive,
@@ -347,26 +351,28 @@ deep_research_workflow = Workflow(
 )
 
 # ============================================================================
-# Demo Scenarios
+# Demo Tests
 # ============================================================================
-"""
-1) Technology Trends
-   - "Deep research: What's the future of AI agents in enterprise?"
-   - "In-depth analysis of the LLM landscape in 2025"
-   - "Comprehensive research on quantum computing progress"
+if __name__ == "__main__":
+    import asyncio
 
-2) Industry Analysis
-   - "Comprehensive research on climate tech investment opportunities"
-   - "Deep dive: The state of autonomous vehicles in 2025"
-   - "Research the fintech disruption of traditional banking"
+    print("=" * 60)
+    print("Deep Research Workflow")
+    print("   4-phase: Decomposition -> Research -> Verification -> Synthesis")
+    print("=" * 60)
 
-3) Market Research
-   - "In-depth research: Is AI in a bubble?"
-   - "Comprehensive analysis of the semiconductor supply chain"
-   - "Deep research on the creator economy"
+    async def run_demo():
+        if len(sys.argv) > 1:
+            # Run with command line argument
+            message = " ".join(sys.argv[1:])
+            response = await deep_research_workflow.arun(message)
+            print(response.content)
+        else:
+            # Run demo test
+            print("\n--- Demo: AI Agents Research ---")
+            response = await deep_research_workflow.arun(
+                "Research the current state of AI agents in enterprise - keep it brief."
+            )
+            print(response.content)
 
-4) Strategic Research
-   - "Research how enterprises are adopting AI agents"
-   - "Deep dive: The future of work with AI"
-   - "Comprehensive research on AI regulation globally"
-"""
+    asyncio.run(run_demo())

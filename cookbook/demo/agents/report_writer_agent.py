@@ -15,10 +15,11 @@ Example queries:
 - "Write a technical report on our system architecture"
 """
 
+import sys
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIResponses
 from agno.tools.parallel import ParallelTools
 from agno.tools.reasoning import ReasoningTools
 from db import demo_db
@@ -118,7 +119,7 @@ instructions = dedent("""\
 report_writer_agent = Agent(
     name="Report Writer Agent",
     role="Generate professional, well-structured reports",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[
         ReasoningTools(add_instructions=True),
         ParallelTools(enable_search=True, enable_extract=True),
@@ -133,26 +134,28 @@ report_writer_agent = Agent(
 )
 
 # ============================================================================
-# Demo Scenarios
+# Demo Tests
 # ============================================================================
-"""
-1) Executive Summary
-   - "Write an executive summary on the state of AI in 2025"
-   - "Create a one-page brief on renewable energy trends"
+if __name__ == "__main__":
+    print("=" * 60)
+    print("Report Writer Agent")
+    print("   Professional report generation")
+    print("=" * 60)
 
-2) Market Analysis
-   - "Generate a market analysis report on the EV industry"
-   - "Write a competitive analysis of cloud providers"
+    if len(sys.argv) > 1:
+        # Run with command line argument
+        message = " ".join(sys.argv[1:])
+        report_writer_agent.print_response(message, stream=True)
+    else:
+        # Run demo tests
+        print("\n--- Demo 1: Executive Summary ---")
+        report_writer_agent.print_response(
+            "Write a brief executive summary on the state of AI agents in 2025. Keep it to 5 bullet points.",
+            stream=True,
+        )
 
-3) Technical Report
-   - "Create a technical report on microservices architecture best practices"
-   - "Write a security assessment report template"
-
-4) Performance Report
-   - "Generate a quarterly performance report template"
-   - "Create a project status report"
-
-5) Research Report
-   - "Write a research report on remote work productivity"
-   - "Create an industry trends report for fintech"
-"""
+        print("\n--- Demo 2: Market Analysis ---")
+        report_writer_agent.print_response(
+            "Write a short market analysis report on the cloud computing industry. Focus on the top 3 players.",
+            stream=True,
+        )

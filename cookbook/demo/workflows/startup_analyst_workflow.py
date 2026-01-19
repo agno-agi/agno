@@ -14,12 +14,16 @@ Example queries:
 - "Evaluate this company as an acquisition target: Notion"
 """
 
+import sys
+from pathlib import Path
 from textwrap import dedent
 from typing import Dict, List, Optional
 
+# Ensure module can be run from any directory
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from agno.agent import Agent
-from agno.models.anthropic import Claude
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.parallel import ParallelTools
 from agno.tools.reasoning import ReasoningTools
 from agno.workflow import Step, Workflow
@@ -33,7 +37,7 @@ from db import demo_db
 company_profiler = Agent(
     name="Company Profiler",
     role="Build initial company profile",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[ParallelTools(enable_search=True, enable_extract=True)],
     description="You create comprehensive company profiles.",
     instructions=dedent("""\
@@ -71,7 +75,7 @@ company_profiler = Agent(
 market_analyst = Agent(
     name="Market Analyst",
     role="Analyze market position and competitive landscape",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[ParallelTools(enable_search=True, enable_extract=True)],
     description="You analyze markets and competitive dynamics.",
     instructions=dedent("""\
@@ -107,7 +111,7 @@ market_analyst = Agent(
 news_tracker = Agent(
     name="News Tracker",
     role="Track recent news and developments",
-    model=OpenAIChat(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[ParallelTools(enable_search=True, enable_extract=True)],
     description="You track and summarize recent company news.",
     instructions=dedent("""\
@@ -142,7 +146,7 @@ news_tracker = Agent(
 strategic_analyst = Agent(
     name="Strategic Analyst",
     role="Deep strategic analysis",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[
         ReasoningTools(add_instructions=True),
         ParallelTools(enable_search=True, enable_extract=True),
@@ -195,7 +199,7 @@ strategic_analyst = Agent(
 critical_reviewer = Agent(
     name="Critical Reviewer",
     role="Challenge findings and identify risks",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[
         ReasoningTools(add_instructions=True),
         ParallelTools(enable_search=True, enable_extract=True),
@@ -242,7 +246,7 @@ critical_reviewer = Agent(
 report_synthesizer = Agent(
     name="Report Synthesizer",
     role="Create final due diligence report",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[ReasoningTools(add_instructions=True)],
     description="You synthesize analysis into executive reports.",
     instructions=dedent("""\
@@ -412,31 +416,28 @@ startup_analyst_workflow = Workflow(
 )
 
 # ============================================================================
-# Demo Scenarios
+# Demo Tests
 # ============================================================================
-"""
-1) Startup Due Diligence
-   - "Analyze this startup: Anthropic"
-   - "Due diligence on: Perplexity AI"
-   - "Evaluate: Cursor (the AI code editor)"
+if __name__ == "__main__":
+    import asyncio
 
-2) Investment Analysis
-   - "Should we invest in: OpenAI?"
-   - "Evaluate as investment target: Stripe"
-   - "Analyze investment opportunity: Databricks"
+    print("=" * 60)
+    print("Startup Analyst Workflow")
+    print("   4-phase: Snapshot -> Deep Analysis -> Critical Review -> Report")
+    print("=" * 60)
 
-3) Acquisition Targets
-   - "Evaluate as acquisition target: Notion"
-   - "M&A analysis: Linear"
-   - "Should we acquire: Vercel?"
+    async def run_demo():
+        if len(sys.argv) > 1:
+            # Run with command line argument
+            message = " ".join(sys.argv[1:])
+            response = await startup_analyst_workflow.arun(message)
+            print(response.content)
+        else:
+            # Run demo test
+            print("\n--- Demo: Anthropic Due Diligence ---")
+            response = await startup_analyst_workflow.arun(
+                "Quick due diligence on Anthropic - give me a brief verdict."
+            )
+            print(response.content)
 
-4) Competitive Analysis
-   - "Analyze competitor: Salesforce"
-   - "Deep dive on: Microsoft's AI strategy"
-   - "Evaluate: Google's position in AI"
-
-5) Partnership Evaluation
-   - "Should we partner with: AWS?"
-   - "Evaluate partnership with: Snowflake"
-   - "Analyze strategic alliance with: Nvidia"
-"""
+    asyncio.run(run_demo())

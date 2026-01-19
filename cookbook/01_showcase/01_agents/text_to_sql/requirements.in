@@ -1,0 +1,18 @@
+# Text-to-SQL Agent Dependencies
+# Install: pip install -r requirements.in
+
+# Core framework
+agno
+
+# Database
+psycopg[binary]
+sqlalchemy
+pgvector
+
+# Data loading
+pandas
+requests
+
+# Models
+anthropic
+openai

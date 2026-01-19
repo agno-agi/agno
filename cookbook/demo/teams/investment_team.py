@@ -13,12 +13,17 @@ Example queries:
 - "Compare semiconductor stocks: NVDA, AMD, INTC, TSM"
 """
 
+import sys
+from pathlib import Path
 from textwrap import dedent
+
+# Ensure module can be run from any directory
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from agents.finance_agent import finance_agent
 from agents.report_writer_agent import report_writer_agent
 from agents.research_agent import research_agent
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIResponses
 from agno.team.team import Team
 from agno.tools.reasoning import ReasoningTools
 from db import demo_db
@@ -101,7 +106,7 @@ instructions = dedent("""\
 # ============================================================================
 investment_team = Team(
     name="Investment Team",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[finance_agent, research_agent, report_writer_agent],
     tools=[ReasoningTools(add_instructions=True)],
     description=description,
@@ -114,26 +119,28 @@ investment_team = Team(
 )
 
 # ============================================================================
-# Demo Scenarios
+# Demo Tests
 # ============================================================================
-"""
-1) Single Stock Analysis
-   - "Complete investment analysis of NVIDIA"
-   - "Should I buy Tesla stock? Full analysis with thesis"
-   - "Create an investment thesis for Apple"
+if __name__ == "__main__":
+    print("=" * 60)
+    print("Investment Team")
+    print("   Finance + Research + Report Writer")
+    print("=" * 60)
 
-2) Multi-Stock Comparison
-   - "Compare Microsoft, Google, and Amazon as investments"
-   - "Analyze the Magnificent 7 stocks - which is the best value?"
-   - "Compare semiconductor stocks: NVDA, AMD, INTC, TSM"
+    if len(sys.argv) > 1:
+        # Run with command line argument
+        message = " ".join(sys.argv[1:])
+        investment_team.print_response(message, stream=True)
+    else:
+        # Run demo tests
+        print("\n--- Demo 1: Single Stock Analysis ---")
+        investment_team.print_response(
+            "Give me a quick investment analysis of NVDA - key metrics and recommendation.",
+            stream=True,
+        )
 
-3) Sector Analysis
-   - "Analyze the AI sector: best investment opportunities"
-   - "Which cloud computing stock should I invest in?"
-   - "Create a fintech investment thesis"
-
-4) Thematic Research
-   - "Best AI infrastructure plays for 2025"
-   - "Investment opportunities in the EV supply chain"
-   - "How to invest in the AI agent revolution"
-"""
+        print("\n--- Demo 2: Stock Comparison ---")
+        investment_team.print_response(
+            "Compare AAPL and MSFT as investments - which is better right now?",
+            stream=True,
+        )
