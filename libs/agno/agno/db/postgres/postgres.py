@@ -252,7 +252,7 @@ class PostgresDb(BaseDb):
             # Build columns
             for col_name, col_config in table_schema.items():
                 column_args = [col_name, col_config["type"]()]
-                column_kwargs = {}
+                column_kwargs: Dict[str, Any] = {}
 
                 # Column-level PK only if no composite PK is defined
                 if col_config.get("primary_key", False) and schema_primary_key is None:
