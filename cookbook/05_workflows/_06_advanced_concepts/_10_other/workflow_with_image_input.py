@@ -2,7 +2,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.media import Image
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
@@ -16,7 +16,7 @@ image_analyzer = Agent(
 news_researcher = Agent(
     name="News Researcher",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="Search for latest news and information related to the analyzed image content.",
 )
 

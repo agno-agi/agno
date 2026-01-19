@@ -1,6 +1,6 @@
 from agno.agent import Agent
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 # Create a research team
 team = Team(
@@ -8,7 +8,7 @@ team = Team(
         Agent(
             name="Sarah",
             role="Data Researcher",
-            tools=[DuckDuckGoTools()],
+            tools=[WebSearchTools()],
             instructions="Focus on gathering and analyzing data",
         ),
         Agent(

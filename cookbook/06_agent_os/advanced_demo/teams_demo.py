@@ -5,8 +5,8 @@ from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -18,7 +18,7 @@ file_agent = Agent(
     role="Answer questions about the uploaded files",
     model=Claude(id="claude-3-7-sonnet-latest"),
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     instructions=[
         "You are an AI agent that can analyze files.",
         "You are given a file and you need to answer questions about the file.",
@@ -32,7 +32,7 @@ video_agent = Agent(
     id="video-understanding-agent",
     role="Answer questions about video files",
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     add_history_to_context=True,
     add_datetime_to_context=True,
     markdown=True,
@@ -44,7 +44,7 @@ audio_agent = Agent(
     role="Answer questions about audio files",
     model=OpenAIChat(id="gpt-4o-audio-preview"),
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     add_history_to_context=True,
     add_datetime_to_context=True,
     markdown=True,
@@ -54,12 +54,12 @@ web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     id="web_agent",
     instructions=[
         "You are an experienced web researcher and news analyst! 🔍",
     ],
-    enable_user_memories=True,
+    update_memory_on_run=True,
     markdown=True,
     db=db,
 )
@@ -69,9 +69,7 @@ finance_agent = Agent(
     role="Get financial data",
     id="finance_agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
-    ],
+    tools=[YFinanceTools()],
     instructions=[
         "You are a skilled financial analyst with expertise in market data! 📊",
         "Follow these steps when analyzing financial data:",
@@ -80,7 +78,7 @@ finance_agent = Agent(
         "Include key metrics: P/E ratio, market cap, 52-week range",
         "Analyze trading patterns and volume trends",
     ],
-    enable_user_memories=True,
+    update_memory_on_run=True,
     markdown=True,
     db=db,
 )
@@ -91,7 +89,7 @@ simple_agent = Agent(
     id="simple_agent",
     model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a simple agent"],
-    enable_user_memories=True,
+    update_memory_on_run=True,
     db=db,
 )
 
@@ -101,8 +99,8 @@ research_agent = Agent(
     id="research_agent",
     model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a research agent"],
-    tools=[DuckDuckGoTools(), ExaTools()],
-    enable_user_memories=True,
+    tools=[WebSearchTools(), ExaTools()],
+    update_memory_on_run=True,
     db=db,
 )
 
@@ -115,7 +113,7 @@ research_team = Team(
     instructions=[
         "You are the lead researcher of a research team! 🔍",
     ],
-    enable_user_memories=True,
+    update_memory_on_run=True,
     add_datetime_to_context=True,
     markdown=True,
     db=db,
@@ -132,7 +130,7 @@ multimodal_team = Team(
     instructions=[
         "You are the lead editor of a prestigious financial news desk! 📰",
     ],
-    enable_user_memories=True,
+    update_memory_on_run=True,
     db=db,
 )
 financial_news_team = Team(
@@ -161,7 +159,7 @@ financial_news_team = Team(
     markdown=True,
     show_members_responses=True,
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     expected_output="A good financial news report.",
 )
 

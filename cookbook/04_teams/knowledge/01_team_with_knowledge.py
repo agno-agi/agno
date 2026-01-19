@@ -12,7 +12,7 @@ from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 # Setup paths for knowledge storage
@@ -31,14 +31,14 @@ agno_docs_knowledge = Knowledge(
 )
 
 # Add content to knowledge base
-agno_docs_knowledge.add_content(url="https://docs.agno.com/llms-full.txt")
+agno_docs_knowledge.insert(url="https://docs.agno.com/llms-full.txt")
 
 # Create web search agent for supplementary information
 web_agent = Agent(
     name="Web Search Agent",
     role="Handle web search requests",
     model=OpenAIChat(id="o3-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions=["Always include sources"],
 )
 

@@ -10,7 +10,7 @@ Steps:
 
 from agno.agent import Agent
 from agno.db.firestore import FirestoreDb
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 PROJECT_ID = "agno-os-test"  # Use your project ID here
 
@@ -24,7 +24,7 @@ db = FirestoreDb(project_id=PROJECT_ID)
 
 agent = Agent(
     db=db,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_history_to_context=True,
 )
 agent.print_response("How many people live in Canada?")

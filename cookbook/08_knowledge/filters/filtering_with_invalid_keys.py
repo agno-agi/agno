@@ -27,7 +27,7 @@ knowledge = Knowledge(
 )
 
 # Load all documents into the vector database
-knowledge.add_contents(
+knowledge.insert_many(
     [
         {
             "path": downloaded_csv_paths[0],
@@ -69,7 +69,7 @@ knowledge.add_contents(
     ],
 )
 
-# Step 2: Query the knowledge base with different filter combinations
+# Step 2: Query the knowledge base with incorrect filter keys
 # ------------------------------------------------------------------------------
 na_sales = Agent(
     knowledge=knowledge,

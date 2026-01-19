@@ -2,7 +2,7 @@
 
 from agno.agent import Agent
 from agno.models.deepseek import DeepSeek
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 """
 The current version of the deepseek-chat model's Function Calling capabilitity is unstable, which may result in looped calls or empty responses.
@@ -11,7 +11,7 @@ Their development team is actively working on a fix, and it is expected to be re
 
 agent = Agent(
     model=DeepSeek(id="deepseek-chat"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

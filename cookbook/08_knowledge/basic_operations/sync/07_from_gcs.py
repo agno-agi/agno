@@ -23,7 +23,7 @@ knowledge = Knowledge(
 )
 
 # Add from GCS
-knowledge.add_content(
+knowledge.insert(
     name="GCS PDF",
     remote_content=GCSContent(bucket_name="thai-recepies", blob_name="ThaiRecipes.pdf"),
     metadata={"remote_content": "GCS"},

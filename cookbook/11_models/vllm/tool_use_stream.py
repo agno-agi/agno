@@ -2,13 +2,13 @@
 
 from agno.agent import Agent
 from agno.models.vllm import VLLM
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=VLLM(
         id="NousResearch/Nous-Hermes-2-Mistral-7B-DPO", top_k=20, enable_thinking=False
     ),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 agent.print_response("Whats happening in France?", stream=True)
