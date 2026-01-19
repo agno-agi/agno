@@ -18,7 +18,7 @@ from textwrap import dedent
 from typing import List, Optional
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
+from agno.models.openai.chat import OpenAIChat
 from agno.team import Team
 from agno.tools.mcp import MCPTools
 from agno.tools.websearch import WebSearchTools
@@ -83,7 +83,7 @@ async def run_team():
         airbnb_agent = Agent(
             name="Airbnb",
             role="Airbnb Agent",
-            model=OpenAIResponses("gpt-5.2"),
+            model=OpenAIChat("gpt-4o"),
             tools=[airbnb_tools],
             instructions=dedent("""\
                 You are an agent that can find Airbnb listings for a given location.
@@ -94,7 +94,7 @@ async def run_team():
         maps_agent = Agent(
             name="Google Maps",
             role="Location Services Agent",
-            model=OpenAIResponses("gpt-5.2"),
+            model=OpenAIChat("gpt-4o"),
             tools=[maps_tools],
             instructions=dedent("""\
                 You are an agent that helps find attractions, points of interest,
@@ -107,7 +107,7 @@ async def run_team():
         web_search_agent = Agent(
             name="Web Search",
             role="Web Search Agent",
-            model=OpenAIResponses("gpt-5.2"),
+            model=OpenAIChat("gpt-4o"),
             tools=[WebSearchTools()],
             instructions=dedent("""\
                 You are an agent that can search the web for information.
@@ -119,7 +119,7 @@ async def run_team():
         weather_search_agent = Agent(
             name="Weather Search",
             role="Weather Search Agent",
-            model=OpenAIResponses("gpt-5.2"),
+            model=OpenAIChat("gpt-4o"),
             tools=[WebSearchTools()],
             instructions=dedent("""\
                 You are an agent that can search the web for information.
@@ -131,7 +131,7 @@ async def run_team():
         # Create and run the team
         team = Team(
             name="SkyPlanner",
-            model=OpenAIResponses("gpt-5.2"),
+            model=OpenAIChat("gpt-4o"),
             members=[
                 airbnb_agent,
                 web_search_agent,

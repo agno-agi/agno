@@ -1,12 +1,12 @@
-"""Run `uv pip install ddgs` to install dependencies."""
+"""Run `pip install ddgs` to install dependencies."""
 
 from agno.agent import Agent
 from agno.models.azure import AzureOpenAI
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
-    model=AzureOpenAI(id="gpt-5.2"),
-    tools=[DuckDuckGoTools()],
+    model=AzureOpenAI(id="gpt-4o-mini"),
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

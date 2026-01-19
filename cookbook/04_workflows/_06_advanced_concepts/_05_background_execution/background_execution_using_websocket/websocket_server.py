@@ -6,8 +6,8 @@ import uvicorn
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -18,15 +18,15 @@ SECURITY_KEY = os.getenv("SECURITY_KEY", "your-secret-key")  # Set your key here
 # === WORKFLOW SETUP ===
 hackernews_agent = Agent(
     name="HackerNews Researcher",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     tools=[HackerNewsTools()],
     instructions="Research tech news and trends from HackerNews",
 )
 
 search_agent = Agent(
     name="Search Agent",
-    model=OpenAIChat(id="gpt-5.2"),
-    tools=[DuckDuckGoTools()],
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[WebSearchTools()],
     instructions="Search for additional information on the web",
 )
 
@@ -69,7 +69,7 @@ async def websocket_endpoint(websocket: WebSocket):
     active_connections[connection_id] = websocket
     authenticated_connections[connection_id] = False  # Start unauthenticated
 
-    print(f"Client connected: {connection_id}")
+    print(f"🔌 Client connected: {connection_id}")
 
     try:
         # Send connection confirmation
@@ -112,7 +112,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 }
                             )
                         )
-                        print(f"Client authenticated: {connection_id}")
+                        print(f"🔐 Client authenticated: {connection_id}")
                     else:
                         await websocket.send_text(
                             json.dumps(
@@ -163,7 +163,7 @@ async def websocket_endpoint(websocket: WebSocket):
             del active_connections[connection_id]
         if connection_id in authenticated_connections:
             del authenticated_connections[connection_id]
-        print(f"Client disconnected: {connection_id}")
+        print(f"🔌 Client disconnected: {connection_id}")
 
 
 async def handle_start_workflow(websocket: WebSocket, message_data: dict):
@@ -232,11 +232,11 @@ async def handle_start_workflow(websocket: WebSocket, message_data: dict):
 # ... rest of the HTTP endpoint code stays the same ...
 
 if __name__ == "__main__":
-    print("Starting Background Workflow WebSocket Server...")
-    print("WebSocket: ws://localhost:8000/ws")
-    print("HTTP API: http://localhost:8000")
-    print("API Docs: http://localhost:8000/docs")
-    print(f"Security Key: {SECURITY_KEY}")
+    print("🚀 Starting Background Workflow WebSocket Server...")
+    print("🔌 WebSocket: ws://localhost:8000/ws")
+    print("📡 HTTP API: http://localhost:8000")
+    print("📊 API Docs: http://localhost:8000/docs")
+    print(f"🔐 Security Key: {SECURITY_KEY}")
 
     uvicorn.run(
         app,

@@ -1,8 +1,8 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.condition import Condition
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step
@@ -12,21 +12,21 @@ from agno.workflow.workflow import Workflow
 # Define agents for different tasks
 researcher = Agent(
     name="Research Agent",
-    model=OpenAIChat(id="gpt-5.2"),
-    tools=[DuckDuckGoTools()],
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[WebSearchTools()],
     instructions="Research the given topic and provide key facts and insights.",
 )
 
 tech_researcher = Agent(
     name="Tech Research Agent",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     tools=[HackerNewsTools()],
     instructions="Research tech-related topics from Hacker News and provide latest developments.",
 )
 
 news_researcher = Agent(
     name="News Research Agent",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     tools=[ExaTools()],
     instructions="Research current news and trends using Exa search.",
 )
@@ -45,7 +45,7 @@ editor = Agent(
 
 content_agent = Agent(
     name="Content Agent",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     instructions="Prepare and format content for writing based on research inputs.",
 )
 

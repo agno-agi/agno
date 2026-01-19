@@ -1,7 +1,7 @@
 """
 Send traces from different agents to different Arize Phoenix projects.
 
-1. Install dependencies: uv pip install arize-phoenix openai openinference-instrumentation-agno opentelemetry-sdk opentelemetry-exporter-otlp
+1. Install dependencies: pip install arize-phoenix openai openinference-instrumentation-agno opentelemetry-sdk opentelemetry-exporter-otlp
 2. Setup your Arize Phoenix account and get your API key: https://phoenix.arize.com/
 3. Set your Arize Phoenix API key as an environment variable:
   - export PHOENIX_API_KEY=<your-key>
@@ -13,7 +13,7 @@ import os
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 from openinference.instrumentation import dangerously_using_project
 from phoenix.otel import register
@@ -43,7 +43,7 @@ class SearchResult(BaseModel):
 # Agent 1 - Stock Price Agent
 stock_agent = Agent(
     name="Stock Price Agent",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     tools=[YFinanceTools()],
     db=InMemoryDb(),
     instructions="You are a stock price agent. Answer questions in the style of a stock analyst.",
@@ -54,8 +54,8 @@ stock_agent = Agent(
 # Agent 2 - Search Agent
 search_agent = Agent(
     name="Search Agent",
-    model=OpenAIChat(id="gpt-5.2"),
-    tools=[DuckDuckGoTools()],
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[WebSearchTools()],
     db=InMemoryDb(),
     instructions="You are a search agent. Find and summarize information from the web.",
     session_id="search_session",

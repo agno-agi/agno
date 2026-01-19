@@ -2,8 +2,8 @@ from typing import List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 from pydantic import BaseModel, Field
@@ -60,8 +60,8 @@ class FinalContentPlan(BaseModel):
 # Define agents with response models
 research_agent = Agent(
     name="AI Research Specialist",
-    model=OpenAIChat(id="gpt-5.2"),
-    tools=[HackerNewsTools(), DuckDuckGoTools()],
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[HackerNewsTools(), WebSearchTools()],
     role="Research AI trends and extract structured insights",
     output_schema=ResearchFindings,
     instructions=[
@@ -74,7 +74,7 @@ research_agent = Agent(
 
 strategy_agent = Agent(
     name="Content Strategy Expert",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     role="Create content strategies based on research findings",
     output_schema=ContentStrategy,
     instructions=[

@@ -1,7 +1,7 @@
 """
 Here is a tool with reasoning capabilities to allow agents to run workflows.
 
-1. Run: `uv pip install openai agno lancedb tantivy sqlalchemy` to install the dependencies
+1. Run: `pip install openai agno lancedb tantivy sqlalchemy` to install the dependencies
 2. Export your OPENAI_API_KEY
 3. Run: `python cookbook/workflows/_06_advanced_concepts/_06_other/workflow_tools.py` to run the agent
 """
@@ -13,8 +13,8 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.workflow import WorkflowTools
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
@@ -36,20 +36,20 @@ FEW_SHOT_EXAMPLES = dedent(
 # Define agents
 web_agent = Agent(
     name="Web Agent",
-    model=OpenAIChat(id="gpt-5.2"),
-    tools=[DuckDuckGoTools()],
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[WebSearchTools()],
     role="Search the web for the latest news and trends",
 )
 hackernews_agent = Agent(
     name="Hackernews Agent",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     tools=[HackerNewsTools()],
     role="Extract key insights and content from Hackernews posts",
 )
 
 writer_agent = Agent(
     name="Writer Agent",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     instructions="Write a blog post on the topic",
 )
 
@@ -128,7 +128,7 @@ workflow_tools = WorkflowTools(
 )
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIChat(id="gpt-5-mini"),
     tools=[workflow_tools],
     markdown=True,
 )

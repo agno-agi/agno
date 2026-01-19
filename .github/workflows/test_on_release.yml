@@ -5,7 +5,8 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
-      - "v2.4-with-cookbooks" # Enable full tests for v2.4-with-cookbooks branch
+      - "learning-machine-v0" # Enable full tests for learning-machine branch
+      - "v2.4.0" # Enable full tests for v2.4.0 branch
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:

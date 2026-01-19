@@ -650,8 +650,8 @@ async def test_process_content_success(mock_knowledge, mock_content):
     # Configure get_readers() to return the dictionary (process_content calls get_readers())
     mock_knowledge.get_readers.return_value = {"text_reader": mock_reader}
 
-    # Mock the knowledge._load_content_async method (async version)
-    with patch.object(mock_knowledge, "_load_content_async", new_callable=AsyncMock) as mock_add:
+    # Mock the knowledge._aload_content method (async version)
+    with patch.object(mock_knowledge, "_aload_content", new_callable=AsyncMock) as mock_add:
         # Call the function with correct parameter order: (knowledge, content, reader_id)
         await process_content(mock_knowledge, mock_content, reader_id)
 
