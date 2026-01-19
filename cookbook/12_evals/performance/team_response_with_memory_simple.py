@@ -40,7 +40,7 @@ weather_agent = Agent(
     instructions="Be concise, reply with one sentence.",
     tools=[get_weather],
     db=db,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     add_history_to_context=True,
 )
 
@@ -50,7 +50,7 @@ team = Team(
     instructions="Be concise, reply with one sentence.",
     db=db,
     markdown=True,
-    enable_user_memories=True,
+    update_memory_on_run=True,
     add_history_to_context=True,
 )
 

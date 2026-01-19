@@ -3,15 +3,15 @@ Example showing how team tools can access dependencies passed to the team.
 
 This demonstrates:
 1. Passing dependencies to team.run()
-2. A team tool that receives resolved dependencies
+2. A team tool that receives resolved dependencies via run_context
 3. Team members working together with shared data sources
 """
 
 from datetime import datetime
-from typing import Any, Dict, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 from agno.team import Team
 
 
@@ -24,9 +24,7 @@ def get_current_context() -> dict:
     }
 
 
-def analyze_team_performance(
-    team_id: str, dependencies: Optional[Dict[str, Any]] = None
-) -> str:
+def analyze_team_performance(team_id: str, run_context: RunContext) -> str:
     """
     Analyze team performance using available data sources.
 
@@ -35,11 +33,12 @@ def analyze_team_performance(
 
     Args:
         team_id: The team ID to analyze (e.g., 'engineering_team', 'sales_team')
-        dependencies: Available data sources (automatically provided)
+        run_context: The run context containing dependencies (automatically provided)
 
     Returns:
         Detailed team performance analysis and insights
     """
+    dependencies = run_context.dependencies
     if not dependencies:
         return "No data sources available for analysis."
 

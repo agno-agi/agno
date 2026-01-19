@@ -8,14 +8,14 @@ from uuid import uuid4
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.google import Gemini
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 session_id = str(uuid4())
 
 agent = Agent(
     model=Gemini(id="gemini-2.5-flash"),
     db=SqliteDb(db_file="tmp/data.db"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
     add_history_to_context=True,
 )

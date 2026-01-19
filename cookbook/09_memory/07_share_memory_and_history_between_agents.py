@@ -14,7 +14,7 @@ agent_1 = Agent(
     instructions="You are really friendly and helpful.",
     db=db,
     add_history_to_context=True,
-    enable_user_memories=True,
+    update_memory_on_run=True,
 )
 
 agent_2 = Agent(
@@ -22,7 +22,7 @@ agent_2 = Agent(
     instructions="You are really grumpy and mean.",
     db=db,
     add_history_to_context=True,
-    enable_user_memories=True,
+    update_memory_on_run=True,
 )
 
 agent_1.print_response(

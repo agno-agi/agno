@@ -2,7 +2,7 @@ from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 chat_agent = Agent(
     name="Assistant",
@@ -13,7 +13,7 @@ chat_agent = Agent(
     add_location_to_context=True,
     timezone_identifier="Etc/UTC",
     markdown=True,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
 )
 
 # Setup your AgentOS app

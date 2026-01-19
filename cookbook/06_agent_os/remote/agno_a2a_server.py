@@ -14,7 +14,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.calculator import CalculatorTools
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.vectordb.chroma import ChromaDb
 
 # =============================================================================
@@ -71,7 +71,7 @@ researcher = Agent(
         "Provide well-researched, accurate responses.",
     ],
     markdown=True,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
 )
 
 # =============================================================================

@@ -15,11 +15,11 @@ from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.e2b import E2BTools
 from agno.tools.knowledge import KnowledgeTools
 from agno.tools.pubmed import PubmedTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.lancedb.lance_db import LanceDb
 from agno.vectordb.search import SearchType
@@ -31,7 +31,7 @@ web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
     model=Claude(id="claude-3-5-sonnet-latest"),
-    tools=[DuckDuckGoTools(cache_results=True)],
+    tools=[WebSearchTools()],
     instructions=["Always include sources"],
 )
 
@@ -139,9 +139,7 @@ async def main():
     """Main async function to demonstrate different team capabilities."""
 
     # Add Agno documentation content
-    await agno_assist_knowledge.add_contents_async(
-        url="https://docs.agno.com/llms-full.txt"
-    )
+    await agno_assist_knowledge.ainsert(url="https://docs.agno.com/llms-full.txt")
 
     # Example interactions:
 

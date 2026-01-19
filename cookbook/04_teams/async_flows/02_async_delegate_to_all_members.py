@@ -26,14 +26,14 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 
 reddit_researcher = Agent(
     name="Reddit Researcher",
     role="Research a topic on Reddit",
     model=OpenAIChat(id="o3-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_name_to_context=True,
     instructions=dedent("""
     You are a Reddit researcher.

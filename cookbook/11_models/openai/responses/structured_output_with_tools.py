@@ -2,7 +2,7 @@ from typing import List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel, Field
 
 
@@ -27,7 +27,7 @@ class MovieScript(BaseModel):
 
 structured_output_agent = Agent(
     model=OpenAIResponses(id="gpt-5-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="Use the tools to get the information you need. You have access to the DuckDuckGo search tools",
     description="You write movie scripts.",
     output_schema=MovieScript,
