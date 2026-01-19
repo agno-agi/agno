@@ -12,6 +12,7 @@ def run_agent():
     agent = Agent(
         model=OpenAIChat(id="gpt-5.2"),
         system_message="Be concise, reply with one sentence.",
+        db=db,
         add_history_to_context=True,
     )
     response_1 = agent.run("What is the capital of France?")

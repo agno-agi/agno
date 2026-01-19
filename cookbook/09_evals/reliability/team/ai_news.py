@@ -8,14 +8,14 @@ from agno.team.team import Team
 from agno.tools.websearch import WebSearchTools
 
 team_member = Agent(
-    name="Stock Searcher",
+    name="News Searcher",
     model=OpenAIChat("gpt-4o"),
-    role="Searches the web for information on a stock.",
-    tools=[WebSearchTools(enable_search=False)],
+    role="Searches the web for the latest news.",
+    tools=[WebSearchTools(enable_news=True)],
 )
 
 team = Team(
-    name="Stock Research Team",
+    name="News Research Team",
     model=OpenAIChat("gpt-4o"),
     members=[team_member],
     markdown=True,
