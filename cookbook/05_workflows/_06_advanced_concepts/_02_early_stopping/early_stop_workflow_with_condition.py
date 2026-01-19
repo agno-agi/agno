@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.workflow import Step, Workflow
 from agno.workflow.condition import Condition
 from agno.workflow.types import StepInput, StepOutput
@@ -8,7 +8,7 @@ from agno.workflow.types import StepInput, StepOutput
 researcher = Agent(
     name="Researcher",
     instructions="Research the given topic thoroughly and provide detailed findings.",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
 )
 
 writer = Agent(

@@ -3,7 +3,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 db = SqliteDb(db_file="tmp/agentos.db")
 
@@ -20,7 +20,7 @@ web_research_agent = Agent(
     name="Web Research Agent",
     model=OpenAIChat(id="gpt-5-mini"),
     db=db,
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     instructions="You are a helpful AI assistant that can search the web.",
     markdown=True,
 )

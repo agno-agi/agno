@@ -2,14 +2,14 @@
 
 from agno.agent import Agent
 from agno.models.litellm import LiteLLM
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
     model=LiteLLM(
         id="gpt-4o",
         name="LiteLLM",
     ),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     markdown=True,
 )
 

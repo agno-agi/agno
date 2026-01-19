@@ -10,8 +10,8 @@ from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.db.mysql import AsyncMySQLDb
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel
 
 db_url = "mysql+asyncmy://ai:ai@localhost:3306/ai"
@@ -33,7 +33,7 @@ hn_researcher = Agent(
 web_searcher = Agent(
     name="Web Searcher",
     role="Searches the web for information on a topic",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_datetime_to_context=True,
 )
 

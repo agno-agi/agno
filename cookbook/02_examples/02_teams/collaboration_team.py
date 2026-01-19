@@ -13,8 +13,8 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.arxiv import ArxivTools
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 
 arxiv_download_dir = Path(__file__).parent.joinpath("tmp", "arxiv_pdfs__{session_id}")
 arxiv_download_dir.mkdir(parents=True, exist_ok=True)
@@ -23,7 +23,7 @@ reddit_researcher = Agent(
     name="Reddit Researcher",
     role="Research a topic on Reddit",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_name_to_context=True,
     instructions=dedent("""
     You are a Reddit researcher.
@@ -49,7 +49,7 @@ academic_paper_researcher = Agent(
     name="Academic Paper Researcher",
     model=OpenAIChat("gpt-4o"),
     role="Research academic papers and scholarly content",
-    tools=[DuckDuckGoTools(), ArxivTools(download_dir=arxiv_download_dir)],
+    tools=[WebSearchTools(), ArxivTools(download_dir=arxiv_download_dir)],
     add_name_to_context=True,
     instructions=dedent("""
     You are a academic paper researcher.
@@ -64,7 +64,7 @@ twitter_researcher = Agent(
     name="Twitter Researcher",
     model=OpenAIChat("gpt-4o"),
     role="Research trending discussions and real-time updates",
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     add_name_to_context=True,
     instructions=dedent("""
     You are a Twitter/X researcher.

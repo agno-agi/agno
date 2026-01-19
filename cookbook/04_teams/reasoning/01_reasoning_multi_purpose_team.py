@@ -23,13 +23,13 @@ from agno.models.anthropic import Claude
 from agno.models.openai.chat import OpenAIChat
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.file import FileTools
 from agno.tools.github import GithubTools
 from agno.tools.knowledge import KnowledgeTools
 from agno.tools.pubmed import PubmedTools
 from agno.tools.python import PythonTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.lancedb.lance_db import LanceDb
 from agno.vectordb.search import SearchType
@@ -41,7 +41,7 @@ web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
     model=Claude(id="claude-3-5-sonnet-latest"),
-    tools=[DuckDuckGoTools(cache_results=True)],
+    tools=[WebSearchTools()],
     instructions=["Always include sources"],
 )
 
@@ -49,7 +49,7 @@ reddit_researcher = Agent(
     name="Reddit Researcher",
     role="Research a topic on Reddit",
     model=Claude(id="claude-3-5-sonnet-latest"),
-    tools=[DuckDuckGoTools(cache_results=True)],
+    tools=[WebSearchTools()],
     add_name_to_context=True,
     instructions=dedent("""
     You are a Reddit researcher.
@@ -191,9 +191,7 @@ agent_team = Team(
 if __name__ == "__main__":
     # Load the knowledge base
     asyncio.run(
-        agno_assist_knowledge.add_contents_async(
-            url="https://docs.agno.com/llms-full.txt"
-        )
+        agno_assist_knowledge.ainsert(url="https://docs.agno.com/llms-full.txt")
     )
 
     # asyncio.run(agent_team.aprint_response("Hi! What are you capable of doing?"))
