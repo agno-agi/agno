@@ -338,11 +338,23 @@ class Workflow:
 
         return session_id, user_id
 
-    def _initialize_session_state(self, session_state: Dict[str, Any]) -> Dict[str, Any]:
+    def _initialize_session_state(
+        self,
+        session_state: Dict[str, Any],
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Initialize the session state for the workflow."""
         session_state["workflow_id"] = self.id
         if self.name:
             session_state["workflow_name"] = self.name
+        if user_id:
+            session_state["current_user_id"] = user_id
+        if session_id is not None:
+            session_state["current_session_id"] = session_id
+        if run_id is not None:
+            session_state["current_run_id"] = run_id
 
         return session_state
 
@@ -972,12 +984,17 @@ class Workflow:
         if workflow_session is None:
             # Creating new session if none found
             log_debug(f"Creating new WorkflowSession: {session_id}")
+            session_data = {}
+            if self.session_state is not None:
+                from copy import deepcopy
+
+                session_data["session_state"] = deepcopy(self.session_state)
             workflow_session = WorkflowSession(
                 session_id=session_id,
                 workflow_id=self.id,
                 user_id=user_id,
                 workflow_data=self._get_workflow_data(),
-                session_data={},
+                session_data=session_data,
                 metadata=self.metadata,
                 created_at=int(time()),
             )
@@ -3872,6 +3889,14 @@ class Workflow:
         session_state = self._load_session_state(
             session=workflow_session,
             session_state=session_state if session_state is not None else {},
+        )
+
+        # Add current session/user/run info to session_state
+        session_state = self._initialize_session_state(
+            session_state=session_state,
+            session_id=session_id,
+            user_id=user_id,
+            run_id=run_id,
         )
 
         log_debug(f"Workflow Run Start: {self.name}", center=True)
