@@ -1,3 +1,4 @@
+import copy
 import json
 from dataclasses import dataclass
 from os import getenv
@@ -48,9 +49,17 @@ class LiteLLM(Model):
 
     client: Optional[Any] = None
 
+    # Store the original client to preserve it across copies (e.g., for Router instances)
+    _original_client: Optional[Any] = None
+
     def __post_init__(self):
         """Initialize the model after the dataclass initialization."""
         super().__post_init__()
+
+        # Store the original client if provided (e.g., Router instance)
+        # This ensures the client is preserved when the model is copied for background tasks
+        if self.client is not None and self._original_client is None:
+            self._original_client = self.client
 
         # Set up API key from environment variable if not already set
         if not self.client and not self.api_key:
@@ -70,11 +79,40 @@ class LiteLLM(Model):
         Returns:
             Any: An instance of the LiteLLM client.
         """
+        # First check if we have a current client
         if self.client is not None:
+            return self.client
+
+        # Check if we have an original client (e.g., Router) that was preserved
+        # This handles the case where the model was copied for background tasks
+        if self._original_client is not None:
+            self.client = self._original_client
             return self.client
 
         self.client = litellm
         return self.client
+
+    def __deepcopy__(self, memo: Dict[int, Any]) -> "LiteLLM":
+        """
+        Custom deepcopy to preserve the client (e.g., Router) across copies.
+
+        This is needed because when the model is copied for background tasks
+        (memory, summarization), the client reference needs to be preserved.
+        """
+        # Create a shallow copy first
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+
+        # Copy all attributes, but keep the same client reference
+        for k, v in self.__dict__.items():
+            if k in ("client", "_original_client"):
+                # Keep the same client reference (don't deepcopy Router instances)
+                setattr(result, k, v)
+            else:
+                setattr(result, k, copy.deepcopy(v, memo))
+
+        return result
 
     def _format_messages(self, messages: List[Message], compress_tool_results: bool = False) -> List[Dict[str, Any]]:
         """Format messages for LiteLLM API."""
