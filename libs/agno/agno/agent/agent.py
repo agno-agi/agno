@@ -2581,7 +2581,7 @@ class Agent:
                             run_response=run_response,
                             events_to_skip=self.events_to_skip,
                             store_events=self.store_events,
-                            get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
+                            get_memories_callback=lambda: self.aget_user_memories(user_id=user_id),
                         ):
                             yield item
 
@@ -2615,7 +2615,7 @@ class Agent:
                         run_response=run_response,
                         events_to_skip=self.events_to_skip,
                         store_events=self.store_events,
-                        get_memories_callback=lambda: self.get_user_memories(user_id=user_id),
+                        get_memories_callback=lambda: self.aget_user_memories(user_id=user_id),
                     ):
                         yield item
 
@@ -6666,6 +6666,15 @@ class Agent:
                     agent=self,
                 )
                 agent_tools.extend(knowledge_tools)
+        elif self.knowledge_retriever is not None and self.search_knowledge:
+            # Create search tool using custom knowledge_retriever
+            agent_tools.append(
+                self._create_knowledge_retriever_search_tool(
+                    run_response=run_response,
+                    run_context=run_context,
+                    async_mode=False,
+                )
+            )
 
         if self.knowledge is not None and self.update_knowledge:
             agent_tools.append(self.add_to_knowledge)
@@ -6779,6 +6788,15 @@ class Agent:
                     agent=self,
                 )
                 agent_tools.extend(knowledge_tools)
+        elif self.knowledge_retriever is not None and self.search_knowledge:
+            # Create search tool using custom knowledge_retriever
+            agent_tools.append(
+                self._create_knowledge_retriever_search_tool(
+                    run_response=run_response,
+                    run_context=run_context,
+                    async_mode=True,
+                )
+            )
 
         if self.knowledge is not None and self.update_knowledge:
             agent_tools.append(self.add_to_knowledge)
@@ -11281,6 +11299,118 @@ class Agent:
             update_cultural_knowledge_function,
             name="create_or_update_cultural_knowledge",
         )
+
+    def _create_knowledge_retriever_search_tool(
+        self,
+        run_response: Optional[RunOutput] = None,
+        run_context: Optional[RunContext] = None,
+        async_mode: bool = False,
+    ) -> Function:
+        """Create a search_knowledge_base tool using the custom knowledge_retriever.
+
+        This allows agents to use a custom retriever function without needing
+        a full Knowledge instance. The retriever is wrapped as a tool the agent can call.
+        """
+        from agno.models.message import MessageReferences
+        from agno.utils.timer import Timer
+
+        def search_knowledge_base(query: str) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+
+            try:
+                docs = self.get_relevant_docs_from_knowledge(
+                    query=query,
+                    run_context=run_context,
+                )
+            except Exception as e:
+                log_warning(f"Knowledge retriever failed: {e}")
+                return f"Error searching knowledge base: {e}"
+
+            if run_response is not None and docs:
+                references = MessageReferences(
+                    query=query,
+                    references=docs,
+                    time=round(retrieval_timer.elapsed, 4),
+                )
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
+
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if not docs:
+                return "No documents found"
+
+            # Format results for the agent
+            if self.references_format == "json":
+                import json
+
+                return json.dumps(docs, indent=2, default=str)
+            else:
+                import yaml
+
+                return yaml.dump(docs, default_flow_style=False)
+
+        async def asearch_knowledge_base(query: str) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+
+            try:
+                docs = await self.aget_relevant_docs_from_knowledge(
+                    query=query,
+                    run_context=run_context,
+                )
+            except Exception as e:
+                log_warning(f"Knowledge retriever failed: {e}")
+                return f"Error searching knowledge base: {e}"
+
+            if run_response is not None and docs:
+                references = MessageReferences(
+                    query=query,
+                    references=docs,
+                    time=round(retrieval_timer.elapsed, 4),
+                )
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
+
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if not docs:
+                return "No documents found"
+
+            # Format results for the agent
+            if self.references_format == "json":
+                import json
+
+                return json.dumps(docs, indent=2, default=str)
+            else:
+                import yaml
+
+                return yaml.dump(docs, default_flow_style=False)
+
+        if async_mode:
+            return Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")
+        return Function.from_callable(search_knowledge_base, name="search_knowledge_base")
 
     def _get_chat_history_function(self, session: AgentSession) -> Callable:
         def get_chat_history(num_chats: Optional[int] = None) -> str:

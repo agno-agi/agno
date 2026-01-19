@@ -596,11 +596,10 @@ def get_agent_router(
             from agno.agent.agent import get_agents
 
             db_agents = get_agents(db=os.db, registry=registry)
-
-        if db_agents:
-            for db_agent in db_agents:
-                agent_response = await AgentResponse.from_agent(agent=db_agent)
-                agents.append(agent_response)
+            if db_agents:
+                for db_agent in db_agents:
+                    agent_response = await AgentResponse.from_agent(agent=db_agent)
+                    agents.append(agent_response)
 
         return agents
 
