@@ -1,81 +1,102 @@
 # Text-to-SQL Agent
 
-A production-ready Text-to-SQL tutorial demonstrating a self-learning SQL agent that queries Formula 1 data (1950-2020) and improves through accumulated knowledge.
+A self-learning SQL agent that queries Formula 1 data (1950-2020) and improves through accumulated knowledge. Customize and connect it to your own data to get one of the most powerful text-to-SQL agents on the market.
+
+## What Makes This Different
+
+Most Text-to-SQL tutorials show you how to generate SQL from natural language. This one goes further:
+
+1. **Knowledge-Based Query Generation** - The agent searches a knowledge base before writing SQL, ensuring consistent patterns
+2. **Data Quality Handling** - Instead of cleaning messy data, the agent learns to handle inconsistencies (mixed types, date formats, naming conventions)
+3. **Self-Learning Loop** - Users can save validated queries, which the agent retrieves for similar future questions
 
 ## What You'll Learn
 
 | Concept | Description |
 |:--------|:------------|
 | **Semantic Model** | Define table metadata to guide query generation |
-| **Knowledge Base** | Store and retrieve query patterns for consistency |
+| **Knowledge Base** | Store and retrieve query patterns and data quality notes |
+| **Data Quality Handling** | Handle type mismatches and inconsistencies without ETL |
 | **Self-Learning** | Save validated queries to improve future responses |
 | **Agentic Memory** | Remember user preferences across sessions |
-| **Reasoning Tools** | Step-by-step query construction and validation |
 
 ## Quick Start
 
-### 1. Start PostgreSQL
+### 1. Clone the repo
+
+```bash
+git clone https://github.com/agno-agi/agno.git
+cd agno
+```
+
+### 2. Create and activate a virtual environment
+
+```bash
+uv venv .venvs/text-to-sql --python 3.12
+source .venvs/text-to-sql/bin/activate
+```
+
+### 3. Install Dependencies
+
+```bash
+uv pip install -r cookbook/01_showcase/01_agents/text_to_sql/requirements.in
+```
+
+### 4. Export API Keys
+
+```bash
+export OPENAI_API_KEY=your-openai-key
+```
+
+### 5. Start PostgreSQL
 
 ```bash
 ./cookbook/scripts/run_pgvector.sh
 ```
 
-### 2. Load F1 Data
+### 6. Check Setup
 
 ```bash
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/text_to_sql/scripts/load_f1_data.py
+python cookbook/01_showcase/01_agents/text_to_sql/scripts/check_setup.py
 ```
 
-### 3. Load Knowledge Base
+### 7. Load Data and Knowledge
 
 ```bash
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/text_to_sql/scripts/load_knowledge.py
+python cookbook/01_showcase/01_agents/text_to_sql/scripts/load_f1_data.py
+python cookbook/01_showcase/01_agents/text_to_sql/scripts/load_knowledge.py
 ```
 
-### 4. Run Examples
+### 8. Run Examples
 
 ```bash
 # Basic queries
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/text_to_sql/examples/01_basic_queries.py
+python cookbook/01_showcase/01_agents/text_to_sql/examples/basic_queries.py
 
 # Self-learning demonstration
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/text_to_sql/examples/02_learning_loop.py
+python cookbook/01_showcase/01_agents/text_to_sql/examples/learning_loop.py
 
-# Complex queries and edge cases
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/text_to_sql/examples/03_edge_cases.py
+# Data quality edge cases
+python cookbook/01_showcase/01_agents/text_to_sql/examples/edge_cases.py
+
+# Evaluate accuracy
+python cookbook/01_showcase/01_agents/text_to_sql/examples/evaluate.py
 ```
 
 ## Examples
 
-| # | File | What You'll Learn |
-|:--|:-----|:------------------|
-| 01 | `examples/01_basic_queries.py` | Simple aggregations, filtering, top-N queries |
-| 02 | `examples/02_learning_loop.py` | Saving queries, knowledge retrieval |
-| 03 | `examples/03_edge_cases.py` | Multi-table joins, time-series, ambiguity |
-
-## Architecture
-
-```
-text_to_sql/
-├── agent.py              # Main agent configuration
-├── semantic_model.py     # Table metadata definitions
-├── tools/
-│   └── save_query.py     # Custom tool for saving queries
-├── knowledge/            # Table schemas and sample queries
-├── scripts/
-│   ├── load_f1_data.py   # Download and load F1 data
-│   └── load_knowledge.py # Load knowledge base
-└── examples/
-    ├── 01_basic_queries.py
-    ├── 02_learning_loop.py
-    └── 03_edge_cases.py
-```
+| File | What You'll Learn |
+|:-----|:------------------|
+| `examples/basic_queries.py` | Simple aggregations, filtering, top-N queries |
+| `examples/learning_loop.py` | Saving queries, knowledge retrieval, pattern reuse |
+| `examples/edge_cases.py` | Multi-table joins, type handling, ambiguity |
+| `examples/evaluate.py` | Automated accuracy testing |
 
 ## Key Concepts
 
 ### Semantic Model
 
-The semantic model defines available tables and their use cases:
+The semantic model defines available tables and their use cases. It's built dynamically from the knowledge JSON files:
 
 ```python
 SEMANTIC_MODEL = {
@@ -83,65 +104,42 @@ SEMANTIC_MODEL = {
         {
             "table_name": "race_wins",
             "table_description": "Race winners and venue info (1950 to 2020).",
-            "use_cases": [
-                "Win counts by driver/team",
-                "Wins by circuit or country",
-            ],
+            "use_cases": ["Win counts by driver/team", "Wins by circuit"],
+            "data_quality_notes": ["date is TEXT - use TO_DATE()"]
         },
-        # ... more tables
+        # ... built from knowledge/*.json
     ],
 }
 ```
 
-The agent uses this to identify relevant tables before writing SQL.
-
-### Knowledge-Based Query Generation
+### Knowledge Base
 
 The knowledge base contains:
-- **Table metadata** (JSON): Column descriptions, data types, tips
-- **Sample queries** (SQL): Validated query patterns with explanations
 
-Before writing SQL, the agent always searches the knowledge base for relevant patterns.
+- **Table metadata** (JSON): Column descriptions, types, and `data_quality_notes`
+- **Sample queries** (SQL): Validated patterns with explanations
+
+Before writing SQL, the agent **always** searches the knowledge base:
+
+```
+User: "Who won the most races in 2019?"
+Agent: [searches knowledge base]
+       [finds race_wins.json with date parsing note]
+       [finds common_queries.sql with similar pattern]
+       [generates SQL using learned patterns]
+```
 
 ### Self-Learning Workflow
 
-1. User asks a question
-2. Agent generates and executes SQL
-3. Agent validates results and asks if user wants to save
-4. If confirmed, query is saved with metadata:
-   - Name and description
-   - Original question
-   - SQL query
-   - Notes and caveats
-5. Future similar questions retrieve the saved pattern
-
-### Agent Configuration
-
-```python
-sql_agent = Agent(
-    name="SQL Agent",
-    model=Claude(id="claude-sonnet-4-5"),
-    knowledge=sql_agent_knowledge,
-    tools=[
-        SQLTools(db_url=DB_URL),
-        ReasoningTools(add_instructions=True),
-        save_validated_query,
-    ],
-    enable_agentic_memory=True,
-    search_knowledge=True,
-    read_tool_call_history=True,
-)
 ```
-
-## Available Tables
-
-| Table | Years | Description |
-|:------|:------|:------------|
-| `constructors_championship` | 1958-2020 | Constructor championship standings |
-| `drivers_championship` | 1950-2020 | Driver championship standings |
-| `fastest_laps` | 1950-2020 | Fastest lap records per race |
-| `race_results` | 1950-2020 | Per-race results with positions and points |
-| `race_wins` | 1950-2020 | Race winners and venue info |
+1. User asks question
+2. Agent searches knowledge base
+3. Agent generates and executes SQL
+4. Agent validates results
+5. Agent asks: "Want to save this query?"
+6. If yes → saves with data_quality_notes
+7. Future similar questions retrieve the pattern
+```
 
 ## Example Prompts
 
@@ -150,31 +148,16 @@ sql_agent = Agent(
 - "List the top 5 drivers with the most championship wins"
 - "What teams competed in 2020?"
 
+**Data Quality Challenges:**
+- "How many retirements were there in 2020?" (handles position='Ret')
+- "Compare constructor wins vs championship position" (handles INT vs TEXT)
+- "Show race wins by year" (handles date parsing)
+
 **Complex Queries:**
-- "Compare Ferrari vs Mercedes points from 2015-2020"
 - "How many races did each world champion win in their championship year?"
 - "Which team outperformed their championship position based on race wins?"
-
-**Analytical Queries:**
 - "Who is the most successful F1 driver of all time?"
-- "Show me drivers who improved their championship position year over year"
-
-## Requirements
-
-- Python 3.11+
-- PostgreSQL with pgvector
-- OpenAI API key (for embeddings)
-- Anthropic API key (for Claude)
-
-## Environment Variables
-
-```bash
-export OPENAI_API_KEY=your-openai-key
-export ANTHROPIC_API_KEY=your-anthropic-key
-```
 
 ## Learn More
 
 - [Agno Documentation](https://docs.agno.com)
-- [Knowledge Base Guide](https://docs.agno.com/knowledge)
-- [SQL Tools Reference](https://docs.agno.com/tools/sql)

@@ -1,7 +1,6 @@
 # Text-to-SQL Agent Dependencies
-# Install: pip install -r requirements.in
+# uv pip install -r requirements.in
 
-# Core framework
 agno
 
 # Database
@@ -14,5 +13,4 @@ pandas
 requests
 
 # Models
-anthropic
 openai
