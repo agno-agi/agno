@@ -66,8 +66,8 @@ def create(
     Create a new AgentOS Infrastructure project in the current directory using a starter template
     \b
     Examples:
-    > ag infra create -t agent-infra-docker                         -> Create an `agent-infra-docker` in the current directory
-    > ag infra create -t agent-infra-docker -n my-agentos-infra     -> Create an `agent-infra-docker` named `my-agentos-infra` in the current directory
+    > ag infra create -t agentos-aws-template                        -> Create an `agentos-aws-template` in the current directory
+    > ag infra create -t agentos-aws-template -n my-agentos-template     -> Create an `agentos-aws-template` named `my-agentos-template` in the current directory
     """
     if print_debug_log:
         set_log_level_to_debug()

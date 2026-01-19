@@ -61,7 +61,7 @@ local_agent = Agent(
     db=db,
     knowledge=knowledge,
     instructions=["You are a helpful assistant on the gateway server."],
-    enable_user_memories=True,
+    update_memory_on_run=True,
     markdown=True,
 )
 
@@ -207,7 +207,7 @@ agent_os = AgentOS(
         a2a_interface,
     ],
     tracing=True,
-    tracing_db=db,
+    db=db,
     enable_mcp_server=True,
     authorization=ENABLE_AUTHORIZATION,
     authorization_config=AuthorizationConfig(
