@@ -15,8 +15,10 @@ Available Stores:
 - SessionContextStore: Current session state
 - LearnedKnowledgeStore: Reusable knowledge/insights
 - EntityMemoryStore: Third-party entity facts
+- DecisionLogStore: Agent decision logging (Phase 2)
 """
 
+from agno.learn.stores.decision_log import DecisionLogStore
 from agno.learn.stores.entity_memory import EntityMemoryStore
 from agno.learn.stores.learned_knowledge import LearnedKnowledgeStore
 from agno.learn.stores.protocol import LearningStore
@@ -32,4 +34,5 @@ __all__ = [
     "SessionContextStore",
     "LearnedKnowledgeStore",
     "EntityMemoryStore",
+    "DecisionLogStore",
 ]

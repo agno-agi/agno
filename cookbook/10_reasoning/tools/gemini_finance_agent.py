@@ -15,7 +15,7 @@ from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 
 thinking_agent = Agent(
-    model=Gemini(id="gemini-2.0-flash"),
+    model=Gemini(id="gemini-3-flash-preview"),
     tools=[
         ReasoningTools(add_instructions=True),
         YFinanceTools(),

@@ -10,7 +10,7 @@ Requirements:
     ollama pull deepseek-r1:8b
 
 Usage:
-    python cookbook/reasoning/models/ollama/local_reasoning.py
+    python cookbook/81_reasoning/models/ollama/local_reasoning.py
 
 What to expect:
     - Complete data privacy (runs locally)
