@@ -87,6 +87,7 @@ def test_health_endpoint_instantiated_at(test_os_client: TestClient):
 
     # Verify instantiated_at is a valid ISO 8601 timestamp
     from datetime import datetime
+
     instantiated_at = datetime.fromisoformat(response_data["instantiated_at"].replace("Z", "+00:00"))
     assert instantiated_at is not None
 

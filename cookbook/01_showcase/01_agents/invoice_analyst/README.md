@@ -59,7 +59,7 @@ invoice_analyst/
 
 ### Vision-Based Extraction
 
-The agent uses Claude's vision capabilities to understand invoice layouts without templates:
+The agent uses GPT-5.2's vision capabilities to understand invoice layouts without templates:
 
 ```python
 from invoice_analyst import extract_invoice_data
@@ -207,13 +207,13 @@ The agent provides a confidence score (0-1) for each extraction:
 ## Requirements
 
 - Python 3.11+
-- Anthropic API key
+- OpenAI API key
 - poppler (for PDF support)
 
 ## Environment Variables
 
 ```bash
-export ANTHROPIC_API_KEY=your-anthropic-key
+export OPENAI_API_KEY=your-openai-key
 ```
 
 ## Adding Sample Invoices

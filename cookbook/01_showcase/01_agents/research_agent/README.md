@@ -150,13 +150,13 @@ response = agent.run("Research: Compare vector databases")
 
 - Python 3.11+
 - Parallel API key
-- Anthropic API key
+- OpenAI API key
 
 ## Environment Variables
 
 ```bash
 export PARALLEL_API_KEY=your-parallel-key
-export ANTHROPIC_API_KEY=your-anthropic-key
+export OPENAI_API_KEY=your-openai-key
 ```
 
 ## Why Parallel?

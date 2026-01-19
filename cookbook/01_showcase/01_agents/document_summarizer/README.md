@@ -151,12 +151,12 @@ print(summary.key_points)
 ## Requirements
 
 - Python 3.11+
-- Anthropic API key
+- OpenAI API key
 
 ## Environment Variables
 
 ```bash
-export ANTHROPIC_API_KEY=your-anthropic-key
+export OPENAI_API_KEY=your-openai-key
 ```
 
 ## Sample Documents
