@@ -1,6 +1,6 @@
 # Text-to-SQL Agent
 
-A self-learning SQL agent that queries Formula 1 data (1950-2020) and improves through accumulated knowledge.
+A self-learning SQL agent that queries Formula 1 data (1950-2020) and improves through accumulated knowledge. Customize and connect it to your own data to get one of the most powerful text-to-SQL agents on the market.
 
 ## What Makes This Different
 
@@ -22,52 +22,65 @@ Most Text-to-SQL tutorials show you how to generate SQL from natural language. T
 
 ## Quick Start
 
-### 1. Install Dependencies
+### 1. Clone the repo
 
 ```bash
-pip install -r requirements.in
+git clone https://github.com/agno-agi/agno.git
+cd agno
 ```
 
-### 2. Set API Keys
+### 2. Create and activate a virtual environment
 
 ```bash
-export OPENAI_API_KEY=your-openai-key      # Required for embeddings
-export ANTHROPIC_API_KEY=your-anthropic-key # Required for Claude
+uv venv .venvs/text-to-sql --python 3.12
+source .venvs/text-to-sql/bin/activate
 ```
 
-### 3. Start PostgreSQL
+### 3. Install Dependencies
+
+```bash
+uv pip install -r cookbook/01_showcase/01_agents/text_to_sql/requirements.in
+```
+
+### 4. Export API Keys
+
+```bash
+export OPENAI_API_KEY=your-openai-key
+```
+
+### 5. Start PostgreSQL
 
 ```bash
 ./cookbook/scripts/run_pgvector.sh
 ```
 
-### 4. Check Setup
+### 6. Check Setup
 
 ```bash
-python scripts/check_setup.py
+python cookbook/01_showcase/01_agents/text_to_sql/scripts/check_setup.py
 ```
 
-### 5. Load Data and Knowledge
+### 7. Load Data and Knowledge
 
 ```bash
-python scripts/load_f1_data.py
-python scripts/load_knowledge.py
+python cookbook/01_showcase/01_agents/text_to_sql/scripts/load_f1_data.py
+python cookbook/01_showcase/01_agents/text_to_sql/scripts/load_knowledge.py
 ```
 
-### 6. Run Examples
+### 8. Run Examples
 
 ```bash
 # Basic queries
-python examples/basic_queries.py
+python cookbook/01_showcase/01_agents/text_to_sql/examples/basic_queries.py
 
 # Self-learning demonstration
-python examples/learning_loop.py
+python cookbook/01_showcase/01_agents/text_to_sql/examples/learning_loop.py
 
 # Data quality edge cases
-python examples/edge_cases.py
+python cookbook/01_showcase/01_agents/text_to_sql/examples/edge_cases.py
 
 # Evaluate accuracy
-python examples/evaluate.py
+python cookbook/01_showcase/01_agents/text_to_sql/examples/evaluate.py
 ```
 
 ## Examples
@@ -78,41 +91,6 @@ python examples/evaluate.py
 | `examples/learning_loop.py` | Saving queries, knowledge retrieval, pattern reuse |
 | `examples/edge_cases.py` | Multi-table joins, type handling, ambiguity |
 | `examples/evaluate.py` | Automated accuracy testing |
-
-## Architecture
-
-```
-text_to_sql/
-├── agent.py              # Main agent configuration
-├── semantic_model.py     # Table metadata (built from knowledge/)
-├── tools/
-│   └── save_query.py     # Custom tool for saving validated queries
-├── knowledge/            # Table schemas and sample queries
-│   ├── *.json            # Table metadata with data_quality_notes
-│   └── common_queries.sql # Validated SQL patterns
-├── scripts/
-│   ├── check_setup.py    # Verify prerequisites
-│   ├── load_f1_data.py   # Download and load F1 data
-│   └── load_knowledge.py # Load knowledge base
-└── examples/
-    ├── basic_queries.py
-    ├── learning_loop.py
-    ├── edge_cases.py
-    └── evaluate.py
-```
-
-## Data Quality Issues (By Design)
-
-The F1 dataset has intentional inconsistencies that mirror real-world data:
-
-| Issue | Tables Affected | How Agent Handles It |
-|:------|:----------------|:---------------------|
-| `position` type mismatch | INTEGER in `constructors_championship`, TEXT in others | Knowledge base notes specify correct comparison |
-| Date format | TEXT `'DD Mon YYYY'` in `race_wins` | Uses `TO_DATE(date, 'DD Mon YYYY')` |
-| Non-numeric positions | `'Ret'`, `'DSQ'`, `'DNS'`, `'NC'` in `race_results` | Filters with `position IN ('1', '2', '3')` |
-| Column naming | `driver_tag` vs `name_tag` across tables | Knowledge base documents the variation |
-
-The key insight: **document the issues, don't fix the data**. The agent learns to handle them through its knowledge base.
 
 ## Key Concepts
 
@@ -163,34 +141,6 @@ Agent: [searches knowledge base]
 7. Future similar questions retrieve the pattern
 ```
 
-### Agent Configuration
-
-```python
-sql_agent = Agent(
-    name="SQL Agent",
-    model=Claude(id="claude-sonnet-4-5-20250929"),
-    knowledge=sql_agent_knowledge,
-    tools=[
-        SQLTools(db_url=DB_URL),
-        ReasoningTools(add_instructions=True),
-        save_validated_query,
-    ],
-    enable_agentic_memory=True,
-    search_knowledge=True,
-    read_tool_call_history=True,
-)
-```
-
-## Available Tables
-
-| Table | Years | Key Columns | Data Quality Notes |
-|:------|:------|:------------|:-------------------|
-| `constructors_championship` | 1958-2020 | year, position (INT), team, points | position is INTEGER |
-| `drivers_championship` | 1950-2020 | year, position (TEXT), name, team, points | position is TEXT |
-| `fastest_laps` | 1950-2020 | year, venue, name, driver_tag, lap_time | Uses `driver_tag` |
-| `race_results` | 1950-2020 | year, position (TEXT), name, name_tag, points | position may be 'Ret', 'DSQ' |
-| `race_wins` | 1950-2020 | venue, date (TEXT), name, name_tag, team | date needs TO_DATE() |
-
 ## Example Prompts
 
 **Simple Queries:**
@@ -208,15 +158,6 @@ sql_agent = Agent(
 - "Which team outperformed their championship position based on race wins?"
 - "Who is the most successful F1 driver of all time?"
 
-## Requirements
-
-- Python 3.11+
-- PostgreSQL with pgvector
-- OpenAI API key (for embeddings)
-- Anthropic API key (for Claude)
-
 ## Learn More
 
 - [Agno Documentation](https://docs.agno.com)
-- [Knowledge Base Guide](https://docs.agno.com/knowledge)
-- [SQL Tools Reference](https://docs.agno.com/tools/sql)
