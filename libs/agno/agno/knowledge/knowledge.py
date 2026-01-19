@@ -17,7 +17,14 @@ from agno.filters import FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
-from agno.knowledge.remote_content.remote_content import GCSContent, RemoteContent, S3Content
+from agno.knowledge.remote_content.config import GcsConfig, GitHubConfig, RemoteContentConfig, S3Config, SharePointConfig
+from agno.knowledge.remote_content.remote_content import (
+    GCSContent,
+    GitHubContent,
+    RemoteContent,
+    S3Content,
+    SharePointContent,
+)
 from agno.utils.http import async_fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -49,6 +56,7 @@ class Knowledge:
     contents_db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
+    content_sources: Optional[List[RemoteContentConfig]] = None
 
     def __post_init__(self):
         from agno.vectordb import VectorDb
@@ -1365,16 +1373,35 @@ class Knowledge:
 
         remote_content = content.remote_content
 
+        # Look up config if config_id is provided
+        config = None
+        if hasattr(remote_content, "config_id") and remote_content.config_id:
+            config = self._get_remote_config_by_id(remote_content.config_id)
+            if config is None:
+                log_warning(f"No config found for config_id: {remote_content.config_id}")
+
         if isinstance(remote_content, S3Content):
-            await self._load_from_s3_async(content, upsert, skip_if_exists)
+            await self._load_from_s3_async(content, upsert, skip_if_exists, config)
 
         elif isinstance(remote_content, GCSContent):
-            await self._load_from_gcs_async(content, upsert, skip_if_exists)
+            await self._load_from_gcs_async(content, upsert, skip_if_exists, config)
+
+        elif isinstance(remote_content, SharePointContent):
+            await self._load_from_sharepoint_async(content, upsert, skip_if_exists, config)
+
+        elif isinstance(remote_content, GitHubContent):
+            await self._load_from_github_async(content, upsert, skip_if_exists, config)
 
         else:
             log_warning(f"Unsupported remote content type: {type(remote_content)}")
 
-    async def _load_from_s3_async(self, content: Content, upsert: bool, skip_if_exists: bool):
+    async def _load_from_s3_async(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+        config: Optional[RemoteContentConfig] = None,
+    ):
         """Load the contextual S3 content.
 
         1. Identify objects to read
@@ -1386,22 +1413,37 @@ class Knowledge:
         7. Prepare and insert the content in the vector database
         8. Remove temporary file if needed
         """
+        from agno.cloud.aws.s3.bucket import S3Bucket
         from agno.cloud.aws.s3.object import S3Object
 
         remote_content: S3Content = cast(S3Content, content.remote_content)
 
+        # Get or create bucket with credentials from config
+        bucket = remote_content.bucket
+        try:
+            if bucket is None and remote_content.bucket_name:
+                s3_config = cast(S3Config, config) if isinstance(config, S3Config) else None
+                bucket = S3Bucket(
+                    name=remote_content.bucket_name,
+                    region=s3_config.region if s3_config else None,
+                    aws_access_key_id=s3_config.aws_access_key_id if s3_config else None,
+                    aws_secret_access_key=s3_config.aws_secret_access_key if s3_config else None,
+                )
+        except Exception as e:
+            log_error(f"Error getting bucket: {e}")
+
         # 1. Identify objects to read
         objects_to_read: List[S3Object] = []
-        if remote_content.bucket is not None:
+        if bucket is not None:
             if remote_content.key is not None:
-                _object = S3Object(bucket_name=remote_content.bucket.name, name=remote_content.key)
+                _object = S3Object(bucket_name=bucket.name, name=remote_content.key)
                 objects_to_read.append(_object)
             elif remote_content.object is not None:
                 objects_to_read.append(remote_content.object)
             elif remote_content.prefix is not None:
-                objects_to_read.extend(remote_content.bucket.get_objects(prefix=remote_content.prefix))
+                objects_to_read.extend(bucket.get_objects(prefix=remote_content.prefix))
             else:
-                objects_to_read.extend(remote_content.bucket.get_objects())
+                objects_to_read.extend(bucket.get_objects())
 
         for s3_object in objects_to_read:
             # 2. Setup Content object
@@ -1452,7 +1494,13 @@ class Knowledge:
             if temporary_file:
                 temporary_file.unlink()
 
-    async def _load_from_gcs_async(self, content: Content, upsert: bool, skip_if_exists: bool):
+    async def _load_from_gcs_async(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+        config: Optional[RemoteContentConfig] = None,
+    ):
         """Load the contextual GCS content.
 
         1. Identify objects to read
@@ -1463,16 +1511,36 @@ class Knowledge:
         6. Read the content
         7. Prepare and insert the content in the vector database
         """
+        try:
+            from google.cloud import storage  # type: ignore
+        except ImportError:
+            raise ImportError(
+                "The `google-cloud-storage` package is not installed. "
+                "Please install it via `pip install google-cloud-storage`."
+            )
+
         remote_content: GCSContent = cast(GCSContent, content.remote_content)
+
+        # Get or create bucket with credentials from config
+        bucket = remote_content.bucket
+        if bucket is None and remote_content.bucket_name:
+            gcs_config = cast(GcsConfig, config) if isinstance(config, GcsConfig) else None
+            if gcs_config and gcs_config.credentials_path:
+                client = storage.Client.from_service_account_json(gcs_config.credentials_path)
+            elif gcs_config and gcs_config.project:
+                client = storage.Client(project=gcs_config.project)
+            else:
+                client = storage.Client()
+            bucket = client.bucket(remote_content.bucket_name)
 
         # 1. Identify objects to read
         objects_to_read = []
         if remote_content.blob_name is not None:
-            objects_to_read.append(remote_content.bucket.blob(remote_content.blob_name))  # type: ignore
+            objects_to_read.append(bucket.blob(remote_content.blob_name))  # type: ignore
         elif remote_content.prefix is not None:
-            objects_to_read.extend(remote_content.bucket.list_blobs(prefix=remote_content.prefix))  # type: ignore
+            objects_to_read.extend(bucket.list_blobs(prefix=remote_content.prefix))  # type: ignore
         else:
-            objects_to_read.extend(remote_content.bucket.list_blobs())  # type: ignore
+            objects_to_read.extend(bucket.list_blobs())  # type: ignore
 
         for gcs_object in objects_to_read:
             # 2. Setup Content object
@@ -1523,16 +1591,35 @@ class Knowledge:
 
         remote_content = content.remote_content
 
+        # Look up config if config_id is provided
+        config = None
+        if hasattr(remote_content, "config_id") and remote_content.config_id:
+            config = self._get_remote_config_by_id(remote_content.config_id)
+            if config is None:
+                log_warning(f"No config found for config_id: {remote_content.config_id}")
+
         if isinstance(remote_content, S3Content):
-            self._load_from_s3(content, upsert, skip_if_exists)
+            self._load_from_s3(content, upsert, skip_if_exists, config)
 
         elif isinstance(remote_content, GCSContent):
-            self._load_from_gcs(content, upsert, skip_if_exists)
+            self._load_from_gcs(content, upsert, skip_if_exists, config)
+
+        elif isinstance(remote_content, SharePointContent):
+            self._load_from_sharepoint(content, upsert, skip_if_exists, config)
+
+        elif isinstance(remote_content, GitHubContent):
+            self._load_from_github(content, upsert, skip_if_exists, config)
 
         else:
             log_warning(f"Unsupported remote content type: {type(remote_content)}")
 
-    def _load_from_s3(self, content: Content, upsert: bool, skip_if_exists: bool):
+    def _load_from_s3(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+        config: Optional[RemoteContentConfig] = None,
+    ):
         """Synchronous version of _load_from_s3.
 
         Load the contextual S3 content:
@@ -1545,22 +1632,34 @@ class Knowledge:
         7. Prepare and insert the content in the vector database
         8. Remove temporary file if needed
         """
+        from agno.cloud.aws.s3.bucket import S3Bucket
         from agno.cloud.aws.s3.object import S3Object
 
         remote_content: S3Content = cast(S3Content, content.remote_content)
 
+        # Get or create bucket with credentials from config
+        bucket = remote_content.bucket
+        if bucket is None and remote_content.bucket_name:
+            s3_config = cast(S3Config, config) if isinstance(config, S3Config) else None
+            bucket = S3Bucket(
+                name=remote_content.bucket_name,
+                region=s3_config.region if s3_config else None,
+                aws_access_key_id=s3_config.aws_access_key_id if s3_config else None,
+                aws_secret_access_key=s3_config.aws_secret_access_key if s3_config else None,
+            )
+
         # 1. Identify objects to read
         objects_to_read: List[S3Object] = []
-        if remote_content.bucket is not None:
+        if bucket is not None:
             if remote_content.key is not None:
-                _object = S3Object(bucket_name=remote_content.bucket.name, name=remote_content.key)
+                _object = S3Object(bucket_name=bucket.name, name=remote_content.key)
                 objects_to_read.append(_object)
             elif remote_content.object is not None:
                 objects_to_read.append(remote_content.object)
             elif remote_content.prefix is not None:
-                objects_to_read.extend(remote_content.bucket.get_objects(prefix=remote_content.prefix))
+                objects_to_read.extend(bucket.get_objects(prefix=remote_content.prefix))
             else:
-                objects_to_read.extend(remote_content.bucket.get_objects())
+                objects_to_read.extend(bucket.get_objects())
 
         for s3_object in objects_to_read:
             # 2. Setup Content object
@@ -1611,7 +1710,13 @@ class Knowledge:
             if temporary_file:
                 temporary_file.unlink()
 
-    def _load_from_gcs(self, content: Content, upsert: bool, skip_if_exists: bool):
+    def _load_from_gcs(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+        config: Optional[RemoteContentConfig] = None,
+    ):
         """Synchronous version of _load_from_gcs.
 
         Load the contextual GCS content:
@@ -1623,16 +1728,36 @@ class Knowledge:
         6. Read the content
         7. Prepare and insert the content in the vector database
         """
+        try:
+            from google.cloud import storage  # type: ignore
+        except ImportError:
+            raise ImportError(
+                "The `google-cloud-storage` package is not installed. "
+                "Please install it via `pip install google-cloud-storage`."
+            )
+
         remote_content: GCSContent = cast(GCSContent, content.remote_content)
+
+        # Get or create bucket with credentials from config
+        bucket = remote_content.bucket
+        if bucket is None and remote_content.bucket_name:
+            gcs_config = cast(GcsConfig, config) if isinstance(config, GcsConfig) else None
+            if gcs_config and gcs_config.credentials_path:
+                client = storage.Client.from_service_account_json(gcs_config.credentials_path)
+            elif gcs_config and gcs_config.project:
+                client = storage.Client(project=gcs_config.project)
+            else:
+                client = storage.Client()
+            bucket = client.bucket(remote_content.bucket_name)
 
         # 1. Identify objects to read
         objects_to_read = []
         if remote_content.blob_name is not None:
-            objects_to_read.append(remote_content.bucket.blob(remote_content.blob_name))  # type: ignore
+            objects_to_read.append(bucket.blob(remote_content.blob_name))  # type: ignore
         elif remote_content.prefix is not None:
-            objects_to_read.extend(remote_content.bucket.list_blobs(prefix=remote_content.prefix))  # type: ignore
+            objects_to_read.extend(bucket.list_blobs(prefix=remote_content.prefix))  # type: ignore
         else:
-            objects_to_read.extend(remote_content.bucket.list_blobs())  # type: ignore
+            objects_to_read.extend(bucket.list_blobs())  # type: ignore
 
         for gcs_object in objects_to_read:
             # 2. Setup Content object
@@ -1669,6 +1794,107 @@ class Knowledge:
                 content.id = generate_id(content.content_hash or "")
             self._prepare_documents_for_insert(read_documents, content.id)
             self._handle_vector_db_insert(content_entry, read_documents, upsert)
+
+    # --- SharePoint loaders ---
+
+    async def _load_from_sharepoint_async(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+        config: Optional[RemoteContentConfig] = None,
+    ):
+        """Load content from SharePoint.
+
+        Requires the SharePoint config to contain tenant_id, client_id, client_secret, and hostname.
+        """
+        remote_content: SharePointContent = cast(SharePointContent, content.remote_content)
+        sp_config = cast(SharePointConfig, config) if isinstance(config, SharePointConfig) else None
+
+        if sp_config is None:
+            log_error(f"SharePoint config not found for config_id: {remote_content.config_id}")
+            return
+
+        # TODO: Implement SharePoint content loading using Microsoft Graph API
+        # This will require:
+        # 1. Authenticate with Microsoft Graph using tenant_id, client_id, client_secret
+        # 2. Access the SharePoint site at hostname/site_path
+        # 3. Download file(s) from file_path or folder_path
+        # 4. Process through reader and insert to vector db
+        log_warning(
+            f"SharePoint loading not yet implemented. Config: {sp_config.id}, "
+            f"file_path: {remote_content.file_path}, folder_path: {remote_content.folder_path}"
+        )
+
+    def _load_from_sharepoint(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+        config: Optional[RemoteContentConfig] = None,
+    ):
+        """Synchronous version of _load_from_sharepoint."""
+        remote_content: SharePointContent = cast(SharePointContent, content.remote_content)
+        sp_config = cast(SharePointConfig, config) if isinstance(config, SharePointConfig) else None
+
+        if sp_config is None:
+            log_error(f"SharePoint config not found for config_id: {remote_content.config_id}")
+            return
+
+        log_warning(
+            f"SharePoint loading not yet implemented. Config: {sp_config.id}, "
+            f"file_path: {remote_content.file_path}, folder_path: {remote_content.folder_path}"
+        )
+
+    # --- GitHub loaders ---
+
+    async def _load_from_github_async(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+        config: Optional[RemoteContentConfig] = None,
+    ):
+        """Load content from GitHub.
+
+        Requires the GitHub config to contain repo and optionally token for private repos.
+        """
+        remote_content: GitHubContent = cast(GitHubContent, content.remote_content)
+        gh_config = cast(GitHubConfig, config) if isinstance(config, GitHubConfig) else None
+
+        if gh_config is None:
+            log_error(f"GitHub config not found for config_id: {remote_content.config_id}")
+            return
+
+        # TODO: Implement GitHub content loading using GitHub API or raw content URLs
+        # This will require:
+        # 1. Authenticate with GitHub using token (if private repo)
+        # 2. Fetch file(s) from repo at file_path or folder_path
+        # 3. Process through reader and insert to vector db
+        log_warning(
+            f"GitHub loading not yet implemented. Config: {gh_config.id}, repo: {gh_config.repo}, "
+            f"file_path: {remote_content.file_path}, folder_path: {remote_content.folder_path}"
+        )
+
+    def _load_from_github(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+        config: Optional[RemoteContentConfig] = None,
+    ):
+        """Synchronous version of _load_from_github."""
+        remote_content: GitHubContent = cast(GitHubContent, content.remote_content)
+        gh_config = cast(GitHubConfig, config) if isinstance(config, GitHubConfig) else None
+
+        if gh_config is None:
+            log_error(f"GitHub config not found for config_id: {remote_content.config_id}")
+            return
+
+        log_warning(
+            f"GitHub loading not yet implemented. Config: {gh_config.id}, repo: {gh_config.repo}, "
+            f"file_path: {remote_content.file_path}, folder_path: {remote_content.folder_path}"
+        )
 
     async def _handle_vector_db_insert_async(self, content: Content, read_documents, upsert):
         from agno.vectordb import VectorDb
@@ -2892,6 +3118,18 @@ class Knowledge:
         """Select the appropriate reader for a file extension."""
         log_info(f"Selecting reader for extension: {extension}")
         return ReaderFactory.get_reader_for_extension(extension)
+
+    # --- Remote Content Sources ---
+
+    def _get_remote_configs(self) -> List[RemoteContentConfig]:
+        """Return configured remote content sources."""
+        return self.content_sources or []
+
+    def _get_remote_config_by_id(self, config_id: str) -> Optional[RemoteContentConfig]:
+        """Get a remote content config by its ID."""
+        if not self.content_sources:
+            return None
+        return next((c for c in self.content_sources if c.id == config_id), None)
 
     # --- Convenience Properties for Backward Compatibility ---
 
