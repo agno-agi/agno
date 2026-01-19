@@ -47,7 +47,7 @@ def load_knowledge() -> None:
             logger.info(f"  Found: {f.name}")
 
     # Load all files in the knowledge directory
-    sql_agent_knowledge.add_content(path=str(KNOWLEDGE_DIR))
+    sql_agent_knowledge.insert(path=str(KNOWLEDGE_DIR))
 
     logger.info("SQL Agent Knowledge loaded successfully.")
 

@@ -74,7 +74,7 @@ def save_validated_query(
 
     logger.info("Saving validated SQL query to knowledge base")
 
-    _sql_agent_knowledge.add_content(
+    _sql_agent_knowledge.insert(
         name=name,
         text_content=json.dumps(payload, ensure_ascii=False),
         reader=TextReader(),
