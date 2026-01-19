@@ -1,5 +1,5 @@
 """This cookbook shows how to add content from a S3 bucket to the knowledge base.
-1. Run: `python cookbook/08_knowledge/basic_operations/sync/06_from_s3.py`
+1. Run: `python cookbook/07_knowledge/basic_operations/sync/06_from_s3.py`
 """
 
 from agno.agent import Agent

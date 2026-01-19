@@ -3,7 +3,7 @@ It also demonstrates how contents can be added to the contents database post pro
 it is already in the vectorDB.
 Existing content is skipped by default.
 
-1. Run: `python cookbook/agent_concepts/knowledge/12_skip_if_exists_contentsdb.py` to run the cookbook
+1. Run: `python cookbook/07_knowledge/basic_operations/sync/12_skip_if_exists_contentsdb.py` to run the cookbook
 """
 
 from agno.db.postgres.postgres import PostgresDb

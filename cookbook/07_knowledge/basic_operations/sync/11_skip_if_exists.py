@@ -1,7 +1,7 @@
 """This cookbook shows how to skip content if it already exists in the knowledge base.
 By default, skip_if_exists=False, so content is re-indexed. Set skip_if_exists=True to skip.
 
-1. Run: `python cookbook/08_knowledge/basic_operations/sync/11_skip_if_exists.py`
+1. Run: `python cookbook/07_knowledge/basic_operations/sync/11_skip_if_exists.py`
 """
 
 from agno.knowledge.knowledge import Knowledge

@@ -1,5 +1,5 @@
-"""This cookbook shows how to add content from a local file to the knowledge base.
-1. Run: `python cookbook/agent_concepts/knowledge/01_from_path.py` to run the cookbook
+"""This cookbook shows how to add text content directly to the knowledge base.
+1. Run: `python cookbook/07_knowledge/basic_operations/async/14_text_content.py`
 """
 
 import asyncio

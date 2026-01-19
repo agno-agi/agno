@@ -2,7 +2,7 @@
 
 You can remove content by id or by name.
 
-1. Run: `python cookbook/agent_concepts/knowledge/09_remove_content.py` to run the cookbook
+1. Run: `python cookbook/07_knowledge/basic_operations/async/09_remove_content.py` to run the cookbook
 """
 
 import asyncio

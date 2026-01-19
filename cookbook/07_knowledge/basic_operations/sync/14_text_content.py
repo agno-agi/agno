@@ -3,7 +3,7 @@
 Use `text_content` for single strings or `text_contents` for multiple strings.
 This is useful when you have text that doesn't come from a file.
 
-1. Run: `python cookbook/08_knowledge/basic_operations/sync/14_text_content.py`
+1. Run: `python cookbook/07_knowledge/basic_operations/sync/14_text_content.py`
 """
 
 from agno.db.postgres.postgres import PostgresDb
