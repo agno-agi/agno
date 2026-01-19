@@ -12,9 +12,7 @@ from agno.db.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.team import Team
 from agno.tools.mcp import MCPTools
-from agno.tools.websearch import WebSearchTools
 from agno.vectordb.pgvector import PgVector
 
 # Database connection
