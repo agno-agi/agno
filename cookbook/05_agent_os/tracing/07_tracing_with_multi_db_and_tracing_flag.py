@@ -47,4 +47,4 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="07_tracing_with_multi-db-and-tracing-flag:app", reload=True)
+    agent_os.serve(app="07_tracing_with_multi_db_and_tracing_flag:app", reload=True)
