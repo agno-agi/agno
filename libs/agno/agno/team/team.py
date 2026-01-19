@@ -77,6 +77,7 @@ from agno.run.team import (
     TeamRunOutput,
     TeamRunOutputEvent,
 )
+from agno.run.workflow import WorkflowRunOutputEvent
 from agno.session import SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.tools import Toolkit
@@ -2226,6 +2227,8 @@ class Team:
             session_state=session_state,
             dependencies=dependencies,
             output_schema=output_schema,
+            stream=stream if stream is not None else (self.stream or False),
+            stream_events=stream_events if stream_events is not None else (self.stream_events or False),
         )
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
@@ -3224,6 +3227,8 @@ class Team:
             knowledge_filters=effective_filters,
             metadata=metadata,
             output_schema=output_schema,
+            stream=stream if stream is not None else self.stream,
+            stream_events=stream_events if stream_events is not None else self.stream_events,
         )
         # output_schema parameter takes priority, even if run_context was provided
         run_context.output_schema = output_schema
@@ -3564,8 +3569,18 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
-        if isinstance(model_response_event, tuple(get_args(RunOutputEvent))) or isinstance(
-            model_response_event, tuple(get_args(TeamRunOutputEvent))
+        # Handle workflow events when workflow is called as a tool
+        if isinstance(model_response_event, tuple(get_args(WorkflowRunOutputEvent))):
+            yield handle_event(  # type: ignore
+                model_response_event,  # type: ignore
+                run_response,
+                events_to_skip=self.events_to_skip,
+                store_events=self.store_events,
+            )  # type: ignore
+        # Handle member events (RunOutputEvent, TeamRunOutputEvent) - only surface if stream_member_events is True
+        elif (
+            isinstance(model_response_event, tuple(get_args(RunOutputEvent)))
+            or isinstance(model_response_event, tuple(get_args(TeamRunOutputEvent)))
         ):
             if self.stream_member_events:
                 if model_response_event.event == TeamRunEvent.custom_event:  # type: ignore
