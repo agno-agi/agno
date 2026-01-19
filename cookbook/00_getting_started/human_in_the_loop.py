@@ -166,39 +166,45 @@ if __name__ == "__main__":
         "What's a healthy P/E ratio for tech stocks? Save that insight."
     )
 
+    # Print the initial response content (the actual answer)
+    if run_response.content:
+        pprint.pprint_run_response(run_response)
+
     # Handle any confirmation requirements
-    for requirement in run_response.active_requirements:
-        if requirement.needs_confirmation:
-            console.print(
-                f"\n[bold yellow]🛑 Confirmation Required[/bold yellow]\n"
-                f"Tool: [bold blue]{requirement.tool_execution.tool_name}[/bold blue]\n"
-                f"Args: {requirement.tool_execution.tool_args}"
-            )
-
-            choice = (
-                Prompt.ask(
-                    "Do you want to continue?",
-                    choices=["y", "n"],
-                    default="y",
+    if run_response.active_requirements:
+        for requirement in run_response.active_requirements:
+            if requirement.needs_confirmation:
+                console.print(
+                    f"\n[bold yellow]🛑 Confirmation Required[/bold yellow]\n"
+                    f"Tool: [bold blue]{requirement.tool_execution.tool_name}[/bold blue]\n"
+                    f"Args: {requirement.tool_execution.tool_args}"
                 )
-                .strip()
-                .lower()
-            )
 
-            if choice == "n":
-                requirement.reject()
-                console.print("[red]❌ Rejected[/red]")
-            else:
-                requirement.confirm()
-                console.print("[green]✅ Approved[/green]")
+                choice = (
+                    Prompt.ask(
+                        "Do you want to continue?",
+                        choices=["y", "n"],
+                        default="y",
+                    )
+                    .strip()
+                    .lower()
+                )
 
-    # Continue the run with the user's decisions
-    run_response = human_in_the_loop_agent.continue_run(
-        run_id=run_response.run_id,
-        requirements=run_response.requirements,
-    )
+                if choice == "n":
+                    requirement.reject()
+                    console.print("[red]❌ Rejected[/red]")
+                else:
+                    requirement.confirm()
+                    console.print("[green]✅ Approved[/green]")
 
-    pprint.pprint_run_response(run_response)
+        # Continue the run with the user's decisions
+        run_response = human_in_the_loop_agent.continue_run(
+            run_id=run_response.run_id,
+            requirements=run_response.requirements,
+        )
+
+        # Print the final response after tool execution
+        pprint.pprint_run_response(run_response)
 
 # ============================================================================
 # More Examples
