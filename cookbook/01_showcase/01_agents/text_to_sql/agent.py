@@ -16,7 +16,6 @@ from agno.models.openai import OpenAIResponses
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.sql import SQLTools
 from agno.vectordb.pgvector import PgVector, SearchType
-
 from semantic_model import SEMANTIC_MODEL_STR
 from tools.save_query import save_validated_query, set_knowledge
 
