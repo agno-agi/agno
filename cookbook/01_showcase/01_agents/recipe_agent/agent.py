@@ -182,3 +182,6 @@ __all__ = [
     "recipe_knowledge",
     "get_visual_recipe",
 ]
+
+if __name__ == "__main__":
+    recipe_agent.cli(stream=True)

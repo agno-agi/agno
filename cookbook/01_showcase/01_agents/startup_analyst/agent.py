@@ -176,3 +176,6 @@ __all__ = [
     "analyze_startup",
     "StartupReport",
 ]
+
+if __name__ == "__main__":
+    startup_analyst.cli(stream=True)

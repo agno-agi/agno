@@ -18,13 +18,13 @@ export OPENAI_API_KEY=your-openai-api-key
 
 ```bash
 # Full startup analysis
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/startup_analyst/examples/01_analyze_startup.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/startup_analyst/examples/analyze_startup.py
 
 # Competitive intelligence
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/startup_analyst/examples/02_competitive_intel.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/startup_analyst/examples/competitive_intel.py
 
 # Quick scan
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/startup_analyst/examples/03_quick_scan.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/startup_analyst/examples/quick_scan.py
 ```
 
 ## Key Concepts

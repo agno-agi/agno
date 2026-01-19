@@ -156,7 +156,7 @@ def main() -> int:
         print("All checks passed! You're ready to run the examples.")
         print()
         print("Try:")
-        print("  python examples/01_triage_inbox.py")
+        print("  python examples/triage_inbox.py")
         return 0
     else:
         print("Some checks failed. Please fix the issues above.")

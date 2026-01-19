@@ -171,3 +171,6 @@ __all__ = [
     "process_meeting_file",
     "MEETINGS_DIR",
 ]
+
+if __name__ == "__main__":
+    meeting_tasks_agent.cli(stream=True)

@@ -16,13 +16,13 @@ export CARTESIA_API_KEY=your-cartesia-api-key
 
 ```bash
 # Basic translation
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/translation_agent/examples/01_basic_translation.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/translation_agent/examples/basic_translation.py
 
 # Emotional content
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/translation_agent/examples/02_emotional_content.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/translation_agent/examples/emotional_content.py
 
 # Batch translation
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/translation_agent/examples/03_batch_translate.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/translation_agent/examples/batch_translate.py
 ```
 
 ## Key Concepts

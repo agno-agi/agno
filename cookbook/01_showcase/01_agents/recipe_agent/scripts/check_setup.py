@@ -202,7 +202,7 @@ def main() -> int:
         print("All checks passed! You're ready to run the examples.")
         print()
         print("Try:")
-        print("  python examples/01_basic_recipe.py")
+        print("  python examples/basic_recipe.py")
         return 0
     else:
         print("Some checks failed. Please fix the issues above.")

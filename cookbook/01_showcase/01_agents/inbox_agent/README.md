@@ -39,13 +39,13 @@ export OPENAI_API_KEY=your-openai-api-key
 
 ```bash
 # Triage inbox
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/inbox_agent/examples/01_triage_inbox.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/inbox_agent/examples/triage_inbox.py
 
 # Summarize email thread
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/inbox_agent/examples/02_summarize_thread.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/inbox_agent/examples/summarize_thread.py
 
 # Draft a response
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/inbox_agent/examples/03_draft_response.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/inbox_agent/examples/draft_response.py
 ```
 
 Note: First run will open a browser window for OAuth authentication.

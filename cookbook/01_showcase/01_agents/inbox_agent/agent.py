@@ -122,3 +122,6 @@ inbox_agent = Agent(
 __all__ = [
     "inbox_agent",
 ]
+
+if __name__ == "__main__":
+    inbox_agent.cli(stream=True)

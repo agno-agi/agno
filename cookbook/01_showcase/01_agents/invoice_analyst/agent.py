@@ -223,3 +223,6 @@ __all__ = [
     "validate_invoice",
     "InvoiceData",
 ]
+
+if __name__ == "__main__":
+    invoice_agent.cli(stream=True)

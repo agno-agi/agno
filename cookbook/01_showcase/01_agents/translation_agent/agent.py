@@ -189,3 +189,6 @@ __all__ = [
     "translation_agent",
     "translate_and_speak",
 ]
+
+if __name__ == "__main__":
+    translation_agent.cli(stream=True)

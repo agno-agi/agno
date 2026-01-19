@@ -232,3 +232,6 @@ __all__ = [
     "ResearchReport",
     "DEPTH_CONFIG",
 ]
+
+if __name__ == "__main__":
+    research_agent.cli(stream=True)

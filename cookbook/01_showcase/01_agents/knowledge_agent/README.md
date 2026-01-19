@@ -25,13 +25,13 @@ export OPENAI_API_KEY=your-openai-api-key
 
 ```bash
 # Basic Q&A
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/knowledge_agent/examples/01_basic_query.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/knowledge_agent/examples/basic_query.py
 
 # Multi-turn conversation
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/knowledge_agent/examples/02_conversation.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/knowledge_agent/examples/conversation.py
 
 # Edge cases and uncertainty
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/knowledge_agent/examples/03_edge_cases.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/knowledge_agent/examples/edge_cases.py
 ```
 
 ## Key Concepts

@@ -25,13 +25,13 @@ export OPENAI_API_KEY=your-openai-api-key
 
 ```bash
 # Create issues
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/linear_agent/examples/01_create_issue.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/linear_agent/examples/create_issue.py
 
 # Query issues
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/linear_agent/examples/02_query_issues.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/linear_agent/examples/query_issues.py
 
 # Generate progress reports
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/linear_agent/examples/03_progress_report.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/linear_agent/examples/progress_report.py
 ```
 
 ## Key Concepts

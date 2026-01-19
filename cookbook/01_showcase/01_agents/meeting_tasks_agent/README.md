@@ -18,13 +18,13 @@ export OPENAI_API_KEY=your-openai-api-key
 
 ```bash
 # Process meeting notes (extraction only)
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/meeting_tasks_agent/examples/01_process_notes.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/meeting_tasks_agent/examples/process_notes.py
 
 # Create Linear issues from transcript
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/meeting_tasks_agent/examples/02_create_issues.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/meeting_tasks_agent/examples/create_issues.py
 
 # Process retrospective actions
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/meeting_tasks_agent/examples/03_retro_actions.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/meeting_tasks_agent/examples/retro_actions.py
 ```
 
 ## Key Concepts

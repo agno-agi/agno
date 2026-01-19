@@ -22,16 +22,17 @@ pip install pypdf requests beautifulsoup4
 ### 2. Run an Example
 
 ```bash
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/document_summarizer/examples/01_basic_summary.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/document_summarizer/examples/basic_summary.py
 ```
 
 ## Examples
 
-| # | File | What You'll Learn |
-|:--|:-----|:------------------|
-| 01 | `examples/01_basic_summary.py` | Basic summarization, accessing structured fields |
-| 02 | `examples/02_extract_entities.py` | Entity extraction and categorization |
-| 03 | `examples/03_batch_processing.py` | Processing multiple documents |
+| File | What You'll Learn |
+|:-----|:------------------|
+| `examples/basic_summary.py` | Basic summarization, accessing structured fields |
+| `examples/extract_entities.py` | Entity extraction and categorization |
+| `examples/batch_processing.py` | Processing multiple documents |
+| `examples/evaluate.py` | Automated accuracy testing |
 
 ## Architecture
 

@@ -32,16 +32,17 @@ apt-get install poppler-utils
 ### 2. Run an Example
 
 ```bash
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/invoice_analyst/examples/01_extract_invoice.py path/to/invoice.pdf
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/invoice_analyst/examples/extract_invoice.py path/to/invoice.pdf
 ```
 
 ## Examples
 
-| # | File | What You'll Learn |
-|:--|:-----|:------------------|
-| 01 | `examples/01_extract_invoice.py` | Single invoice extraction |
-| 02 | `examples/02_validate_data.py` | Validation and error checking |
-| 03 | `examples/03_batch_process.py` | Processing multiple invoices |
+| File | What You'll Learn |
+|:-----|:------------------|
+| `examples/extract_invoice.py` | Single invoice extraction |
+| `examples/validate_data.py` | Validation and error checking |
+| `examples/batch_process.py` | Processing multiple invoices |
+| `examples/evaluate.py` | Automated accuracy testing |
 
 ## Architecture
 

@@ -21,13 +21,13 @@ export X_ACCESS_SECRET=your-access-secret
 
 ```bash
 # Brand sentiment analysis
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/social_media_analyst/examples/01_brand_analysis.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/social_media_analyst/examples/brand_analysis.py
 
 # Competitor comparison
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/social_media_analyst/examples/02_competitor_compare.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/social_media_analyst/examples/competitor_compare.py
 
 # Trending topic analysis
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/social_media_analyst/examples/03_trending_topic.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/social_media_analyst/examples/trending_topic.py
 ```
 
 ## Key Concepts

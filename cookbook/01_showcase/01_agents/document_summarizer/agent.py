@@ -153,3 +153,6 @@ __all__ = [
     "summarize_document",
     "DocumentSummary",
 ]
+
+if __name__ == "__main__":
+    summarizer_agent.cli(stream=True)

@@ -117,3 +117,6 @@ linear_agent = Agent(
 __all__ = [
     "linear_agent",
 ]
+
+if __name__ == "__main__":
+    linear_agent.cli(stream=True)

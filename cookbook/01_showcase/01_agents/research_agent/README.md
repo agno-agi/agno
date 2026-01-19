@@ -28,16 +28,17 @@ export PARALLEL_API_KEY=your-api-key
 ### 3. Run an Example
 
 ```bash
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/research_agent/examples/01_quick_research.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/research_agent/examples/quick_research.py
 ```
 
 ## Examples
 
-| # | File | What You'll Learn |
-|:--|:-----|:------------------|
-| 01 | `examples/01_quick_research.py` | Fast overview research (3-5 sources) |
-| 02 | `examples/02_deep_research.py` | Comprehensive investigation (10-15 sources) |
-| 03 | `examples/03_comparative.py` | Comparison and decision support |
+| File | What You'll Learn |
+|:-----|:------------------|
+| `examples/quick_research.py` | Fast overview research (3-5 sources) |
+| `examples/deep_research.py` | Comprehensive investigation (10-15 sources) |
+| `examples/comparative.py` | Comparison and decision support |
+| `examples/evaluate.py` | Automated accuracy testing |
 
 ## Architecture
 

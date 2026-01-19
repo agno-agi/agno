@@ -25,10 +25,10 @@ export COHERE_API_KEY=your-cohere-api-key
 
 ```bash
 # Basic recipe query
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/recipe_agent/examples/01_basic_recipe.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/recipe_agent/examples/basic_recipe.py
 
 # Visual guide with images
-.venvs/demo/bin/python cookbook/01_showcase/01_agents/recipe_agent/examples/02_visual_guide.py
+.venvs/demo/bin/python cookbook/01_showcase/01_agents/recipe_agent/examples/visual_guide.py
 ```
 
 ## Key Concepts

@@ -126,7 +126,7 @@ def main() -> int:
         print("All checks passed! You're ready to run the examples.")
         print()
         print("Try:")
-        print("  python examples/01_brand_analysis.py")
+        print("  python examples/brand_analysis.py")
         return 0
     else:
         print("Some checks failed. Please fix the issues above.")

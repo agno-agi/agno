@@ -165,3 +165,6 @@ __all__ = [
     "analyze_brand",
     "SocialMediaReport",
 ]
+
+if __name__ == "__main__":
+    social_media_agent.cli(stream=True)

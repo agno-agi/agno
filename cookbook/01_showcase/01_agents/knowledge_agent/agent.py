@@ -131,3 +131,6 @@ __all__ = [
     "DB_URL",
     "KNOWLEDGE_DIR",
 ]
+
+if __name__ == "__main__":
+    knowledge_agent.cli(stream=True)
