@@ -98,7 +98,9 @@ def test_basic_intermediate_steps_events(shared_db):
 
     assert run_response_from_storage is not None
     assert run_response_from_storage.events is not None
-    assert len(run_response_from_storage.events) == 5, "We should have run_started, model_request_started, model_request_completed, run_content_completed, and run_completed events"
+    assert len(run_response_from_storage.events) == 5, (
+        "We should have run_started, model_request_started, model_request_completed, run_content_completed, and run_completed events"
+    )
     assert run_response_from_storage.events[0].event == TeamRunEvent.run_started
     assert run_response_from_storage.events[1].event == TeamRunEvent.model_request_started
     assert run_response_from_storage.events[2].event == TeamRunEvent.model_request_completed
