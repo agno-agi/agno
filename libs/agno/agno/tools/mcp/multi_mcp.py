@@ -23,7 +23,7 @@ try:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.sse import sse_client
     from mcp.client.stdio import get_default_environment, stdio_client
-    from mcp.client.streamable_http import streamablehttp_client
+    from mcp.client.streamable_http import streamable_http_client
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
 
@@ -471,8 +471,25 @@ class MultiMCPTools(Toolkit):
 
                 # Handle Streamable HTTP connections
                 elif isinstance(server_params, StreamableHTTPClientParams):
+                    # Temporarily remove http_client to avoid pickle issues with asdict
+                    http_client = getattr(server_params, "http_client", None)
+                    if http_client is not None:
+                        server_params.http_client = None
+
+                    streamable_http_params = asdict(server_params)
+
+                    # Restore and add http_client
+                    if http_client is not None:
+                        server_params.http_client = http_client
+                        streamable_http_params["http_client"] = http_client
+
+                    # Remove deprecated parameters not accepted by streamable_http_client
+                    streamable_http_params.pop("headers", None)
+                    streamable_http_params.pop("timeout", None)
+                    streamable_http_params.pop("sse_read_timeout", None)
+
                     client_connection = await self._async_exit_stack.enter_async_context(
-                        streamablehttp_client(**asdict(server_params))
+                        streamable_http_client(**streamable_http_params)
                     )
                     read, write = client_connection[0:2]
                     session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))

@@ -7,7 +7,7 @@ requires-python = ">=3.13"
 dependencies = [
     "agno",
     "fastapi>=0.116.1",
-    "mcp>=1.12.2",
+    "mcp>=1.25.0",
     "openai>=1.97.1",
     "sqlalchemy>=2.0.43",
     "toolbox-core>=0.4.0",

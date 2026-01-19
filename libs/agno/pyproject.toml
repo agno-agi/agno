@@ -117,7 +117,7 @@ gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthl
 google_bigquery = ["google-cloud-bigquery"]
 googlemaps = ["googlemaps", "google-maps-places"]
 matplotlib = ["matplotlib"]
-mcp = ["mcp>=1.9.2"]
+mcp = ["mcp>=1.25.0"]
 mem0 = ["mem0ai"]
 memori = ["memori>=3.0.5"]
 newspaper = ["newspaper4k", "lxml_html_clean"]

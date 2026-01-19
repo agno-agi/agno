@@ -22,3 +22,4 @@ class StreamableHTTPClientParams:
     timeout: Optional[timedelta] = timedelta(seconds=30)
     sse_read_timeout: Optional[timedelta] = timedelta(seconds=60 * 5)
     terminate_on_close: Optional[bool] = None
+    http_client: Optional[Any] = None

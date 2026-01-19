@@ -20,7 +20,7 @@ try:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.sse import sse_client
     from mcp.client.stdio import get_default_environment, stdio_client
-    from mcp.client.streamable_http import streamablehttp_client
+    from mcp.client.streamable_http import streamable_http_client
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
 
@@ -63,7 +63,7 @@ class MCPTools(Toolkit):
             command: The command to run to start the server. Should be used in conjunction with env.
             url: The URL endpoint for SSE or Streamable HTTP connection when transport is "sse" or "streamable-http".
             env: The environment variables to pass to the server. Should be used in conjunction with command.
-            client: The underlying MCP client (optional, used to prevent garbage collection)
+            client: Custom httpx AsyncClient for Streamable HTTP connections (optional, allows SSL verification control)
             timeout_seconds: Read timeout in seconds for the MCP client
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
@@ -456,14 +456,32 @@ class MCPTools(Toolkit):
 
         # Create a new streamable HTTP session
         elif self.transport == "streamable-http":
-            streamable_http_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
-            if "url" not in streamable_http_params:
+            streamable_http_params = {}
+            if self.server_params is not None:
+                # Temporarily remove http_client to avoid pickle issues with asdict
+                http_client = getattr(self.server_params, "http_client", None)
+                if http_client is not None:
+                    self.server_params.http_client = None
+
+                streamable_http_params = asdict(self.server_params)  # type: ignore
+
+                # Restore and add http_client
+                if http_client is not None:
+                    self.server_params.http_client = http_client
+                    streamable_http_params["http_client"] = http_client
+
+                # Remove deprecated parameters not accepted by streamable_http_client
+                streamable_http_params.pop("headers", None)
+                streamable_http_params.pop("timeout", None)
+                streamable_http_params.pop("sse_read_timeout", None)
+
+                if "url" not in streamable_http_params:
+                    streamable_http_params["url"] = self.url
+            else:
                 streamable_http_params["url"] = self.url
-            self._context = streamablehttp_client(**streamable_http_params)  # type: ignore
-            params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
-            if isinstance(params_timeout, timedelta):
-                params_timeout = int(params_timeout.total_seconds())
-            client_timeout = min(self.timeout_seconds, params_timeout)
+
+            self._context = streamable_http_client(**streamable_http_params)  # type: ignore
+            client_timeout = self.timeout_seconds
 
         else:
             if self.server_params is None:
