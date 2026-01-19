@@ -127,6 +127,7 @@ class MCPTools(Toolkit):
 
         self.transport = transport
 
+        self.header_provider = None
         if self._is_valid_header_provider(header_provider):
             self.header_provider = header_provider
 

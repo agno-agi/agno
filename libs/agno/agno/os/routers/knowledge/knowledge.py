@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, Request, UploadFile
 
+from agno.db.base import AsyncBaseDb
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader import ReaderFactory
@@ -36,7 +37,7 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_knowledge_instance_by_db_id
 from agno.remote.base import RemoteKnowledge
-from agno.utils.log import log_debug, log_info
+from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
 
 logger = logging.getLogger(__name__)
@@ -297,7 +298,17 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             else:
                 raise HTTPException(status_code=400, detail=f"Invalid reader_id: {update_data.reader_id}")
 
-        updated_content_dict = await knowledge.apatch_content(content)
+        # Use async patch method if contents_db is an AsyncBaseDb, otherwise use sync patch method
+        updated_content_dict = None
+        try:
+            if knowledge.contents_db is not None and isinstance(knowledge.contents_db, AsyncBaseDb):
+                updated_content_dict = await knowledge.apatch_content(content)
+            else:
+                updated_content_dict = knowledge.patch_content(content)
+        except Exception as e:
+            log_error(f"Error updating content: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error updating content: {str(e)}")
+
         if not updated_content_dict:
             raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
 
@@ -344,8 +355,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     )
     async def get_content(
         request: Request,
-        limit: Optional[int] = Query(default=20, description="Number of content entries to return"),
-        page: Optional[int] = Query(default=1, description="Page number"),
+        limit: Optional[int] = Query(default=20, description="Number of content entries to return", ge=1),
+        page: Optional[int] = Query(default=1, description="Page number", ge=0),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
@@ -660,7 +671,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         # Use max_results if specified, otherwise use a higher limit for search then paginate
         search_limit = request.max_results
 
-        results = await knowledge.async_search(
+        results = await knowledge.asearch(
             query=request.query, max_results=search_limit, filters=request.filters, search_type=request.search_type
         )
 
@@ -849,6 +860,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                     "name": "TextReader",
                                     "description": "Reads text files",
                                     "chunkers": [
+                                        "CodeChunker",
                                         "FixedSizeChunker",
                                         "AgenticChunker",
                                         "DocumentChunker",
@@ -886,6 +898,12 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                     "name": "AgenticChunker",
                                     "description": "Chunking strategy that uses an LLM to determine natural breakpoints in the text",
                                     "metadata": {"chunk_size": 5000},
+                                },
+                                "CodeChunker": {
+                                    "key": "CodeChunker",
+                                    "name": "CodeChunker",
+                                    "description": "The CodeChunker splits code into chunks based on its structure, leveraging Abstract Syntax Trees (ASTs) to create contextually relevant segments",
+                                    "metadata": {"chunk_size": 2048},
                                 },
                                 "DocumentChunker": {
                                     "key": "DocumentChunker",
@@ -1029,7 +1047,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                     search_types=search_types,
                 )
             )
-        filters = await knowledge.async_get_valid_filters()
+        filters = await knowledge.aget_valid_filters()
         return ConfigResponseSchema(
             readers=reader_schemas,
             vector_dbs=vector_dbs,
@@ -1080,7 +1098,7 @@ async def process_content(
             log_debug(f"Set chunking strategy: {chunker}")
 
         log_debug(f"Using reader: {content.reader.__class__.__name__}")
-        await knowledge._load_content_async(content, upsert=False, skip_if_exists=True)
+        await knowledge._aload_content(content, upsert=False, skip_if_exists=True)
         log_info(f"Content {content.id} processed successfully")
     except Exception as e:
         log_info(f"Error processing content: {e}")
@@ -1090,7 +1108,12 @@ async def process_content(
 
             content.status = KnowledgeContentStatus.FAILED
             content.status_message = str(e)
-            knowledge.patch_content(content)
+            # Use async patch method if contents_db is an AsyncBaseDb, otherwise use sync patch method
+            if knowledge.contents_db is not None and isinstance(knowledge.contents_db, AsyncBaseDb):
+                await knowledge.apatch_content(content)
+            else:
+                knowledge.patch_content(content)
+
         except Exception:
             # Swallow any secondary errors to avoid crashing the background task
             pass

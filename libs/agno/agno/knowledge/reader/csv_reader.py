@@ -25,10 +25,11 @@ class CSVReader(Reader):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for CSV readers."""
         return [
             ChunkingStrategyType.ROW_CHUNKER,
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
@@ -36,7 +37,7 @@ class CSVReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.CSV, ContentType.XLSX, ContentType.XLS]
 
     def read(
@@ -55,7 +56,7 @@ class CSVReader(Reader):
                 log_debug(f"Reading retrieved file: {getattr(file, 'name', 'BytesIO')}")
                 csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
                 file.seek(0)
-                file_content = io.StringIO(file.read().decode("utf-8"))
+                file_content = io.StringIO(file.read().decode(self.encoding or "utf-8"))
 
             csv_content = ""
             with file_content as csvfile:
@@ -105,14 +106,14 @@ class CSVReader(Reader):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
                 log_debug(f"Reading async: {file}")
-                async with aiofiles.open(file, mode="r", encoding="utf-8", newline="") as file_content:
+                async with aiofiles.open(file, mode="r", encoding=self.encoding or "utf-8", newline="") as file_content:
                     content = await file_content.read()
                     file_content_io = io.StringIO(content)
                 csv_name = name or file.stem
             else:
                 log_debug(f"Reading retrieved file async: {getattr(file, 'name', 'BytesIO')}")
                 file.seek(0)
-                file_content_io = io.StringIO(file.read().decode("utf-8"))
+                file_content_io = io.StringIO(file.read().decode(self.encoding or "utf-8"))
                 csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
 
             file_content_io.seek(0)

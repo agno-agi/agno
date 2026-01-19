@@ -2,11 +2,15 @@
 
 import json
 from datetime import date, datetime
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 from uuid import UUID
 
 from agno.models.message import Message
 from agno.models.metrics import Metrics
+from agno.utils.log import log_error, log_warning
+
+if TYPE_CHECKING:
+    from agno.db.base import BaseDb
 
 
 def get_sort_value(record: Dict[str, Any], sort_by: str) -> Any:
@@ -138,3 +142,35 @@ def deserialize_session_json_fields(session: dict) -> dict:
             log_warning(f"Warning: Could not parse runs as JSON, keeping as string: {e}")
 
     return session
+
+
+def db_from_dict(db_data: Dict[str, Any]) -> Optional[Union["BaseDb"]]:
+    """
+    Create a database instance from a dictionary.
+
+    Args:
+        db_data: Dictionary containing database configuration
+
+    Returns:
+        Database instance or None if creation fails
+    """
+    db_type = db_data.get("type")
+    if db_type == "postgres":
+        try:
+            from agno.db.postgres import PostgresDb
+
+            return PostgresDb.from_dict(db_data)
+        except Exception as e:
+            log_error(f"Error reconstructing PostgresDb from dictionary: {e}")
+            return None
+    elif db_type == "sqlite":
+        try:
+            from agno.db.sqlite import SqliteDb
+
+            return SqliteDb.from_dict(db_data)
+        except Exception as e:
+            log_error(f"Error reconstructing SqliteDb from dictionary: {e}")
+            return None
+    else:
+        log_warning(f"Unknown database type: {db_type}")
+        return None
