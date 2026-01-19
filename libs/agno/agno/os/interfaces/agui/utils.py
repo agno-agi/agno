@@ -1,8 +1,8 @@
 """Logic used by the AG-UI router."""
 
+import copy
 import json
 import uuid
-from collections.abc import Iterator
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple, Union
 
@@ -24,7 +24,6 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from ag_ui.core.types import Message as AGUIMessage
-import copy
 from jsonpatch import make_patch
 from pydantic import BaseModel
 
@@ -34,6 +33,7 @@ from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
 from agno.utils.log import log_debug, log_warning
 from agno.utils.message import get_text_from_message
+
 
 def validate_agui_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
     """Validate the given AGUI state is of the expected type (dict)."""
@@ -334,7 +334,10 @@ def _create_events_from_chunk(
                     events_to_emit.append(result_event)
 
                     # Emit StateDeltaEvent if state has changed.
-                    if event_buffer.current_session_state is not None or event_buffer.previous_session_state is not None:
+                    if (
+                        event_buffer.current_session_state is not None
+                        or event_buffer.previous_session_state is not None
+                    ):
                         try:
                             # Generate JSON patch between previous and current state
                             patch = make_patch(event_buffer.previous_session_state, event_buffer.current_session_state)
