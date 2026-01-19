@@ -24,20 +24,13 @@ Usage:
     report = research_topic("Compare LangChain vs LlamaIndex", depth="comprehensive")
 """
 
-import sys
-from pathlib import Path
 from typing import Literal
 
-# Add parent directory to path for imports
-_this_dir = Path(__file__).parent
-if str(_this_dir) not in sys.path:
-    sys.path.insert(0, str(_this_dir))
-
-from agno.agent import Agent  # noqa: E402
-from agno.models.anthropic import Claude  # noqa: E402
-from agno.tools.parallel import ParallelTools  # noqa: E402
-from agno.tools.reasoning import ReasoningTools  # noqa: E402
-from schemas import ResearchReport  # noqa: E402
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.tools.parallel import ParallelTools
+from agno.tools.reasoning import ReasoningTools
+from schemas import ResearchReport
 
 # ============================================================================
 # Research Depth Configuration

@@ -22,24 +22,16 @@ Prerequisites:
 3. Load knowledge: python scripts/load_knowledge.py
 """
 
-import sys
-from pathlib import Path
-
-# Add text_to_sql directory to path for relative imports
-_this_dir = Path(__file__).parent
-if str(_this_dir) not in sys.path:
-    sys.path.insert(0, str(_this_dir))
-
-from agno.agent import Agent  # noqa: E402
-from agno.db.postgres import PostgresDb  # noqa: E402
-from agno.knowledge.embedder.openai import OpenAIEmbedder  # noqa: E402
-from agno.knowledge.knowledge import Knowledge  # noqa: E402
-from agno.models.anthropic import Claude  # noqa: E402
-from agno.tools.reasoning import ReasoningTools  # noqa: E402
-from agno.tools.sql import SQLTools  # noqa: E402
-from agno.vectordb.pgvector import PgVector, SearchType  # noqa: E402
-from semantic_model import SEMANTIC_MODEL_STR  # noqa: E402
-from tools.save_query import save_validated_query, set_knowledge  # noqa: E402
+from agno.agent import Agent
+from agno.db.postgres import PostgresDb
+from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.sql import SQLTools
+from agno.vectordb.pgvector import PgVector, SearchType
+from semantic_model import SEMANTIC_MODEL_STR
+from tools.save_query import save_validated_query, set_knowledge
 
 # ============================================================================
 # Database Configuration

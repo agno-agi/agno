@@ -21,19 +21,11 @@ Usage:
     summarizer_agent.print_response("Summarize: <document content>")
 """
 
-import sys
-from pathlib import Path
-
-# Add parent directory to path for imports
-_this_dir = Path(__file__).parent
-if str(_this_dir) not in sys.path:
-    sys.path.insert(0, str(_this_dir))
-
-from agno.agent import Agent  # noqa: E402
-from agno.models.anthropic import Claude  # noqa: E402
-from agno.tools.reasoning import ReasoningTools  # noqa: E402
-from schemas import DocumentSummary  # noqa: E402
-from tools import fetch_url, read_pdf, read_text_file  # noqa: E402
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+from schemas import DocumentSummary
+from tools import fetch_url, read_pdf, read_text_file
 
 # ============================================================================
 # System Message

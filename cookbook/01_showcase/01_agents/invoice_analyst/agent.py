@@ -19,20 +19,13 @@ Usage:
     print(invoice.line_items)
 """
 
-import sys
 from decimal import Decimal
-from pathlib import Path
 
-# Add parent directory to path for imports
-_this_dir = Path(__file__).parent
-if str(_this_dir) not in sys.path:
-    sys.path.insert(0, str(_this_dir))
-
-from agno.agent import Agent  # noqa: E402
-from agno.models.anthropic import Claude  # noqa: E402
-from agno.tools.reasoning import ReasoningTools  # noqa: E402
-from schemas import InvoiceData  # noqa: E402
-from tools.invoice_reader import (  # noqa: E402
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+from schemas import InvoiceData
+from tools.invoice_reader import (
     get_invoice_as_message_content,
     read_invoice,
 )
