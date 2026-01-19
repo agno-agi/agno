@@ -661,6 +661,7 @@ class AsyncBaseDb(ABC):
         self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
         self.learnings_table_name = learnings_table or "agno_learnings"
+        self.context_table_name = context_table or "agno_context"
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""
@@ -673,7 +674,6 @@ class AsyncBaseDb(ABC):
         Should be called during application shutdown.
         """
         pass
-        self.context_table_name = context_table or "agno_context"
 
     @abstractmethod
     async def table_exists(self, table_name: str) -> bool:
@@ -1134,7 +1134,7 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    Just one conflict is remaining in my base, I don't know how to solve that. There is nothing except combination there async def upsert_learning(
+    async def upsert_learning(
         self,
         id: str,
         learning_type: str,
@@ -1206,30 +1206,6 @@ class AsyncBaseDb(ABC):
         Returns:
             List of learning records.
         """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def clear_context_items(self) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def delete_context_item(self, id: str) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def get_context_item(self, id: str) -> Optional["ContextItem"]:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def get_all_context_items(
-        self,
-        name: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[List["ContextItem"]]:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def upsert_context_item(self, context_item: "ContextItem") -> Optional["ContextItem"]:
         raise NotImplementedError
 
     @abstractmethod
