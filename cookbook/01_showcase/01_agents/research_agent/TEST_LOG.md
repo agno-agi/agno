@@ -25,7 +25,7 @@ cd research_agent && python -c "from agent import research_agent; print(research
 |---------|-------|
 | Model | `gpt-5.2` (OpenAIResponses) |
 | Output Schema | ResearchReport |
-| Markdown | Enabled |
+| Features | add_datetime_to_context, add_history_to_context, enable_agentic_memory, markdown |
 | Tools | ParallelTools, ReasoningTools |
 
 ---

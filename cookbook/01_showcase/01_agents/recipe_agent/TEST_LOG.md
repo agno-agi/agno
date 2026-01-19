@@ -24,7 +24,7 @@ cd recipe_agent && python -c "from agent import recipe_agent; print(recipe_agent
 | Setting | Value |
 |---------|-------|
 | Model | `gpt-5.2` (OpenAIResponses) |
-| Features | search_knowledge, markdown |
+| Features | add_datetime_to_context, add_history_to_context, enable_agentic_memory, search_knowledge, markdown |
 | Knowledge | Hybrid search (semantic + keyword) with PgVector |
 | Embedder | text-embedding-3-small |
 | Tools | OpenAITools (for image generation), ReasoningTools |

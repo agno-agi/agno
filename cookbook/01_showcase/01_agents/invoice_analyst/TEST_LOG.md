@@ -25,7 +25,7 @@ cd invoice_analyst && python -c "from agent import invoice_agent; print(invoice_
 |---------|-------|
 | Model | `gpt-5.2` (OpenAIResponses) |
 | Output Schema | InvoiceData |
-| Markdown | Enabled |
+| Features | add_datetime_to_context, add_history_to_context, enable_agentic_memory, markdown |
 | Tools | ReasoningTools, read_invoice |
 
 ---

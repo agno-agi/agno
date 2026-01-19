@@ -25,7 +25,7 @@ ModuleNotFoundError: No module named 'tweepy'
 |---------|-------|
 | Model | `gpt-5.2` (OpenAIResponses) |
 | Output Schema | SocialMediaReport |
-| Markdown | Enabled |
+| Features | add_datetime_to_context, add_history_to_context, enable_agentic_memory, markdown |
 | Tools | XTools, ReasoningTools |
 
 ---

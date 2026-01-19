@@ -24,8 +24,7 @@ LinearTools() initialization failed - requires LINEAR_API_KEY
 | Setting | Value |
 |---------|-------|
 | Model | `gpt-5.2` (OpenAIResponses) |
-| Output Schema | MeetingTasksOutput |
-| Markdown | Enabled |
+| Features | add_datetime_to_context, add_history_to_context, enable_agentic_memory, markdown |
 | Tools | LinearTools, ReasoningTools |
 
 ---

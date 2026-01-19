@@ -128,6 +128,10 @@ recipe_agent = Agent(
         OpenAITools(),
         ReasoningTools(add_instructions=True),
     ],
+    add_datetime_to_context=True,
+    add_history_to_context=True,
+    num_history_runs=5,
+    enable_agentic_memory=True,
     search_knowledge=True,
     markdown=True,
 )

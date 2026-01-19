@@ -24,9 +24,7 @@ ModuleNotFoundError: No module named 'google_auth_oauthlib'
 | Setting | Value |
 |---------|-------|
 | Model | `gpt-5.2` (OpenAIResponses) |
-| Enable Agentic Memory | Yes |
-| Add History to Context | Yes |
-| Markdown | Enabled |
+| Features | add_datetime_to_context, add_history_to_context, enable_agentic_memory, markdown |
 | Tools | GmailTools, ReasoningTools |
 
 ---

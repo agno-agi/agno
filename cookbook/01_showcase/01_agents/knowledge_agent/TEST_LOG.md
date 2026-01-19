@@ -45,7 +45,7 @@
 | Setting | Value |
 |---------|-------|
 | Model | `gpt-5.2` (OpenAIResponses) |
-| Features | search_knowledge, add_history_to_context, enable_agentic_memory, markdown |
+| Features | add_datetime_to_context, add_history_to_context, enable_agentic_memory, search_knowledge, markdown |
 | Knowledge | Hybrid search (semantic + keyword) with PgVector |
 | Embedder | text-embedding-3-small |
 

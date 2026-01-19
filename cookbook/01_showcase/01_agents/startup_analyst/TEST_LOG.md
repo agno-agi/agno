@@ -25,7 +25,7 @@ ModuleNotFoundError: No module named 'scrapegraph_py'
 |---------|-------|
 | Model | `gpt-5.2` (OpenAIResponses) |
 | Output Schema | StartupReport |
-| Markdown | Enabled |
+| Features | add_datetime_to_context, add_history_to_context, enable_agentic_memory, markdown |
 | Tools | ScrapeGraphTools, ReasoningTools |
 
 ---

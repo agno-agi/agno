@@ -112,15 +112,12 @@ knowledge_agent = Agent(
     tools=[
         ReasoningTools(add_instructions=True),
     ],
-    # Enable knowledge search (agentic RAG)
-    search_knowledge=True,
-    # Conversation history for follow-up questions
+    add_datetime_to_context=True,
     add_history_to_context=True,
     num_history_runs=5,
     read_chat_history=True,
-    # Memory for user preferences
     enable_agentic_memory=True,
-    # Output formatting
+    search_knowledge=True,
     markdown=True,
 )
 

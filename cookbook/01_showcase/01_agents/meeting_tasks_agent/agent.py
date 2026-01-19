@@ -130,13 +130,11 @@ meeting_tasks_agent = Agent(
         ReasoningTools(add_instructions=True),
         LinearTools(),
     ],
-    # Memory for team members and project context
-    enable_agentic_memory=True,
-    # Conversation history for follow-ups
+    add_datetime_to_context=True,
     add_history_to_context=True,
     num_history_runs=5,
     read_chat_history=True,
-    # Output formatting
+    enable_agentic_memory=True,
     markdown=True,
 )
 

@@ -129,6 +129,10 @@ translation_agent = Agent(
     instructions=AGENT_INSTRUCTIONS,
     model=OpenAIResponses(id="gpt-5.2"),
     tools=[CartesiaTools()],
+    add_datetime_to_context=True,
+    add_history_to_context=True,
+    num_history_runs=5,
+    enable_agentic_memory=True,
     markdown=True,
 )
 

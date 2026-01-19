@@ -49,7 +49,7 @@ cd document_summarizer && python -c "from agent import summarizer_agent; print(s
 |---------|-------|
 | Model | `gpt-5.2` (OpenAIResponses) |
 | Output Schema | DocumentSummary |
-| Markdown | Enabled |
+| Features | add_datetime_to_context, add_history_to_context, enable_agentic_memory, markdown |
 | Tools | ReasoningTools, read_pdf, read_text_file, fetch_url |
 
 ---
