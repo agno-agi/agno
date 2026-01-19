@@ -1304,7 +1304,7 @@ class Knowledge:
 
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
-                self._prepare_documents_for_insert(read_documents, content.id)
+                self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
 
                 await self._ahandle_vector_db_insert(content, read_documents, upsert)
 
@@ -1385,7 +1385,7 @@ class Knowledge:
 
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
-                self._prepare_documents_for_insert(read_documents, content.id)
+                self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
 
                 self._handle_vector_db_insert(content, read_documents, upsert)
 
