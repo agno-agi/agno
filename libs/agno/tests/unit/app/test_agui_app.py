@@ -1401,9 +1401,9 @@ async def test_state_snapshot_event():
 @pytest.mark.asyncio
 async def test_state_delta_event():
     """Test that StateDeltaEvent is emitted when state changes after tool call results."""
+    from agno.models.response import ToolExecution
     from agno.os.interfaces.agui.utils import EventBuffer, _create_events_from_chunk
     from agno.run.agent import RunEvent, ToolCallCompletedEvent
-    from agno.models.response import ToolExecution
 
     # Create event buffer with initial state
     event_buffer = EventBuffer()
@@ -1439,17 +1439,17 @@ async def test_state_delta_event():
 
     # Verify delta contains expected operations
     delta = deltas[0].delta
-    ops = {op['op'] for op in delta}
-    paths = {op['path'] for op in delta}
+    ops = {op["op"] for op in delta}
+    paths = {op["path"] for op in delta}
 
-    assert 'replace' in ops or 'add' in ops, "Delta should contain replace or add operations"
-    assert '/counter' in paths or '/new_field' in paths, "Delta should reference changed fields"
+    assert "replace" in ops or "add" in ops, "Delta should contain replace or add operations"
+    assert "/counter" in paths or "/new_field" in paths, "Delta should reference changed fields"
 
 
 @pytest.mark.asyncio
 async def test_state_snapshot_without_delta():
     """Test that StateSnapshotEvent is emitted even when there's no previous state."""
-    from agno.os.interfaces.agui.utils import _create_completion_events, EventBuffer
+    from agno.os.interfaces.agui.utils import EventBuffer, _create_completion_events
     from agno.run.agent import RunCompletedEvent, RunEvent
 
     event_buffer = EventBuffer()
@@ -1460,12 +1460,9 @@ async def test_state_snapshot_without_delta():
         content="Complete",
     )
 
-    events = _create_completion_events(
-        completion, event_buffer, False, "", "test-thread", "test-run"
-    )
+    events = _create_completion_events(completion, event_buffer, False, "", "test-thread", "test-run")
 
     snapshots = [e for e in events if e.type == EventType.STATE_SNAPSHOT]
 
     assert len(snapshots) == 1, "StateSnapshotEvent should always be emitted"
     assert snapshots[0].snapshot == {"test": "data"}
-

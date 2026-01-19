@@ -98,7 +98,7 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
 
         # Emit initial state snapshot if available.
         if session_state:
-            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT,snapshot=session_state)
+            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=session_state)
 
         # Request streaming response from team
         response_stream = team.arun(  # type: ignore
