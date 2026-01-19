@@ -51,7 +51,8 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
         session_state = validate_agui_state(run_input.state, run_input.thread_id)
 
         # Emit initial state snapshot if available.
-        yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=session_state)
+        if session_state:
+            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=session_state)
 
         # Request streaming response from agent
         response_stream = agent.arun(  # type: ignore
@@ -96,7 +97,8 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
         session_state = validate_agui_state(input.state, input.thread_id)
 
         # Emit initial state snapshot if available.
-        yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT,snapshot=session_state)
+        if session_state:
+            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT,snapshot=session_state)
 
         # Request streaming response from team
         response_stream = team.arun(  # type: ignore
