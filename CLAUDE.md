@@ -189,6 +189,22 @@ Both scripts must pass with no errors before code review.
 
 ---
 
+## GitHub Operations
+
+**Updating PR descriptions:**
+
+The `gh pr edit` command may fail with GraphQL errors related to classic projects. Use the API directly instead:
+
+```bash
+# Update PR body
+gh api repos/agno-agi/agno/pulls/<PR_NUMBER> -X PATCH -f body="<PR_BODY>"
+
+# Or with a file
+gh api repos/agno-agi/agno/pulls/<PR_NUMBER> -X PATCH -f body="$(cat /path/to/body.md)"
+```
+
+---
+
 ## Don't
 
 - Don't implement features without checking for a design doc first
