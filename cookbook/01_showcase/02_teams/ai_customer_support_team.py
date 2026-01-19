@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.website_reader import WebsiteReader
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.team import Team
 from agno.tools.exa import ExaTools
 from agno.tools.slack import SlackTools
@@ -30,7 +30,7 @@ feedback_channel = "testing"
 doc_researcher_agent = Agent(
     name="Doc researcher Agent",
     role="Search the knowledge base for information",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[WebSearchTools(), ExaTools()],
     knowledge=knowledge,
     search_knowledge=True,
@@ -50,7 +50,7 @@ doc_researcher_agent = Agent(
 escalation_manager_agent = Agent(
     name="Escalation Manager Agent",
     role="Escalate the issue to the slack channel",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[SlackTools()],
     instructions=[
         "You are an escalation manager responsible for routing critical issues to the support team.",
@@ -66,7 +66,7 @@ escalation_manager_agent = Agent(
 feedback_collector_agent = Agent(
     name="Feedback Collector Agent",
     role="Collect feedback from the user",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[SlackTools()],
     description="You are an AI agent that can collect feedback from the user.",
     instructions=[
@@ -83,7 +83,7 @@ feedback_collector_agent = Agent(
 
 customer_support_team = Team(
     name="Customer Support Team",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses("gpt-5.2"),
     members=[doc_researcher_agent, escalation_manager_agent, feedback_collector_agent],
     determine_input_for_members=False,
     respond_directly=True,

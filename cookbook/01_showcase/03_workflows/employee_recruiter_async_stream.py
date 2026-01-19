@@ -7,7 +7,7 @@ from typing import Any, List
 import requests
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.workflow.types import WorkflowExecutionInput
 from agno.workflow.workflow import Workflow
 from pydantic import BaseModel
@@ -82,7 +82,7 @@ def simulate_email_sending(agent: Agent, to_email: str, subject: str, body: str)
 # --- Agents ---
 screening_agent = Agent(
     name="Screening Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "Screen candidate given resume text and job description.",
         "Provide a score from 0-10 based on how well they match the job requirements.",
@@ -94,7 +94,7 @@ screening_agent = Agent(
 
 scheduler_agent = Agent(
     name="Scheduler Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         f"You are scheduling interview calls. Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST",
         "Schedule calls between 10am-6pm IST on weekdays.",
@@ -107,7 +107,7 @@ scheduler_agent = Agent(
 
 email_writer_agent = Agent(
     name="Email Writer Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "Write professional, friendly interview invitation emails.",
         "Include congratulations, interview details, and next steps.",
@@ -119,7 +119,7 @@ email_writer_agent = Agent(
 
 email_sender_agent = Agent(
     name="Email Sender Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You send emails using the simulate_email_sending tool.",
         "Always confirm successful delivery with details.",

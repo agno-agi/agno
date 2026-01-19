@@ -7,7 +7,7 @@
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.models.openai.chat import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.team import Team
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.tools.websearch import WebSearchTools
@@ -50,7 +50,7 @@ writer = Agent(
 
 editor = Team(
     name="Editor",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses("gpt-5.2"),
     members=[searcher, writer],
     description="You are a senior NYT editor. Given a topic, your goal is to write a NYT worthy article.",
     instructions=[

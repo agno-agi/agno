@@ -9,7 +9,7 @@
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.pdf_reader import PDFReader
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.team import Team
 from agno.tools.exa import ExaTools
 from agno.tools.slack import SlackTools
@@ -34,7 +34,7 @@ sales_channel = "sales"
 legal_compliance_agent = Agent(
     name="Legal Compliance Agent",
     role="Legal Compliance",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses("gpt-5.2"),
     tools=[ExaTools()],
     knowledge=knowledge,
     instructions=[
@@ -56,7 +56,7 @@ legal_compliance_agent = Agent(
 product_manager_agent = Agent(
     name="Product Manager Agent",
     role="Product Manager",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses("gpt-5.2"),
     knowledge=knowledge,
     instructions=[
         "You are the Product Manager of a startup, responsible for product strategy and execution.",
@@ -79,7 +79,7 @@ product_manager_agent = Agent(
 market_research_agent = Agent(
     name="Market Research Agent",
     role="Market Research",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses("gpt-5.2"),
     tools=[WebSearchTools(), ExaTools()],
     knowledge=knowledge,
     instructions=[
@@ -101,7 +101,7 @@ market_research_agent = Agent(
 sales_agent = Agent(
     name="Sales Agent",
     role="Sales",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses("gpt-5.2"),
     tools=[SlackTools()],
     knowledge=knowledge,
     instructions=[
@@ -129,7 +129,7 @@ sales_agent = Agent(
 financial_analyst_agent = Agent(
     name="Financial Analyst Agent",
     role="Financial Analyst",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses("gpt-5.2"),
     knowledge=knowledge,
     tools=[YFinanceTools()],
     instructions=[
@@ -152,7 +152,7 @@ financial_analyst_agent = Agent(
 customer_support_agent = Agent(
     name="Customer Support Agent",
     role="Customer Support",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses("gpt-5.2"),
     knowledge=knowledge,
     tools=[SlackTools()],
     instructions=[
@@ -167,7 +167,7 @@ customer_support_agent = Agent(
 
 autonomous_startup_team = Team(
     name="CEO Agent",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses("gpt-5.2"),
     instructions=[
         "You are the CEO of a startup, responsible for overall leadership and success.",
         " Always delegate task to product manager agent so it can search the knowledge base.",

@@ -23,7 +23,7 @@ from typing import Any
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.websearch import WebSearchTools
 from agno.utils.pprint import pprint_run_response
 from agno.workflow.types import WorkflowExecutionInput
@@ -75,7 +75,7 @@ class ValidationReport(BaseModel):
 # --- Agents ---
 idea_clarifier_agent = Agent(
     name="Idea Clarifier",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "Given a user's startup idea, your goal is to refine that idea.",
         "Evaluate the originality of the idea by comparing it with existing concepts.",
@@ -90,7 +90,7 @@ idea_clarifier_agent = Agent(
 
 market_research_agent = Agent(
     name="Market Research Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[WebSearchTools()],
     instructions=[
         "You are provided with a startup idea and the company's mission and objectives.",
@@ -106,7 +106,7 @@ market_research_agent = Agent(
 
 competitor_analysis_agent = Agent(
     name="Competitor Analysis Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[WebSearchTools()],
     instructions=[
         "You are provided with a startup idea and market research data.",
@@ -123,7 +123,7 @@ competitor_analysis_agent = Agent(
 
 report_agent = Agent(
     name="Report Generator",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=[
         "You are provided with comprehensive data about a startup idea including clarification, market research, and competitor analysis.",
         "Synthesize all information into a comprehensive validation report.",

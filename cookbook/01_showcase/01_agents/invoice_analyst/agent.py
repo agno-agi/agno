@@ -22,7 +22,7 @@ Usage:
 from decimal import Decimal
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIResponses
 from agno.tools.reasoning import ReasoningTools
 from schemas import InvoiceData
 from tools.invoice_reader import (
@@ -103,7 +103,7 @@ Use the analyze tool to validate the extracted data.
 # ============================================================================
 invoice_agent = Agent(
     name="Invoice Analyst",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=OpenAIResponses(id="gpt-5.2"),
     system_message=SYSTEM_MESSAGE,
     output_schema=InvoiceData,
     tools=[

@@ -22,7 +22,7 @@ Usage:
 """
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIResponses
 from agno.tools.reasoning import ReasoningTools
 from schemas import DocumentSummary
 from tools import fetch_url, read_pdf, read_text_file
@@ -90,7 +90,7 @@ Use the think tool to plan your approach before summarizing.
 # ============================================================================
 summarizer_agent = Agent(
     name="Document Summarizer",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=OpenAIResponses(id="gpt-5.2"),
     system_message=SYSTEM_MESSAGE,
     output_schema=DocumentSummary,
     tools=[

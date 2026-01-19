@@ -27,7 +27,7 @@ Usage:
 from typing import Literal
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIResponses
 from agno.tools.parallel import ParallelTools
 from agno.tools.reasoning import ReasoningTools
 from schemas import ResearchReport
@@ -155,7 +155,7 @@ def create_research_agent(depth: str = "standard") -> Agent:
 
     return Agent(
         name="Research Agent",
-        model=Claude(id="claude-sonnet-4-5"),
+        model=OpenAIResponses(id="gpt-5.2"),
         system_message=SYSTEM_MESSAGE,
         output_schema=ResearchReport,
         tools=[

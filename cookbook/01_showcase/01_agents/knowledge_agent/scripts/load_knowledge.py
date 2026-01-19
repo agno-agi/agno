@@ -45,16 +45,10 @@ def load_knowledge_base():
         print(f"  - {f.name}")
     print()
 
-    # Load each document
-    for doc_path in md_files:
-        doc_name = doc_path.stem.replace("_", " ").title()
-        print(f"Loading: {doc_name}...")
-        company_knowledge.load(
-            path=str(doc_path),
-            recreate=False,
-            skip_existing=True,
-        )
-        print(f"  Loaded: {doc_path.name}")
+    # Load all documents at once
+    print("Loading all documents...")
+    company_knowledge.add_content(path=str(KNOWLEDGE_DIR))
+    print("  Loaded all documents")
 
     print()
     print("Knowledge base loaded successfully.")

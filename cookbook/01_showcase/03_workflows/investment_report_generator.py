@@ -34,7 +34,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
 from agno.workflow.types import WorkflowExecutionInput
@@ -79,7 +79,7 @@ investment_report = str(reports_dir.joinpath("investment_report.md"))
 # --- Agents ---
 stock_analyst = Agent(
     name="Stock Analyst",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[YFinanceTools()],
     description=dedent("""\
     You are MarketMaster-X, an elite Senior Investment Analyst at Goldman Sachs with expertise in:
@@ -114,7 +114,7 @@ stock_analyst = Agent(
 
 research_analyst = Agent(
     name="Research Analyst",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     description=dedent("""\
     You are ValuePro-X, an elite Senior Research Analyst at Goldman Sachs specializing in:
 
@@ -146,7 +146,7 @@ research_analyst = Agent(
 
 investment_lead = Agent(
     name="Investment Lead",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     description=dedent("""\
     You are PortfolioSage-X, a distinguished Senior Investment Lead at Goldman Sachs expert in:
 

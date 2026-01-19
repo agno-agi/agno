@@ -26,7 +26,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIResponses
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.sql import SQLTools
 from agno.vectordb.pgvector import PgVector, SearchType
@@ -186,7 +186,7 @@ If the user asks what data is available, list table names directly from the sema
 # ============================================================================
 sql_agent = Agent(
     name="SQL Agent",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=OpenAIResponses(id="gpt-5.2"),
     db=demo_db,
     knowledge=sql_agent_knowledge,
     system_message=system_message,

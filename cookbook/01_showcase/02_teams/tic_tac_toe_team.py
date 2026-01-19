@@ -2,13 +2,13 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.google.gemini import Gemini
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.team import Team
 
 player_1 = Agent(
     name="Player 1",
     role="Play Tic Tac Toe",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.2"),
     add_name_to_context=True,
     instructions=dedent("""
     You are a Tic Tac Toe player.
@@ -32,7 +32,7 @@ player_2 = Agent(
 # This is a simple team that plays Tic Tac Toe. It is not perfect and would work better with reasoning.
 agent_team = Team(
     name="Tic Tac Toe Team",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIResponses("gpt-5.2"),
     members=[player_1, player_2],
     instructions=[
         "You are a games master.",
