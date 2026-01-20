@@ -170,10 +170,9 @@ def attach_routes(
             # Warn if creating a team without members
             if body.component_type == ComponentType.TEAM:
                 members = config.get("members")
-                if not members:
+                if not members or len(members) == 0:
                     log_warning(
                         f"Creating team '{body.name}' without members. "
-                        "The team lead model will handle all tasks directly. "
                         "If this is unintended, add members to the config."
                     )
 
