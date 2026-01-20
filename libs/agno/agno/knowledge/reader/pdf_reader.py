@@ -200,7 +200,7 @@ class BasePDFReader(Reader):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for PDF readers."""
         return [
             ChunkingStrategyType.DOCUMENT_CHUNKER,
@@ -346,7 +346,7 @@ class PDFReader(BasePDFReader):
     """Reader for PDF files"""
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.PDF]
 
     def read(
