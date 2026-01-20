@@ -7910,7 +7910,6 @@ class Team:
                             await t
             else:
                 # Non-streaming concurrent run of members; collect results when done
-                # FIX: Capture all loop variables via default arguments to avoid closure bug
                 tasks = []
                 for member_agent_index, member_agent in enumerate(self.members):
                     current_agent = member_agent
