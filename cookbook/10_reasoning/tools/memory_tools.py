@@ -1,7 +1,7 @@
 """
 1. Run: `pip install openai agno lancedb tantivy sqlalchemy` to install the dependencies
 2. Export your OPENAI_API_KEY
-3. Run: `python cookbook/reasoning/tools/knowledge_tools.py` to run the agent
+3. Run: `python cookbook/81_reasoning/tools/memory_tools.py` to run the agent
 """
 
 import asyncio
@@ -9,8 +9,8 @@ import asyncio
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.memory import MemoryTools
+from agno.tools.websearch import WebSearchTools
 
 db = SqliteDb(db_file="tmp/memory.db")
 
@@ -22,10 +22,10 @@ memory_tools = MemoryTools(
 
 agent = Agent(
     model=OpenAIChat(id="gpt-5-mini"),
-    tools=[memory_tools, DuckDuckGoTools()],
+    tools=[memory_tools, WebSearchTools()],
     instructions=[
         "You are a trip planner bot and you are helping the user plan their trip.",
-        "You should use the DuckDuckGoTools to get information about the destination and activities.",
+        "You should use the WebSearchTools to get information about the destination and activities.",
         "You should use the MemoryTools to store information about the user for future reference.",
     ],
     markdown=True,

@@ -27,7 +27,7 @@ agno_docs = Knowledge(
     ),
 )
 # Add content to the knowledge
-asyncio.run(agno_docs.add_content_async(url="https://www.paulgraham.com/read.html"))
+asyncio.run(agno_docs.ainsert(url="https://www.paulgraham.com/read.html"))
 print("Knowledge ready.")
 
 
@@ -46,8 +46,7 @@ agent = Agent(
         )
     ],
     instructions=dedent("""\
-        You are an expert problem-solving assistant with strong analytical skills! 🧠
-        Use the knowledge tools to organize your thoughts, search for information,
+        You are an expert problem-solving assistant with strong analytical skills!         Use the knowledge tools to organize your thoughts, search for information,
         and analyze results step-by-step.
         \
     """),
@@ -63,7 +62,7 @@ response = agent.run(
 # Check reasoning_content from the response
 print("\n--- reasoning_content from response ---")
 if hasattr(response, "reasoning_content") and response.reasoning_content:
-    print("✅ reasoning_content FOUND in non-streaming response")
+    print("[OK] reasoning_content FOUND in non-streaming response")
     print(f"   Length: {len(response.reasoning_content)} characters")
     print("\n=== reasoning_content preview (non-streaming) ===")
     preview = response.reasoning_content[:1000]
@@ -71,7 +70,7 @@ if hasattr(response, "reasoning_content") and response.reasoning_content:
         preview += "..."
     print(preview)
 else:
-    print("❌ reasoning_content NOT FOUND in non-streaming response")
+    print("[NOT FOUND] reasoning_content NOT FOUND in non-streaming response")
 
 
 print("\n\n=== Example 2: Using KnowledgeTools in streaming mode ===\n")
@@ -89,8 +88,7 @@ streaming_agent = Agent(
         )
     ],
     instructions=dedent("""\
-        You are an expert problem-solving assistant with strong analytical skills! 🧠
-        Use the knowledge tools to organize your thoughts, search for information,
+        You are an expert problem-solving assistant with strong analytical skills!         Use the knowledge tools to organize your thoughts, search for information,
         and analyze results step-by-step.
         \
     """),
@@ -119,7 +117,7 @@ if (
     and hasattr(final_response, "reasoning_content")
     and final_response.reasoning_content
 ):
-    print("✅ reasoning_content FOUND in final stream event")
+    print("[OK] reasoning_content FOUND in final stream event")
     print(f"   Length: {len(final_response.reasoning_content)} characters")
     print("\n=== reasoning_content preview (streaming) ===")
     preview = final_response.reasoning_content[:1000]
@@ -127,4 +125,4 @@ if (
         preview += "..."
     print(preview)
 else:
-    print("❌ reasoning_content NOT FOUND in final stream event")
+    print("[NOT FOUND] reasoning_content NOT FOUND in final stream event")

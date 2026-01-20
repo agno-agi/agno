@@ -919,7 +919,7 @@ class LearnedKnowledgeStore(LearningStore):
             text_content = self._to_text_content(learning=learning_obj)
 
             # Build metadata for filtering
-            # Metadata must be passed separately to add_content for filters to work
+            # Metadata must be passed separately to insert for filters to work
             filter_metadata: dict[str, Any] = {
                 "namespace": effective_namespace,
             }
@@ -932,7 +932,7 @@ class LearnedKnowledgeStore(LearningStore):
             if tags:
                 filter_metadata["tags"] = tags
 
-            self.knowledge.add_content(
+            self.knowledge.insert(
                 name=learning_data["title"],
                 text_content=text_content,
                 reader=TextReader(),
@@ -989,7 +989,7 @@ class LearnedKnowledgeStore(LearningStore):
             text_content = self._to_text_content(learning=learning_obj)
 
             # Build metadata for filtering - THIS IS THE KEY FIX!
-            # Metadata must be passed separately to add_content for filters to work
+            # Metadata must be passed separately to insert for filters to work
             filter_metadata: dict[str, Any] = {
                 "namespace": effective_namespace,
             }
@@ -1002,8 +1002,8 @@ class LearnedKnowledgeStore(LearningStore):
             if tags:
                 filter_metadata["tags"] = tags
 
-            if hasattr(self.knowledge, "aadd_content"):
-                await self.knowledge.aadd_content(
+            if hasattr(self.knowledge, "ainsert"):
+                await self.knowledge.ainsert(
                     name=learning_data["title"],
                     text_content=text_content,
                     reader=TextReader(),
@@ -1011,7 +1011,7 @@ class LearnedKnowledgeStore(LearningStore):
                     metadata=filter_metadata,  # Pass metadata for filtering
                 )
             else:
-                self.knowledge.add_content(
+                self.knowledge.insert(
                     name=learning_data["title"],
                     text_content=text_content,
                     reader=TextReader(),
