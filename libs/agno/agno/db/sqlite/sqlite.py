@@ -3475,7 +3475,7 @@ class SqliteDb(BaseDb):
 
         Args:
             component_id: The component ID.
-            version: Specific version number. If None, uses current.
+            version: Specific version number. If None, uses current or latest draft.
             label: Config label to lookup. Ignored if version is provided.
 
         Returns:
@@ -3491,7 +3491,7 @@ class SqliteDb(BaseDb):
             with self.Session() as sess:
                 # Always verify component exists and is not deleted
                 component = sess.execute(
-                    select(components_table.c.current_version).where(
+                    select(components_table.c.current_version, components_table.c.component_id).where(
                         components_table.c.component_id == component_id,
                         components_table.c.deleted_at.is_(None),
                     )
@@ -3510,12 +3510,19 @@ class SqliteDb(BaseDb):
                         configs_table.c.component_id == component_id,
                         configs_table.c.label == label,
                     )
-                else:
-                    if component.current_version is None:
-                        return None
+                elif component.current_version is not None:
+                    # Use the current published version
                     stmt = select(configs_table).where(
                         configs_table.c.component_id == component_id,
                         configs_table.c.version == component.current_version,
+                    )
+                else:
+                    # No current_version set (draft only) - get the latest version
+                    stmt = (
+                        select(configs_table)
+                        .where(configs_table.c.component_id == component_id)
+                        .order_by(configs_table.c.version.desc())
+                        .limit(1)
                     )
 
                 result = sess.execute(stmt).fetchone()

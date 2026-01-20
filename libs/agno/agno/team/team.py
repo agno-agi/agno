@@ -8536,6 +8536,7 @@ class Team:
         # --- Handle Members reconstruction ---
         members: Optional[List[Union[Agent, "Team"]]] = None
         from agno.agent import get_agent_by_id
+        from agno.team import get_team_by_id
 
         if "members" in config and config["members"]:
             members = []
@@ -8551,6 +8552,16 @@ class Team:
                         members.append(agent)
                     else:
                         log_warning(f"Agent not found: {member_data['agent_id']}")
+                elif member_type == "team":
+                    # Handle nested teams as members
+                    if db is None:
+                        log_warning(f"Cannot load member team {member_data['team_id']}: db is None")
+                        continue
+                    nested_team = get_team_by_id(id=member_data["team_id"], db=db, registry=registry)
+                    if nested_team:
+                        members.append(nested_team)
+                    else:
+                        log_warning(f"Team not found: {member_data['team_id']}")
 
         # --- Handle reasoning_model reconstruction ---
         # TODO: implement reasoning model deserialization
