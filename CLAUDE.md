@@ -201,6 +201,43 @@ Both scripts must pass with no errors before code review.
 
 ---
 
+## Branch and PR Naming
+
+### Branch Names
+
+Use the format: `<type>/<short-description>`
+
+Examples:
+- `feat/add-openresponses-support`
+- `fix/memory-leak-in-agent`
+- `cookbook/update-ollama-examples`
+
+### PR Titles
+
+PR titles must follow one of these formats (enforced by CI):
+
+```
+[type] description
+type: description
+type-description
+```
+
+**Valid types:** `feat`, `fix`, `cookbook`, `test`, `refactor`, `build`, `ci`, `chore`, `perf`, `style`, `revert`
+
+Examples:
+- `[feat] add OpenResponses base class`
+- `fix: handle empty password in knowledge`
+- `cookbook-update-ollama-responses`
+
+### PR Descriptions
+
+Always include a description in your PR body explaining:
+- What the change does
+- Why it's needed
+- Any notable implementation details
+
+---
+
 ## Don't
 
 - Don't implement features without checking for a design doc first

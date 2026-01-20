@@ -5,12 +5,12 @@ from typing import Any, Dict, List, Optional, Type, Union
 from pydantic import BaseModel
 
 from agno.exceptions import ModelAuthenticationError
-from agno.models.openai.responses_like import OpenAIResponsesLike
+from agno.models.openai.open_responses import OpenResponses
 from agno.run.agent import RunOutput
 
 
 @dataclass
-class OpenRouterResponses(OpenAIResponsesLike):
+class OpenRouterResponses(OpenResponses):
     """
     A class for interacting with OpenRouter models using the OpenAI Responses API.
 

@@ -2,12 +2,12 @@ from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, Optional
 
-from agno.models.openai.responses_like import OpenAIResponsesLike
+from agno.models.openai.open_responses import OpenResponses
 from agno.utils.log import log_debug
 
 
 @dataclass
-class OllamaResponses(OpenAIResponsesLike):
+class OllamaResponses(OpenResponses):
     """
     A class for interacting with Ollama models using the OpenAI Responses API.
 

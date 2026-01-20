@@ -5,13 +5,15 @@ from agno.models.openai.responses import OpenAIResponses
 
 
 @dataclass
-class OpenAIResponsesLike(OpenAIResponses):
+class OpenResponses(OpenAIResponses):
     """
-    A base class for interacting with any provider using the OpenAI Responses API schema.
+    A base class for interacting with any provider using the Open Responses API specification.
 
-    This class provides a foundation for providers that implement OpenAI's Responses API
-    specification (e.g., Ollama, OpenRouter). It extends OpenAIResponses with configurable
-    defaults suitable for third-party providers.
+    Open Responses is an open-source specification for building multi-provider, interoperable
+    LLM interfaces based on the OpenAI Responses API. This class provides a foundation for
+    providers that implement the spec (e.g., Ollama, OpenRouter).
+
+    For more information, see: https://openresponses.org
 
     Key differences from OpenAIResponses:
     - Configurable base_url for pointing to different API endpoints
@@ -20,13 +22,13 @@ class OpenAIResponsesLike(OpenAIResponses):
 
     Args:
         id (str): The model id. Defaults to "not-provided".
-        name (str): The model name. Defaults to "OpenAIResponsesLike".
+        name (str): The model name. Defaults to "OpenResponses".
         api_key (Optional[str]): The API key. Defaults to "not-provided".
     """
 
     id: str = "not-provided"
-    name: str = "OpenAIResponsesLike"
-    provider: str = "OpenAIResponsesLike"
+    name: str = "OpenResponses"
+    provider: str = "OpenResponses"
     api_key: Optional[str] = "not-provided"
 
     # Disable stateful features by default for compatible providers
