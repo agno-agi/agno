@@ -1,7 +1,7 @@
 """
 1. Run: `pip install openai agno lancedb tantivy sqlalchemy` to install the dependencies
 2. Export your OPENAI_API_KEY
-3. Run: `python cookbook/reasoning/tools/knowledge_tools.py` to run the agent
+3. Run: `python cookbook/81_reasoning/tools/workflow_tools.py` to run the agent
 """
 
 from textwrap import dedent
@@ -10,8 +10,8 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.workflow import WorkflowTools
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
@@ -32,7 +32,7 @@ FEW_SHOT_EXAMPLES = dedent("""\
 web_agent = Agent(
     name="Web Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
+    tools=[WebSearchTools()],
     role="Search the web for the latest news and trends",
 )
 hackernews_agent = Agent(

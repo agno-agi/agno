@@ -73,11 +73,17 @@ class Reader:
     def chunk_document(self, document: Document) -> List[Document]:
         if self.chunking_strategy is None:
             self.chunking_strategy = FixedSizeChunking(chunk_size=self.chunk_size)
-        return self.chunking_strategy.chunk(document)  # type: ignore
+        return self.chunking_strategy.chunk(document)
+
+    async def achunk_document(self, document: Document) -> List[Document]:
+        """Async version of chunk_document."""
+        if self.chunking_strategy is None:
+            self.chunking_strategy = FixedSizeChunking(chunk_size=self.chunk_size)
+        return await self.chunking_strategy.achunk(document)
 
     async def chunk_documents_async(self, documents: List[Document]) -> List[Document]:
         """
-        Asynchronously chunk a list of documents using the instance's chunk_document method.
+        Asynchronously chunk a list of documents.
 
         Args:
             documents: List of documents to be chunked.
@@ -85,11 +91,7 @@ class Reader:
         Returns:
             A flattened list of chunked documents.
         """
-
-        async def _chunk_document_async(doc: Document) -> List[Document]:
-            return await asyncio.to_thread(self.chunk_document, doc)
-
         # Process chunking in parallel for all documents
-        chunked_lists = await asyncio.gather(*[_chunk_document_async(doc) for doc in documents])
+        chunked_lists = await asyncio.gather(*[self.achunk_document(doc) for doc in documents])
         # Flatten the result
         return [chunk for sublist in chunked_lists for chunk in sublist]
