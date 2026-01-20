@@ -369,6 +369,7 @@ class OpenAIResponses(Model):
     ) -> List[Dict[str, Any]]:
         """Format the tool parameters for the OpenAI Responses API."""
         formatted_tools = []
+        has_file_search_tool = False  # Track if file_search is actually needed
         if tools:
             for _tool in tools:
                 if isinstance(_tool, Function):
@@ -378,6 +379,10 @@ class OpenAIResponses(Model):
                         if isinstance(prop.get("type", ""), list):
                             prop["type"] = prop["type"][0]
                     formatted_tools.append(_tool_dict)
+
+                    # Check if file_search tool is present
+                    if isinstance(_tool, dict) and _tool.get("type") == "file_search":
+                        has_file_search_tool = True
                 elif _tool.get("type") == "function":
                     _tool_dict = _tool.get("function", {})
                     _tool_dict["type"] = "function"
@@ -388,15 +393,16 @@ class OpenAIResponses(Model):
                 else:
                     formatted_tools.append(_tool)
 
-        # Find files to upload to the OpenAI vector database
+        # Only upload to vector stores if file_search tool exists
         file_ids = []
-        for message in messages:
-            # Upload any attached files to the OpenAI vector database
-            if message.files is not None and len(message.files) > 0:
-                for file in message.files:
-                    file_id = self._upload_file(file)
-                    if file_id is not None:
-                        file_ids.append(file_id)
+        if has_file_search_tool:
+            for message in messages:
+                # Upload any attached files to the OpenAI vector database
+                if message.files is not None and len(message.files) > 0:
+                    for file in message.files:
+                        file_id = self._upload_file(file)
+                        if file_id is not None:
+                            file_ids.append(file_id)
 
         vector_store_id = self._create_vector_store(file_ids) if file_ids else None
 
@@ -406,6 +412,28 @@ class OpenAIResponses(Model):
                 _tool["vector_store_ids"] = [vector_store_id]
 
         return formatted_tools
+
+    def _get_file_content_base64(self, file: File) -> Optional[str]:
+        """Get file content as base64 string for direct attachment."""
+        import base64
+
+        content_bytes = None
+        if file.content is not None:
+            content_bytes = file.content if isinstance(file.content, bytes) else file.content.encode()
+        elif file.filepath is not None:
+            from pathlib import Path
+
+            path = Path(file.filepath)
+            if path.exists():
+                content_bytes = path.read_bytes()
+        elif file.url is not None:
+            file_tuple = file.file_url_content
+            if file_tuple:
+                content_bytes = file_tuple[0]
+
+        if content_bytes:
+            return base64.b64encode(content_bytes).decode("utf-8")
+        return None
 
     def _format_messages(
         self, messages: List[Message], compress_tool_results: bool = False
@@ -473,6 +501,32 @@ class OpenAIResponses(Model):
                         message_dict["content"] = [{"type": "input_text", "text": message.content}]
                         if message.images is not None:
                             message_dict["content"].extend(images_to_message(images=message.images))
+
+                if message.files is not None and len(message.files) > 0:
+                    import mimetypes
+
+                    # Initialize content array if not already done
+                    if not isinstance(message_dict.get("content"), list):
+                        message_dict["content"] = [{"type": "input_text", "text": message.content or ""}]
+
+                    for file in message.files:
+                        file_content = self._get_file_content_base64(file)
+                        if file_content:
+                            # Determine MIME type from file properties or guess from filename/path
+                            mime_type = file.mime_type
+                            if not mime_type and file.filepath:
+                                mime_type = mimetypes.guess_type(str(file.filepath))[0]
+                            if not mime_type and (file.filename or file.name):
+                                mime_type = mimetypes.guess_type(file.filename or file.name)[0]
+                            mime_type = mime_type or "application/octet-stream"
+
+                            message_dict["content"].append(
+                                {
+                                    "type": "input_file",
+                                    "filename": file.filename or file.name or "document",
+                                    "file_data": f"data:{mime_type};base64,{file_content}",
+                                }
+                            )
 
                 if message.audio is not None and len(message.audio) > 0:
                     log_warning("Audio input is currently unsupported.")
