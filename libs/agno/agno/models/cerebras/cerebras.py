@@ -102,19 +102,29 @@ class Cerebras(Model):
         Recursively ensure all object types have additionalProperties: false.
         Cerebras API requires this for JSON schema validation.
         """
-        if isinstance(schema, dict):
-            if schema.get("type") == "object":
-                schema["additionalProperties"] = False
+        if not isinstance(schema, dict):
+            return
 
-            # Recursively process nested schemas
-            for key, value in schema.items():
-                if key in ["properties", "items", "allOf", "anyOf", "oneOf"]:
-                    if isinstance(value, dict):
-                        self._ensure_additional_properties_false(value)
-                    elif isinstance(value, list):
-                        for item in value:
-                            if isinstance(item, dict):
-                                self._ensure_additional_properties_false(item)
+        # Set additionalProperties: false for object types
+        if schema.get("type") == "object":
+            schema["additionalProperties"] = False
+
+        # Recursively process nested schemas
+        if "properties" in schema and isinstance(schema["properties"], dict):
+            for prop_schema in schema["properties"].values():
+                self._ensure_additional_properties_false(prop_schema)
+
+        if "items" in schema:
+            self._ensure_additional_properties_false(schema["items"])
+
+        if "$defs" in schema and isinstance(schema["$defs"], dict):
+            for def_schema in schema["$defs"].values():
+                self._ensure_additional_properties_false(def_schema)
+
+        for key in ["allOf", "anyOf", "oneOf"]:
+            if key in schema and isinstance(schema[key], list):
+                for item in schema[key]:
+                    self._ensure_additional_properties_false(item)
 
     def get_client(self) -> CerebrasClient:
         """
