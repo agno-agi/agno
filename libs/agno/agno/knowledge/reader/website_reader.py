@@ -32,14 +32,14 @@ class WebsiteReader(Reader):
 
     def __init__(
         self,
-        chunking_strategy: Optional[ChunkingStrategy] = SemanticChunking(),
+        chunking_strategy: Optional[ChunkingStrategy] = None,
         max_depth: int = 3,
         max_links: int = 10,
         timeout: int = 10,
         proxy: Optional[str] = None,
         **kwargs,
     ):
-        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
+        super().__init__(chunking_strategy=chunking_strategy or SemanticChunking(), **kwargs)
         self.max_depth = max_depth
         self.max_links = max_links
         self.proxy = proxy
