@@ -7832,7 +7832,6 @@ class Team:
 
             if stream:
                 # Concurrent streaming: launch each member as a streaming worker and merge events
-                # FIX: Use 'agent' parameter consistently instead of outer loop 'member_agent'
                 done_marker = object()
                 queue: "asyncio.Queue[Union[RunOutputEvent, TeamRunOutputEvent, str, object]]" = asyncio.Queue()
 
