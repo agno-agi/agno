@@ -20,8 +20,6 @@ from agno.knowledge.reader.csv_reader import (
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error, log_warning
 
-_EXCEL_SUFFIXES = {ContentType.XLSX.value, ContentType.XLS.value}
-
 
 class FieldLabeledCSVReader(Reader):
     """Reader for CSV files that converts each row to a field-labeled document."""
@@ -237,11 +235,11 @@ class FieldLabeledCSVReader(Reader):
             file_extension = _infer_file_extension(file, name)
 
             # Handle Excel files
-            if file_extension in _EXCEL_SUFFIXES:
+            if file_extension in {ContentType.XLSX, ContentType.XLS}:
                 workbook_name = _get_workbook_name(file, name)
                 log_debug(f"Reading Excel file: {workbook_name}{file_extension}")
 
-                if file_extension == ContentType.XLSX.value:
+                if file_extension == ContentType.XLSX:
                     return self._read_xlsx(file, workbook_name=workbook_name)
                 else:
                     return self._read_xls(file, workbook_name=workbook_name)
@@ -327,11 +325,11 @@ class FieldLabeledCSVReader(Reader):
             file_extension = _infer_file_extension(file, name)
 
             # Handle Excel files (use asyncio.to_thread for sync openpyxl/xlrd)
-            if file_extension in _EXCEL_SUFFIXES:
+            if file_extension in {ContentType.XLSX, ContentType.XLS}:
                 workbook_name = _get_workbook_name(file, name)
                 log_debug(f"Reading Excel file async: {workbook_name}{file_extension}")
 
-                if file_extension == ContentType.XLSX.value:
+                if file_extension == ContentType.XLSX:
                     return await asyncio.to_thread(self._read_xlsx, file, workbook_name=workbook_name)
                 else:
                     return await asyncio.to_thread(self._read_xls, file, workbook_name=workbook_name)

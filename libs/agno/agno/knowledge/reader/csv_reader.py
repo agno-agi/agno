@@ -18,8 +18,6 @@ from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error
 
-_EXCEL_SUFFIXES = {ContentType.XLSX.value, ContentType.XLS.value}
-
 
 def _get_workbook_name(file: Union[Path, IO[Any]], name: Optional[str]) -> str:
     """Extract workbook name from file path or name parameter.
@@ -127,10 +125,10 @@ class CSVReader(Reader):
     ) -> List[Document]:
         try:
             file_extension = _infer_file_extension(file, name)
-            if file_extension in _EXCEL_SUFFIXES:
+            if file_extension in {ContentType.XLSX, ContentType.XLS}:
                 workbook_name = _get_workbook_name(file, name)
 
-                if file_extension == ContentType.XLSX.value:
+                if file_extension == ContentType.XLSX:
                     documents = self._read_xlsx(file, workbook_name=workbook_name)
                 else:
                     documents = self._read_xls(file, workbook_name=workbook_name)
@@ -210,10 +208,10 @@ class CSVReader(Reader):
         """
         try:
             file_extension = _infer_file_extension(file, name)
-            if file_extension in _EXCEL_SUFFIXES:
+            if file_extension in {ContentType.XLSX, ContentType.XLS}:
                 workbook_name = _get_workbook_name(file, name)
 
-                if file_extension == ContentType.XLSX.value:
+                if file_extension == ContentType.XLSX:
                     documents = await asyncio.to_thread(self._read_xlsx, file, workbook_name=workbook_name)
                 else:
                     documents = await asyncio.to_thread(self._read_xls, file, workbook_name=workbook_name)
