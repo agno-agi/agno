@@ -1,6 +1,7 @@
 """Tests for Knowledge._build_content_hash() method, verifying hash includes name and description."""
 
 from agno.knowledge.content import Content, FileData
+from agno.knowledge.document.base import Document
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.base import VectorDb
 
@@ -237,11 +238,6 @@ def test_hash_with_only_description():
     assert hash1 != hash2
     assert hash1 != hash3
     assert hash2 != hash3
-
-
-# ============================================================================
-# FileData Hash Tests
-# ============================================================================
 
 
 def test_file_data_hash_with_filename():
@@ -489,15 +485,8 @@ def test_file_data_hash_empty_hash_parts_fallback():
     assert len(hash1) == 64
 
 
-# ============================================================================
-# Document Content Hash Tests (for multi-page readers like WebsiteReader)
-# ============================================================================
-
-
 def test_document_content_hash_uses_document_url():
     """Documents from different URLs get unique content hashes."""
-    from agno.knowledge.document.base import Document
-
     knowledge = Knowledge(vector_db=MockVectorDb())
     content = Content(url="https://example.com")
 
@@ -522,8 +511,6 @@ def test_document_content_hash_uses_document_url():
 
 def test_document_content_hash_is_deterministic():
     """Same document URL produces same hash (deterministic)."""
-    from agno.knowledge.document.base import Document
-
     knowledge = Knowledge(vector_db=MockVectorDb())
     content = Content(url="https://example.com")
 
@@ -539,8 +526,6 @@ def test_document_content_hash_is_deterministic():
 
 def test_document_content_hash_includes_content_name():
     """Document hash includes content name for uniqueness."""
-    from agno.knowledge.document.base import Document
-
     knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com", name="Site A")
     content2 = Content(url="https://example.com", name="Site B")
@@ -556,8 +541,6 @@ def test_document_content_hash_includes_content_name():
 
 def test_document_content_hash_includes_content_description():
     """Document hash includes content description for uniqueness."""
-    from agno.knowledge.document.base import Document
-
     knowledge = Knowledge(vector_db=MockVectorDb())
     content1 = Content(url="https://example.com", description="Description A")
     content2 = Content(url="https://example.com", description="Description B")
@@ -573,8 +556,6 @@ def test_document_content_hash_includes_content_description():
 
 def test_document_content_hash_fallback_to_content_url():
     """Document without URL in meta_data falls back to content URL."""
-    from agno.knowledge.document.base import Document
-
     knowledge = Knowledge(vector_db=MockVectorDb())
     content = Content(url="https://example.com/fallback")
 
@@ -588,8 +569,6 @@ def test_document_content_hash_fallback_to_content_url():
 
 def test_document_content_hash_fallback_to_content_hash():
     """Document without any URL falls back to document content hash."""
-    from agno.knowledge.document.base import Document
-
     knowledge = Knowledge(vector_db=MockVectorDb())
     content = Content()  # No URL or path
 
